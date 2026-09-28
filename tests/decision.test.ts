@@ -39,6 +39,7 @@ import {
   toTaskClassification,
 } from '../src/decision/routing.ts';
 import { TASK_FIELD, toProbability, type DecisionQuestion, type DecisionRequest } from '../src/decision/types.ts';
+import type { TaskClassification } from '../src/decision/routing.ts';
 
 let passed = 0;
 let failed = 0;
@@ -63,26 +64,63 @@ function eq(name: string, actual: unknown, expected: unknown): void {
 
 // ---- fixtures -------------------------------------------------------------
 
-/** A well-formed laya-serve answer, matching the shape observed locally. */
+/** Rounds the way laya/agent.py serialises: round(x, 4). */
+function round4(x: number): number {
+  return Math.round(x * 1e4) / 1e4;
+}
+
+/**
+ * Builds a choice answer that is internally consistent, exactly as the service
+ * would emit it: `choice` is the argmax and `answer_confidence` is max(p).
+ * Deriving them from the distribution means a negative test can perturb exactly
+ * one field and be sure the failure is the field under test.
+ */
+function consistentChoice(key: string, probs: Record<string, number>): Record<string, unknown> {
+  return {
+    type: 'choice',
+    choice: key,
+    probabilities: probs,
+    confidence: 0.5,
+    answer_confidence: round4(Math.max(...Object.values(probs))),
+  };
+}
+
+/** The same for a score, where the reported value is the expectation, not an argmax. */
+function consistentScore(probs: Record<string, number>, levels: readonly string[]): Record<string, unknown> {
+  const expectation = levels.reduce((acc, _l, i) => acc + i * probs[String(i)], 0);
+  return {
+    type: 'score',
+    score: round4(expectation),
+    legend: Object.fromEntries(levels.map((c, i) => [String(i), c])),
+    probabilities: probs,
+    confidence: 0.5,
+    answer_confidence: round4(Math.max(...Object.values(probs))),
+  };
+}
+
+const LEVELS = [...COMPLEXITY_LEVELS];
+
+/**
+ * A well-formed laya-serve answer. These are the REAL values captured from the
+ * running service for the Chinese refactor task, not hand-written numbers, so
+ * every consistency check passes for the same reason it does in production:
+ *   complexity  sum 1.0000, expectation 1.6295 == score, max(p) 0.5052 == answer_confidence
+ *   work_kind   sum 1.0001, argmax implementation == choice, max(p) 0.9989 == answer_confidence
+ *   review      noul 0.0035, max(noul, 1-noul) 0.9965 == answer_confidence
+ */
 function goodAnswers(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    work_kind: {
-      type: 'choice',
-      choice: 'implementation',
-      probabilities: { implementation: 0.667, review: 0.158, research: 0.047, debugging: 0.129 },
-      confidence: 0.302,
-      answer_confidence: 0.667,
-      action: { act_probability: 1 },
-    },
-    complexity: {
-      type: 'score',
-      score: 1.7292,
-      legend: { '0': 'trivial', '1': 'small', '2': 'moderate', '3': 'large', '4': 'very large' },
-      probabilities: { '0': 0.04, '1': 0.36, '2': 0.46, '3': 0.1, '4': 0.04 },
-      confidence: 0.361,
-      answer_confidence: 0.505,
-    },
-    review_required: { type: 'noul', noul: 0.678, confidence: 0.996, answer_confidence: 0.678 },
+    work_kind: consistentChoice('implementation', {
+      implementation: 0.9989,
+      review: 0.0004,
+      research: 0.0004,
+      debugging: 0.0004,
+    }),
+    complexity: consistentScore(
+      { '0': 0.0286, '1': 0.3935, '2': 0.5052, '3': 0.0652, '4': 0.0075 },
+      LEVELS,
+    ),
+    review_required: { type: 'noul', noul: 0.0035, confidence: 0.9965, answer_confidence: 0.9965 },
     ...overrides,
   };
 }
@@ -156,22 +194,22 @@ async function testGenericLayer(): Promise<void> {
     check('choice answer is typed', kind?.type === 'choice', kind?.type);
     if (kind?.type === 'choice') {
       eq('choice value', kind.choice, 'implementation');
-      eq('confidence', kind.confidence, 0.667);
+      eq('confidence is the reported max of the distribution', kind.confidence, 0.9989);
       eq('criteria echoed back', Object.keys(kind.criteria).join(), WORK_KINDS.join());
       eq('probabilities cover the offered choices', Object.keys(kind.probabilities).join(), WORK_KINDS.join());
     }
     const complexity = r.answers[COMPLEXITY_ID];
     if (complexity?.type === 'score') {
-      // score is continuous, so the level comes from rounding it: 1.7292 -> 2.
+      // score is continuous, so the level comes from rounding it: 1.6295 -> 2.
       eq('level from rounded score', complexity.level, 'moderate');
-      eq('raw score preserved', complexity.score, 1.7292);
+      eq('raw score preserved', complexity.score, 1.6295);
       eq('levels echoed back', complexity.levels.join(), COMPLEXITY_LEVELS.join());
       eq('score distribution covers every level', Object.keys(complexity.probabilities).join(), '0,1,2,3,4');
     } else {
       check('score answer is typed', false, complexity?.type);
     }
     const review = r.answers[REVIEW_ID];
-    eq('noul value', review?.type === 'noul' ? review.noul : null, 0.678);
+    eq('noul value', review?.type === 'noul' ? review.noul : null, 0.0035);
 
     // provider metadata is retained for debugging, split into generic + Laya-specific
     eq('provider name', r.provider.name, 'laya');
@@ -190,9 +228,10 @@ async function testGenericLayer(): Promise<void> {
     jsonHandler(200, {
       model: 'laya-rl-agent',
       answers: {
-        tone: { type: 'choice', choice: 'urgent', probabilities: { urgent: 0.8, normal: 0.2 }, answer_confidence: 0.8 },
-        severity: { type: 'score', score: 3, legend: { '0': 'low', '1': 'mid', '2': 'high', '3': 'critical' }, probabilities: { '0': 0.05, '1': 0.05, '2': 0.1, '3': 0.8 }, answer_confidence: 0.8 },
-        needsHuman: { type: 'noul', noul: 0.2, probabilities: {}, answer_confidence: 0.8 },
+        tone: consistentChoice('urgent', { urgent: 0.8, normal: 0.2 }),
+        severity: consistentScore({ '0': 0.05, '1': 0.05, '2': 0.1, '3': 0.8 }, ['low', 'mid', 'high', 'critical']),
+        // a noul sends no distribution at all; its confidence is max(noul, 1 - noul)
+        needsHuman: { type: 'noul', noul: 0.2, answer_confidence: 0.8 },
       },
       routing: { model: 'english', reason: 'English Latin text' },
     }),
@@ -514,13 +553,7 @@ async function testResponseValidation(): Promise<void> {
     [
       'score is not a number',
       goodAnswers({
-        complexity: {
-          type: 'score',
-          score: 'high',
-          legend: { '0': 'trivial', '1': 'small', '2': 'moderate', '3': 'large', '4': 'very large' },
-          probabilities: { '0': 0.04, '1': 0.36, '2': 0.46, '3': 0.1, '4': 0.04 },
-          answer_confidence: 0.5,
-        },
+        complexity: { ...consistentScore({ '0': 0.04, '1': 0.36, '2': 0.46, '3': 0.1, '4': 0.04 }, LEVELS), score: 'high' },
       }),
       'expected a finite number',
     ],
@@ -528,26 +561,41 @@ async function testResponseValidation(): Promise<void> {
       'score legend disagrees with the offered levels',
       goodAnswers({
         complexity: {
-          type: 'score',
-          score: 2,
+          ...consistentScore({ '0': 0.04, '1': 0.36, '2': 0.46, '3': 0.1, '4': 0.04 }, LEVELS),
           legend: { '0': 'a', '1': 'b', '2': 'c' },
-          probabilities: { '0': 0.04, '1': 0.36, '2': 0.46, '3': 0.1, '4': 0.04 },
-          answer_confidence: 0.5,
         },
       }),
-      'outside the levels this request offered',
+      'legend that disagrees with the levels',
     ],
     [
       'score legend missing',
       goodAnswers({
-        complexity: {
-          type: 'score',
-          score: 2,
-          probabilities: { '0': 0.04, '1': 0.36, '2': 0.46, '3': 0.1, '4': 0.04 },
-          answer_confidence: 0.5,
-        },
+        complexity: (({ legend: _drop, ...rest }) => rest)(
+          consistentScore({ '0': 0.04, '1': 0.36, '2': 0.46, '3': 0.1, '4': 0.04 }, LEVELS),
+        ),
       }),
       'missing its "legend"',
+    ],
+    [
+      'score legend is reversed',
+      goodAnswers({
+        complexity: {
+          ...consistentScore({ '0': 0.04, '1': 0.36, '2': 0.46, '3': 0.1, '4': 0.04 }, LEVELS),
+          // same five names, wrong order: index 2 now says "trivial"
+          legend: { '0': 'very large', '1': 'large', '2': 'trivial', '3': 'small', '4': 'moderate' },
+        },
+      }),
+      'legend that disagrees with the levels',
+    ],
+    [
+      'score legend has a duplicated level',
+      goodAnswers({
+        complexity: {
+          ...consistentScore({ '0': 0.04, '1': 0.36, '2': 0.46, '3': 0.1, '4': 0.04 }, LEVELS),
+          legend: { '0': 'trivial', '1': 'small', '2': 'trivial', '3': 'large', '4': 'very large' },
+        },
+      }),
+      'legend that disagrees with the levels',
     ],
     [
       'noul above 1',
@@ -644,47 +692,33 @@ async function testResponseValidation(): Promise<void> {
     });
   }
 
-  // The complement: a consistent answer, including an exact tie, must still pass.
-  const consistent: Array<[string, Record<string, unknown>, string]> = [
+  // The complement: a consistent answer, including genuine ties, must still pass.
+  // Every distribution here really sums to 1, so the only thing under test is
+  // that ties are not mistaken for contradictions.
+  const consistent: Array<[string, Record<string, number>, string]> = [
     [
       'the plain argmax case',
-      goodAnswers({
-        work_kind: {
-          type: 'choice',
-          choice: 'implementation',
-          probabilities: { implementation: 0.667, review: 0.158, research: 0.047, debugging: 0.129 },
-          answer_confidence: 0.667,
-        },
-      }),
+      { implementation: 0.667, review: 0.158, research: 0.047, debugging: 0.129 },
       'implementation',
     ],
     [
-      'an exact tie is a legitimate argmax for either side',
-      goodAnswers({
-        work_kind: {
-          type: 'choice',
-          choice: 'research',
-          probabilities: { implementation: 0.5, review: 0.5, research: 0.5, debugging: 0.5 },
-          answer_confidence: 0.5,
-        },
-      }),
+      'a tie between the top two, with a lower third and fourth',
+      { implementation: 0.4, review: 0.4, research: 0.1, debugging: 0.1 },
+      'review',
+    ],
+    [
+      'a flat distribution, where every option is an argmax',
+      { implementation: 0.25, review: 0.25, research: 0.25, debugging: 0.25 },
       'research',
     ],
     [
-      'a tie between only the top two, with a lower third option',
-      goodAnswers({
-        work_kind: {
-          type: 'choice',
-          choice: 'review',
-          probabilities: { implementation: 0.4, review: 0.4, research: 0.1, debugging: 0.1 },
-          answer_confidence: 0.4,
-        },
-      }),
-      'review',
+      'a tie below a clear winner is irrelevant to the choice',
+      { implementation: 0.7, review: 0.1, research: 0.1, debugging: 0.1 },
+      'implementation',
     ],
   ];
-  for (const [name, answers, expectedChoice] of consistent) {
-    await withServer(jsonHandler(200, goodBody(answers)), async (baseUrl) => {
+  for (const [name, probs, expectedChoice] of consistent) {
+    await withServer(jsonHandler(200, goodBody(goodAnswers({ work_kind: consistentChoice(expectedChoice, probs) }))), async (baseUrl) => {
       const r = await createLayaDecisionProvider({ baseUrl }).decide(ROUTING);
       const got = r.answers[WORK_KIND_ID]?.type === 'choice' ? r.answers[WORK_KIND_ID].choice : null;
       check(`accepts consistent choice: ${name}`, got === expectedChoice, `got ${got}, want ${expectedChoice}`);
@@ -1037,27 +1071,16 @@ async function testTransport(): Promise<void> {
 // ---- the routing preset on top -------------------------------------------
 
 async function testRoutingPreset(): Promise<void> {
-  // level comes from the provider's legend, not a hardcoded index
+  // The level comes from the request's own criteria at the rounded index. A
+  // legend is now REQUIRED to match the request exactly, so this uses a valid
+  // legend and checks the level is read from criteria, not from the provider's
+  // labelling (which is verified separately to be identical anyway).
   await withServer(
-    jsonHandler(
-      200,
-      goodBody(
-        goodAnswers({
-          complexity: {
-            type: 'score',
-            score: 2,
-            // reversed legend: index 2 is "trivial" now. A hardcoded level order
-            // would not notice this.
-            legend: { '0': 'very large', '1': 'large', '2': 'trivial', '3': 'small', '4': 'moderate' },
-            probabilities: { '0': 0.04, '1': 0.36, '2': 0.46, '3': 0.1, '4': 0.04 },
-            answer_confidence: 0.5,
-          },
-        }),
-      ),
-    ),
+    jsonHandler(200, goodBody(goodAnswers({ complexity: consistentScore({ '0': 0.0, '1': 0.0, '2': 1.0, '3': 0.0, '4': 0.0 }, LEVELS) }))),
     async (baseUrl) => {
       const c = await classifyTask(createLayaDecisionProvider({ baseUrl }), { task: 't' });
-      eq('level is read from the legend entry for the score', c.complexity, 'trivial');
+      eq('level is criteria[round(score)]', c.complexity, 'moderate');
+      eq('score is the expectation, here exactly 2', c.complexity_score, 2);
     },
   );
 
@@ -1070,7 +1093,16 @@ async function testRoutingPreset(): Promise<void> {
     [1, true],
   ] as Array<[number, boolean]>) {
     await withServer(
-      jsonHandler(200, goodBody(goodAnswers({ review_required: { type: 'noul', noul, answer_confidence: noul } }))),
+      jsonHandler(
+        200,
+        goodBody(
+          goodAnswers({
+            // answer_confidence for a noul is max(noul, 1 - noul), since the
+            // provider splits over two options and sends no distribution.
+            review_required: { type: 'noul', noul, answer_confidence: round4(Math.max(noul, 1 - noul)) },
+          }),
+        ),
+      ),
       async (baseUrl) => {
         const c = await classifyTask(createLayaDecisionProvider({ baseUrl }), { task: 't' });
         check(`noul ${noul} -> review_required ${expected}`, c.review_required === expected, String(c.review_required));
@@ -1173,6 +1205,424 @@ async function testRoutingPreset(): Promise<void> {
   eq('routingRequest asks three questions', Object.keys(rq.questions).length, 3);
 }
 
+/**
+ * SCORE CONSISTENCY.
+ *
+ * The rule under test comes from laya/agent.py, verified against the installed
+ * 0.3.21:
+ *   score = round(Σ(i * p_i), 4)     -- an EXPECTATION, not an argmax
+ *   legend = {str(i): criteria[i]}   -- the request's own levels, in order
+ *
+ * So `round(score) != argmax(p)` is NORMAL and must be accepted, while a score
+ * that is not the expectation of the distribution beside it must be rejected.
+ * The last case here is the one an argmax rule would get wrong.
+ */
+async function testScoreConsistency(): Promise<void> {
+  const SCORE_ID = COMPLEXITY_ID;
+
+  async function decideWith(complexity: Record<string, unknown>): Promise<{ ok: boolean; message: string }> {
+    let ok = false;
+    let message = '';
+    await withServer(jsonHandler(200, goodBody(goodAnswers({ [SCORE_ID]: complexity }))), async (baseUrl) => {
+      try {
+        await createLayaDecisionProvider({ baseUrl }).decide(ROUTING);
+        ok = true;
+      } catch (e) {
+        message = (e as Error).message;
+      }
+    });
+    return { ok, message };
+  }
+
+  // ---- accepted ----
+  const accepted: Array<[string, Record<string, number>, number, string]> = [
+    ['a plain expectation', { '0': 0.0286, '1': 0.3935, '2': 0.5052, '3': 0.0652, '4': 0.0075 }, 1.6295, 'moderate'],
+    [
+      'a clean peak, expectation exactly on an index',
+      { '0': 0.0, '1': 0.0, '2': 1.0, '3': 0.0, '4': 0.0 },
+      2,
+      'moderate',
+    ],
+    [
+      'the lowest level',
+      { '0': 1.0, '1': 0.0, '2': 0.0, '3': 0.0, '4': 0.0 },
+      0,
+      'trivial',
+    ],
+    [
+      'the highest level',
+      { '0': 0.0, '1': 0.0, '2': 0.0, '3': 0.0, '4': 1.0 },
+      4,
+      'very large',
+    ],
+    [
+      'a flat distribution, expectation 2.0',
+      { '0': 0.2, '1': 0.2, '2': 0.2, '3': 0.2, '4': 0.2 },
+      2,
+      'moderate',
+    ],
+    [
+      // THE CASE AN ARGMAX RULE WOULD REJECT. argmax is index 1 ('small'), but
+      // the expectation is 1.5, which rounds to index 2 ('moderate'). Both are
+      // correct answers; only the expectation rule accepts the right one.
+      'score is not the argmax of its distribution',
+      { '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': 0.1 },
+      1.5,
+      'moderate',
+    ],
+    [
+      // argmax is index 4 ('very large'), expectation 2.2 -> index 2.
+      'a high argmax but a middling expectation',
+      { '0': 0.3, '1': 0.1, '2': 0.1, '3': 0.1, '4': 0.4 },
+      2.2,
+      'moderate',
+    ],
+  ];
+  for (const [name, probs, expectedScore, expectedLevel] of accepted) {
+    const r = await decideWith(consistentScore(probs, LEVELS));
+    if (!r.ok) {
+      check(`accepts score: ${name}`, false, r.message.slice(0, 190));
+      continue;
+    }
+    check(`accepts score: ${name}`, true);
+    eq(`  ${name} -> score`, (consistentScore(probs, LEVELS) as Record<string, unknown>).score, expectedScore);
+    eq(`  ${name} -> level`, LEVELS[Math.round(expectedScore)], expectedLevel);
+  }
+
+  // the level really is criteria[round(score)] for the non-argmax cases
+  {
+    const classify = async (probs: Record<string, number>): Promise<TaskClassification> => {
+      let out: TaskClassification | null = null;
+      await withServer(
+        jsonHandler(200, goodBody(goodAnswers({ [SCORE_ID]: consistentScore(probs, LEVELS) }))),
+        async (baseUrl) => {
+          out = await classifyTask(createLayaDecisionProvider({ baseUrl }), { task: 't' });
+        },
+      );
+      return out as unknown as TaskClassification;
+    };
+    const a = await classify({ '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': 0.1 });
+    eq('a non-argmax score keeps its expectation', a.complexity_score, 1.5);
+    eq('the level is criteria[round(score)], not the argmax', a.complexity, 'moderate');
+    const b = await classify({ '0': 0.3, '1': 0.1, '2': 0.1, '3': 0.1, '4': 0.4 });
+    eq('a high-argmax score keeps its expectation', b.complexity_score, 2.2);
+    eq('its level is also criteria[round(score)]', b.complexity, 'moderate');
+  }
+
+  // ---- 4-decimal rounding is tolerated ----
+  // The service serialises score as round(expectation, 4), so the reported value
+  // can differ from the expectation of the reported distribution in the last
+  // decimal. A legal answer must not be rejected for that.
+  {
+    const base = consistentScore({ '0': 0.0286, '1': 0.3935, '2': 0.5052, '3': 0.0652, '4': 0.0075 }, LEVELS) as Record<string, unknown>;
+    for (const [name, nudge] of [
+      ['score 1e-4 above the expectation', 0.0001],
+      ['score 1e-4 below the expectation', -0.0001],
+      ['score 2e-3 above the expectation (inside tolerance)', 0.002],
+    ] as Array<[string, number]>) {
+      const r = await decideWith({ ...base, score: round4(1.6295 + nudge) });
+      check(`tolerates rounding: ${name}`, r.ok, r.message.slice(0, 190));
+    }
+  }
+
+  // ---- rejected ----
+  const rejected: Array<[string, Record<string, unknown>, string]> = [
+    [
+      'score contradicts the distribution it ships with',
+      { ...consistentScore({ '0': 0.1, '1': 0.1, '2': 0.1, '3': 0.1, '4': 0.6 }, LEVELS), score: 1.0 },
+      'self-contradictory',
+    ],
+    [
+      'score is the argmax index rather than the expectation',
+      { ...consistentScore({ '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': 0.1 }, LEVELS), score: 1 },
+      'self-contradictory',
+    ],
+    [
+      'score off by half a level',
+      { ...consistentScore({ '0': 0.1, '1': 0.1, '2': 0.1, '3': 0.1, '4': 0.6 }, LEVELS), score: 3.8 },
+      'self-contradictory',
+    ],
+    [
+      'legend is reversed',
+      { ...consistentScore({ '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': 0.1 }, LEVELS), legend: { '0': 'very large', '1': 'large', '2': 'moderate', '3': 'small', '4': 'trivial' } },
+      'legend that disagrees with the levels',
+    ],
+    [
+      'legend renames a level',
+      { ...consistentScore({ '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': 0.1 }, LEVELS), legend: { '0': 'trivial', '1': 'small', '2': 'moderate', '3': 'large', '4': 'enormous' } },
+      'legend that disagrees with the levels',
+    ],
+    [
+      'legend has fewer entries than the request offered',
+      { ...consistentScore({ '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': 0.1 }, LEVELS), legend: { '0': 'trivial', '1': 'small' } },
+      'legend that disagrees with the levels',
+    ],
+    [
+      'a probability is missing',
+      (() => {
+        const a = consistentScore({ '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': 0.1 }, LEVELS) as Record<string, unknown>;
+        const p = { ...(a.probabilities as Record<string, number>) };
+        delete p['3'];
+        return { ...a, probabilities: p };
+      })(),
+      'expected a probability',
+    ],
+    [
+      'an extra probability index is invented',
+      { ...consistentScore({ '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': 0.1 }, LEVELS), probabilities: { '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': 0.1, '5': 0.0 } },
+      'which this request did not offer',
+    ],
+    [
+      'a probability is null',
+      { ...consistentScore({ '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': 0.1 }, LEVELS), probabilities: { '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': null } },
+      'expected a probability',
+    ],
+    [
+      'a probability is NaN',
+      { ...consistentScore({ '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': 0.1 }, LEVELS), probabilities: { '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': NaN } },
+      'expected a probability',
+    ],
+    [
+      'a probability is Infinity',
+      { ...consistentScore({ '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': 0.1 }, LEVELS), probabilities: { '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': Infinity } },
+      'expected a probability',
+    ],
+    [
+      'a probability is negative',
+      { ...consistentScore({ '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': 0.1 }, LEVELS), probabilities: { '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': -0.1 } },
+      'expected a probability',
+    ],
+    [
+      'a probability is above 1',
+      { ...consistentScore({ '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': 0.1 }, LEVELS), probabilities: { '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': 1.4 } },
+      'expected a probability',
+    ],
+    [
+      'the distribution does not sum to 1',
+      { ...consistentScore({ '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': 0.1 }, LEVELS), probabilities: { '0': 0.2, '1': 0.6, '2': 0.2, '3': 0.2, '4': 0.2 } },
+      'summing to',
+    ],
+    [
+      'the distribution sums to 0',
+      { ...consistentScore({ '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': 0.1 }, LEVELS), probabilities: { '0': 0, '1': 0, '2': 0, '3': 0, '4': 0 } },
+      'summing to',
+    ],
+    [
+      'score is above the top index',
+      { ...consistentScore({ '0': 0.1, '1': 0.1, '2': 0.1, '3': 0.1, '4': 0.6 }, LEVELS), score: 9 },
+      'outside the',
+    ],
+    [
+      'score is below the bottom index',
+      { ...consistentScore({ '0': 0.1, '1': 0.1, '2': 0.1, '3': 0.1, '4': 0.6 }, LEVELS), score: -3 },
+      'outside the',
+    ],
+    [
+      'score is NaN',
+      { ...consistentScore({ '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': 0.1 }, LEVELS), score: NaN },
+      'expected a finite number',
+    ],
+    [
+      'score is Infinity',
+      { ...consistentScore({ '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': 0.1 }, LEVELS), score: Infinity },
+      'expected a finite number',
+    ],
+    [
+      'score is a string',
+      { ...consistentScore({ '0': 0.1, '1': 0.6, '2': 0.1, '3': 0.1, '4': 0.1 }, LEVELS), score: 'moderate' },
+      'expected a finite number',
+    ],
+  ];
+  for (const [name, complexity, fragment] of rejected) {
+    const r = await decideWith(complexity);
+    check(`rejects score: ${name}`, !r.ok && r.message.includes(fragment), (r.ok ? 'accepted' : r.message.slice(0, 190)));
+  }
+}
+
+/**
+ * ANSWER_CONFIDENCE CONSISTENCY.
+ *
+ * `answer_confidence` is `max(probabilities)` (laya/common.py:answer_confidence).
+ * Checking only [0, 1] would accept `{a: 0.01, b: 0.99}` reported with
+ * `answer_confidence: 0.99`. For a noul, which ships no distribution, the same
+ * guarantee is available as max(noul, 1 - noul).
+ */
+async function testAnswerConfidenceConsistency(): Promise<void> {
+  async function decideWith(answer: Record<string, unknown>, id = WORK_KIND_ID): Promise<{ ok: boolean; message: string }> {
+    let ok = false;
+    let message = '';
+    await withServer(jsonHandler(200, goodBody(goodAnswers({ [id]: answer }))), async (baseUrl) => {
+      try {
+        await createLayaDecisionProvider({ baseUrl }).decide(ROUTING);
+        ok = true;
+      } catch (e) {
+        message = (e as Error).message;
+      }
+    });
+    return { ok, message };
+  }
+
+  // A distribution whose maximum is 0.99, and one whose maximum is 0.35, so
+  // "confidence == max" can be checked at both a high and a middling value.
+  const peaked = { implementation: 0.01, review: 0.99, research: 0, debugging: 0 };
+  const middling = { implementation: 0.05, review: 0.35, research: 0.3, debugging: 0.3 };
+
+  // accepted: confidence equals the maximum
+  {
+    const r = await decideWith({ type: 'choice', choice: 'review', probabilities: peaked, answer_confidence: 0.99, confidence: 0.5 });
+    check('accepts confidence equal to max(probabilities) = 0.99', r.ok, r.message.slice(0, 190));
+  }
+  {
+    const r = await decideWith({ type: 'choice', choice: 'review', probabilities: middling, answer_confidence: 0.35, confidence: 0.5 });
+    check('accepts confidence equal to max(probabilities) = 0.35', r.ok, r.message.slice(0, 190));
+  }
+  {
+    // floating point boundary: the service rounds to 4dp, so a value inside the
+    // rounding budget must be accepted.
+    const a = consistentScore({ '0': 0.0286, '1': 0.3935, '2': 0.5052, '3': 0.0652, '4': 0.0075 }, LEVELS) as Record<string, unknown>;
+    const r = await decideWith({ ...a, answer_confidence: 0.5053 }, COMPLEXITY_ID);
+    check('tolerates a 1e-4 confidence overshoot from 4dp rounding', r.ok, r.message.slice(0, 190));
+  }
+  {
+    const r = await decideWith({ type: 'noul', noul: 0.2, answer_confidence: 0.8 }, REVIEW_ID);
+    check('accepts a noul whose confidence is max(noul, 1-noul) = 0.8', r.ok, r.message.slice(0, 190));
+  }
+  {
+    const r = await decideWith({ type: 'noul', noul: 0.9, answer_confidence: 0.9 }, REVIEW_ID);
+    check('accepts a noul of 0.9 with confidence 0.9', r.ok, r.message.slice(0, 190));
+  }
+
+  // rejected: confidence disagrees with the distribution
+  const bad: Array<[string, Record<string, unknown>, string, string?]> = [
+    [
+      // the reported case: probabilities peak at 0.99 but the answer claims 0.01
+      'claims 0.01 where the distribution peaks at 0.99',
+      { type: 'choice', choice: 'review', probabilities: peaked, answer_confidence: 0.01, confidence: 0.5 },
+      'self-contradictory',
+    ],
+    [
+      'claims 0.99 where the distribution peaks at 0.35',
+      { type: 'choice', choice: 'review', probabilities: middling, answer_confidence: 0.99, confidence: 0.5 },
+      'self-contradictory',
+    ],
+    [
+      'claims 0.5 where the distribution peaks at 0.99',
+      { type: 'choice', choice: 'review', probabilities: peaked, answer_confidence: 0.5, confidence: 0.5 },
+      'self-contradictory',
+    ],
+    [
+      'confidence is null',
+      { type: 'choice', choice: 'review', probabilities: peaked, answer_confidence: null, confidence: 0.5 },
+      'expected a probability',
+    ],
+    [
+      'confidence is above 1',
+      { type: 'choice', choice: 'review', probabilities: peaked, answer_confidence: 1.4, confidence: 0.5 },
+      'expected a probability',
+    ],
+    [
+      'confidence is negative',
+      { type: 'choice', choice: 'review', probabilities: peaked, answer_confidence: -0.2, confidence: 0.5 },
+      'expected a probability',
+    ],
+    [
+      'confidence is a string',
+      { type: 'choice', choice: 'review', probabilities: peaked, answer_confidence: 'high', confidence: 0.5 },
+      'expected a probability',
+    ],
+    [
+      'a noul whose confidence is not max(noul, 1-noul)',
+      { type: 'noul', noul: 0.2, answer_confidence: 0.2 },
+      'self-contradictory',
+      REVIEW_ID,
+    ],
+  ];
+  for (const [name, answer, fragment, id] of bad) {
+    const r = await decideWith(answer, id ?? WORK_KIND_ID);
+    check(`rejects confidence: ${name}`, !r.ok && r.message.includes(fragment), (r.ok ? 'accepted' : r.message.slice(0, 190)));
+  }
+}
+
+/** The minor hardening items: timeoutMs, loopback octets, health last_reason. */
+async function testProviderOptionHardening(): Promise<void> {
+  // ---- timeoutMs ----
+  for (const [name, value] of [
+    ['zero', 0],
+    ['negative', -1],
+    ['NaN', NaN],
+    ['Infinity', Infinity],
+    ['a string', '1000' as unknown as number],
+    ['null', null as unknown as number],
+  ] as Array<[string, number]>) {
+    let msg = '';
+    try {
+      createLayaDecisionProvider({ baseUrl: 'http://127.0.0.1:8077', timeoutMs: value });
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    check(`illegal timeoutMs is refused: ${name}`, msg.length > 0 && !msg.includes('RangeError'), msg.slice(0, 150) || 'no error thrown');
+  }
+  {
+    let threw = false;
+    let msg = '';
+    try {
+      createLayaDecisionProvider({ baseUrl: 'http://127.0.0.1:8077', timeoutMs: 1 });
+    } catch (e) {
+      threw = true;
+      msg = (e as Error).message;
+    }
+    check('a small but legal timeoutMs is accepted', !threw, msg);
+  }
+
+  // ---- loopback octets ----
+  // WHATWG URL already rejects a host whose IPv4 octets exceed 255, so these
+  // arrive here as an invalid URL. The octet check is the belt to that braces.
+  for (const bad of ['http://127.999.999.999:8077', 'http://127.256.0.1:8077', 'http://127.0.0.300:8077']) {
+    let msg = '';
+    try {
+      createLayaDecisionProvider({ baseUrl: bad });
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    const refused = msg.includes('not loopback') || msg.includes('not a valid absolute URL');
+    check(`out-of-range loopback octets are not treated as loopback: ${bad}`, refused, msg.slice(0, 150) || 'accepted');
+  }
+  for (const good of [
+    'http://127.0.0.1:8077',
+    'http://127.1.2.3:8077',
+    'http://127.255.255.255:8077',
+    // URL normalises the 3-part form to 127.0.0.0, which really is 127/8.
+    'http://127.0.0:8077',
+  ]) {
+    let threw = false;
+    let msg = '';
+    try {
+      createLayaDecisionProvider({ baseUrl: good });
+    } catch (e) {
+      threw = true;
+      msg = (e as Error).message;
+    }
+    check(`a real 127/8 address is accepted: ${good}`, !threw, msg);
+  }
+
+  // ---- health last_reason ----
+  for (const [name, payload, expected] of [
+    ['last_reason is a number', { status: 'ok', cpu_fallbacks: { english: { count: 1, last_reason: 5 } } }, 'last_reason'],
+    ['last_reason is an object', { status: 'ok', cpu_fallbacks: { english: { count: 1, last_reason: { a: 1 } } } }, 'last_reason'],
+    ['last_reason is null', { status: 'ok', cpu_fallbacks: { english: { count: 1, last_reason: null } } }, ''],
+    ['last_reason is a string', { status: 'ok', cpu_fallbacks: { english: { count: 1, last_reason: 'CUDA OOM' } } }, ''],
+  ] as Array<[string, unknown, string]>) {
+    await withServer(jsonHandler(200, payload), async (baseUrl) => {
+      const probe = await createLayaDecisionProvider({ baseUrl }).probe();
+      if (expected === '') {
+        check(`health accepts ${name}`, probe.ok === true, probe.detail);
+      } else {
+        check(`health refuses ${name}`, probe.ok === false && probe.detail.includes(expected), probe.detail);
+      }
+    });
+  }
+}
+
 let sentQuestions: Record<string, DecisionQuestion> = {};
 
 // ---- helpers --------------------------------------------------------------
@@ -1268,6 +1718,9 @@ async function main(): Promise<void> {
   await testGenericLayer();
   await testRequestValidation();
   await testResponseValidation();
+  await testScoreConsistency();
+  await testAnswerConfidenceConsistency();
+  await testProviderOptionHardening();
   await testTransport();
   await testRoutingPreset();
   await testChineseInput();

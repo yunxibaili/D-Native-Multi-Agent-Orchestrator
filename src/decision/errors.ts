@@ -65,8 +65,8 @@ export class DecisionTimeoutError extends DecisionError {
     super(
       'DECISION_TIMEOUT',
       `Decision provider at ${endpoint} did not respond within ${timeoutMs} ms. ` +
-        `No answer was produced. On a cold CUDA start the first request also pays ` +
-        `for checkpoint load; raise timeoutMs or warm the provider once.`,
+        `No answer was produced. A provider that loads a model on first use also pays that cost on the ` +
+        `first request, so raise timeoutMs or warm the provider once.`,
     );
     this.timeoutMs = timeoutMs;
   }
@@ -81,8 +81,8 @@ export class DecisionTransportError extends DecisionError {
     super(
       'DECISION_TRANSPORT',
       `Decision provider at ${endpoint} returned HTTP ${status}: ${body}. ` +
-        `Laya rejects an oversized or malformed request with 4xx; the detail ` +
-        `above is the provider's own explanation.`,
+        `A 4xx usually means the request exceeded a provider limit or was malformed; the detail above is ` +
+        `the provider's own explanation of which.`,
     );
     this.status = status;
     this.body = body;
@@ -92,13 +92,16 @@ export class DecisionTransportError extends DecisionError {
 /**
  * The response was 2xx but did not contain an answer we are willing to act on.
  *
- * This is the important one. laya-serve answers 200 for several inputs that
+ * This is the important one. A provider can answer 200 for several inputs that
  * carry no information at all -- an empty `questions` object yields
  * `answers: {}`, and a one-option choice yields that option every time. It will
- * also answer 200 with a self-contradictory answer, where the reported `choice`
- * is not the most likely entry in the provider's own distribution. Trusting the
- * status code, or a single reported field, would turn those into confident,
- * wrong classifications.
+ * also answer 200 with a self-contradictory answer, where the reported value
+ * disagrees with the distribution shipped beside it. Trusting the status code, or
+ * a single reported field, would turn those into confident, wrong classifications.
+ *
+ * The wording here stays provider-agnostic; a provider that knows more about a
+ * particular contradiction (for instance that its score is an expectation rather
+ * than an argmax) adds that detail at the point of detection.
  */
 export class DecisionSchemaError extends DecisionError {
   readonly detail: string;

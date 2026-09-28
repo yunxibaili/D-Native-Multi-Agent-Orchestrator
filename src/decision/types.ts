@@ -37,14 +37,25 @@ export function toProbability(value: unknown): Probability | null {
 // ---- the question vocabulary ---------------------------------------------
 
 /**
- * The three question kinds Laya answers. Each is closed on purpose: an
+ * The three answer kinds a question can ask for. Each is closed on purpose: an
  * open-ended "describe the work" answer cannot be acted on, and letting one
  * through would be a silent fallback wearing the costume of a decision.
  *
- *   choice  pick exactly one key of `criteria`
- *   score   position on an ordered list of `criteria` levels
- *   noul    "no / unsure likelihood" -- a bare number in [0, 1], with no
- *           answer space, and therefore no `criteria` at all
+ *   choice  pick exactly one key of `criteria`  -> the most likely option
+ *   score   position on an ordered list of levels -> the expectation of the
+ *           distribution, which is generally NOT the most likely level
+ *   noul    a graded "no or unsure" judgement, returned as a bare number in
+ *           [0, 1] rather than a selection
+ *
+ * `noul` is a general answer kind, not a Laya-ism: "is this true, or are we
+ * unsure" is a question any decision layer needs to ask. The name is kept
+ * because it is the vocabulary on the wire for the provider this layer ships
+ * with, and renaming it would buy abstraction at the cost of a worse fit for the
+ * only provider in use. It carries no answer space at all, which is the one
+ * property the generic layer relies on.
+ *
+ * The three kinds are named for what they mean, not for any particular
+ * implementation: a provider with a different vocabulary translates into them.
  */
 export type DecisionQuestion =
   | {
@@ -63,11 +74,10 @@ export type DecisionQuestion =
       readonly type: 'noul';
       readonly instructions: string;
       /**
-       * `criteria` is deliberately absent. Measured against laya-serve: a noul
-       * question that carries `criteria` is rejected by the server with 422
-       * ("a noul question takes 'criteria' as a dict with optional 'true'/'false'
-       * descriptions, or omits it"). The provider refuses that combination
-       * locally instead of spending a round trip on a guaranteed failure.
+       * `criteria` is deliberately absent: a noul has no answer space, so there
+       * is nothing for criteria to describe. Providers reject the combination
+       * (the one shipped here answers 422), so the provider refuses it up front
+       * rather than spending a round trip to learn it.
        */
     };
 

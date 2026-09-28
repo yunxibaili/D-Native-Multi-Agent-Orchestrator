@@ -58,6 +58,7 @@ const MAX_TOTAL_OPTIONS = 512;
 const MAX_BODY_BYTES = 2_097_152;
 
 const DEFAULT_BASE_URL = 'http://127.0.0.1:8077';
+const DEFAULT_TIMEOUT_MS = 30_000;
 
 export interface LayaProviderOptions {
   /**
@@ -185,8 +186,7 @@ function resolveBaseUrl(raw: string | undefined, allowRemote: boolean): string {
     );
   }
   const host = url.hostname.toLowerCase();
-  const isLoopback = host === 'localhost' || host === '::1' || host === '[::1]' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
-  if (!isLoopback && !allowRemote) {
+  if (!isLoopbackHost(host) && !allowRemote) {
     throw new DecisionInputError(
       `baseUrl host ${JSON.stringify(host)} is not loopback. This is a local-only project that makes no ` +
         `provider API calls, and a decision request carries the task text, so a remote endpoint would send ` +
@@ -194,8 +194,43 @@ function resolveBaseUrl(raw: string | undefined, allowRemote: boolean): string {
         `is genuinely intended`,
     );
   }
-  const normalized = url.toString().replace(/\/+$/, '');
-  return normalized;
+  return url.toString().replace(/\/+$/, '');
+}
+
+/**
+ * True only for a real loopback host.
+ *
+ * The 127.0.0.0/8 test checks each octet is 0-255, so a nonsense address like
+ * `127.999.999.999` is NOT classified as loopback. That matters here: the check
+ * is a safety boundary, and an address that merely looks loopback-ish must not
+ * pass it. Note `new URL()` already rejects many malformed hosts outright; this
+ * is the belt to that braces.
+ */
+function isLoopbackHost(host: string): boolean {
+  if (host === 'localhost' || host === '::1' || host === '[::1]') return true;
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!v4) return false;
+  const octets = v4.slice(1, 5).map((part) => Number(part));
+  if (octets.some((o) => !Number.isInteger(o) || o < 0 || o > 255)) return false;
+  return octets[0] === 127;
+}
+
+/**
+ * A per-request budget that AbortSignal.timeout can actually use.
+ *
+ * Validated here so an illegal value becomes a DecisionInputError with a usable
+ * message, instead of a RangeError escaping from inside AbortSignal.timeout at
+ * the first call.
+ */
+function resolveTimeoutMs(raw: number | undefined): number {
+  if (raw === undefined) return DEFAULT_TIMEOUT_MS;
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+    throw new DecisionInputError(`timeoutMs is ${describe(raw)}, expected a finite number`);
+  }
+  if (raw <= 0) {
+    throw new DecisionInputError(`timeoutMs is ${raw}, expected a positive number of milliseconds`);
+  }
+  return raw;
 }
 
 /**
@@ -430,27 +465,115 @@ function validateEnvelope(body: unknown, expectedIds: readonly string[]): ValidE
 }
 
 /**
+ * Laya serialises every probability and every score with `round(x, 4)`
+ * (`laya/agent.py`), so each reported value can differ from the true one by at
+ * most half a unit in the fourth decimal.
+ *
+ * A sum of k such values is therefore off by at most k * 5e-5, and the
+ * expectation `Σ(i * p_i)` by at most (k-1) * k * 5e-5. A single tolerance of
+ * `2 * 5e-5 * k^2` covers all three checks with 2x margin, and is still far too
+ * tight to let a real contradiction through: a sum of 0.5, or a score off by
+ * half a level, is orders of magnitude larger.
+ *
+ * For the 5 levels the routing preset uses this is 2.5e-3. Measured against the
+ * real service, the largest observed deviation was 3e-4 (expectation for the
+ * English refactor task), so the margin is comfortable without being loose.
+ */
+const ROUNDING_HALF_STEP = 5e-5;
+
+function toleranceFor(k: number): number {
+  return 2 * ROUNDING_HALF_STEP * k * k + 1e-9;
+}
+
+/**
+ * Rejects a distribution that does not cover exactly the declared answer space.
+ *
+ * Extra keys are refused as well as missing ones: the provider is supposed to
+ * describe the space the request offered, so an index it invented is as
+ * untrustworthy as one it left out, and silently dropping it would hide a
+ * provider that is not answering the question that was asked.
+ */
+function readDistribution(
+  id: string,
+  raw: Record<string, unknown>,
+  keys: readonly string[],
+  keyLabel: (key: string) => string,
+): Record<string, number> {
+  const probabilitiesRaw = raw.probabilities;
+  if (!isRecord(probabilitiesRaw)) {
+    throw new DecisionSchemaError(
+      `answer "${id}" is missing a "probabilities" distribution (got ${describe(probabilitiesRaw)})`,
+    );
+  }
+  const expected = new Set(keys);
+  const extra = Object.keys(probabilitiesRaw).filter((k) => !expected.has(k));
+  if (extra.length > 0) {
+    throw new DecisionSchemaError(
+      `answer "${id}" reports probabilities for ${extra.map((k) => JSON.stringify(k)).join(', ')}, ` +
+        `which this request did not offer; expected exactly [${keys.join(', ')}]`,
+    );
+  }
+  const out: Record<string, number> = {};
+  for (const key of keys) {
+    out[key] = requireProbability(probabilitiesRaw[key], `answer "${id}" probability for ${keyLabel(key)}`);
+  }
+  return out;
+}
+
+/** A distribution over a probability space must sum to 1. */
+function requireNormalized(id: string, probabilities: Record<string, number>, what: string): void {
+  const values = Object.values(probabilities);
+  const sum = values.reduce((a, b) => a + b, 0);
+  const tol = toleranceFor(values.length);
+  if (Math.abs(sum - 1) > tol) {
+    throw new DecisionSchemaError(
+      `answer "${id}" has a ${what} distribution summing to ${sum.toFixed(6)}, not 1 ` +
+        `(tolerance ${tol.toExponential(2)}). A distribution that is not a probability distribution ` +
+        `cannot be thresholded, so it is not trusted.`,
+    );
+  }
+}
+
+/**
+ * `answer_confidence` is `max(probabilities)` for choice and score
+ * (`laya/common.py:answer_confidence`). Checking only that it lies in [0, 1]
+ * would let `probabilities: {a: 0.01, b: 0.99}` pass with
+ * `answer_confidence: 0.99`, which asserts certainty the distribution denies.
+ */
+function requireAnswerConfidence(
+  id: string,
+  raw: Record<string, unknown>,
+  probabilities: Record<string, number>,
+): Probability {
+  const reported = requireProbability(raw.answer_confidence, `answer "${id}" answer_confidence`);
+  const max = Math.max(...Object.values(probabilities));
+  const tol = toleranceFor(Object.values(probabilities).length);
+  if (Math.abs(reported - max) > tol) {
+    throw new DecisionSchemaError(
+      `answer "${id}" is self-contradictory: it reports answer_confidence ${reported.toFixed(4)}, ` +
+        `but the highest probability in its own distribution is ${max.toFixed(4)} ` +
+        `(tolerance ${tol.toExponential(2)}). answer_confidence is defined as max(probabilities), ` +
+        `so the two cannot disagree.`,
+    );
+  }
+  return reported;
+}
+
+/**
  * Validates one answer against the question that asked for it.
  *
- * Three separate things are checked, and all three are needed:
+ * Everything checked here comes from how the service actually builds an answer,
+ * not from a general statistical principle. From `laya/agent.py`:
  *
- *   1. the answer's own `type` matches the question's kind;
- *   2. the reported value is inside the answer space the request declared;
- *   3. the reported value AGREES WITH THE PROVIDER'S OWN DISTRIBUTION.
+ *   choice  choice = keys[argmax(p)],  probabilities = p, answer_confidence = max(p)
+ *   score   score = round(Σ(i * p_i), 4),  legend = {str(i): criteria[i]},
+ *           probabilities = p, answer_confidence = max(p)
+ *   noul    noul = p[1], NO probabilities at all, answer_confidence = max(p)
  *
- * (3) is the one a status-code check cannot do. laya-serve can answer 200 with
- * `choice: "a"` while its own `probabilities` say `a: 0.01, b: 0.99`. That
- * payload is self-contradictory: it claims "a" and simultaneously says "b, and
- * not a". Accepting it means the reported answer can be the one the provider
- * itself considers least likely.
- *
- * The consistency rule is deliberately minimal and is taken from how Laya
- * actually builds the answer, not invented: `choice` is the ARGMAX of
- * `probabilities`, and `answer_confidence` is that maximum. So the rule is only
- * "the chosen option's probability must be >= every other option's". Ties are
- * accepted, because with equal mass either option is a legitimate argmax. No
- * entropy, margin, or threshold statistic is introduced: none is needed to catch
- * a contradiction, and any such threshold would risk rejecting a real answer.
+ * The critical consequence is that `score` is an EXPECTATION, not an argmax, so
+ * it must NOT be checked with the argmax rule used for `choice`. A legitimate
+ * answer routinely has `round(score) != argmax(p)`; what must hold is that
+ * `score` equals the expectation of the distribution reported beside it.
  */
 function validateAnswer(id: string, raw: Record<string, unknown>, question: DecisionQuestion): DecisionAnswer {
   // The answer must be the kind that was asked for. Without this, a score answer
@@ -461,16 +584,8 @@ function validateAnswer(id: string, raw: Record<string, unknown>, question: Deci
     );
   }
 
-  // NOTE: only `choice` and `score` answers carry a `probabilities` map. A `noul`
-  // answer is a bare likelihood and laya-serve does not send one, so demanding
-  // it there would reject every real response.
+  // ---- choice: the reported option must be the most likely one ----
   if (question.type === 'choice') {
-    const probabilitiesRaw = raw.probabilities;
-    if (!isRecord(probabilitiesRaw)) {
-      throw new DecisionSchemaError(
-        `answer "${id}" is missing a "probabilities" distribution (got ${describe(probabilitiesRaw)})`,
-      );
-    }
     const offered = Object.keys(question.criteria);
     const choice = raw.choice;
     if (typeof choice !== 'string' || !offered.includes(choice)) {
@@ -479,21 +594,19 @@ function validateAnswer(id: string, raw: Record<string, unknown>, question: Deci
           `offered [${offered.join(', ')}]`,
       );
     }
-    // The distribution has to cover the same space, or it cannot be thresholded.
-    const probabilities: Record<string, number> = {};
-    for (const key of offered) {
-      probabilities[key] = requireProbability(probabilitiesRaw[key], `answer "${id}" probability for "${key}"`);
-    }
+    const probabilities = readDistribution(id, raw, offered, (k) => JSON.stringify(k));
+    requireNormalized(id, probabilities, 'choice');
     // Consistency: the chosen option must be a maximum of the reported
-    // distribution, otherwise the answer contradicts itself.
+    // distribution, otherwise the answer contradicts itself. Ties are accepted,
+    // because with equal mass either option is a legitimate argmax.
     const chosen = probabilities[choice];
     for (const key of offered) {
       if (probabilities[key] > chosen) {
         throw new DecisionSchemaError(
           `answer "${id}" is self-contradictory: it chose ${JSON.stringify(choice)} at probability ` +
             `${chosen.toFixed(4)}, but its own distribution gives ${JSON.stringify(key)} a higher ` +
-            `${probabilities[key].toFixed(4)}. Laya's "choice" is the most likely option, so the reported ` +
-            `answer and the reported distribution disagree.`,
+            `${probabilities[key].toFixed(4)}. The reported choice is the most likely option, so the ` +
+            `answer and the distribution disagree.`,
         );
       }
     }
@@ -502,68 +615,107 @@ function validateAnswer(id: string, raw: Record<string, unknown>, question: Deci
       choice,
       criteria: question.criteria,
       probabilities,
-      confidence: requireProbability(raw.answer_confidence, `answer "${id}" answer_confidence`),
+      confidence: requireAnswerConfidence(id, raw, probabilities),
     };
   }
 
+  // ---- score: the reported value must be the distribution's expectation ----
   if (question.type === 'score') {
-    const probabilitiesRaw = raw.probabilities;
-    if (!isRecord(probabilitiesRaw)) {
-      throw new DecisionSchemaError(
-        `answer "${id}" is missing a "probabilities" distribution (got ${describe(probabilitiesRaw)})`,
-      );
+    const levels = question.criteria;
+    const probabilities = readDistribution(id, raw, levels.map((_, i) => String(i)), (k) => `level ${k}`);
+    requireNormalized(id, probabilities, 'score');
+
+    // The legend is the provider's own restatement of the levels. Laya builds it
+    // as {str(i): criteria[i]}, so it must match the request index for index. A
+    // legend that disagrees -- reordered, renamed, or simply wrong -- means the
+    // provider is describing a different question, so it is refused rather than
+    // allowed to redefine what the numbers mean.
+    const legend = raw.legend;
+    if (!isRecord(legend)) {
+      throw new DecisionSchemaError(`answer "${id}" is missing its "legend" mapping index -> level`);
     }
+    for (let i = 0; i < levels.length; i++) {
+      const entry = legend[String(i)];
+      if (entry !== levels[i]) {
+        throw new DecisionSchemaError(
+          `answer "${id}" has a legend that disagrees with the levels this request offered at index ` +
+            `${i}: legend says ${describe(entry)}, the request asked for ${JSON.stringify(levels[i])}. ` +
+            `The legend must be {String(i): criteria[i]} exactly, or the answer describes a different question.`,
+        );
+      }
+    }
+
     const score = raw.score;
     if (typeof score !== 'number' || !Number.isFinite(score)) {
       throw new DecisionSchemaError(
         `answer "${id}" score is ${describe(score)}, expected a finite number`,
       );
     }
-    // The legend is the authority on what the numbers mean, so it is matched
-    // against the levels this request offered rather than assumed to line up.
-    const legend = raw.legend;
-    if (!isRecord(legend)) {
-      throw new DecisionSchemaError(`answer "${id}" is missing its "legend" mapping index -> level`);
-    }
-    const level = legend[String(Math.round(score))];
-    if (typeof level !== 'string' || !question.criteria.includes(level)) {
+    const index = Math.round(score);
+    if (index < 0 || index >= levels.length) {
       throw new DecisionSchemaError(
-        `answer "${id}" scored ${score}, which maps to legend entry ${describe(level)}, ` +
-          `outside the levels this request offered [${question.criteria.join(', ')}]`,
+        `answer "${id}" scored ${score}, which rounds to index ${index}, outside the ` +
+          `0..${levels.length - 1} range of the ${levels.length} levels this request offered`,
       );
     }
-    const probabilities: Record<string, number> = {};
-    for (let i = 0; i < question.criteria.length; i++) {
-      probabilities[String(i)] = requireProbability(probabilitiesRaw[String(i)], `answer "${id}" probability for level ${i}`);
+
+    // The core check: score must be the expectation of the distribution that
+    // ships with it. This is what an argmax check would get WRONG -- a score
+    // answer legitimately has round(score) != argmax(p).
+    const expectation = levels.reduce((acc, _level, i) => acc + i * probabilities[String(i)], 0);
+    const tol = toleranceFor(levels.length);
+    if (Math.abs(score - expectation) > tol) {
+      throw new DecisionSchemaError(
+        `answer "${id}" is self-contradictory: it scored ${score.toFixed(4)}, but the expectation of its ` +
+          `own distribution is ${expectation.toFixed(4)} (tolerance ${tol.toExponential(2)}). ` +
+          `Σ(i * probabilities[i]) is the definition of this score, so the two cannot disagree.`,
+      );
     }
+
     return {
       type: 'score',
       score,
-      level,
-      levels: [...question.criteria],
+      // Taken from the request's own levels, which the legend was just required
+      // to match. A provider cannot redefine a level by labelling it differently.
+      level: levels[index],
+      levels: [...levels],
       probabilities,
-      confidence: requireProbability(raw.answer_confidence, `answer "${id}" answer_confidence`),
+      confidence: requireAnswerConfidence(id, raw, probabilities),
     };
   }
 
-  // noul has no answer space, so only the likelihood and its confidence matter.
-  // A distribution is accepted when present, but is not required.
+  // ---- noul: a bare likelihood, with no distribution to check ----
+  // laya/agent.py sends no `probabilities` for a noul, so requiring one would
+  // reject every real response. It does define noul = p[1] and
+  // answer_confidence = max(p) over the two-way split, which reduces to
+  // max(noul, 1 - noul) -- so the same consistency guarantee is still available
+  // without a distribution.
   const probabilities: Record<string, number> = {};
   if (raw.probabilities !== undefined) {
     if (!isRecord(raw.probabilities)) {
       throw new DecisionSchemaError(`answer "${id}" has a "probabilities" that is ${describe(raw.probabilities)}`);
     }
     for (const [k, v] of Object.entries(raw.probabilities)) {
-      probabilities[k] = requireProbability(v, `answer "${id}" probability for "${k}"`);
+      probabilities[k] = requireProbability(v, `answer "${id}" probability for ${JSON.stringify(k)}`);
     }
   }
-  return {
-    type: 'noul',
-    noul: requireProbability(raw.noul, `answer "${id}" noul`),
-    probabilities,
-    confidence: requireProbability(raw.answer_confidence, `answer "${id}" answer_confidence`),
-  };
+  const noul = requireProbability(raw.noul, `answer "${id}" noul`);
+  const confidence = requireProbability(raw.answer_confidence, `answer "${id}" answer_confidence`);
+  const impliedMax = Math.max(noul, 1 - noul);
+  // Two options, so the rounding budget is small; the reported `noul` was itself
+  // rounded to 4dp before the comparison on the provider side.
+  const noulTol = 2 * ROUNDING_HALF_STEP * 2 * 2 + 1e-9;
+  if (Math.abs(confidence - impliedMax) > noulTol) {
+    throw new DecisionSchemaError(
+      `answer "${id}" is self-contradictory: it reports answer_confidence ${confidence.toFixed(4)} for ` +
+        `noul ${noul.toFixed(4)}, but max(noul, 1 - noul) is ${impliedMax.toFixed(4)} ` +
+        `(tolerance ${noulTol.toExponential(2)}). A noul has no probability distribution, so this is the ` +
+        `only consistency available for it.`,
+    );
+  }
+  return { type: 'noul', noul, probabilities, confidence };
 }
+
 
 function readProviderMetadata(envelope: ValidEnvelope, name: string, elapsedMs: number): ProviderMetadata {
   const routing = envelope.routing;
@@ -591,7 +743,7 @@ export function createLayaDecisionProvider(options: LayaProviderOptions = {}): D
   // a configuration error, not a runtime decision failure, so it surfaces at
   // construction rather than on the first classify call.
   const baseUrl = resolveBaseUrl(options.baseUrl, options.allowRemote === true);
-  const timeoutMs = options.timeoutMs ?? 30_000;
+  const timeoutMs = resolveTimeoutMs(options.timeoutMs);
   const doFetch = options.fetchImpl ?? globalThis.fetch;
   const name = 'laya';
 
@@ -694,6 +846,16 @@ export function createLayaDecisionProvider(options: LayaProviderOptions = {}): D
             ok: false,
             endpoint: url,
             detail: `health payload "cpu_fallbacks.${ckpt}" is ${describe(info)}, expected { count: number, last_reason?: string }`,
+            warnings: [],
+          };
+        }
+        // `last_reason` is documented as a string, and the service emits null
+        // when there is no reason. Anything else is not the documented shape.
+        if (info.last_reason !== undefined && info.last_reason !== null && typeof info.last_reason !== 'string') {
+          return {
+            ok: false,
+            endpoint: url,
+            detail: `health payload "cpu_fallbacks.${ckpt}.last_reason" is ${describe(info.last_reason)}, expected a string or null`,
             warnings: [],
           };
         }

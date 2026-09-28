@@ -88,7 +88,7 @@ refused with a `DecisionInputError` at construction.
 
 ```powershell
 npm run typecheck       # clean
-npm test                # 90 unit + 242 contract + 270 decision, no agents needed
+npm test                # 90 unit + 242 contract + 353 decision, no agents needed
 npm run test:decision   # the Decision Layer contract only, fully hermetic
 node tests/live-decision-check.ts   # opt-in; needs laya-serve running
 ```
@@ -250,23 +250,52 @@ constant "decision" carrying no information.
 - a question that was asked but not answered
 - **an answer whose own `type` is not the kind that was asked for**
 - a `choice` outside the offered choices, or a `probabilities` map that does not
-  cover the offered space
-- **a self-contradictory choice: the reported `choice` is not a maximum of the
-  provider's own `probabilities`**
-- a `score` whose `legend` does not match the offered levels
+  match the offered space (a missing key **or an invented one**)
+- **a `choice` that is not a maximum of the provider's own `probabilities`**
+- a distribution that does not sum to 1
+- **a `score` whose `legend` does not match the request's criteria index for index**
+- **a `score` that is not the expectation of the distribution shipped with it**
+- a `score` whose rounded index falls outside `0..criteria.length - 1`
+- **an `answer_confidence` that is not `max(probabilities)`**
 - any confidence/probability outside [0, 1], non-finite, or of the wrong type
 
-### Why the contradiction check is a plain argmax test
+### The three consistency rules, and where they come from
 
-Laya builds `choice` as the **argmax** of `probabilities` and `answer_confidence`
-as that maximum. So the only consistency rule needed is "the chosen option's
-probability must be `>=` every other option's". That rejects
-`choice: "review"` with `review: 0.01, implementation: 0.99` — the exact payload
-in the review finding — while accepting a genuine tie, where either option is a
-legitimate argmax.
+All three are read off the installed `laya` 0.3.21 source, not invented:
 
-No entropy, margin or threshold statistic is introduced. None is needed to catch
-a contradiction, and any such threshold would risk rejecting a real answer.
+| Answer | Reported field | Actual definition (`laya/agent.py`) | Rule enforced |
+|---|---|---|---|
+| `choice` | `choice` | `keys[int(p.argmax())]` | must be an argmax of `probabilities` (ties ok) |
+| `score` | `score` | `round(Σ(i * pᵢ), 4)` | must equal `Σ(i * probabilities[i])` |
+| both | `answer_confidence` | `round(max(p), 4)` | must equal `max(probabilities)` |
+| `noul` | `answer_confidence` | `round(max(p), 4)` over a 2-way split | must equal `max(noul, 1 - noul)` |
+
+**`score` must not be checked with the argmax rule.** A score is an expectation, so
+`round(score) != argmax(p)` is normal and correct: with
+`{0: 0.1, 1: 0.6, 2: 0.1, 3: 0.1, 4: 0.1}` the argmax is index 1 (`small`) but the
+expectation is 1.5, which rounds to index 2 (`moderate`). An argmax rule would
+reject that legitimate answer; the expectation rule is what catches a real
+contradiction.
+
+The legend is also checked, and it must equal the request's criteria index for
+index. Laya builds it as `{str(i): criteria[i]}`, so a reordered, renamed or
+short legend means the provider is answering a different question — and the level
+is then taken from the **request's** criteria, so a provider cannot redefine a
+level by labelling it differently.
+
+`noul` ships **no** `probabilities` (`laya/agent.py`), so none is required. But the
+same guarantee is still available: its confidence is `max(noul, 1 - noul)`, which
+is derived from the value it does report, so a noul is not left unchecked.
+
+### Floating-point tolerance
+
+Every probability and score is serialised with `round(x, 4)`, so each reported
+value can be off by up to 5e-5. A single tolerance of `2 · 5e-5 · k²` (where `k`
+is the number of options) covers the sum, the expectation and the confidence,
+with 2× margin — 2.5e-3 for the 5 levels the routing preset uses. That is far too
+tight to admit a real contradiction (a distribution summing to 0.5, or a score off
+by half a level, is orders of magnitude larger) while comfortably absorbing
+4-decimal rounding. No entropy, margin or threshold statistic is introduced.
 
 **Transport** is split so the two operator problems stay separate:
 `DecisionUnavailableError` (cannot reach the service), `DecisionTimeoutError`
@@ -297,7 +326,7 @@ suite pins this so it cannot regress.
 
 ```
 npm run typecheck            # clean
-npm test                     # 90 unit + 242 contract + 270 decision, 0 failed
+npm test                     # 90 unit + 242 contract + 353 decision, 0 failed
 npm run test:decision        # the Decision Layer contract only
 node tests/live-decision-check.ts   # opt-in, against a real laya-serve
 ```
