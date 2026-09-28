@@ -41,6 +41,18 @@ export interface ProcessExit {
   signal: string | null;
 }
 
+/**
+ * What the process-tree cleanup actually achieved. Recorded so a leak is
+ * observable rather than assumed away, and so a caller can tell "nothing to do"
+ * apart from "tried and failed".
+ */
+export interface CleanupResult {
+  /** True only when a tree kill was actually issued against a live root. */
+  readonly rootKilled: boolean;
+  readonly descendantsReaped: boolean;
+  readonly note: string;
+}
+
 /** Grace given to a child to shut down cleanly before the tree is killed. */
 const TREE_KILL_GRACE_MS = 1500;
 /** How long to keep reading stdio after the process itself exited. */
@@ -306,18 +318,40 @@ export class ManagedProcess {
   /**
    * Reap descendants after a NORMAL exit.
    *
-   * Contract, stated plainly: once the root process has exited, `taskkill /T`
-   * has no live root to walk. A Windows job object is the only fully reliable
-   * mechanism and we deliberately do not take a native dependency for it. So:
-   * the kill is issued and AWAITED, and failure is reported rather than
-   * swallowed — a leaking agent is observable, not silently tolerated.
+   * DELIBERATELY DOES NOT taskkill the root once it has exited.
+   *
+   * `taskkill /T` walks a LIVE process tree. After the root exits there is no
+   * live root to walk, so the call accomplishes no descendant cleanup — while
+   * carrying a small but real risk: if the OS has already recycled that PID it
+   * would target an unrelated process. A successful run must not be able to
+   * trigger a stray force-kill, so the dead-root path is skipped entirely.
+   *
+   * True descendant reclamation after a normal exit needs a Windows Job Object,
+   * which is deliberately not introduced here (no native dependency). The
+   * result is RECORDED and reported instead of being silently assumed, so a
+   * leaking agent is observable.
    */
-  async reapDescendants(reason: string): Promise<boolean> {
+  async reapDescendants(reason: string): Promise<CleanupResult> {
     const pid = this.child.pid;
-    if (pid === undefined) return true;
-    const ok = await taskkillTree(pid);
-    if (!ok) log.debug('descendant reap found nothing', { pid, reason });
-    return ok;
+    if (pid === undefined) {
+      return { rootKilled: false, descendantsReaped: false, note: 'no pid' };
+    }
+    if (process.platform !== 'win32') {
+      try {
+        process.kill(-pid, 'SIGKILL');
+        return { rootKilled: false, descendantsReaped: true, note: 'posix process group signalled' };
+      } catch {
+        return { rootKilled: false, descendantsReaped: false, note: 'posix group already gone' };
+      }
+    }
+    // The root has already exited: there is no live tree to walk.
+    return {
+      rootKilled: false,
+      descendantsReaped: false,
+      note:
+        `root ${pid} already exited; taskkill /T skipped (no live root to walk, and a ` +
+        `recycled PID would be a stray-kill risk). reason=${reason}`,
+    };
   }
 }
 

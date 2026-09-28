@@ -145,6 +145,15 @@ export class AgentSession implements RunHandle, NativeSink {
       overflow: 'drop-oldest',
     });
     this.onSettled = limits.onSettled ?? null;
+    // Seed a resume thread BEFORE anything can fail.
+    //
+    // A native CLI can die before emitting its first frame (bad flag, auth
+    // failure, immediate crash). If the thread id were learned only from a
+    // native event, such a run would produce a RunResult with threadId=null and
+    // be uncorrelatable from the thread it was continuing. The caller has
+    // already proved ownership, so the identity is known up front and is bound
+    // here — the session can never be launched un-seeded for a resume.
+    if (req.threadId) this.threadId = req.threadId;
     this.donePromise = new Promise<RunResult>((res) => {
       this.resolveDone = res;
     });
@@ -293,6 +302,26 @@ export class AgentSession implements RunHandle, NativeSink {
     }
   }
 
+  /**
+   * Resolve a transport frame into a native payload.
+   *
+   * PRECEDENCE: `frame.data` WINS over `frame.text`.
+   *
+   * `text` is the CLI-JSONL convention: the payload arrives as text and must
+   * be JSON-parsed. `data` is the protocol convention: a transport that frames
+   * natively (ACP, app-server) hands over a decoded object and may not
+   * produce JSON text at all. Before this rule existed, a data-only frame fell
+   * through to text parsing, failed to parse, and was misreported as a
+   * diagnostic — so `mapEvent` never ran for any real protocol transport.
+   */
+  private resolveFrame(frame: TransportFrame): { payload: unknown; ok: boolean } {
+    if (frame.data !== undefined && frame.data !== null) {
+      return { payload: frame.data, ok: true };
+    }
+    const parsed = tryParse(frame.text);
+    return { payload: parsed, ok: parsed !== undefined };
+  }
+
   private handleFrame(frame: TransportFrame): void {
     if (frame.channel === 'stderr') {
       this.stderrTail.append(frame.text);
@@ -302,8 +331,8 @@ export class AgentSession implements RunHandle, NativeSink {
       return;
     }
 
-    const parsed = tryParse(frame.text);
-    if (parsed === undefined) {
+    const { payload, ok } = this.resolveFrame(frame);
+    if (!ok) {
       // A banner or warning on the event channel. Kept, never dropped.
       this.transcript?.write({ _unparsed: frame.text });
       this.noteDiagnostic(`unparsed: ${frame.text}`);
@@ -313,12 +342,15 @@ export class AgentSession implements RunHandle, NativeSink {
 
     // Persist the untouched native payload BEFORE mapping, so a mapping
     // failure can never lose information.
-    this.transcript?.write(parsed);
+    this.transcript?.write(payload);
+    // Hand the adapter a frame whose `data` is the resolved payload, so
+    // adapters read one field regardless of how the payload arrived.
+    const normalized: TransportFrame = { channel: frame.channel, text: frame.text, data: payload };
     let mapped: RuntimeEvent[];
     try {
-      mapped = this.adapter.mapEvent({ channel: frame.channel, text: frame.text, data: parsed }, this.ctx());
+      mapped = this.adapter.mapEvent(normalized, this.ctx());
     } catch (e) {
-      mapped = [E.diagnostic(this.ctx(), parsed, `mapEvent failed: ${(e as Error).message}`)];
+      mapped = [E.diagnostic(this.ctx(), payload, `mapEvent failed: ${(e as Error).message}`)];
     }
     for (const ev of mapped) this.publish(ev);
   }
@@ -364,7 +396,7 @@ export class AgentSession implements RunHandle, NativeSink {
     } else {
       // The ADAPTER owns the terminal policy, not this kernel.
       const decision = this.adapter.terminalPolicy({
-        exit: exit ?? { code: null, signal: null, stderrTail: this.stderrTail.toString(), stderrTruncated: this.stderrTail.truncated },
+        exit: exit ?? this.emptyExit(),
         nativeSignals: [...this.nativeSignals],
         localAbort: null,
       });
@@ -399,6 +431,11 @@ export class AgentSession implements RunHandle, NativeSink {
       toolCalls: this.toolCallList.slice(),
       error,
       diagnostics: this.diagnosticsList.slice(),
+      cleanup: exit?.cleanup ?? {
+        rootKilled: false,
+        descendantsReaped: false,
+        note: 'transport reported no exit',
+      },
     };
 
     this.frozen = result; // Freeze BEFORE any async cleanup.
@@ -442,7 +479,8 @@ export class AgentSession implements RunHandle, NativeSink {
   private persist(result: RunResult): void {
     try {
       if (this.threadId) {
-        const prior = this.store.getThread(this.threadId);
+        // Agent-scoped lookup: this session's own agent only.
+        const prior = this.store.getThread(this.agentId, this.threadId);
         const now = Date.now();
         const rec: ThreadRecord = {
           threadId: this.threadId,
@@ -466,6 +504,17 @@ export class AgentSession implements RunHandle, NativeSink {
 
   private ctx(): MapContext {
     return { taskId: this.taskId, agentId: this.agentId, threadId: this.threadId, sink: this };
+  }
+
+  /** Placeholder exit for the case where a transport never reported one. */
+  private emptyExit(): TransportExit {
+    return {
+      code: null,
+      signal: null,
+      stderrTail: this.stderrTail.toString(),
+      stderrTruncated: this.stderrTail.truncated,
+      cleanup: { rootKilled: false, descendantsReaped: false, note: 'transport reported no exit' },
+    };
   }
 
   private publish(ev: RuntimeEvent): void {

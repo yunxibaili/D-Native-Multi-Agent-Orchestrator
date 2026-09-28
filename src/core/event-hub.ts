@@ -46,7 +46,12 @@ export interface HubStats {
 const DEFAULT_RECENT = 256;
 const DEFAULT_BUFFER = 1024;
 
-/** Fixed-capacity FIFO that drops from the front. */
+/**
+ * Fixed-capacity FIFO that drops from the front.
+ *
+ * `dropped` counts events a consumer did NOT receive because of overflow,
+ * uniformly across every overflow policy.
+ */
 class Ring<T> {
   private items: T[] = [];
   private dropped = 0;
@@ -56,12 +61,30 @@ class Ring<T> {
     this.cap = cap;
   }
 
+  /** Push, evicting the oldest when full. Eviction counts as a drop. */
   push(item: T): void {
     this.items.push(item);
     if (this.items.length > this.cap) {
       this.items.shift();
       this.dropped++;
     }
+  }
+
+  /**
+   * Record an event that was refused instead of buffered (drop-newest).
+   * Uniform with eviction so a subscriber's counter means one thing.
+   */
+  noteDropped(count = 1): void {
+    this.dropped += count;
+  }
+
+  /**
+   * Count everything still buffered as undelivered. Used when a subscriber is
+   * closed by the overflow policy: those events will never be delivered.
+   */
+  abandonBuffered(): void {
+    this.dropped += this.items.length;
+    this.items = [];
   }
 
   shift(): T | undefined {
@@ -76,10 +99,20 @@ class Ring<T> {
     return this.dropped;
   }
 
-  drain(): T[] {
-    const out = this.items;
+  /**
+   * A COPY of the retained window.
+   *
+   * NOT `drain()`. Replay must have snapshot semantics: if subscriber A
+   * replays, that must not change what subscriber B replays. Draining made the
+   * first replayer consume history and every later replayer got an empty set.
+   */
+  snapshot(): T[] {
+    return this.items.slice();
+  }
+
+  /** Release the retained window. */
+  clear(): void {
     this.items = [];
-    return out;
   }
 }
 
@@ -119,6 +152,19 @@ class SubscriptionImpl<T> implements HubSubscription<T> {
     for (const ev of initial) this.buffer.push(ev);
   }
 
+  /**
+   * `droppedCount()` is defined uniformly for every policy as:
+   *   "events this subscriber did NOT receive because of overflow".
+   *
+   *  - drop-oldest:      the evicted event            (delivered + dropped = total published)
+   *  - drop-newest:      the refused event            (delivered + dropped = total published)
+   *  - close-subscriber: the buffered remainder       (delivered + dropped = capacity)
+   *
+   * close-subscriber is the one policy that ends the subscription, so events
+   * published AFTER the close are not counted: the subscriber no longer exists,
+   * and counting them would make the total unbounded and meaningless. Its
+   * accounting therefore closes at the capacity it was holding.
+   */
   droppedCount(): number {
     return this.buffer.droppedCount;
   }
@@ -137,16 +183,20 @@ class SubscriptionImpl<T> implements HubSubscription<T> {
       this.overflowed = true;
       switch (this.policy) {
         case 'drop-oldest':
-          // Ring.push evicts the front to make room for the new event.
+          // Evicting the front counts as one dropped event.
           this.buffer.push(ev);
           break;
         case 'drop-newest':
-          // The incoming event is the one discarded; the subscriber keeps the
-          // older, more relevant context.
+          // The incoming event is the one refused; older context is kept.
+          this.buffer.noteDropped(1);
           break;
-        case 'close-subscriber':
+        case 'close-subscriber': {
+          // Everything still buffered will never be delivered: count it, so the
+          // subscriber's drop total stays meaningful after it closes.
+          this.buffer.abandonBuffered();
           this.close();
           return;
+        }
       }
     } else {
       this.buffer.push(ev);
@@ -220,8 +270,11 @@ export class EventHub<T> {
   }
 
   /**
-   * Late-subscriber semantics are explicit: nothing by default, or the
-   * retained recent window when `replay: 'replay'`.
+   * Late-subscriber semantics are explicit: nothing by default, or a SNAPSHOT
+   * of the retained recent window with `replay: 'replay'`.
+   *
+   * The snapshot is a copy. Two replay subscribers independently get the same
+   * window, and one replaying subscriber cannot alter another's history.
    */
   subscribe(opts: SubscribeOptions = {}): HubSubscription<T> {
     if (this.closedFlag) {
@@ -230,7 +283,7 @@ export class EventHub<T> {
       return new SubscriptionImpl<T>(this.nextId++, this, 1, 'close-subscriber', [], true);
     }
     const cap = Math.max(1, opts.buffer ?? this.defaultBuffer);
-    const initial = opts.replay === 'replay' ? this.recent.drain() : [];
+    const initial = opts.replay === 'replay' ? this.recent.snapshot() : [];
     const sub = new SubscriptionImpl<T>(this.nextId++, this, cap, this.overflow, initial);
     this.subs.add(sub);
     return sub;
@@ -255,7 +308,7 @@ export class EventHub<T> {
     this.closedFlag = true;
     for (const sub of [...this.subs]) sub.finish();
     this.subs.clear();
-    this.recent.drain();
+    this.recent.clear();
   }
 
   remove(sub: SubscriptionImpl<T>): void {

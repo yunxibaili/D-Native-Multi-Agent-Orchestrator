@@ -19,7 +19,7 @@
  * from the first frame. Resume is `--session <id>` (verified: context kept).
  */
 
-import { UnsupportedOptionError } from '../core/errors.ts';
+import { InvalidRequestError, UnsupportedOptionError } from '../core/errors.ts';
 import * as E from '../core/event.ts';
 import type { RuntimeEvent } from '../core/event.ts';
 import { log } from '../core/log.ts';
@@ -94,6 +94,16 @@ export function createOpenCodeAdapter(config?: {
    * instead of producing a result that silently ignored the request.
    */
   const validateRequest = (req: RunRequest): void => {
+    // A review is a one-shot judgement; OpenCode has no review entrypoint at
+    // all, and a prompt-shaped "review" has no conversation to continue either.
+    if (req.mode === 'review' && req.threadId) {
+      throw new InvalidRequestError(
+        'opencode',
+        'mode=review together with threadId',
+        `A review has no conversation to continue. Drop threadId, or use the ` +
+          `default mode with threadId to resume.`,
+      );
+    }
     if (req.sandbox !== undefined) {
       throw new UnsupportedOptionError(
         'opencode',

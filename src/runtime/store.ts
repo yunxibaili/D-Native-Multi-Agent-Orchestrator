@@ -5,13 +5,20 @@
  * conversation identity and outlives executions; a *task* is one subprocess
  * execution. Without this split, "resume" degenerates into "run again".
  *
+ * THREAD IDENTITY IS AGENT-SCOPED. A native threadId is only unique within one
+ * agent: agent A and agent B can both mint "123", and keying storage on
+ * threadId alone means the second write silently clobbers the first. Every
+ * thread lookup therefore takes BOTH `agentId` and `threadId`, and the on-disk
+ * filename is a composite. This is a lookup-scope fix, not a cosmetic rename: a
+ * lookup physically cannot reach another agent's record.
+ *
  * Storage is intentionally boring files. No database, no service.
  *
  *   $ORCH_HOME/
- *     threads/<threadId>.json      one per resumable conversation
- *     tasks/<taskId>.json          one per execution (terminal state)
- *     transcripts/<taskId>.jsonl   EVERY raw native event, never truncated
- *     index.jsonl                  append-only task index for `list`
+ *     threads/<agentId>__<threadId>.json    one per resumable conversation
+ *     tasks/<taskId>.json                   one per execution
+ *     transcripts/<taskId>.jsonl            EVERY raw native event, untruncated
+ *     index.jsonl                           append-only task index
  */
 
 import {
@@ -21,6 +28,7 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
@@ -28,8 +36,15 @@ import { join } from 'node:path';
 import type { RunResult, TaskState } from '../core/types.ts';
 import { log } from '../core/log.ts';
 
+/**
+ * Composite-key separator. `agentId` is our own identifier, so it cannot
+ * contain this, and both halves are sanitized before touching the filesystem.
+ */
+const KEY_SEP = '__';
+
 export interface ThreadRecord {
   threadId: string;
+  /** The agent that owns this conversation. Part of the storage key. */
   agentId: string;
   cwd: string;
   createdAt: number;
@@ -55,6 +70,8 @@ export class SessionStore {
   private readonly tasksDir: string;
   private readonly transcriptsDir: string;
   private readonly indexPath: string;
+  /** Legacy single-key filenames, migrated lazily on first thread access. */
+  private legacyMigrated = false;
 
   constructor(root?: string) {
     this.root = root ?? process.env.ORCH_HOME ?? join(homedir(), '.native-agent-orchestrator');
@@ -67,29 +84,141 @@ export class SessionStore {
     mkdirSync(this.transcriptsDir, { recursive: true });
   }
 
+  // ---- threads (agent-scoped) ------------------------------------------
+
+  /** Composite on-disk name. Both halves are sanitized. */
+  private threadPath(agentId: string, threadId: string): string {
+    return join(this.threadsDir, `${sanitizeId(agentId)}${KEY_SEP}${sanitizeId(threadId)}.json`);
+  }
+
+  saveThread(rec: ThreadRecord): void {
+    this.writeAtomic(this.threadPath(rec.agentId, rec.threadId), rec);
+  }
+
+  /**
+   * Fetch a thread, SCOPED to `agentId`.
+   *
+   * Another agent's record is unreachable by construction, which is what keeps
+   * cross-agent resume refused at the storage layer as well as by policy.
+   */
+  getThread(agentId: string, threadId: string): ThreadRecord | null {
+    const direct = this.readJson<ThreadRecord>(this.threadPath(agentId, threadId));
+    if (direct && direct.agentId === agentId) return direct;
+
+    // Records written before agent scoping used `<threadId>.json` and carry no
+    // agentId. Upgrade them on read rather than deleting anything.
+    this.migrateLegacyThreads();
+    const migrated = this.readJson<ThreadRecord>(this.threadPath(agentId, threadId));
+    if (migrated && migrated.agentId === agentId) return migrated;
+    return null;
+  }
+
+  /**
+   * Look a threadId up across ALL agents.
+   *
+   * Deliberately NOT used by the normal resume path — that is agent-scoped so
+   * one agent can never reach another's conversation by guessing an id. This
+   * exists only for the explicit `allowForeignThread` operator override, where
+   * crossing namespaces is the whole point and is always logged.
+   */
+  findThreadAnyAgent(threadId: string): ThreadRecord | null {
+    this.migrateLegacyThreads();
+    for (const f of this.readdir(this.threadsDir)) {
+      if (!f.endsWith('.json')) continue;
+      const rec = this.readJson<ThreadRecord>(join(this.threadsDir, f));
+      if (rec && rec.agentId && rec.threadId === threadId) return rec;
+    }
+    return null;
+  }
+
+  /** Every thread, optionally filtered to one agent. */
+  listThreads(agentId?: string): ThreadRecord[] {
+    this.migrateLegacyThreads();
+    const out: ThreadRecord[] = [];
+    const seen = new Set<string>();
+    for (const f of this.readdir(this.threadsDir)) {
+      if (!f.endsWith('.json')) continue;
+      const rec = this.readJson<ThreadRecord>(join(this.threadsDir, f));
+      if (!rec || !rec.agentId) continue;
+      if (agentId && rec.agentId !== agentId) continue;
+      // Composite key: exactly one record per (agentId, threadId) pair.
+      const key = `${rec.agentId}${KEY_SEP}${rec.threadId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(rec);
+    }
+    return out.sort((a, b) => b.lastUsedAt - a.lastUsedAt);
+  }
+
+  /**
+   * One-time, idempotent upgrade of thread files that are not composite-named.
+   *
+   * Two shapes need handling, because both exist in the wild:
+   *  - a file named `<threadId>.json` whose record HAS an `agentId`. This is
+   *    what earlier versions wrote: the data was fine, only the filename was
+   *    unscoped. It must be renamed or the thread becomes unresumable, because
+   *    the composite lookup would never find it.
+   *  - a file named `<threadId>.json` whose record has NO `agentId` at all. The
+   *    owning agent is recovered from the task index.
+   *
+   * The legacy file is removed only after the composite copy exists, so an
+   * interrupted migration is safe to repeat.
+   */
+  private migrateLegacyThreads(): void {
+    if (this.legacyMigrated) return;
+    this.legacyMigrated = true;
+
+    const legacy: string[] = [];
+    for (const f of this.readdir(this.threadsDir)) {
+      if (!f.endsWith('.json') || f.includes(KEY_SEP)) continue;
+      legacy.push(f);
+    }
+    if (!legacy.length) return;
+
+    for (const f of legacy) {
+      const p = join(this.threadsDir, f);
+      const rec = this.readJson<ThreadRecord>(p);
+      if (!rec) continue;
+      const owner = rec.agentId || this.findOwningAgent(rec.threadId);
+      if (!owner) {
+        log.debug('legacy thread has no discoverable owner; left untouched', { file: f });
+        continue;
+      }
+      const target = this.threadPath(owner, rec.threadId);
+      if (target === p) continue;
+      try {
+        if (!existsSync(target)) this.writeAtomic(target, { ...rec, agentId: owner });
+        if (existsSync(target)) unlinkSync(p);
+        log.info('migrated thread record to an agent-scoped key', { agent: owner, thread: rec.threadId });
+      } catch (e) {
+        log.warn('legacy thread migration failed', { file: f, error: (e as Error).message });
+      }
+    }
+  }
+
+  /** Which agent created this native thread? Ask the task index. */
+  private findOwningAgent(threadId: string): string | null {
+    if (!existsSync(this.indexPath)) return null;
+    const lines = readFileSync(this.indexPath, 'utf8').split('\n').filter(Boolean);
+    // Oldest first, so the creating task wins over a later resume.
+    for (let i = 0; i < lines.length; i++) {
+      try {
+        const row = JSON.parse(lines[i]!) as { threadId?: string | null; agentId?: string };
+        if (row.threadId === threadId && row.agentId) return row.agentId;
+      } catch {
+        /* skip */
+      }
+    }
+    return null;
+  }
+
+  // ---- tasks & transcripts ---------------------------------------------
+
   /** Live transcript writer for one task. */
   openTranscript(taskId: string, dir?: string): TranscriptWriter {
     const target = dir ?? this.transcriptsDir;
     mkdirSync(target, { recursive: true });
     return new TranscriptWriter(join(target, `${sanitizeId(taskId)}.jsonl`));
-  }
-
-  saveThread(rec: ThreadRecord): void {
-    this.writeAtomic(join(this.threadsDir, `${sanitizeId(rec.threadId)}.json`), rec);
-  }
-
-  getThread(threadId: string): ThreadRecord | null {
-    return this.readJson<ThreadRecord>(join(this.threadsDir, `${sanitizeId(threadId)}.json`));
-  }
-
-  listThreads(agentId?: string): ThreadRecord[] {
-    const out: ThreadRecord[] = [];
-    for (const f of this.readdir(this.threadsDir)) {
-      if (!f.endsWith('.json')) continue;
-      const rec = this.readJson<ThreadRecord>(join(this.threadsDir, f));
-      if (rec && (!agentId || rec.agentId === agentId)) out.push(rec);
-    }
-    return out.sort((a, b) => b.lastUsedAt - a.lastUsedAt);
   }
 
   saveTask(result: RunResult): void {

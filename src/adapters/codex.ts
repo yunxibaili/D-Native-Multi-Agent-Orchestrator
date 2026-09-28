@@ -29,7 +29,7 @@
  * PROFILES table in createTransport.
  */
 
-import { UnsupportedOptionError } from '../core/errors.ts';
+import { InvalidRequestError, UnsupportedOptionError } from '../core/errors.ts';
 import * as E from '../core/event.ts';
 import type { RuntimeEvent } from '../core/event.ts';
 import { log } from '../core/log.ts';
@@ -99,6 +99,17 @@ export function createCodexAdapter(config?: {
   };
 
   const validateRequest = (req: RunRequest): void => {
+    // A review is a one-shot judgement; it has no conversation to continue.
+    // `codex exec review` has no way to accept a thread id, so combining them
+    // would silently drop the threadId. Refuse rather than appear to honour it.
+    if (req.mode === 'review' && req.threadId) {
+      throw new InvalidRequestError(
+        'codex',
+        'mode=review together with threadId',
+        `"codex exec review" cannot continue a conversation. Drop threadId to review, ` +
+          `or use the default mode with threadId to resume.`,
+      );
+    }
     if (!CAPABILITIES.review && req.mode === 'review') {
       throw new UnsupportedOptionError('codex', 'review', '');
     }

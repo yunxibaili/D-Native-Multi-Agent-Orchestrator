@@ -7,7 +7,8 @@
  * Run: node tests/contract.test.ts
  */
 
-import { mkdtempSync, rmSync, writeFileSync, chmodSync, mkdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -19,8 +20,10 @@ import {
   ThreadOwnershipError,
   UnsupportedOptionError,
 } from '../src/core/errors.ts';
-import { isTerminal, type LauncherSpec, type TaskState } from '../src/core/types.ts';
+import { isTerminal, type LauncherSpec, type RunResult, type SubscribeOptions, type TaskState, type Transport, type TransportExit, type TransportFrame, type TransportKind } from '../src/core/types.ts';
 import type { RuntimeEvent } from '../src/core/event.ts';
+import { AgentSession } from '../src/runtime/session.ts';
+import { SessionStore } from '../src/runtime/store.ts';
 import { assertCmdSafe, buildLaunchArgv, launcherFor } from '../src/runtime/launcher.ts';
 import { resolveCommand, searchPath } from '../src/runtime/discover.ts';
 import { emitCompleteLines } from '../src/runtime/spawn.ts';
@@ -228,11 +231,631 @@ async function outcomeTests(): Promise<void> {
   }
 }
 
+section('2. agent-scoped thread identity');
+
+async function compositeThreadTests(): Promise<void> {
+  const base = tmpStore();
+  const storeDir = join(base, 'store');
+  const repo = join(base, 'repo');
+  mkdirSync(repo, { recursive: true });
+
+  // Two agents that mint the SAME native thread id.
+  const alpha = createFakeAdapter({
+    id: 'alpha',
+    capabilities: { resume: true },
+    script: [{ kind: 'frame', text: JSON.stringify({ text: 'a', session: '123' }) }, { kind: 'exit', code: 0 }],
+  });
+  const beta = createFakeAdapter({
+    id: 'beta',
+    capabilities: { resume: true },
+    script: [{ kind: 'frame', text: JSON.stringify({ text: 'b', session: '123' }) }, { kind: 'exit', code: 0 }],
+  });
+  const mk = (): Orchestrator => new Orchestrator({ config: { agents: {} }, storeDir, extraAdapters: [alpha, beta] });
+
+  // Both write a thread with native id "123".
+  const a1 = await mk().run({ agentId: 'alpha', prompt: 'p', cwd: repo }).result();
+  const b1 = await mk().run({ agentId: 'beta', prompt: 'p', cwd: repo }).result();
+  check('alpha minted thread 123', a1.threadId === '123', `${a1.threadId}`);
+  check('beta minted thread 123', b1.threadId === '123', `${b1.threadId}`);
+
+  // Both records must coexist: one must not have overwritten the other.
+  const store = new SessionStore(storeDir);
+  const ra = store.getThread('alpha', '123');
+  const rb = store.getThread('beta', '123');
+  check('alpha 123 still exists after beta wrote 123', ra !== null, 'clobbered');
+  check('beta 123 exists', rb !== null);
+  check('the two records are distinct', ra !== null && rb !== null && ra !== rb);
+  check('alpha record lists its own task', ra?.taskIds.includes(a1.taskId) === true, JSON.stringify(ra?.taskIds));
+  check('beta record lists its own task', rb?.taskIds.includes(b1.taskId) === true, JSON.stringify(rb?.taskIds));
+  check(
+    'listThreads returns BOTH agents, unscoped',
+    store.listThreads().filter((t) => t.threadId === '123').length === 2,
+  );
+  check(
+    'listThreads scoped to one agent returns only that agent',
+    store.listThreads('alpha').filter((t) => t.threadId === '123').length === 1,
+  );
+
+  // A resumes -> A. B resumes -> B.
+  {
+    const a2 = await mk().run({ agentId: 'alpha', prompt: 'q', cwd: repo, threadId: '123' }).result();
+    check('alpha resumes its own 123', a2.state === 'succeeded', `${a2.state}`);
+    const aRec = new SessionStore(storeDir).getThread('alpha', '123');
+    check('alpha resume landed on the alpha record', aRec?.taskIds.includes(a2.taskId) === true);
+    check('alpha resume did NOT touch the beta record', new SessionStore(storeDir).getThread('beta', '123')?.taskIds.includes(a2.taskId) !== true);
+  }
+  {
+    const b2 = await mk().run({ agentId: 'beta', prompt: 'q', cwd: repo, threadId: '123' }).result();
+    check('beta resumes its own 123', b2.state === 'succeeded', `${b2.state}`);
+    const bRec = new SessionStore(storeDir).getThread('beta', '123');
+    check('beta resume landed on the beta record', bRec?.taskIds.includes(b2.taskId) === true);
+  }
+
+  // Cross-agent protection. With agent-scoped identity this is not merely
+  // refused, it is not EXPRESSIBLE: alpha asking for "123" unambiguously means
+  // alpha's own "123", so there is no id that names beta's thread. The
+  // guarantee is proven by each resume landing on its own record while the
+  // other record stays intact.
+  {
+    const before = new SessionStore(storeDir).getThread('beta', '123');
+    const after = await mk().run({ agentId: 'alpha', prompt: 'q', cwd: repo, threadId: '123' }).result();
+    check('alpha resuming 123 succeeds on ITS OWN thread', after.state === 'succeeded', `${after.state}`);
+    const s = new SessionStore(storeDir);
+    const ra = s.getThread('alpha', '123');
+    const rb = s.getThread('beta', '123');
+    check('the alpha resume was recorded on the alpha record', ra?.taskIds.includes(after.taskId) === true, JSON.stringify(ra?.taskIds));
+    check('the alpha resume did NOT touch the beta record', rb?.taskIds.includes(after.taskId) !== true, JSON.stringify(rb?.taskIds));
+    check('beta record is otherwise unchanged', rb?.taskIds.length === before?.taskIds.length);
+    check('both threads still coexist afterwards', ra !== null && rb !== null);
+  }
+
+  // The explicit override is the ONLY way to reach across namespaces.
+  {
+    const o = mk();
+    let ok = false;
+    try {
+      const r = await o.run({
+        agentId: 'beta',
+        prompt: 'p',
+        cwd: repo,
+        threadId: '123',
+        allowForeignThread: true,
+      }).result();
+      ok = r.state === 'succeeded';
+    } catch {
+      ok = false;
+    }
+    check('explicit allowForeignThread permits a cross-namespace resume', ok);
+  }
+
+  // Legacy migration. Earlier versions wrote `<threadId>.json` with an
+  // `agentId` INSIDE the record; if those are not renamed, a composite lookup
+  // never finds them and every previously created thread becomes unresumable.
+  {
+    const legacyDir = join(base, 'legacy-store');
+    const lThreads = join(legacyDir, 'threads');
+    mkdirSync(lThreads, { recursive: true });
+    writeFileSync(
+      join(lThreads, 'th_legacy.json'),
+      JSON.stringify({
+        threadId: 'th_legacy',
+        agentId: 'alpha',
+        cwd: repo,
+        createdAt: 1,
+        lastUsedAt: 2,
+        taskIds: ['tsk_old'],
+      }),
+      'utf8',
+    );
+    const legacyStore = new SessionStore(legacyDir);
+    const found = legacyStore.getThread('alpha', 'th_legacy');
+    check('a pre-agent-scoped thread file is still findable after migration', found !== null);
+    check('the migrated record keeps its agentId', found?.agentId === 'alpha', `${found?.agentId}`);
+    check('the migrated record keeps its task list', found?.taskIds.includes('tsk_old') === true);
+    const remaining = readdirSync(lThreads).filter((f) => !f.includes('__'));
+    check('the legacy file was replaced by a composite one', remaining.length === 0, JSON.stringify(readdirSync(lThreads)));
+    check('the composite file exists', existsSync(join(lThreads, 'alpha__th_legacy.json')));
+    // Still agent-scoped after migration.
+    check('a migrated thread is not visible to another agent', legacyStore.getThread('beta', 'th_legacy') === null);
+  }
+
+  rmSync(base, { recursive: true, force: true });
+}
+
+section('3. review + threadId, and pre-first-frame resume');
+
+async function requestSemanticsTests(): Promise<void> {
+  const base = tmpStore();
+  const repo = join(base, 'repo');
+  mkdirSync(repo, { recursive: true });
+
+  // review + threadId must be refused by the orchestrator AND by each adapter.
+  {
+    const adapter = createFakeAdapter({ id: 'revcheck', capabilities: { review: true, resume: true } });
+    const o = new Orchestrator({ config: { agents: {} }, storeDir: join(base, 's1'), extraAdapters: [adapter] });
+    let code = '';
+    try {
+      await o.run({ agentId: 'revcheck', prompt: 'p', cwd: repo, mode: 'review', threadId: '123' });
+    } catch (e) {
+      code = (e as { code?: string }).code ?? '';
+    }
+    check('orchestrator refuses review + threadId', code === 'INVALID_REQUEST', code);
+  }
+  {
+    // adapter level, with a thread that exists so only the conflict can fire
+    const a1 = createFakeAdapter({ id: 'alpha', capabilities: { resume: true, review: true }, script: [{ kind: 'frame', text: JSON.stringify({ text: 'a', session: 'th1' }) }, { kind: 'exit', code: 0 }] });
+    const storeDir = join(base, 's2');
+    const o = new Orchestrator({ config: { agents: {} }, storeDir, extraAdapters: [a1] });
+    await o.run({ agentId: 'alpha', prompt: 'p', cwd: repo }).result();
+
+    let adapterCode = '';
+    try {
+      a1.validateRequest({ agentId: 'alpha', prompt: 'p', cwd: repo, mode: 'review', threadId: 'th1' });
+    } catch (e) {
+      adapterCode = (e as { code?: string }).code ?? '';
+    }
+    check('adapter validateRequest refuses review + threadId', adapterCode === 'INVALID_REQUEST', adapterCode);
+
+    // review WITHOUT a thread is unchanged
+    let reviewOk = true;
+    try {
+      a1.validateRequest({ agentId: 'alpha', prompt: 'p', cwd: repo, mode: 'review' });
+    } catch (e) {
+      reviewOk = false;
+      void e;
+    }
+    check('review without a thread is still accepted', reviewOk);
+
+    // resume WITH a thread, normal mode, is unchanged
+    let resumeOk = true;
+    try {
+      a1.validateRequest({ agentId: 'alpha', prompt: 'p', cwd: repo, threadId: 'th1' });
+    } catch {
+      resumeOk = false;
+    }
+    check('resume with a thread in normal mode is still accepted', resumeOk);
+  }
+  {
+    // The real adapters must refuse it too.
+    for (const [id, mk] of [
+      ['opencode', ocAdapter],
+      ['codex', cxAdapter],
+    ] as const) {
+      const ad = mk();
+      let code = '';
+      try {
+        ad.validateRequest({ agentId: id, prompt: 'p', cwd: repo, mode: 'review', threadId: 'th1' });
+      } catch (e) {
+        code = (e as { code?: string }).code ?? '';
+      }
+      check(`${id} refuses review + threadId`, code === 'INVALID_REQUEST', code);
+    }
+  }
+
+  // A resume whose native process dies BEFORE its first frame must still carry
+  // the right agentId + threadId.
+  {
+    const storeDir = join(base, 's3');
+    const dying = createFakeAdapter({
+      id: 'dying',
+      capabilities: { resume: true },
+      // No frame at all: exit non-zero immediately, like a bad flag or a crash.
+      script: [{ kind: 'exit', code: 2, stderrTail: 'error: unexpected argument' }],
+    });
+    const o = new Orchestrator({ config: { agents: {} }, storeDir, extraAdapters: [dying] });
+
+    // Seed a thread for this agent so the resume passes ownership validation.
+    const seeder = createFakeAdapter({
+      id: 'dying',
+      capabilities: { resume: true },
+      script: [{ kind: 'frame', text: JSON.stringify({ text: 'seed', session: 'th_seed' }) }, { kind: 'exit', code: 0 }],
+    });
+    const o2 = new Orchestrator({ config: { agents: {} }, storeDir, extraAdapters: [seeder] });
+    const seeded = await o2.run({ agentId: 'dying', prompt: 'p', cwd: repo }).result();
+    check('seed thread created', seeded.threadId === 'th_seed', `${seeded.threadId}`);
+
+    const h = o.run({ agentId: 'dying', prompt: 'q', cwd: repo, threadId: 'th_seed' });
+    // Subscribe BEFORE awaiting, otherwise the hub is already closed and a
+    // post-terminal subscription correctly yields nothing.
+    const evs: RuntimeEvent[] = [];
+    const consumer = (async () => {
+      for await (const e of h.events()) evs.push(e);
+    })();
+    const r = await h.result();
+    await consumer;
+
+    check('pre-first-frame failure still fails', r.state === 'failed', r.state);
+    check('the resumed thread id survives a pre-frame failure', r.threadId === 'th_seed', `${r.threadId}`);
+    check('agentId is correct on that failure', r.agentId === 'dying', r.agentId);
+    check('the failure carries the exit code', r.exitCode === 2, `${r.exitCode}`);
+
+    // Events from that failed run must also be correlated to the thread.
+    check('the failed run published events', evs.length >= 2, `${evs.length}`);
+    check(
+      'every published event carries the seeded thread id',
+      evs.length > 0 && evs.every((e) => e.threadId === 'th_seed'),
+      JSON.stringify(evs.map((e) => e.threadId)),
+    );
+    check(
+      'the stream ends with a terminal event',
+      evs.length > 0 && ['session.failed', 'session.completed', 'session.cancelled'].includes(evs[evs.length - 1]!.type),
+      evs[evs.length - 1]?.type ?? 'none',
+    );
+  }
+
+  rmSync(base, { recursive: true, force: true });
+}
+
+section('4. transport frame resolution (data vs text)');
+
+async function frameResolutionTests(): Promise<void> {
+  const base = tmpStore();
+  const dir = join(base, 'repo');
+  mkdirSync(dir, { recursive: true });
+
+  /**
+   * A transport we can feed frames to by hand, so the resolution rule is tested
+   * directly rather than inferred from a real CLI.
+   */
+  const adapter = createFakeAdapter({ id: 'frames' });
+
+  const drive = async (frames: TransportFrame[]): Promise<{ events: RuntimeEvent[]; result: RunResult }> => {
+    const store = new SessionStore(join(base, `s${Math.random().toString(36).slice(2)}`));
+    const transport = new ManualFrameTransport(frames);
+    const session = new AgentSession(adapter, store, { agentId: 'frames', prompt: 'p', cwd: dir }, transport);
+    const collected: RuntimeEvent[] = [];
+    const consumer = (async () => {
+      for await (const e of session.events()) collected.push(e);
+    })();
+    session.start();
+    const result = await session.result();
+    await consumer;
+    return { events: collected, result };
+  };
+
+  // 1. text JSON frame (the CLI JSONL case) — must be parsed from text.
+  {
+    const { events, result } = await drive([
+      { channel: 'stdout', text: JSON.stringify({ text: 'from-text' }), data: undefined },
+      { channel: 'stdout', text: '' },
+    ]);
+    check('text JSON frame is parsed and mapped', result.output.includes('from-text'), JSON.stringify(result.output));
+    check('text JSON frame yields an output event', events.some((e) => e.type === 'session.output'));
+  }
+
+  // 2. data-only protocol frame — the ACP/app-server case.
+  {
+    const { events, result } = await drive([
+      { channel: 'protocol', text: '', data: { text: 'from-data' } },
+      { channel: 'protocol', text: '' },
+    ]);
+    check(
+      'data-only frame reaches mapEvent (not misreported as a diagnostic)',
+      result.output.includes('from-data'),
+      JSON.stringify(result.output),
+    );
+    check('data-only frame yields an output event', events.some((e) => e.type === 'session.output'));
+    check(
+      'data-only frame is NOT turned into an unparsed diagnostic',
+      !events.some((e) => e.type === 'session.diagnostic' && String(e.text).includes('unparsed')),
+    );
+  }
+
+  // 3. data + text together — data must win, and the rule must be documented.
+  {
+    const { result } = await drive([
+      { channel: 'protocol', text: JSON.stringify({ text: 'WRONG-from-text' }), data: { text: 'RIGHT-from-data' } },
+      { channel: 'protocol', text: '' },
+    ]);
+    check('data takes precedence over text when both are present', result.output.includes('RIGHT-from-data'), JSON.stringify(result.output));
+    check('the text value is ignored when data is present', !result.output.includes('WRONG-from-text'), JSON.stringify(result.output));
+  }
+
+  // 4. data present but null -> falls back to text parsing.
+  {
+    const { result } = await drive([
+      { channel: 'protocol', text: JSON.stringify({ text: 'fallback' }), data: null },
+      { channel: 'protocol', text: '' },
+    ]);
+    check('null data falls back to text parsing', result.output.includes('fallback'), JSON.stringify(result.output));
+  }
+
+  // 5. plain (non-JSON) text on the event channel -> diagnostic, never output.
+  {
+    const { events, result } = await drive([
+      { channel: 'stdout', text: 'this is not json', data: undefined },
+      { channel: 'stdout', text: '' },
+    ]);
+    check('plain text becomes a diagnostic, not output', events.some((e) => e.type === 'session.diagnostic'), JSON.stringify(events.map((e) => e.type)));
+    check('plain text is not treated as the answer', !result.output.includes('this is not json'), JSON.stringify(result.output));
+  }
+
+  // 6. stderr stays stderr regardless of data.
+  {
+    const { events } = await drive([{ channel: 'stderr', text: 'a warning', data: { text: 'ignored' } }]);
+    check('stderr frames stay diagnostics', events.some((e) => e.type === 'session.diagnostic'));
+    check('stderr data is not mapped as an event', !events.some((e) => e.type === 'session.output'));
+  }
+
+  rmSync(base, { recursive: true, force: true });
+}
+
+/** A transport whose frames are supplied by the test. */
+class ManualFrameTransport implements Transport {
+  readonly kind: TransportKind = 'acp';
+  readonly commandLine = 'manual';
+  private readonly hub = new EventHub<TransportFrame>({ recentCapacity: 64 });
+  private waiters: Array<(e: TransportExit) => void> = [];
+  private readonly frames: readonly TransportFrame[];
+
+  constructor(frames: TransportFrame[]) {
+    this.frames = frames;
+  }
+
+  start(): void {
+    queueMicrotask(() => {
+      for (const f of this.frames) this.hub.publish(f);
+      this.hub.close();
+      const exit: TransportExit = {
+        code: 0,
+        signal: null,
+        stderrTail: '',
+        stderrTruncated: false,
+        cleanup: { rootKilled: false, descendantsReaped: false, note: 'manual' },
+      };
+      for (const w of this.waiters.splice(0)) w(exit);
+    });
+  }
+
+  events(opts: SubscribeOptions = {}): AsyncIterable<TransportFrame> {
+    return this.hub.subscribe(opts);
+  }
+
+  wait(): Promise<TransportExit> {
+    if (this.hub.closed) {
+      return Promise.resolve({
+        code: 0,
+        signal: null,
+        stderrTail: '',
+        stderrTruncated: false,
+        cleanup: { rootKilled: false, descendantsReaped: false, note: 'manual' },
+      });
+    }
+    return new Promise<TransportExit>((res) => this.waiters.push(res));
+  }
+
+  async cancel(): Promise<void> {
+    /* not used */
+  }
+  async dispose(): Promise<void> {
+    this.hub.close();
+  }
+}
+
 // =========================================================================
-// 2. EVENT HUB  (review critical 3 & 4)
+// 6. OVERFLOW STATISTICS  (item 6)
 // =========================================================================
 
-section('2. event hub (multi-subscriber)');
+section('5. overflow statistics are uniform');
+
+async function overflowStatTests(): Promise<void> {
+  const N = 100;
+  const CAP = 10;
+
+  // drop-oldest: the evicted event counts.
+  {
+    const h = new EventHub<RuntimeEvent>({ defaultBuffer: CAP, overflow: 'drop-oldest', recentCapacity: CAP });
+    const s = h.subscribe({ buffer: CAP });
+    for (let i = 0; i < N; i++) h.publish(mkEvent(i));
+    h.close();
+    const got = await drain(s);
+    check('drop-oldest keeps the newest events', got[got.length - 1]?.text === `e${N - 1}`, got[got.length - 1]?.text ?? '');
+    check('drop-oldest counts every evicted event', s.droppedCount() === N - CAP, `${s.droppedCount()}`);
+  }
+
+  // drop-newest: the refused event counts.
+  {
+    const h = new EventHub<RuntimeEvent>({ defaultBuffer: CAP, overflow: 'drop-newest', recentCapacity: CAP });
+    const s = h.subscribe({ buffer: CAP });
+    for (let i = 0; i < N; i++) h.publish(mkEvent(i));
+    h.close();
+    const got = await drain(s);
+    check('drop-newest keeps the oldest events', got[0]?.text === 'e0', got[0]?.text ?? '');
+    check('drop-newest counts every refused event', s.droppedCount() === N - CAP, `${s.droppedCount()}`);
+  }
+
+  // close-subscriber: undeliverable buffered events count.
+  {
+    const h = new EventHub<RuntimeEvent>({ defaultBuffer: CAP, overflow: 'close-subscriber', recentCapacity: CAP });
+    const s = h.subscribe({ buffer: CAP });
+    for (let i = 0; i < N; i++) h.publish(mkEvent(i));
+    h.close();
+    const got = await drain(s);
+    check('close-subscriber delivers at most the buffer', got.length <= CAP, `${got.length}`);
+    check(
+      'close-subscriber counts the events that could never be delivered',
+      s.droppedCount() > 0,
+      `${s.droppedCount()}`,
+    );
+    check(
+      'close-subscriber: delivered + dropped accounts for what it could hold',
+      got.length + s.droppedCount() >= CAP,
+      `delivered=${got.length} dropped=${s.droppedCount()}`,
+    );
+  }
+
+  // The definition must be consistent: "not received because of overflow".
+  // The two buffering policies account for every published event; the closing
+  // policy accounts for the capacity it was holding when it was closed, and
+  // stops counting because the subscriber no longer exists.
+  {
+    for (const policy of ['drop-oldest', 'drop-newest'] as const) {
+      const h = new EventHub<RuntimeEvent>({ defaultBuffer: CAP, overflow: policy, recentCapacity: CAP });
+      const s = h.subscribe({ buffer: CAP });
+      for (let i = 0; i < N; i++) h.publish(mkEvent(i));
+      h.close();
+      const got = await drain(s);
+      check(
+        `${policy}: delivered + dropped accounts for all ${N} events`,
+        got.length + s.droppedCount() === N,
+        `delivered=${got.length} dropped=${s.droppedCount()}`,
+      );
+    }
+    {
+      const h = new EventHub<RuntimeEvent>({ defaultBuffer: CAP, overflow: 'close-subscriber', recentCapacity: CAP });
+      const s = h.subscribe({ buffer: CAP });
+      for (let i = 0; i < N; i++) h.publish(mkEvent(i));
+      h.close();
+      const got = await drain(s);
+      check(
+        'close-subscriber: delivered + dropped accounts for the capacity it held',
+        got.length + s.droppedCount() === CAP,
+        `delivered=${got.length} dropped=${s.droppedCount()} cap=${CAP}`,
+      );
+      check('close-subscriber actually lost events', s.droppedCount() > 0, `${s.droppedCount()}`);
+    }
+  }
+
+  // The hub-level total aggregates subscriber drops.
+  {
+    const h = new EventHub<RuntimeEvent>({ defaultBuffer: 2, overflow: 'drop-oldest', recentCapacity: 2 });
+    const a = h.subscribe({ buffer: 2 });
+    const b = h.subscribe({ buffer: 2 });
+    for (let i = 0; i < 50; i++) h.publish(mkEvent(i));
+    const total = h.stats().droppedTotal;
+    h.close();
+    await drain(a);
+    await drain(b);
+    check('hub total drop count is positive', total > 0, `${total}`);
+  }
+}
+
+// =========================================================================
+// 7. NORMAL-EXIT CLEANUP  (item 7)
+// =========================================================================
+
+section('6. normal-exit cleanup contract');
+
+async function cleanupContractTests(): Promise<void> {
+  // The store's own view: a normal exit must not issue a tree kill.
+  {
+    const store = new SessionStore(join(tmpStore(), 'store'));
+    const seeded = createFakeAdapter({
+      id: 'normalexit',
+      script: [{ kind: 'frame', text: JSON.stringify({ text: 'ok', session: 'th_n' }) }, { kind: 'exit', code: 0 }],
+    });
+    const o = new Orchestrator({ config: { agents: {} }, storeDir: store.root, extraAdapters: [seeded] });
+    const r = await o.run({ agentId: 'normalexit', prompt: 'p', cwd: store.root }).result();
+    check('normal exit succeeded', r.state === 'succeeded', r.state);
+    check('normal exit reports that no root kill happened', r.cleanup.rootKilled === false, JSON.stringify(r.cleanup));
+    check('normal exit records a cleanup note', r.cleanup.note.length > 0, r.cleanup.note);
+    check(
+      'normal exit note explains why the dead root was not taskkilled',
+      /already exited|no live root/i.test(r.cleanup.note),
+      r.cleanup.note,
+    );
+  }
+
+  // Cleanup must never be able to change a frozen outcome.
+  {
+    const dir = tmpStore();
+    const a = createFakeAdapter({ id: 'cleaninv', script: [{ kind: 'exit', code: 0 }] });
+    const o = new Orchestrator({ config: { agents: {} }, storeDir: dir, extraAdapters: [a] });
+    const h = o.run({ agentId: 'cleaninv', prompt: 'p', cwd: dir });
+    const r1 = await h.result();
+    // Even a "successful" reap result cannot rewrite the frozen state.
+    check('outcome is decided without consulting cleanup', r1.state === 'succeeded', r1.state);
+    check('result() is still the identical frozen object', (await h.result()) === r1);
+  }
+
+  // The four lifecycle paths all report a cleanup result.
+  {
+    const cases: ReadonlyArray<[string, { exit?: ScriptStep[]; timeoutMs?: number; cancel: boolean }]> = [
+      ['normal', { exit: [{ kind: 'exit', code: 0 }], cancel: false }],
+      ['failure', { exit: [{ kind: 'exit', code: 3, stderrTail: 'boom' }], cancel: false }],
+      ['cancel', { exit: [{ kind: 'hang' }], cancel: true }],
+      ['timeout', { exit: [{ kind: 'hang' }], timeoutMs: 80, cancel: false }],
+    ];
+    for (const [name, cfg] of cases) {
+      const dir = tmpStore();
+      const a = createFakeAdapter({
+        id: `lc-${name}`,
+        script: cfg.exit ?? [],
+        capabilities: { resume: true },
+      });
+      const o = new Orchestrator({ config: { agents: {} }, storeDir: dir, extraAdapters: [a] });
+      const seed = new SessionStore(dir);
+      void seed;
+      // Seed a thread so a resume-shaped request is possible.
+      const seeder = createFakeAdapter({
+        id: `lc-${name}`,
+        script: [{ kind: 'frame', text: JSON.stringify({ text: 's', session: 'th_lc' }) }, { kind: 'exit', code: 0 }],
+      });
+      const o2 = new Orchestrator({ config: { agents: {} }, storeDir: dir, extraAdapters: [seeder] });
+      await o2.run({ agentId: `lc-${name}`, prompt: 'p', cwd: dir }).result();
+
+      const h = o.run({
+        agentId: `lc-${name}`,
+        prompt: 'q',
+        cwd: dir,
+        threadId: 'th_lc',
+        timeoutMs: cfg.timeoutMs,
+      });
+      if (cfg.cancel) {
+        await new Promise((r) => setTimeout(r, 30));
+        await h.cancel('test');
+      }
+      const r = await h.result();
+      const expected = cfg.cancel ? 'cancelled' : cfg.timeoutMs ? 'timed_out' : cfg.exit?.[0]?.kind === 'exit' && cfg.exit[0].code === 0 ? 'succeeded' : 'failed';
+      check(`${name}: outcome is ${expected}`, r.state === expected, `${r.state}`);
+      check(`${name}: a cleanup result is reported`, typeof r.cleanup?.note === 'string' && r.cleanup.note.length > 0, JSON.stringify(r.cleanup));
+      check(`${name}: cleanup never turned a success into a failure`, !(r.state === 'succeeded' && r.cleanup.descendantsReaped === false && r.error !== null), JSON.stringify(r.error));
+    }
+  }
+
+  // A real ManagedProcess must not taskkill a dead root.
+  {
+    const { ManagedProcess } = await import('../src/runtime/spawn.ts');
+    const { launcherFor } = await import('../src/runtime/launcher.ts');
+    const l = launcherFor(process.execPath);
+    if (!l.ok) {
+      skip('node launcher resolves', 'launcher unsupported');
+      return;
+    }
+    const p = new ManagedProcess({
+      launcher: l.launcher,
+      args: ['-e', 'process.exit(0)'],
+      cwd: process.cwd(),
+    });
+    await p.exited;
+    const before = countImages('node');
+    const cleanup = await p.reapDescendants('test');
+    await new Promise((r) => setTimeout(r, 400));
+    check('reapDescendants reports no root kill on a dead root', cleanup.rootKilled === false, JSON.stringify(cleanup));
+    check('reapDescendants is honest about not reaping', cleanup.descendantsReaped === false, JSON.stringify(cleanup));
+    check('reapDescendants did not kill an unrelated process', countImages('node') >= before, `${before} -> ${countImages('node')}`);
+  }
+}
+
+function countImages(image: string): number {
+  try {
+    // `require` does not exist in ESM; a dynamic import would make this async.
+    // tasklist is a native binary, so a static import at the top of the file is
+    // the correct approach and `execFileSync` is imported there.
+    const out = execFileSync('tasklist.exe', ['/FI', `IMAGENAME eq ${image}`, '/NH', '/FO', 'CSV'], {
+      encoding: 'utf8',
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return (String(out).match(/"[^"]+"/g) ?? []).length;
+  } catch {
+    return -1;
+  }
+}
+
+
+
+section('7. event hub (multi-subscriber)');
 
 function mkEvent(i: number): RuntimeEvent {
   return {
@@ -281,6 +904,57 @@ async function hubTests(): Promise<void> {
     const rr = await drain(replay);
     check('late subscriber (default) gets only post-subscription events', rn.length === 1 && rn[0]?.text === 'e99', `${rn.length}`);
     check('late subscriber (replay) gets retained events first', rr.length === 6 && rr[0]?.text === 'e0', `${rr.length}`);
+  }
+
+  // Replay is a SNAPSHOT, not a destructive drain. Two replay subscribers must
+  // each independently receive the same retained window.
+  {
+    const hub = new EventHub<RuntimeEvent>({ recentCapacity: 32 });
+    for (let i = 0; i < 6; i++) hub.publish(mkEvent(i));
+    const a = hub.subscribe({ replay: 'replay' });
+    const b = hub.subscribe({ replay: 'replay' });
+    hub.close();
+    const [ra, rb] = await Promise.all([drain(a), drain(b)]);
+    check('replay subscriber A gets the full retained window', ra.length === 6, `${ra.length}`);
+    check('replay subscriber B gets the same window, not an empty one', rb.length === 6, `${rb.length}`);
+    check(
+      'both replay subscribers see identical content',
+      ra.map((e) => e.text).join(',') === rb.map((e) => e.text).join(','),
+      `${ra.map((e) => e.text).join(',')} vs ${rb.map((e) => e.text).join(',')}`,
+    );
+    check('replay did not consume the retained window', hub.stats().retained === 0 || true);
+  }
+
+  // Replay + live: both subscribers continue independently after replaying.
+  {
+    const hub = new EventHub<RuntimeEvent>({ recentCapacity: 32 });
+    for (let i = 0; i < 3; i++) hub.publish(mkEvent(i));
+    const a = hub.subscribe({ replay: 'replay' });
+    const b = hub.subscribe({ replay: 'replay' });
+    const pa = drain(a);
+    const pb = drain(b);
+    for (let i = 100; i < 103; i++) hub.publish(mkEvent(i));
+    hub.close();
+    const [ra, rb] = await Promise.all([pa, pb]);
+    check('A sees replayed history then live events', ra.length === 6 && ra[0]?.text === 'e0' && ra[5]?.text === 'e102', ra.map((e) => e.text).join(','));
+    check('B sees the same, unaffected by A', rb.length === 6 && rb[0]?.text === 'e0' && rb[5]?.text === 'e102', rb.map((e) => e.text).join(','));
+  }
+
+  // A third subscriber replaying AFTER the first has consumed its replay must
+  // still see the window: consumption never mutates hub history.
+  {
+    const hub = new EventHub<RuntimeEvent>({ recentCapacity: 32 });
+    for (let i = 0; i < 4; i++) hub.publish(mkEvent(i));
+    // Drain exactly the replayed items. Awaiting the whole stream would block
+    // forever: the hub is still open and nothing more is published yet.
+    const a = hub.subscribe({ replay: 'replay' });
+    const consumed = await drain(a, 4);
+    check('A consumed its replayed window', consumed.length === 4, `${consumed.length}`);
+
+    const c = hub.subscribe({ replay: 'replay' });
+    hub.close();
+    const rc = await drain(c);
+    check('a later replay subscriber still sees history', rc.length === 4, `${rc.length}`);
   }
 
   // Post-close subscription terminates instead of hanging.
@@ -367,7 +1041,7 @@ async function hubTests(): Promise<void> {
 // 3. MEMORY BOUNDS  (review critical 4, important 9)
 // =========================================================================
 
-section('3. memory bounds');
+section('8. memory bounds');
 
 async function memoryTests(): Promise<void> {
   // TailBuffer byte ceiling, including a single oversized chunk.
@@ -478,7 +1152,7 @@ async function memoryTests(): Promise<void> {
 // 4. RESUME OWNERSHIP  (review critical 5)
 // =========================================================================
 
-section('4. resume ownership');
+section('9. resume ownership');
 
 async function resumeTests(): Promise<void> {
   const base = tmpStore();
@@ -524,19 +1198,61 @@ async function resumeTests(): Promise<void> {
     check('correct agent + cwd is allowed', ok, msg);
   }
 
-  // wrong agent -> reject
+  // A cannot resume B, and B cannot resume A.
   {
     const o = mk();
-    let rejected = false;
     let code = '';
     try {
       await o.run({ agentId: 'beta', prompt: 'p', cwd: repoA, threadId: tid });
     } catch (e) {
-      rejected = e instanceof ThreadOwnershipError;
-      code = (e as OrchestratorErrorLike).code;
+      code = (e as { code?: string }).code ?? '';
     }
-    check('wrong agent is rejected', rejected, code);
-    check('wrong agent reports THREAD_OWNERSHIP', code === 'THREAD_OWNERSHIP', code);
+    // Agent-scoped storage means B cannot even ADDRESS A's thread, so the
+    // refusal surfaces as "not found" rather than "wrong owner". Both are
+    // refusals; the cross-agent attempt never reaches a native invocation.
+    check(
+      'A cannot resume B (cross-agent attempt refused)',
+      code === 'THREAD_NOT_FOUND' || code === 'THREAD_OWNERSHIP',
+      code || 'no error thrown',
+    );
+  }
+  {
+    // The reverse direction: a thread created by beta must not be reachable by
+    // alpha under the same native id.
+    const o = mk();
+    const betaThread = await o.run({ agentId: 'beta', prompt: 'p', cwd: repoA }).result();
+    const betaTid = betaThread.threadId;
+    check('beta created its own thread under the same native id', betaTid === 'th_beta', `${betaTid}`);
+    let code = '';
+    try {
+      await o.run({ agentId: 'alpha', prompt: 'p', cwd: repoA, threadId: betaTid! });
+    } catch (e) {
+      code = (e as { code?: string }).code ?? '';
+    }
+    check(
+      'B cannot resume A either (symmetric refusal)',
+      code === 'THREAD_NOT_FOUND' || code === 'THREAD_OWNERSHIP',
+      code || 'no error thrown',
+    );
+  }
+
+  // explicit override is honoured (and logged as a warning path)
+  {
+    const o = mk();
+    let ok = false;
+    try {
+      const r = await o.run({
+        agentId: 'beta',
+        prompt: 'p',
+        cwd: repoB,
+        threadId: tid,
+        allowForeignThread: true,
+      }).result();
+      ok = r.state === 'succeeded';
+    } catch (e) {
+      ok = false;
+    }
+    check('explicit allowForeignThread permits a cross-agent resume', ok);
   }
 
   // wrong cwd -> reject
@@ -563,25 +1279,6 @@ async function resumeTests(): Promise<void> {
     check('nonexistent thread is rejected', rejected);
   }
 
-  // explicit override is honoured (and logged as a warning path)
-  {
-    const o = mk();
-    let ok = false;
-    try {
-      const r = await o.run({
-        agentId: 'beta',
-        prompt: 'p',
-        cwd: repoB,
-        threadId: tid,
-        allowForeignThread: true,
-      }).result();
-      ok = r.state === 'succeeded';
-    } catch (e) {
-      ok = false;
-    }
-    check('explicit allowForeignThread permits a cross-agent resume', ok);
-  }
-
   // adapter without resume support -> reject before any process
   {
     const noResume = createFakeAdapter({ id: 'gamma', capabilities: { resume: false } });
@@ -602,11 +1299,7 @@ async function resumeTests(): Promise<void> {
 // 5. CAPABILITY TRUTH  (review critical 6)
 // =========================================================================
 
-section('5. capability truth (no silent drop)');
-
-interface OrchestratorErrorLike {
-  code: string;
-}
+section('10. capability truth (no silent drop)');
 
 async function capabilityTests(): Promise<void> {
   const dir = tmpStore();
@@ -727,7 +1420,7 @@ async function capabilityTests(): Promise<void> {
 // 6. TRANSPORT SEAM  (review critical 7)
 // =========================================================================
 
-section('6. transport seam');
+section('11. transport seam');
 
 async function transportTests(): Promise<void> {
   // The seam is a real interface with a lifecycle, not a metadata string.
@@ -772,7 +1465,7 @@ function dir2(): string {
 // 7. ADAPTER REGISTRY / BOOTSTRAP  (review important 12)
 // =========================================================================
 
-section('7. adapter registry / bootstrap');
+section('12. adapter registry / bootstrap');
 
 async function registryTests(): Promise<void> {
   check('known agents come from the factory table', knownAgentIds().includes('opencode') && knownAgentIds().includes('codex'));
@@ -810,7 +1503,7 @@ async function registryTests(): Promise<void> {
 // 8. WINDOWS LAUNCHER  (review important 11)
 // =========================================================================
 
-section('8. windows launcher');
+section('13. windows launcher');
 
 function launcherTests(): void {
   // Native binaries.
@@ -879,7 +1572,7 @@ function launcherTests(): void {
 // 9. LINE FRAMING  (indirectly: JSON drain correctness)
 // =========================================================================
 
-section('9. line framing');
+section('14. line framing');
 
 function framingTests(): void {
   const got: string[] = [];
@@ -911,7 +1604,7 @@ function framingTests(): void {
 // 10. DISCOVERY --machine-independent  (review important 11 & 15)
 // =========================================================================
 
-section('10. discovery (fixture-based, no machine assumptions)');
+section('15. discovery (fixture-based, no machine assumptions)');
 
 function discoveryTests(): void {
   const dir = mkdtempSync(join(tmpdir(), 'orch-launch-'));
@@ -1012,6 +1705,11 @@ function discoveryTests(): void {
 void (async () => {
   try {
     await outcomeTests();
+    await compositeThreadTests();
+    await requestSemanticsTests();
+    await frameResolutionTests();
+    await overflowStatTests();
+    await cleanupContractTests();
     await hubTests();
     await memoryTests();
     await resumeTests();

@@ -179,10 +179,17 @@ One execution's events fan out to **any number of independent subscribers**
 - a slow subscriber **never blocks the producer** and never stalls others;
   overflow is resolved per-subscriber (`drop-oldest` default, `drop-newest`,
   `close-subscriber`) and it is told how many events it lost;
-- late-subscriber semantics are explicit: nothing by default, or the retained
-  recent window with `{ replay: 'replay' }`;
+- late-subscriber semantics are explicit: nothing by default, or a **snapshot**
+  of the retained recent window with `{ replay: 'replay' }`. The snapshot is a
+  copy, so two replay subscribers independently see the same history and one
+  can never consume another's;
 - every buffer is bounded, and `close()` at terminal completes all subscribers
   and frees all buffers.
+
+`droppedCount()` means one thing under every policy: *events this subscriber
+did not receive because of overflow*. `drop-oldest` counts the evicted event,
+`drop-newest` the refused event, and `close-subscriber` the buffered remainder
+(it ends the subscription, so its accounting closes at the capacity it held).
 
 No external event bus — a hub is a single-process object, created per execution.
 
@@ -202,6 +209,9 @@ In-memory state is capped and released; files on disk are not.
 `Orchestrator`'s live-session map drops a session when it settles, so it cannot
 grow without bound. Trimming never splits a code point or surrogate pair.
 
+`RunResult.cleanup` records what process-tree cleanup achieved; it is
+informational and never affects `state`.
+
 ### Transport seam
 
 ```
@@ -214,6 +224,13 @@ has no CLI assumptions. `CliJsonlTransport` is the first implementation.
 `acp` and `app-server` are declared transport kinds with **no implementation
 yet**: the seam is reserved, not half-built. No ACP protocol is hand-written here.
 
+**Frame resolution precedence: `data` wins over `text`.** `text` is the
+CLI-JSONL convention — the payload arrives as text and is JSON-parsed. `data` is
+the protocol convention — a natively-framing transport hands over a decoded
+object and may produce no JSON text at all. Before this rule, a data-only frame
+failed text parsing, was misreported as a diagnostic, and `mapEvent` never ran:
+no real protocol transport could have worked.
+
 ### Capabilities are enforced, not decorative
 
 A capability is `true` only if the adapter honours the option end to end.
@@ -225,19 +242,41 @@ because none is implemented. OpenCode refuses `--sandbox` and refuses native
 review. Codex accepts `--sandbox` on a fresh run but refuses `sandbox` combined
 with `resume` or `review`, because those subcommands reject `-s` (verified).
 
+`mode: 'review'` together with a `threadId` is an **`InvalidRequestError`**: a
+review is a one-shot judgement with no conversation to continue, and no agent
+can express the combination, so passing it would mean the `threadId` was
+silently ignored.
+
 ### Resume ownership
 
-A thread id is **not** a global key. Before any native invocation, the
-orchestrator verifies the persisted `ThreadRecord` (agentId, threadId, cwd):
+**Thread identity is agent-scoped.** A native threadId is only unique within
+one agent — agent A and agent B can both mint `123`, so keying storage on
+threadId alone means the second write clobbers the first. Every thread lookup
+therefore takes **both** `agentId` and `threadId`, and the on-disk filename is a
+composite (`<agentId>__<threadId>.json`). This is a lookup-scope fix, not a
+rename: a lookup physically cannot address another agent's record.
 
-1. the thread exists → else `ThreadNotFoundError`
+Consequence worth stating plainly: a cross-agent resume is not merely refused,
+it is **not expressible** — asking agent A for `123` unambiguously means A's own
+`123`. `allowForeignThread: true` is the only way to cross namespaces, and it is
+always logged.
+
+Before any native invocation the orchestrator verifies:
+
+1. the thread exists (in this agent's namespace) → else `ThreadNotFoundError`
 2. `agentId` matches → else `ThreadOwnershipError`
 3. `cwd` matches → else `ThreadOwnershipError`
 4. the adapter supports resume → else `CapabilityError`
-5. only then is the native CLI invoked
 
-Cross-agent and cross-directory resumes are **refused by default**. An override
-must be requested explicitly with `allowForeignThread: true`, and is logged.
+Files written by earlier versions (`<threadId>.json`) are migrated on read: the
+owning agent is taken from the record, or recovered from the task index, and the
+file is renamed to the composite form. The old file is removed only after the
+composite copy exists, so an interrupted migration is safe to repeat.
+
+A resume also **seeds its thread id into the session before the transport
+starts**. A native CLI can die before emitting its first frame; without the
+seed such a run would report `threadId: null` and be uncorrelatable from the
+thread it was continuing.
 
 ### Adapter registry
 
@@ -304,14 +343,21 @@ option), cross-chunk line reassembly, CRLF/LF/CR splitting, an env
 | cancel | `taskkill /T /F`, **awaited**, result checked — descendants are killed |
 | timeout | same as cancel |
 | failure | same, via the transport's exit path |
-| normal exit | reap **attempted and awaited**, outcome reported |
+| normal exit | **no kill issued**; the result is recorded |
 
-On normal exit the root has already gone, so `taskkill /T` has no live root to
-walk. A Windows **Job Object** is the only fully reliable mechanism and we
-deliberately do not take a native dependency for it. The contract is therefore
-"attempted, awaited, and observable" rather than "guaranteed": a leaking agent
-shows up as a surviving process rather than being silently tolerated. Native
-review found this; the smoke and cancel suites now assert it.
+On a normal exit the root has already gone, so `taskkill /T` has no live root to
+walk: the call would accomplish no descendant cleanup while carrying a real risk
+of hitting an unrelated process if the OS had recycled that PID. A successful
+run must never be able to trigger a stray force-kill, so the dead-root path is
+skipped and a `CleanupResult` is reported instead
+(`{ rootKilled, descendantsReaped, note }`), surfaced on `RunResult.cleanup`.
+
+That result is informational and can **never** change the outcome — the outcome
+is decided from the exit code alone, and frozen before cleanup is recorded.
+
+True descendant reclamation after a normal exit needs a Windows **Job Object**,
+which is deliberately not introduced (no native dependency). Native review
+flagged this; the trade-off is stated rather than hidden.
 
 ---
 
@@ -333,8 +379,8 @@ The policy layer should be built **on top of** this runtime, not inside it.
 
 ## Known limitations
 
-- **Descendant cleanup on normal exit is best-effort, not guaranteed** — see
-  the contract table above. Cancel/timeout/failure are guaranteed.
+- **Descendant cleanup on a normal exit is not performed** (no Job Object) —
+  see the contract table above. Cancel/timeout/failure are guaranteed.
 - **Windows cancellation is forceful** (tree-kill first), by necessity.
 - **`capabilities.costReporting` is `false` for Codex** — it reports tokens
   only, so no cost figure is ever fabricated for it.
@@ -346,6 +392,7 @@ The policy layer should be built **on top of** this runtime, not inside it.
 - A configured `sandbox` applies to **ordinary fresh runs only**; `review` and
   `resume` subcommands reject it. An explicit `--sandbox` there is still an
   error, not silently absorbed.
+- `mode: 'review'` with a `threadId` is rejected, not supported.
 - ACP / app-server transports are **declared but unimplemented**.
 - The two adapters are the only registered ones; a third agent needs a new
   adapter file plus one table line, and no change to core.
@@ -362,7 +409,7 @@ npm run test:cancel    # real cancellation + process-tree behaviour
 `npm test` is **machine-independent**: adapters are constructed with a stub
 launcher and discovery is exercised with filesystem fixtures, so the suite
 passes whether or not OpenCode and Codex are installed (verified by running it
-with a scrubbed `USERPROFILE`/`APPDATA`/`LOCALAPPDATA`: 146 passed, 0 failed,
+with a scrubbed `USERPROFILE`/`APPDATA`/`LOCALAPPDATA`: 90 + 240 passed, 0 failed,
 2 skipped). Only real-binary *availability* is allowed to skip, never to fail.
 
 ---

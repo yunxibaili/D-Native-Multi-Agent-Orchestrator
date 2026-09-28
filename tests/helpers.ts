@@ -8,7 +8,7 @@
  */
 
 import { EventHub } from '../src/core/event-hub.ts';
-import { UnsupportedOptionError } from '../src/core/errors.ts';
+import { InvalidRequestError, UnsupportedOptionError } from '../src/core/errors.ts';
 import * as E from '../src/core/event.ts';
 import type { RuntimeEvent } from '../src/core/event.ts';
 import type {
@@ -122,6 +122,9 @@ export class FakeTransport implements Transport {
       signal: 'SIGTERM',
       stderrTail: 'cancelled by test',
       stderrTruncated: false,
+      // Mirrors the real contract: cancel issues a tree kill against a LIVE
+      // root, so this is the one path where rootKilled can be true.
+      cleanup: { rootKilled: true, descendantsReaped: true, note: 'cancelled: tree kill issued' },
     });
   }
 
@@ -155,6 +158,8 @@ export class FakeTransport implements Transport {
           signal: step.signal ?? null,
           stderrTail: step.stderrTail ?? '',
           stderrTruncated: false,
+          // Normal exit: the root is already gone, so no tree kill is issued.
+          cleanup: { rootKilled: false, descendantsReaped: false, note: 'root already exited' },
         });
         return;
       }
@@ -217,6 +222,15 @@ export function createFakeAdapter(options: FakeAdapterOptions = {}): AgentAdapte
     },
 
     validateRequest(req: RunRequest): void {
+      // Mirror the real agents: a review has no conversation to continue, so
+      // the combination is a request conflict, never a silent drop.
+      if (req.mode === 'review' && req.threadId) {
+        throw new InvalidRequestError(
+          id,
+          'mode=review together with threadId',
+          'A review is a one-shot judgement; drop threadId or use the default mode.',
+        );
+      }
       const bag = req as unknown as Record<string, unknown>;
       for (const opt of ['sandbox', 'model', 'role', 'extraArgs', 'mode'] as const) {
         const present = opt === 'extraArgs' ? (req.extraArgs?.length ?? 0) > 0 : bag[opt] !== undefined;

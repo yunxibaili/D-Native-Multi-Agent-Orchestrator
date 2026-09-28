@@ -247,13 +247,34 @@ section('opencode adapter');
   // Terminal policy is the adapter's, not the runtime's.
   {
     const p = adapter.terminalPolicy;
-    eq('exit 0 => succeeded', p({ exit: { code: 0, signal: null, stderrTail: '', stderrTruncated: false }, nativeSignals: [], localAbort: null }), { state: 'succeeded', error: null });
-    const f = p({ exit: { code: 2, signal: null, stderrTail: 'boom', stderrTruncated: false }, nativeSignals: [], localAbort: null });
+    const ok = {
+      code: 0,
+      signal: null,
+      stderrTail: '',
+      stderrTruncated: false,
+      cleanup: { rootKilled: false, descendantsReaped: false, note: 'root already exited' },
+    };
+    const bad = {
+      code: 2,
+      signal: null,
+      stderrTail: 'boom',
+      stderrTruncated: false,
+      cleanup: { rootKilled: false, descendantsReaped: false, note: 'root already exited' },
+    };
+    eq('exit 0 => succeeded', p({ exit: ok, nativeSignals: [], localAbort: null }), { state: 'succeeded', error: null });
+    const f = p({ exit: bad, nativeSignals: [], localAbort: null });
     check('non-zero => failed', f.state === 'failed');
     check('failure carries an error code', f.error?.code === 'NONZERO_EXIT', JSON.stringify(f.error));
     // An error frame with exit 0 stays successful: exit code is ground truth.
-    const w = p({ exit: { code: 0, signal: null, stderrTail: '', stderrTruncated: false }, nativeSignals: ['error: APIError: x'], localAbort: null });
+    const w = p({ exit: ok, nativeSignals: ['error: APIError: x'], localAbort: null });
     eq('error frame + exit 0 is still succeeded', w.state, 'succeeded');
+    // Cleanup is informational and must never alter the outcome.
+    const withCleanup = p({
+      exit: { ...ok, cleanup: { rootKilled: true, descendantsReaped: true, note: 'killed' } },
+      nativeSignals: [],
+      localAbort: null,
+    });
+    eq('cleanup never changes a successful outcome', withCleanup.state, 'succeeded');
   }
 }
 

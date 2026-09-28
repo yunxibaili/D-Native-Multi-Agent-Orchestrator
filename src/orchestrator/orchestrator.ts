@@ -22,6 +22,7 @@
 import { createAdapter, knownAgentIds } from '../adapters/index.ts';
 import {
   CapabilityError,
+  InvalidRequestError,
   ThreadNotFoundError,
   ThreadOwnershipError,
 } from '../core/errors.ts';
@@ -136,10 +137,21 @@ export class Orchestrator {
 
     if (!caps.newTask && !req.threadId) throw new CapabilityError(req.agentId, 'newTask');
 
+    // `review` and `resume` are mutually exclusive entrypoints. A review is a
+    // one-shot judgement over a diff; it has no conversation to continue. The
+    // agents cannot express "review and continue thread 123", so combining them
+    // would mean the threadId is silently ignored. Refuse instead.
+    if (req.mode === 'review' && req.threadId) {
+      throw new InvalidRequestError(
+        req.agentId,
+        'mode=review together with threadId',
+        `A review is a one-shot judgement and has no conversation to continue. ` +
+          `Drop threadId to run a review, or use mode=default with threadId to resume.`,
+      );
+    }
+
     // Resume ownership: a threadId is not a global key.
-    const effective = req.threadId
-      ? this.resolveResumeTarget(req, caps.resume)
-      : undefined;
+    const effective = req.threadId ? this.resolveResumeTarget(req, caps.resume) : undefined;
 
     if (req.mode === 'review' && !caps.review) {
       // The adapter's own validateRequest gives a better message; this is the
@@ -184,30 +196,35 @@ export class Orchestrator {
   /**
    * Validate a resume request against the persisted thread record.
    *
-   * A thread belongs to the (agentId, cwd) pair that created it. Resuming it
-   * elsewhere would hand the agent a session whose file context and tool
-   * state belong to a different checkout, so it is REFUSED. An override must
-   * be requested explicitly, never assumed.
+   * A thread belongs to the (agentId, cwd) pair that created it. The storage
+   * lookup is agent-scoped, so a guessable native id from one agent cannot
+   * reach another agent's conversation at all; the ownership checks below then
+   * enforce cwd on top. Resuming across cwd would hand the agent a session whose
+   * file context belongs to a different checkout, so it is REFUSED. Any override
+   * must be requested explicitly, never assumed.
    */
-  private resolveResumeTarget(
-    req: RunRequest,
-    supportsResume: boolean,
-  ): string {
+  private resolveResumeTarget(req: RunRequest, supportsResume: boolean): string {
     if (!supportsResume) throw new CapabilityError(req.agentId, 'resume');
     const threadId = req.threadId!;
-    const record = this.store.getThread(threadId);
-    if (!record) throw new ThreadNotFoundError(threadId);
 
+    // Explicit operator override: crossing the agent namespace is the point, so
+    // this is the ONLY path that consults other agents' records. Always logged.
     if (req.allowForeignThread) {
-      log.warn('resuming a foreign thread by explicit override', {
+      const anywhere = this.store.findThreadAnyAgent(threadId);
+      if (!anywhere) throw new ThreadNotFoundError(threadId, req.agentId);
+      log.warn('resuming a thread by explicit cross-agent override', {
         threadId,
         requestedAgent: req.agentId,
-        ownerAgent: record.agentId,
+        ownerAgent: anywhere.agentId,
         requestedCwd: req.cwd,
-        ownerCwd: record.cwd,
+        ownerCwd: anywhere.cwd,
       });
       return threadId;
     }
+
+    // Agent-scoped: another agent's record is not addressable.
+    const record = this.store.getThread(req.agentId, threadId);
+    if (!record) throw new ThreadNotFoundError(threadId, req.agentId);
 
     if (record.agentId !== req.agentId) {
       throw new ThreadOwnershipError(threadId, 'agentId', record.agentId, req.agentId);

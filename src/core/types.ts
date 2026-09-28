@@ -166,6 +166,11 @@ export interface RunResult {
   readonly error: RunErrorInfo | null;
   /** Agent-emitted diagnostics. Never failures on their own. */
   readonly diagnostics: readonly string[];
+  /**
+   * What process-tree cleanup achieved. Informational only: it can never change
+   * `state`, which is decided by the terminal policy from the exit code.
+   */
+  readonly cleanup: CleanupReport;
 }
 
 /** Live handle. `result()` is the ONLY way to learn the outcome. */
@@ -255,6 +260,18 @@ export interface TransportExit {
   /** Byte-bounded stderr tail; the only explanation for a startup crash. */
   readonly stderrTail: string;
   readonly stderrTruncated: boolean;
+  /**
+   * What process-tree cleanup achieved. Recorded rather than assumed, and
+   * never able to change the outcome — the outcome comes from the exit code.
+   */
+  readonly cleanup: CleanupReport;
+}
+
+export interface CleanupReport {
+  /** True only when a tree kill was issued against a LIVE root. */
+  readonly rootKilled: boolean;
+  readonly descendantsReaped: boolean;
+  readonly note: string;
 }
 
 /**

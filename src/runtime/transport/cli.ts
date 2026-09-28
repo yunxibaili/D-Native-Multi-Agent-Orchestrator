@@ -9,7 +9,7 @@
 
 import { EventHub } from '../../core/event-hub.ts';
 import { log } from '../../core/log.ts';
-import { ManagedProcess, type ProcessExit } from '../spawn.ts';
+import { ManagedProcess, type CleanupResult, type ProcessExit } from '../spawn.ts';
 import type {
   LauncherSpec,
   SubscribeOptions,
@@ -40,6 +40,11 @@ export class CliJsonlTransport implements Transport {
   private started = false;
   private disposed = false;
   private cleanupDone = false;
+  private cleanup: CleanupResult = {
+    rootKilled: false,
+    descendantsReaped: false,
+    note: 'not attempted',
+  };
   /** Resolves once the process exists, so `wait()` is safe to call first. */
   private readonly ready: Promise<void>;
   private signalReady: (() => void) | null = null;
@@ -89,28 +94,46 @@ export class CliJsonlTransport implements Transport {
     const proc = this.proc;
     if (!proc) {
       this.hub.close();
-      return { code: null, signal: null, stderrTail: '', stderrTruncated: false };
+      return {
+        code: null,
+        signal: null,
+        stderrTail: '',
+        stderrTruncated: false,
+        cleanup: { rootKilled: false, descendantsReaped: false, note: 'process never started' },
+      };
     }
     const exit = await proc.exited;
-    // Process-tree cleanup contract. Best-effort by design (see
-    // ManagedProcess.reapDescendants): a Windows job object would be the only
-    // fully reliable mechanism, and we do not take a native dependency for it.
-    // The attempt is awaited so a leak is observable rather than silent.
+    // Process-tree cleanup. On cancel/timeout a tree kill already ran (and was
+    // awaited by cancel()). On a NORMAL exit the root is already gone, so
+    // reapDescendants deliberately does NOT taskkill it. Either way the result
+    // is recorded, and it can never change the execution outcome: the outcome
+    // is decided from the exit code alone.
     await proc.settleCleanup();
     if (!this.cleanupDone) {
       this.cleanupDone = true;
       try {
-        await proc.reapDescendants(`exit ${exit.code ?? 'null'}`);
+        this.cleanup = await proc.reapDescendants(`exit ${exit.code ?? 'null'}`);
+        if (!this.cleanup.descendantsReaped) {
+          log.debug('descendants not reaped', { note: this.cleanup.note });
+        }
       } catch (e) {
         log.debug('descendant reap failed', { error: (e as Error).message });
+        this.cleanup = {
+          rootKilled: false,
+          descendantsReaped: false,
+          note: `reap threw: ${(e as Error).message}`,
+        };
       }
     }
+    // Close the frame hub so consumers finish. Already-buffered frames are
+    // still delivered before the subscription ends.
     this.hub.close();
     return {
       code: exit.code,
       signal: exit.signal,
       stderrTail: proc.stderrTail.toString(),
       stderrTruncated: proc.stderrTail.truncated,
+      cleanup: this.cleanup,
     };
   }
 

@@ -65,12 +65,28 @@ export class CapabilityError extends OrchestratorError {
 }
 
 export class ThreadNotFoundError extends OrchestratorError {
-  constructor(threadId: string) {
+  constructor(threadId: string, agentId?: string) {
     super(
       'THREAD_NOT_FOUND',
-      `No stored thread "${threadId}". List known threads with "orchestrator threads", ` +
+      `No stored thread ${JSON.stringify(threadId)}${agentId ? ` for agent ${JSON.stringify(agentId)}` : ''}. ` +
+        `Thread identity is agent-scoped, so a thread belonging to another agent is ` +
+        `not visible here. List this agent's threads with "orchestrator threads <agent>", ` +
         `or drop --thread to start a new conversation.`,
     );
+  }
+}
+
+/**
+ * A request that is internally contradictory, independent of any agent's
+ * capabilities. Used for semantic conflicts such as `mode=review` with a
+ * `threadId`, where no agent can honour the combination.
+ */
+export class InvalidRequestError extends OrchestratorError {
+  readonly detail: string;
+
+  constructor(agentId: string, detail: string, hint: string) {
+    super('INVALID_REQUEST', `Agent "${agentId}": ${detail}. ${hint}`);
+    this.detail = detail;
   }
 }
 
