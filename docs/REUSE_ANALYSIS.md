@@ -272,18 +272,66 @@ NAR 已对 opencode 1.18.15 验证过 `acp-generic`），
 
 ---
 
-## 8. `laya`（决策库，非 server）
+## 8. `laya`（决策库，非 server）— 已本地验证
 
 定位到的是 `laya.Router` / `laya.route(state, questions)` → `RouteDecision` /
 `laya.predict()` / `laya.structured`（pydantic/JSON Schema）。
-**这是 Phase 2 的依赖，Phase 1 不接。** 记录两点约束供 Phase 2 使用：
-- `RouteDecision` 天然是"结构化决策"，与本项目 `Decision` 形状对得上；
-- `max_loaded` / LRU checkpoint 驻留说明本地多模型是常态，
-  决策层不能假设单模型常驻。
+
+**本轮已在本地跑通**，详见 `docs/DECISION_PROVIDER.md`。修正与补充原记录：
+
+- 原记录说"laya 是决策库，**非 server**"——不准确。`laya-serve` 是官方 server，
+  暴露 `/health` 与 `POST /v1/systemone`，响应是 Jev-compatible envelope。
+- `RouteDecision` 天然是"结构化决策"，与本项目 `Decision` 形状对得上 —— 成立。
+  已落盘为 `src/decision/types.ts`，但**收紧了**：词汇表封闭
+  （`WORK_KINDS` / `COMPLEXITY_LEVELS`），且 `DecisionProvider` 没有 `fallback`
+  成员、没有 `tryDecide`，从类型上禁止"决策不了就默认交给某个 agent"。
+- `max_loaded` / LRU checkpoint 驻留说明本地多模型是常态 —— 成立且已实测：
+  三个 checkpoint（`english` / `multilingual` / `typed-decisions`）同时驻留
+  RTX 5070，冷加载 6.1 s，稳态单次推理 17–28 ms。
+- **新增约束**：`laya-serve` 对若干非法输入返回 `200` 但结果退化
+  （`questions: {}` → `answers: {}`；单选项 choice 恒返回该项；
+  `criteria` 传 list → `choice: "a"`）。所以 provider 必须校验 payload，
+  不能只看 HTTP 状态码。已按此实现并用 stub server 固化为 56 条契约测试。
+- **新增约束**：criteria 集合即决策空间。同一段英文 bug 报告在 2 选项
+  （implementation/review）下判为 `review`，在 4 选项下判为 `debugging`。
+  因此 question set 固定在 `src/decision/laya.ts`，不交给调用方按请求变化。
+- **新增约束**：语言会改变结论。同一重构任务英文 `review=yes`（noul 0.678）、
+  中文 `review=no`（noul 0.004）。`review_required` 只能当带分布的提示。
+- **环境约束**：本机 `huggingface.co` 不可达，必须 `HF_ENDPOINT=https://hf-mirror.com`。
+
+Phase 1 仍不接入 orchestrator：agent 选择保持显式（`--agent`），直到这个信号
+可信到可以独立驱动 dispatch。
 
 ---
 
-## 9. 汇总：本项目实际复用了什么
+## 9. Agent Skills 调研 — 详见 `docs/SKILLS_EVALUATION.md`
+
+`obra/superpowers`（292.3k★ MIT）与 `addyosmani/agent-skills`（99.6k★ MIT）
+已 clone 到临时 fixture 实测，不是只看 README：
+
+- 对 OpenCode **1.18.31** 的真实 loader 契约校验了全部 40 个候选 skill：
+  **0 个加载失败**。真正的区分点是工作流冲突与上下文成本，不是加载。
+- 两者的 `.codex-plugin/plugin.json` 都是 `"skills": "./skills/"`，
+  所以**同一份 skill 目录同时供 OpenCode 与 Codex 使用**，不需要分叉两份。
+- 决定性约束来自本项目自身的 capability matrix：**OpenCode `rejects: review`，
+  只有 Codex `can: review`**。因此 build 类 skill 归 OpenCode，
+  review 类 skill 归 Codex——这不是偏好，是被能力矩阵强制的。
+- 推荐 5 个 core skill，全部来自 agent-skills：`test-driven-development`、
+  `api-and-interface-design`、`code-review-and-quality`、
+  `debugging-and-error-recovery`、`doubt-driven-development`（合计 ~19.7k tok，
+  按需加载）。
+- `superpowers/requesting-code-review` 判 **ADAPT**：它的核心机制是
+  "dispatch 一个 reviewer subagent"，且其 rationalization 表**明确禁止**就地
+  review——这两点都与本项目冲突（reviewer 是独立 Codex 进程，且 review 的
+  dispatch 归 orchestrator 而非 implementer）。保留其 SHA 捕获、
+  Critical/Important/Minor 分级、"绝不带着未修的 Important 继续"等部分。
+- **不整包安装 superpowers**：其 OpenCode 安装路径会加入
+  `.opencode/plugins/superpowers.js`，在 session 启动时**执行插件代码**注入
+  bootstrap 方法论。本项目倾向可组合的 markdown，而非会覆盖 agent 判断的注入式流程。
+
+---
+
+## 10. 汇总：本项目实际复用了什么
 
 | 借鉴对象 | 借鉴内容 | 落地位置 |
 |---|---|---|
@@ -294,6 +342,8 @@ NAR 已对 opencode 1.18.15 验证过 `acp-generic`），
 | pi-jev-router | 失败策略必须显式声明（本项目取 fail fast） | `src/orchestrator/orchestrator.ts` |
 | agent-native | seam 要窄、未知值给可操作错误 | `src/runtime/registry.ts` |
 | ACP 三家 | 传输无关的 adapter 契约（推迟实现） | `AgentCapabilities.transport` |
+| laya | 本地多 checkpoint 决策、typed choice/score/noul、Jev-compatible envelope | `src/decision/` |
+| agent-skills / superpowers | 封闭词汇表式决策接口、显式失败、review 与 build 的能力分离 | `src/decision/types.ts`、本文 §9 |
 
 **没有任何一个上游项目的代码被直接复制。** 全部是契约与文件切分的借鉴，
 因为没有两个在语言、agent 列表、目标形态上与本项目一致。

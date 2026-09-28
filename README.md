@@ -125,10 +125,14 @@ src/
                  registry.ts      narrow adapter-selection seam
                  transport/cli.ts the first Transport implementation
   adapters/      opencode.ts codex.ts index.ts (factory table)
+  decision/      types.ts     closed routing vocabularies + DecisionProvider seam
+                 errors.ts    unavailable/timeout/transport/schema/input failures
+                 laya.ts      local laya-serve provider (validated, not yet wired in)
   orchestrator/  orchestrator.ts config.ts
   cli/           index.ts
-tests/           unit.test.ts  contract.test.ts  cancel.test.ts  smoke.ts  helpers.ts
-docs/            REUSE_ANALYSIS.md
+tests/           unit.test.ts  contract.test.ts  decision.test.ts  cancel.test.ts
+                 smoke.ts  helpers.ts  live-decision-check.ts
+docs/            REUSE_ANALYSIS.md  DECISION_PROVIDER.md  SKILLS_EVALUATION.md
 ```
 
 ### CLI `--json` drain
@@ -365,15 +369,20 @@ flagged this; the trade-off is stated rather than hidden.
 
 Phase 1 is the runtime only. Absent on purpose:
 
-- Laya / any local decision model
 - automatic planning, task decomposition, retry or review *policy*
 - multi-agent role routing (ZCode / WorkBuddy / DSH / Claude Code)
 - ACP transport (OpenCode's `acp` and `codex app-server` both exist and work —
   see `REUSE_ANALYSIS.md` §6 for why it was deferred, and `transport: 'cli' |
   'acp'` is already reserved in the contract)
 - worktree isolation, parallel execution, any server/daemon/frontend
+- **installing any agent skill.** `docs/SKILLS_EVALUATION.md` recommends 5, but
+  nothing is installed: a skill that can silently reshape an agent's judgement is
+  an operator decision, not a build step.
 
-The policy layer should be built **on top of** this runtime, not inside it.
+`src/decision/` is the exception to "absent on purpose": the Laya provider is
+implemented and tested but **not wired into `src/orchestrator/`**, so agent
+selection still requires an explicit `--agent`. The policy layer should be built
+**on top of** this runtime, not inside it.
 
 ---
 
@@ -401,7 +410,7 @@ The policy layer should be built **on top of** this runtime, not inside it.
 
 ```powershell
 npm run typecheck      # 0 errors, strict + erasableSyntaxOnly
-npm test               # unit + contract; NO real agents required
+npm test               # unit + contract + decision; NO real agents required
 npm run smoke          # real agents, end to end
 npm run test:cancel    # real cancellation + process-tree behaviour
 ```
@@ -409,14 +418,24 @@ npm run test:cancel    # real cancellation + process-tree behaviour
 `npm test` is **machine-independent**: adapters are constructed with a stub
 launcher and discovery is exercised with filesystem fixtures, so the suite
 passes whether or not OpenCode and Codex are installed (verified by running it
-with a scrubbed `USERPROFILE`/`APPDATA`/`LOCALAPPDATA`: 90 + 240 passed, 0 failed,
-2 skipped). Only real-binary *availability* is allowed to skip, never to fail.
+with a scrubbed `USERPROFILE`/`APPDATA`/`LOCALAPPDATA`: 90 + 242 passed, 0 failed).
+The decision suite is hermetic too — a stub `node:http` server stands in for
+`laya-serve`, including its 200-with-no-answer responses. Only real-binary
+*availability* is allowed to skip, never to fail.
+
+`node tests/live-decision-check.ts` is the one test that needs the Python side
+(`laya-serve` on 127.0.0.1:8077); see `docs/DECISION_PROVIDER.md`.
 
 ---
 
 ## Next step
 
-Add the **policy layer** over this runtime: a `Decision` input (Phase 2: local
-Laya via `laya.Router` returning a `RouteDecision`), a retry/review gate, and
-then ACP + more agents. The runtime contract — `Thread`/`Task`, the capability
-matrix, `RunHandle`, and the 8 events — is what that layer should consume.
+Add the **policy layer** over this runtime: a `Decision` input (Phase 2: the local
+Laya provider in `src/decision/`, already implemented and verified — see
+`docs/DECISION_PROVIDER.md`), a retry/review gate, and then ACP + more agents. The
+runtime contract — `Thread`/`Task`, the capability matrix, `RunHandle`, and the 8
+events — is what that layer should consume.
+
+Note for that layer: `npm run doctor` shows **OpenCode `rejects: review`, Codex
+`can: review`**. The implement→review split is enforced by the capability matrix,
+not by convention.
