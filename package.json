@@ -1,0 +1,30 @@
+{
+  "name": "native-agent-orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local multi-agent orchestrator that drives native coding-agent CLIs (OpenCode, Codex) over subprocess JSONL. No provider API calls.",
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "bin": {
+    "orchestrator": "./src/cli/index.ts"
+  },
+  "scripts": {
+    "doctor": "node src/cli/index.ts doctor",
+    "oc": "node src/cli/index.ts run opencode",
+    "cx": "node src/cli/index.ts run codex",
+    "review": "node src/cli/index.ts review codex",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node tests/unit.test.ts",
+    "test:cancel": "node tests/cancel.test.ts",
+    "smoke": "node src/cli/index.ts smoke",
+    "smoke:quick": "node src/cli/index.ts smoke --quick",
+    "verify": "npm run typecheck && npm test && npm run smoke:quick"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "typescript": "5.9.3"
+  }
+}
