@@ -74,11 +74,23 @@ export type DecisionQuestion =
       readonly type: 'noul';
       readonly instructions: string;
       /**
-       * `criteria` is deliberately absent: a noul has no answer space, so there
-       * is nothing for criteria to describe. Providers reject the combination
-       * (the one shipped here answers 422), so the provider refuses it up front
-       * rather than spending a round trip to learn it.
+       * Optional wording for the two outcomes. A noul is a boolean question, so
+       * the only keys it can have are `true` and `false`; either one, both, or
+       * neither may be given, and the provider substitutes its own default for
+       * whichever is absent.
+       *
+       * This mirrors the shipped provider's protocol exactly (verified in
+       * `laya/agent.py`): a dict keyed anything else is rejected, because the
+       * model only ever reads `criteria["true"]` and `criteria["false"]`, so any
+       * other key would be silently dropped and the caller's wording would never
+       * reach the model. The keys are matched case-insensitively, and boolean
+       * literal keys are normalised to their string form, as the provider does.
+       *
+       * It is a description, NOT an answer space: a noul still has no options to
+       * choose between, which is why it reports a bare likelihood rather than a
+       * selection.
        */
+      readonly criteria?: Readonly<Record<string, string>>;
     };
 
 /** The ids of the questions a request asks, used to key the answers. */

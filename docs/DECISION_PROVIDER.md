@@ -88,7 +88,7 @@ refused with a `DecisionInputError` at construction.
 
 ```powershell
 npm run typecheck       # clean
-npm test                # 90 unit + 242 contract + 353 decision, no agents needed
+npm test                # 90 unit + 242 contract + 397 decision, no agents needed
 npm run test:decision   # the Decision Layer contract only, fully hermetic
 node tests/live-decision-check.ts   # opt-in; needs laya-serve running
 ```
@@ -206,7 +206,9 @@ so a caller can apply its own threshold instead of trusting one number.
 | > 64 questions / > 100 options | `413` |
 | body > 2 MB | `413 request body too large` |
 | unknown or missing question `type` | `422 use one of ['choice','noul','score']` |
-| `noul` given `criteria` | `422` |
+| `noul` given a non-dict `criteria` | `422` ("as a dict with optional 'true'/'false' descriptions, **or omits it**") |
+| `noul` given a dict keyed anything but `true`/`false` | `422` ("keyed only 'true'/'false' … or omitted is fine") |
+| **`noul` given a proper `{"true":…, "false":…}` dict** | **accepted** |
 | `score` given dict `criteria` | `422` |
 | **`questions: {}`** | **`200` with `answers: {}`** |
 | **choice with one option** | **`200`, always that option** |
@@ -229,8 +231,10 @@ a dependency of the agent runtime, and so the provider stays replaceable.
 - a score with fewer than two levels
 - an empty choice description or key, an empty score level
 - malformed `criteria` (array where an object belongs, or vice versa)
-- **`noul` carrying `criteria`** — laya-serve rejects this with 422, so it is
-  refused locally rather than spending a round trip to learn it
+- **`noul` `criteria` keyed anything but `true`/`false`, or with an empty or
+  non-string description** — a valid `true`/`false` dict is accepted (see the
+  `noul` criteria section); what is refused is anything the provider would
+  silently drop or substitute
 - empty `instructions`, an unknown question type, a non-string `task`/context value
 - `state` that is not a plain object, or a state/context value that is not a string
 - more than 100 choices in one question, or 512 options in total
@@ -287,15 +291,61 @@ level by labelling it differently.
 same guarantee is still available: its confidence is `max(noul, 1 - noul)`, which
 is derived from the value it does report, so a noul is not left unchecked.
 
-### Floating-point tolerance
+### Three separate tolerances, each derived
 
-Every probability and score is serialised with `round(x, 4)`, so each reported
-value can be off by up to 5e-5. A single tolerance of `2 · 5e-5 · k²` (where `k`
-is the number of options) covers the sum, the expectation and the confidence,
-with 2× margin — 2.5e-3 for the 5 levels the routing preset uses. That is far too
-tight to admit a real contradiction (a distribution summing to 0.5, or a score off
-by half a level, is orders of magnitude larger) while comfortably absorbing
-4-decimal rounding. No entropy, margin or threshold statistic is introduced.
+The service serialises every probability and every score with `round(x, 4)`
+(`laya/agent.py`), so each reported value differs from the true one by at most
+half a unit in the fourth decimal: `HALF = 5e-5`.
+
+| Check | Compares | Tolerance | Growth |
+|---|---|---|---|
+| probability normalization | `Σ probabilities` to 1 | `HALF · k` | linear |
+| answer confidence | `answer_confidence` to `max(probabilities)` | `2 · HALF` = 1e-4 | **constant** |
+| score expectation | `score` to `Σ(i · probabilities[i])` | `HALF · (1 + k(k-1)/2)` | quadratic |
+
+- **Sum** — `|Σ p_rep − 1| = |Σ (p_rep[i] − p_true[i])| ≤ k · HALF`. Linear, because
+  all k rounding errors add.
+- **Confidence** — the reported confidence is `round(max(p_true), 4)` and the
+  reported maximum is `round(p_true[j], 4)` for whichever j attains it. Rounding is
+  monotone, so these coincide and the residual bound is two rounding steps. **This
+  must not grow with k**: only one term is involved, so a wider answer space buys no
+  more slack. At k = 100 this is 1e-4, not 1.0.
+- **Expectation** — the one check that legitimately needs a quadratic term, because
+  it is a *weighted* sum, so error accumulates with the index:
+  `≤ HALF (rounding of the score) + Σ(i) · HALF`.
+
+All three are upper bounds on the real error, not fudge factors; a small epsilon is
+added only for double-precision arithmetic in the comparison.
+
+> An earlier version used `2 · HALF · k²` for all three. That is **wrong and
+> dangerous**: at k = 100 it is 1.0, so a distribution summing to 0, or a confidence
+> 0.98 away from its own maximum, passed. The regression tests reproduce exactly
+> that — see "high-k" below.
+
+### `noul` criteria
+
+`noul` **may** carry `criteria`, keyed only by `true` and `false`:
+
+```jsonc
+{ "type": "noul", "instructions": "Does it hold?",
+  "criteria": { "true": "the statement holds", "false": "the statement does not hold" } }
+```
+
+Verified in `laya/agent.py`: either key, both, an empty object, or omitted are all
+valid; keys are matched case-insensitively and boolean literal keys are normalised to
+their string form. A dict keyed anything else is rejected by the provider, because
+the model reads only `criteria["true"]` and `criteria["false"]` — any other key would
+be silently dropped and the caller's wording would never reach the model.
+
+This layer is **stricter than the provider in one respect**: a description must be a
+non-empty string. The provider silently substitutes its default wording for an empty
+description, and JSON-marshals a structured value into the prompt. Both would leave
+the caller believing they had chosen the wording when they had not, so they are
+refused here with a message saying to omit the key instead.
+
+`noul` still has **no answer space** and sends **no `probabilities`**; `criteria` is a
+description, not options. Answer semantics are unchanged: no distribution is required,
+and the confidence is still checked against `max(noul, 1 − noul)`.
 
 **Transport** is split so the two operator problems stay separate:
 `DecisionUnavailableError` (cannot reach the service), `DecisionTimeoutError`
@@ -326,7 +376,7 @@ suite pins this so it cannot regress.
 
 ```
 npm run typecheck            # clean
-npm test                     # 90 unit + 242 contract + 353 decision, 0 failed
+npm test                     # 90 unit + 242 contract + 397 decision, 0 failed
 npm run test:decision        # the Decision Layer contract only
 node tests/live-decision-check.ts   # opt-in, against a real laya-serve
 ```

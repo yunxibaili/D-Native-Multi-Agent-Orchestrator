@@ -353,15 +353,42 @@ function validateRequest(request: unknown): Record<string, string> {
       }
       totalOptions += levels.length;
     } else if (kind === 'noul') {
-      // A noul has no answer space. Measured against laya-serve: supplying
-      // `criteria` anyway is rejected server-side with 422, so it is refused here
-      // rather than spending a round trip to learn something already known.
-      if (q.criteria !== undefined) {
+      // A noul has no answer space, so `criteria` here is a description of the
+      // two outcomes, not options to choose between. Verified against
+      // laya/agent.py: a dict is accepted, but its keys must be a subset of
+      // {"true", "false"} -- the model reads only criteria["true"] and
+      // criteria["false"], so any other key would be silently dropped and the
+      // caller's wording would never reach the model. Either key, both, or an
+      // empty dict are all fine.
+      const criteria = q.criteria;
+      if (criteria === undefined) {
+        // omitted: the provider supplies its own default wording
+      } else if (!isRecord(criteria)) {
         throw new DecisionInputError(
-          `${where} is a noul question, which has no answer space, but it carries "criteria" ${describe(q.criteria)}. ` +
-            `laya-serve rejects noul+criteria with 422 ("a noul question takes 'criteria' as a dict with optional ` +
-            `'true'/'false' descriptions, or omits it"). Omit it.`,
+          `${where} is a noul whose "criteria" is ${describe(criteria)}, expected an object keyed ` +
+            `"true" and/or "false" describing the two outcomes, or omitted`,
         );
+      } else {
+        for (const [key, value] of Object.entries(criteria)) {
+          if (key.toLowerCase() !== 'true' && key.toLowerCase() !== 'false') {
+            throw new DecisionInputError(
+              `${where} is a noul with criteria key ${JSON.stringify(key)}, but a noul is a boolean ` +
+                `question whose only keys are "true" and "false". The provider reads only those two, ` +
+                `so any other key would be silently dropped. Use { "true": ..., "false": ... }.`,
+            );
+          }
+          // Stricter than the provider on purpose: an empty description is
+          // silently replaced by the default wording, and a structured value is
+          // JSON-marshalled into the prompt. Both would leave the caller
+          // believing they chose the wording when they did not, so they are
+          // refused here with a message that says what to do instead.
+          if (typeof value !== 'string' || value.trim().length === 0) {
+            throw new DecisionInputError(
+              `${where} noul criteria ${JSON.stringify(key)} is ${describe(value)}, expected a non-empty ` +
+                `description string. Omit the key entirely to use the default wording.`,
+            );
+          }
+        }
       }
     } else {
       throw new DecisionInputError(
@@ -465,24 +492,67 @@ function validateEnvelope(body: unknown, expectedIds: readonly string[]): ValidE
 }
 
 /**
- * Laya serialises every probability and every score with `round(x, 4)`
- * (`laya/agent.py`), so each reported value can differ from the true one by at
- * most half a unit in the fourth decimal.
+ * TOLERANCES -- three separate bounds, each the smallest that provably cannot
+ * reject a genuine response.
  *
- * A sum of k such values is therefore off by at most k * 5e-5, and the
- * expectation `Σ(i * p_i)` by at most (k-1) * k * 5e-5. A single tolerance of
- * `2 * 5e-5 * k^2` covers all three checks with 2x margin, and is still far too
- * tight to let a real contradiction through: a sum of 0.5, or a score off by
- * half a level, is orders of magnitude larger.
+ * The service serialises every probability and every score with `round(x, 4)`
+ * (laya/agent.py), so each reported value differs from the true one by at most
+ * half a unit in the fourth decimal:
  *
- * For the 5 levels the routing preset uses this is 2.5e-3. Measured against the
- * real service, the largest observed deviation was 3e-4 (expectation for the
- * English refactor task), so the margin is comfortable without being loose.
+ *     HALF = 5e-5     |p_reported[i] - p_true[i]| <= HALF
+ *
+ * The previous single `2 * HALF * k^2` was used for all three checks. That is
+ * wrong, and wrong in the dangerous direction: at k = 100 it is 1.0, so a
+ * distribution summing to 0, or a confidence 0.98 away from its own maximum,
+ * passes. Each bound below is derived for the quantity actually being compared.
+ *
+ * (A) SUM. |Σ p_rep - 1| = |Σ (p_rep[i] - p_true[i])| <= k * HALF. Grows
+ *     linearly, because every one of the k terms contributes its own rounding
+ *     error and they add.
+ *
+ * (B) CONFIDENCE. Compared against a single value, the maximum. The reported
+ *     confidence is round(max(p_true), 4) and the reported maximum is
+ *     round(p_true[j], 4) for whichever j attains it; rounding is monotone, so
+ *     these coincide, and the residual bound is two rounding steps:
+ *
+ *         |conf_rep - max(p_rep)| <= HALF + HALF = 2 * HALF
+ *
+ *     Crucially this is O(1) in k. Only one term is involved, so a wider answer
+ *     space buys no more slack -- which is the whole point: at k = 100 this is
+ *     1e-4, not 1.0.
+ *
+ * (C) EXPECTATION. Compared against a weighted sum, so error genuinely does
+ *     accumulate with the index:
+ *
+ *         |score_rep - Σ(i·p_rep[i])|
+ *             <= HALF                            (rounding of the score)
+ *               + Σ(i) * HALF                    (each term, weighted by i)
+ *             = HALF * (1 + k(k-1)/2)
+ *
+ *     This is the one check that legitimately needs a quadratic term, and only
+ *     because it is a weighted sum. It is derived, not borrowed: for k = 32 it
+ *     is 0.025, and it is still small compared to the "off by half a level"
+ *     error the check exists to catch.
+ *
+ * Each bound is an upper bound on the real error, not a fudge factor, so a small
+ * epsilon is added only for double-precision arithmetic in the comparison.
  */
 const ROUNDING_HALF_STEP = 5e-5;
+const FLOAT_EPSILON = 1e-9;
 
-function toleranceFor(k: number): number {
-  return 2 * ROUNDING_HALF_STEP * k * k + 1e-9;
+/** (A) how far Σ probabilities may sit from 1. Linear in k. */
+function sumTolerance(k: number): number {
+  return ROUNDING_HALF_STEP * k + FLOAT_EPSILON;
+}
+
+/** (B) how far answer_confidence may sit from max(probabilities). Constant in k. */
+function confidenceTolerance(): number {
+  return 2 * ROUNDING_HALF_STEP + FLOAT_EPSILON;
+}
+
+/** (C) how far a score may sit from Σ(i · p[i]). Quadratic, because it is a weighted sum. */
+function expectationTolerance(k: number): number {
+  return ROUNDING_HALF_STEP * (1 + (k * (k - 1)) / 2) + FLOAT_EPSILON;
 }
 
 /**
@@ -520,11 +590,11 @@ function readDistribution(
   return out;
 }
 
-/** A distribution over a probability space must sum to 1. */
+/** A distribution over a probability space must sum to 1. Uses bound (A). */
 function requireNormalized(id: string, probabilities: Record<string, number>, what: string): void {
   const values = Object.values(probabilities);
   const sum = values.reduce((a, b) => a + b, 0);
-  const tol = toleranceFor(values.length);
+  const tol = sumTolerance(values.length);
   if (Math.abs(sum - 1) > tol) {
     throw new DecisionSchemaError(
       `answer "${id}" has a ${what} distribution summing to ${sum.toFixed(6)}, not 1 ` +
@@ -539,6 +609,7 @@ function requireNormalized(id: string, probabilities: Record<string, number>, wh
  * (`laya/common.py:answer_confidence`). Checking only that it lies in [0, 1]
  * would let `probabilities: {a: 0.01, b: 0.99}` pass with
  * `answer_confidence: 0.99`, which asserts certainty the distribution denies.
+ * Uses bound (B), which does not grow with the size of the answer space.
  */
 function requireAnswerConfidence(
   id: string,
@@ -547,7 +618,7 @@ function requireAnswerConfidence(
 ): Probability {
   const reported = requireProbability(raw.answer_confidence, `answer "${id}" answer_confidence`);
   const max = Math.max(...Object.values(probabilities));
-  const tol = toleranceFor(Object.values(probabilities).length);
+  const tol = confidenceTolerance();
   if (Math.abs(reported - max) > tol) {
     throw new DecisionSchemaError(
       `answer "${id}" is self-contradictory: it reports answer_confidence ${reported.toFixed(4)}, ` +
@@ -663,7 +734,7 @@ function validateAnswer(id: string, raw: Record<string, unknown>, question: Deci
     // ships with it. This is what an argmax check would get WRONG -- a score
     // answer legitimately has round(score) != argmax(p).
     const expectation = levels.reduce((acc, _level, i) => acc + i * probabilities[String(i)], 0);
-    const tol = toleranceFor(levels.length);
+    const tol = expectationTolerance(levels.length);
     if (Math.abs(score - expectation) > tol) {
       throw new DecisionSchemaError(
         `answer "${id}" is self-contradictory: it scored ${score.toFixed(4)}, but the expectation of its ` +
@@ -702,9 +773,9 @@ function validateAnswer(id: string, raw: Record<string, unknown>, question: Deci
   const noul = requireProbability(raw.noul, `answer "${id}" noul`);
   const confidence = requireProbability(raw.answer_confidence, `answer "${id}" answer_confidence`);
   const impliedMax = Math.max(noul, 1 - noul);
-  // Two options, so the rounding budget is small; the reported `noul` was itself
-  // rounded to 4dp before the comparison on the provider side.
-  const noulTol = 2 * ROUNDING_HALF_STEP * 2 * 2 + 1e-9;
+  // Two options, so this is bound (B) with k = 2: the reported `noul` was itself
+  // rounded to 4dp, and the provider's confidence came from the unrounded pair.
+  const noulTol = confidenceTolerance();
   if (Math.abs(confidence - impliedMax) > noulTol) {
     throw new DecisionSchemaError(
       `answer "${id}" is self-contradictory: it reports answer_confidence ${confidence.toFixed(4)} for ` +

@@ -326,22 +326,42 @@ async function testRequestValidation(): Promise<void> {
       { questions: { s: { type: 'score', instructions: '?', criteria: { a: 'b' } as unknown as string[] } }, task: 't' },
       'expected an ordered array',
     ],
-    // noul has no answer space, and laya-serve rejects noul+criteria with 422, so
-    // any `criteria` on a noul is refused locally rather than sent.
+    // A noul may carry `criteria` keyed "true"/"false" -- verified against
+    // laya/agent.py. Anything else is refused locally.
     [
-      'noul with criteria (server rejects this with 422)',
-      { questions: { n: { type: 'noul', instructions: '?', criteria: { true: 'yes', false: 'no' } as unknown as undefined } }, task: 't' },
-      'has no answer space, but it carries "criteria"',
+      'noul with criteria keyed yes/no',
+      { questions: { n: { type: 'noul', instructions: '?', criteria: { yes: 'y', no: 'n' } } }, task: 't' },
+      'only keys are "true" and "false"',
     ],
     [
       'noul criteria as an array',
-      { questions: { n: { type: 'noul', instructions: '?', criteria: ['a'] as unknown as Record<string, string> } }, task: 't' },
-      'has no answer space, but it carries "criteria"',
+      { questions: { n: { type: 'noul', instructions: '?', criteria: ['true'] as unknown as Record<string, string> } }, task: 't' },
+      'expected an object keyed',
     ],
     [
-      'noul with an empty criteria object',
-      { questions: { n: { type: 'noul', instructions: '?', criteria: {} as unknown as undefined } }, task: 't' },
-      'has no answer space, but it carries "criteria"',
+      'noul with an extra key alongside true/false',
+      { questions: { n: { type: 'noul', instructions: '?', criteria: { true: 'y', false: 'n', maybe: 'x' } } }, task: 't' },
+      'only keys are "true" and "false"',
+    ],
+    [
+      'noul criteria with an empty description',
+      { questions: { n: { type: 'noul', instructions: '?', criteria: { true: '  ' } } }, task: 't' },
+      'expected a non-empty description string',
+    ],
+    [
+      'noul criteria with a non-string description',
+      { questions: { n: { type: 'noul', instructions: '?', criteria: { true: 5 as unknown as string } } }, task: 't' },
+      'expected a non-empty description string',
+    ],
+    [
+      'noul criteria with a null description',
+      { questions: { n: { type: 'noul', instructions: '?', criteria: { true: null as unknown as string } } }, task: 't' },
+      'expected a non-empty description string',
+    ],
+    [
+      'noul criteria as a string',
+      { questions: { n: { type: 'noul', instructions: '?', criteria: 'true' as unknown as Record<string, string> } }, task: 't' },
+      'expected an object keyed',
     ],
     ['empty instructions', { questions: { c: { type: 'choice', instructions: '   ', criteria: { a: 'x', b: 'y' } } }, task: 't' }, 'expected a non-empty string'],
     [
@@ -697,8 +717,12 @@ async function testResponseValidation(): Promise<void> {
   // that ties are not mistaken for contradictions.
   const consistent: Array<[string, Record<string, number>, string]> = [
     [
+      // The real captured distribution for the English refactor task, at the
+      // full 4dp the service emits: it sums to 1.0001, which is inside the
+      // 2e-4 sum bound for k=4. Truncating these to 3dp would give 1.001 and be
+      // correctly refused, which is how the bound was calibrated.
       'the plain argmax case',
-      { implementation: 0.667, review: 0.158, research: 0.047, debugging: 0.129 },
+      { implementation: 0.6672, review: 0.1578, research: 0.0465, debugging: 0.1286 },
       'implementation',
     ],
     [
@@ -1318,7 +1342,8 @@ async function testScoreConsistency(): Promise<void> {
     for (const [name, nudge] of [
       ['score 1e-4 above the expectation', 0.0001],
       ['score 1e-4 below the expectation', -0.0001],
-      ['score 2e-3 above the expectation (inside tolerance)', 0.002],
+      // expectationTolerance(5) = 5e-5 * (1 + 5*4/2) = 5e-5 * 11 = 5.5e-4
+      ['score 5e-4 above the expectation (at the tolerance bound)', 0.0005],
     ] as Array<[string, number]>) {
       const r = await decideWith({ ...base, score: round4(1.6295 + nudge) });
       check(`tolerates rounding: ${name}`, r.ok, r.message.slice(0, 190));
@@ -1623,6 +1648,328 @@ async function testProviderOptionHardening(): Promise<void> {
   }
 }
 
+/**
+ * TOLERANCE BOUNDARIES AT LARGE k.
+ *
+ * The old single tolerance, 2*5e-5*k^2, is 1.0 at k = 100. That means a
+ * distribution summing to 0, or a confidence 0.98 away from its own maximum,
+ * used to be ACCEPTED. These cases are the regression for that, and they are
+ * written by hand rather than through consistentChoice/consistentScore so they
+ * do not inherit a builder that would quietly re-derive a consistent value.
+ */
+async function testHighKBoundaries(): Promise<void> {
+  // ---- 100 choices ----
+  const k100 = Array.from({ length: 100 }, (_, i) => `o${i}`);
+  const criteria100 = Object.fromEntries(k100.map((c) => [c, `description ${c}`]));
+  const request100: DecisionRequest = {
+    questions: { big: { type: 'choice', instructions: 'Which one?', criteria: criteria100 } },
+    task: 't',
+  };
+
+  /** The answer must be keyed by the question id, or the envelope has no answer for it. */
+  const manyBody = (answer: Record<string, unknown>): unknown => ({
+    model: 'laya-rl-agent',
+    answers: { big: answer },
+    routing: { model: 'english', reason: 'English Latin text' },
+  });
+
+  async function decide100(answer: Record<string, unknown>): Promise<{ ok: boolean; message: string }> {
+    let ok = false;
+    let message = '';
+    await withServer(jsonHandler(200, manyBody(answer)), async (baseUrl) => {
+      try {
+        await createLayaDecisionProvider({ baseUrl }).decide(request100);
+        ok = true;
+      } catch (e) {
+        message = (e as Error).message;
+      }
+    });
+    return { ok, message };
+  }
+
+  {
+    // THE reported failure mode: 100 options, every probability 0. The old
+    // tolerance was 1.0, and |0 - 1| is not > 1.0, so this passed.
+    const allZero = { type: 'choice', choice: 'o0', probabilities: Object.fromEntries(k100.map((c) => [c, 0])), answer_confidence: 0 };
+    const r = await decide100(allZero);
+    check('100 choices, all probabilities 0, is rejected', !r.ok, r.ok ? 'accepted' : '');
+    check('  ...because the sum is not 1', r.message.includes('summing to'), r.message.slice(0, 190));
+  }
+  {
+    // A valid 100-way distribution, hand-built: 1/100 each. Must be ACCEPTED, so
+    // the tighter tolerance is proven not to over-reject.
+    const uniform = {
+      type: 'choice',
+      choice: 'o0',
+      probabilities: Object.fromEntries(k100.map((c) => [c, 0.01])),
+      answer_confidence: 0.01,
+    };
+    const r = await decide100(uniform);
+    check('100 choices with a valid uniform distribution is accepted', r.ok, r.message.slice(0, 190));
+  }
+  {
+    // A real 4dp rounding artefact across 100 terms: one option at 0.0101 and
+    // ninety-nine at 0.01 sums to 1.0001; sumTolerance(100) is 5e-3.
+    const nearOne = {
+      type: 'choice',
+      choice: 'o0',
+      probabilities: Object.fromEntries(k100.map((c, i) => [c, i === 0 ? 0.0101 : 0.01])),
+      answer_confidence: 0.0101,
+    };
+    const r = await decide100(nearOne);
+    check('100 choices with sum 1.0001 (rounding drift) is accepted', r.ok, r.message.slice(0, 190));
+  }
+  {
+    // Confidence 0.98 away from the true maximum. Under the old k^2 tolerance
+    // (1.0) this was accepted.
+    const uniform = {
+      type: 'choice',
+      choice: 'o0',
+      probabilities: Object.fromEntries(k100.map((c) => [c, 0.01])),
+      answer_confidence: 0.99,
+    };
+    const r = await decide100(uniform);
+    check('100 choices, confidence 0.99 against a max of 0.01, is rejected', !r.ok, r.ok ? 'accepted' : '');
+    check('  ...as a confidence contradiction', r.message.includes('self-contradictory'), r.message.slice(0, 190));
+  }
+  {
+    // And the small deviation the confidence check must still tolerate, with a
+    // 100-way distribution: confidenceTolerance() is 1e-4 and does not grow.
+    const uniform = {
+      type: 'choice',
+      choice: 'o0',
+      probabilities: Object.fromEntries(k100.map((c) => [c, 0.01])),
+      answer_confidence: 0.0101,
+    };
+    const r = await decide100(uniform);
+    check('100 choices tolerates a 1e-4 confidence overshoot', r.ok, r.message.slice(0, 190));
+  }
+  {
+    // A 100-way distribution that sums to 0.5 must be rejected: the sum bound at
+    // k=100 is 5e-3, so 0.5 is a hundred times outside it.
+    const half = {
+      type: 'choice',
+      choice: 'o0',
+      probabilities: Object.fromEntries(k100.map((c) => [c, 0.005])),
+      answer_confidence: 0.005,
+    };
+    const r = await decide100(half);
+    check('100 choices summing to 0.5 is rejected', !r.ok, r.ok ? 'accepted' : '');
+  }
+
+  // ---- 32-level score ----
+  const k32 = 32;
+  const levels32 = Array.from({ length: k32 }, (_, i) => `L${i}`);
+  const request32: DecisionRequest = {
+    questions: { big: { type: 'score', instructions: 'How big?', criteria: levels32 } },
+    task: 't',
+  };
+  async function decide32(answer: Record<string, unknown>): Promise<{ ok: boolean; message: string }> {
+    let ok = false;
+    let message = '';
+    await withServer(jsonHandler(200, manyBody(answer)), async (baseUrl) => {
+      try {
+        await createLayaDecisionProvider({ baseUrl }).decide(request32);
+        ok = true;
+      } catch (e) {
+        message = (e as Error).message;
+      }
+    });
+    return { ok, message };
+  }
+  /** Hand-built so nothing is re-derived: score is written out explicitly. */
+  const score32 = (probs: Record<string, number>, score: number): Record<string, unknown> => ({
+    type: 'score',
+    score,
+    legend: Object.fromEntries(levels32.map((c, i) => [String(i), c])),
+    probabilities: probs,
+    answer_confidence: Math.max(...Object.values(probs)),
+  });
+  // a genuine 32-way distribution: half the mass on 0 and half on 31
+  const real32 = Object.fromEntries(levels32.map((_l, i) => [String(i), i === 0 || i === 31 ? 0.5 : 0]));
+  const exp32 = levels32.reduce((acc, _l, i) => acc + i * real32[String(i)], 0); // 0*0.5 + 31*0.5 = 15.5
+
+  {
+    const r = await decide32(score32(real32, exp32));
+    check('32-level score, exact expectation, is accepted', r.ok, r.message.slice(0, 190));
+  }
+  {
+    // expectationTolerance(32) = 5e-5 * (1 + 32*31/2) = 5e-5 * 497 = 0.02485
+    const r = await decide32(score32(real32, Math.round((exp32 + 0.02) * 1e4) / 1e4));
+    check('32-level score, expectation off by 0.02, is accepted (inside 0.02485)', r.ok, r.message.slice(0, 190));
+  }
+  {
+    const r = await decide32(score32(real32, Math.round((exp32 + 0.5) * 1e4) / 1e4));
+    check('32-level score, expectation off by 0.5, is rejected', !r.ok, r.ok ? 'accepted' : '');
+    check('  ...as an expectation contradiction', r.message.includes('self-contradictory'), r.message.slice(0, 190));
+  }
+  {
+    // sumTolerance(32) = 1.6e-3, so a 1e-3 drift is inside it. The score is
+    // re-derived by hand to stay consistent with the drifted distribution:
+    // 0.501 on level 0, 0.499 on level 31 -> 31*0.499 = 15.469.
+    const drift: Record<string, number> = { ...real32, '0': 0.501, '31': 0.499 };
+    const driftExp = levels32.reduce((acc, _l, i) => acc + i * drift[String(i)], 0);
+    const r = await decide32(score32(drift, Math.round(driftExp * 1e4) / 1e4));
+    check('32-level score, sum off by 1e-3, is accepted (inside 1.6e-3)', r.ok, r.message.slice(0, 190));
+  }
+  {
+    const bad = { ...real32, '0': 0.55 }; // sums to 1.05
+    const r = await decide32(score32(bad, exp32));
+    check('32-level score, sum off by 0.05, is rejected', !r.ok, r.ok ? 'accepted' : '');
+    check('  ...as a normalisation failure', r.message.includes('summing to'), r.message.slice(0, 190));
+  }
+  {
+    // confidenceTolerance() does not grow with k, so it is the same 1e-4 here.
+    const p32 = Object.fromEntries(levels32.map((_l, i) => [String(i), i === 0 ? 0.07 : 0.03])); // 0.07 + 31*0.03 = 1.00
+    const p32Exp = levels32.reduce((acc, _l, i) => acc + i * p32[String(i)], 0);
+    const r = await decide32({ ...score32(p32, Math.round(p32Exp * 1e4) / 1e4), answer_confidence: 0.5 });
+    check('32-level score, confidence 0.5 against a max of 0.07, is rejected', !r.ok, r.ok ? 'accepted' : '');
+    check('  ...as a confidence contradiction', r.message.includes('self-contradictory'), r.message.slice(0, 190));
+  }
+  {
+    // A high level index pushes the expectation, which is exactly why its
+    // tolerance is the one that has to grow: 31 * 0.5.
+    const r = await decide32(score32(real32, 15.5));
+    check('32-level score, a high-index expectation, is accepted', r.ok, r.message.slice(0, 190));
+  }
+}
+
+/** noul + true/false criteria: accepted when valid, refused when not. */
+async function testNoulCriteria(): Promise<void> {
+  const answer = { type: 'noul', noul: 0.0035, answer_confidence: 0.9965 };
+  const body = (noul: Record<string, unknown>): unknown => ({
+    model: 'laya-rl-agent',
+    answers: { q: noul },
+    routing: { model: 'english', reason: 'English Latin text' },
+  });
+
+  const legal: Array<[string, Record<string, string> | undefined]> = [
+    ['criteria omitted entirely', undefined],
+    ['an empty criteria object', {}],
+    ['true only', { true: 'the statement holds' }],
+    ['false only', { false: 'the statement does not hold' }],
+    ['both keys', { true: 'yes', false: 'no' }],
+    ['uppercase keys, as the provider normalises them', { True: 'yes', False: 'no' }],
+  ];
+  for (const [name, criteria] of legal) {
+    await withServer(jsonHandler(200, body(answer)), async (baseUrl) => {
+      const question =
+        criteria === undefined
+          ? { type: 'noul' as const, instructions: 'Does it hold?' }
+          : { type: 'noul' as const, instructions: 'Does it hold?', criteria };
+      const r = await createLayaDecisionProvider({ baseUrl }).decide({
+        questions: { q: question },
+        task: 'does it hold?',
+      });
+      eq(`noul with ${name} is answered`, r.answers.q?.type === 'noul' ? r.answers.q.noul : null, 0.0035);
+    });
+  }
+
+  // The answer semantics are unchanged: no distribution is required, and the
+  // confidence is still checked against max(noul, 1 - noul).
+  const illegal: Array<[string, unknown, string]> = [
+    ['a key other than true/false', { yes: 'y', no: 'n' }, 'only keys are "true" and "false"'],
+    ['an extra key beside true/false', { true: 'y', false: 'n', maybe: 'x' }, 'only keys are "true" and "false"'],
+    ['criteria as an array', ['true'], 'expected an object keyed'],
+    ['criteria as a string', 'true', 'expected an object keyed'],
+    ['a null description', { true: null }, 'expected a non-empty description string'],
+    ['a numeric description', { true: 5 }, 'expected a non-empty description string'],
+    ['an empty description', { true: '' }, 'expected a non-empty description string'],
+  ];
+  for (const [name, criteria, fragment] of illegal) {
+    // Detected server-side: if the request is refused locally, no request is made.
+    let reachedServer = false;
+    let msg = '';
+    await withServer(
+      (_req, res) => {
+        reachedServer = true;
+        jsonHandler(200, body(answer))(_req, res);
+      },
+      async (baseUrl) => {
+        try {
+          await createLayaDecisionProvider({ baseUrl }).decide({
+            questions: { q: { type: 'noul', instructions: '?', criteria } as never },
+            task: 't',
+          });
+        } catch (e) {
+          msg = (e as Error).message;
+        }
+      },
+    );
+    check(`noul refuses ${name}`, !reachedServer && msg.includes(fragment), reachedServer ? 'the request was sent' : msg.slice(0, 180));
+  }
+}
+
+/**
+ * round(score) sits on a .5 boundary for some distributions, and the index it
+ * selects determines the reported level. Both sides of the boundary are pinned:
+ * a legal half-way expectation must resolve deterministically, and a level that
+ * disagrees with the expectation must be refused.
+ */
+async function testScoreRoundingBoundary(): Promise<void> {
+  const id = COMPLEXITY_ID;
+  const levels = LEVELS;
+  // goodAnswers() FIRST, then the override, so the answer under test is the one
+  // that survives the spread.
+  const body = (complexity: Record<string, unknown>): unknown => ({
+    model: 'laya-rl-agent',
+    answers: { ...goodAnswers(), [id]: complexity },
+    routing: { model: 'english', reason: 'English Latin text' },
+  });
+  const request: DecisionRequest = { questions: { [id]: { type: 'score', instructions: 'How complex?', criteria: levels } }, task: 't' };
+
+  async function run(complexity: Record<string, unknown>): Promise<{ ok: boolean; message: string }> {
+    let ok = false;
+    let message = '';
+    await withServer(jsonHandler(200, body(complexity)), async (baseUrl) => {
+      try {
+        await createLayaDecisionProvider({ baseUrl }).decide(request);
+        ok = true;
+      } catch (e) {
+        message = (e as Error).message;
+      }
+    });
+    return { ok, message };
+  }
+
+  // expectation exactly 1.5 -> Math.round gives index 2
+  const half = { '0': 0.25, '1': 0.5, '2': 0.25, '3': 0.0, '4': 0.0 };
+  {
+    const r = await run(consistentScore(half, levels));
+    check('an expectation of exactly 1.5 is accepted', r.ok, r.message.slice(0, 190));
+  }
+  {
+    // The same distribution, but the provider claims a different level. The
+    // expectation of {0.25, 0.5, 0.25, 0, 0} is 1.5, so 2.0 contradicts it.
+    const r = await run({ ...consistentScore(half, levels), score: 2 });
+    check('the same distribution with a score of 2.0 is rejected', !r.ok, r.ok ? 'accepted' : '');
+  }
+  {
+    // 1.5 reported but the distribution says 2.0.
+    const flat2 = { '0': 0.2, '1': 0.2, '2': 0.2, '3': 0.2, '4': 0.2 };
+    const r = await run({ ...consistentScore(flat2, levels), score: 1.5 });
+    check('a score of 1.5 against an expectation of 2.0 is rejected', !r.ok, r.ok ? 'accepted' : '');
+  }
+  {
+    // The boundary is real, not a rounding accident: {0, 0, 0.5, 0.5, 0} has an
+    // expectation of exactly 2.5, which rounds to index 3.
+    const half2 = { '0': 0.0, '1': 0.0, '2': 0.5, '3': 0.5, '4': 0.0 };
+    let level: string | null = null;
+    await withServer(jsonHandler(200, body(consistentScore(half2, levels))), async (baseUrl) => {
+      const r = await createLayaDecisionProvider({ baseUrl }).decide(request);
+      level = r.answers[id]?.type === 'score' ? r.answers[id].level : null;
+    });
+    eq('an expectation of exactly 2.5 resolves to the level above the boundary', level, 'large');
+  }
+  {
+    // 4dp rounding may push the reported score either side of the .5 mark, and
+    // that must not be treated as a contradiction.
+    const just = { '0': 0.0, '1': 0.0, '2': 0.49995, '3': 0.49995, '4': 0.0001 };
+    const r = await run(consistentScore(just, levels));
+    check('an expectation that rounds to the .5 boundary is accepted', r.ok, r.message.slice(0, 190));
+  }
+}
+
 let sentQuestions: Record<string, DecisionQuestion> = {};
 
 // ---- helpers --------------------------------------------------------------
@@ -1652,19 +1999,19 @@ async function testChineseInput(): Promise<void> {
       {
         model: 'laya-rl-agent',
         answers: {
-          work_kind: {
-            type: 'choice',
-            choice: 'implementation',
-            probabilities: { implementation: 0.998, review: 0.001, research: 0.001, debugging: 0.001 },
-            answer_confidence: 0.998,
-          },
-          complexity: {
-            type: 'score',
-            score: 1.6295,
-            legend: { '0': 'trivial', '1': 'small', '2': 'moderate', '3': 'large', '4': 'very large' },
-            probabilities: { '0': 0.0286, '1': 0.3935, '2': 0.5052, '3': 0.0652, '4': 0.0075 },
-            answer_confidence: 0.5052,
-          },
+          // The real values, not a rounded approximation: 0.9989 + 3*0.0004 = 1.0001,
+          // which is inside the sum bound. A hand-rounded 0.998/0.001 triple sums
+          // to 1.001 and is correctly refused.
+          work_kind: consistentChoice('implementation', {
+            implementation: 0.9989,
+            review: 0.0004,
+            research: 0.0004,
+            debugging: 0.0004,
+          }),
+          complexity: consistentScore(
+            { '0': 0.0286, '1': 0.3935, '2': 0.5052, '3': 0.0652, '4': 0.0075 },
+            LEVELS,
+          ),
           review_required: { type: 'noul', noul: 0.0035, answer_confidence: 0.9965 },
         },
         routing: {
@@ -1720,6 +2067,9 @@ async function main(): Promise<void> {
   await testResponseValidation();
   await testScoreConsistency();
   await testAnswerConfidenceConsistency();
+  await testScoreRoundingBoundary();
+  await testHighKBoundaries();
+  await testNoulCriteria();
   await testProviderOptionHardening();
   await testTransport();
   await testRoutingPreset();
