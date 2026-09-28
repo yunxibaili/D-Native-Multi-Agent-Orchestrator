@@ -125,9 +125,11 @@ src/
                  registry.ts      narrow adapter-selection seam
                  transport/cli.ts the first Transport implementation
   adapters/      opencode.ts codex.ts index.ts (factory table)
-  decision/      types.ts     closed routing vocabularies + DecisionProvider seam
+  decision/      types.ts     the minimal DecisionProvider interface
                  errors.ts    unavailable/timeout/transport/schema/input failures
-                 laya.ts      local laya-serve provider (validated, not yet wired in)
+                 laya.ts      local laya-serve provider (validates request + response)
+                 routing.ts   measured task-classification preset on top of it
+                 check.ts     standalone dev entry point (not the orchestrator)
   orchestrator/  orchestrator.ts config.ts
   cli/           index.ts
 tests/           unit.test.ts  contract.test.ts  decision.test.ts  cancel.test.ts

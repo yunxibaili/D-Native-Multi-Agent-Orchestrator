@@ -12,6 +12,8 @@
   },
   "scripts": {
     "doctor": "node src/cli/index.ts doctor",
+    "decision:check": "node src/decision/check.ts",
+    "decision:probe": "node src/decision/check.ts --probe",
     "oc": "node src/cli/index.ts run opencode",
     "cx": "node src/cli/index.ts run codex",
     "review": "node src/cli/index.ts review codex",

@@ -1,7 +1,86 @@
 # DECISION_PROVIDER — Laya verified locally
 
-Status: **verified working on this machine.** Implemented in `src/decision/`.
-Phase 1 runtime is untouched: nothing here is wired into `src/orchestrator/`.
+Status: **verified working on this machine.** The Decision Layer is in
+`src/decision/`. Phase 1 runtime is untouched: nothing here is wired into
+`src/orchestrator/`.
+
+## What Laya's role is here
+
+Laya is a **classifier**, not an agent router and not a runtime dependency. It
+answers typed questions about a piece of text — pick one of these, rate it 0..4,
+is this true-ish — and returns a distribution. It never runs a task, never picks
+OpenCode or Codex, and never launches anything.
+
+```
+DecisionRequest  ->  DecisionProvider  ->  laya-serve  ->  DecisionResponse
+   questions           (swappable)         (local HTTP)     answers + metadata
+   task/state
+```
+
+Three small types carry the whole interface (`src/decision/types.ts`):
+
+| Type | Carries |
+|---|---|
+| `DecisionRequest` | the questions (each with its `criteria` / available choices), plus the `task` / `state` / `context` to read |
+| `DecisionResponse` | the validated `answers` (`choice` / `score`+`level` / `noul`, each with a `probabilities` map and a `confidence`), the `provider` metadata, and the `raw` envelope |
+| `DecisionProvider` | `name`, `probe()`, `decide()` — the seam |
+
+The one design rule: **the caller declares the answer space, and the provider
+validates that the answer landed inside it.** A provider cannot invent an answer
+the request did not offer, which is what makes the result safe to branch on.
+
+`DecisionProvider` has no `fallback` field and no `tryDecide` on purpose.
+
+### Files
+
+| File | Role |
+|---|---|
+| `src/decision/types.ts` | the minimal interface: `DecisionQuestion`, `DecisionRequest`, `DecisionResponse`, `DecisionProvider` |
+| `src/decision/errors.ts` | unavailable / timeout / transport / schema / input, all `OrchestratorError`s |
+| `src/decision/laya.ts` | the Laya implementation. Validates the request, posts, validates the response |
+| `src/decision/routing.ts` | the measured task-classification preset (work kind / complexity / review) on top of the generic layer |
+| `src/decision/check.ts` | a standalone dev entry point. Not the orchestrator |
+
+## Running it
+
+```powershell
+# 1. start the service yourself (the provider never starts it)
+$env:HF_ENDPOINT = "https://hf-mirror.com"   # only needed if huggingface.co is blocked
+laya-serve
+
+# 2. check the provider, then classify one task
+node src/decision/check.ts --probe
+node src/decision/check.ts "refactor the event hub and update the tests"
+node src/decision/check.ts --provider http://127.0.0.1:8077 "任意任务文本"
+```
+
+```powershell
+npm run typecheck       # clean
+npm test                # 90 unit + 242 contract + 131 decision, no agents needed
+npm run test:decision   # the Decision Layer contract only, fully hermetic
+node tests/live-decision-check.ts   # opt-in; needs laya-serve running
+```
+
+`tests/decision.test.ts` never touches the network, Python or CUDA: a stub
+`node:http` server reproduces the real laya-serve responses, including the
+200-with-no-answer cases.
+
+## Why Laya does not select an agent
+
+`--agent` is still the only way to choose an agent, and that is deliberate:
+
+1. **The signal is not yet trustworthy enough to dispatch on.** Measured: the same
+   refactor task is `review=yes` in English (noul 0.678) and `review=no` in Chinese
+   (noul 0.004). Language alone flips the verdict.
+2. **The shipped checkpoints warn their own confidence is uncalibrated.** So the
+   provider keeps the full distribution on every answer instead of collapsing it
+   into one number, for a caller to threshold deliberately.
+3. **Auto-selecting an agent changes existing semantics.** `--agent` is explicit
+   today; making it implicit would change what every existing invocation does.
+4. The capability matrix already encodes the split: `opencode` `rejects: review`,
+   only `codex` `can: review`.
+
+The Decision Layer is the base for a Router/Policy later, not a Router/Policy.
 
 ## What was verified
 
@@ -107,41 +186,73 @@ The bottom block is the reason `src/decision/laya.ts` validates the payload inst
 of trusting the status code. Each of those is a silent wrong answer that a
 status-code check would convert into confident misrouting.
 
-## What the provider does
+## What the provider guarantees
 
-`src/decision/` — a separate layer, so the Python/CUDA dependency can never become
-a dependency of the agent runtime, and so the provider is replaceable.
+`src/decision/` is a separate layer, so the Python/CUDA dependency can never become
+a dependency of the agent runtime, and so the provider stays replaceable.
 
-- `types.ts` — **closed** vocabularies (`WORK_KINDS`, `COMPLEXITY_LEVELS`) and a
-  `DecisionProvider` interface with no `fallback` member and no `tryDecide`. A
-  provider that cannot decide cannot hand the work to someone else.
-- `errors.ts` — `DecisionUnavailableError`, `DecisionTimeoutError`,
-  `DecisionTransportError`, `DecisionSchemaError`, `DecisionInputError`, all
-  extending `OrchestratorError` so the existing `code` discipline holds.
-- `laya.ts` — `createLayaDecisionProvider()`. Pins the question set, validates the
-  envelope before reading any field, maps the complexity score through the
-  provider's own `legend`, and reports `probabilities` and provenance
-  (checkpoint, reason, elapsed ms) on every decision.
+**Before sending** (`DecisionInputError` — no request is sent):
+- zero questions, or nothing to read (`task` / `state` / `context` all empty)
+- a choice with no choices, or with **exactly one** choice
+- a score with fewer than two levels
+- malformed `criteria` (array where an object belongs, or vice versa)
+- empty `instructions`, an unknown question type, a non-string `task`/context value
+- state over Laya's 50 000 chars
 
-Failure is always explicit: no default agent, no default complexity, no dropped
-review step. `review_required` is derived from `noul > 0.5`, with the raw value kept.
+The one-option case is the important one: laya-serve returns that option with
+HTTP 200, forever, for every input. Accepting it would report a confident,
+constant "decision" carrying no information.
+
+**After receiving** (`DecisionSchemaError` — despite a 2xx):
+- missing/empty `answers`, a missing `model`, a non-object body
+- a question that was asked but not answered, or answered with the wrong type
+- a `choice` outside the offered choices, or a `probabilities` map that does not
+  cover the offered space
+- a `score` whose `legend` does not match the offered levels
+- any confidence/probability outside [0, 1], or non-finite
+
+**Transport** is split so the two operator problems stay separate:
+`DecisionUnavailableError` (cannot reach the service), `DecisionTimeoutError`
+(too slow), `DecisionTransportError` (non-2xx, carrying laya's own `detail`).
+
+Every answer keeps its `probabilities` distribution, and every response keeps the
+`provider` metadata (checkpoint, routing reason, detected script, elapsed ms) plus
+the `raw` envelope, so a wrong classification can be diagnosed without re-running
+the model.
+
+`review_required` in the routing preset is derived from `noul > 0.5`, with the raw
+value retained so a caller can pick its own threshold.
+
+### One measured gotcha, worth not re-discovering
+
+A `noul` answer has **no `probabilities` map** — laya-serve sends only
+`noul`, `confidence` and `answer_confidence`. `choice` and `score` answers do
+carry one. Validating uniformly would reject every real response; the hermetic
+suite pins this so it cannot regress.
 
 ## Verification
 
 ```
 npm run typecheck            # clean
-npm test                     # 90 unit + 242 contract + 56 decision, 0 failed
-node tests/live-decision-check.ts   # against a real laya-serve; needs the Python side
+npm test                     # 90 unit + 242 contract + 131 decision, 0 failed
+npm run test:decision        # the Decision Layer contract only
+node tests/live-decision-check.ts   # opt-in, against a real laya-serve
 ```
 
 `tests/decision.test.ts` is hermetic: a stub `node:http` server reproduces the real
 laya-serve responses, including the 200-with-no-answer cases, so the contract is
 tested without Python, CUDA, or a network.
 
+The unit and contract counts are unchanged from before this layer existed, which
+is the evidence that orchestrator behaviour did not move.
+
 ## Limitations
 
 - Windows-only as measured; no Linux/macOS verification.
-- Laya's own `serve` limits are mirrored client-side (`MAX_STATE_CHARS` etc.) and
-  will silently drift if upstream changes them; the server's 413 remains the backstop.
+- Laya's own `serve` limits are mirrored client-side (`MAX_STATE_CHARS`,
+  `MAX_QUESTIONS`, `MAX_CHOICE_OPTIONS`, `MAX_SCORE_LEVELS`) and will drift if
+  upstream changes them; the server's 413 remains the backstop.
+- `noul` answers carry no distribution, so `review_required` is the one decision
+  without a probability map to threshold against.
 - Not wired into the orchestrator. Selection stays explicit (`--agent`) until the
   routing signal is trusted enough to drive dispatch on its own.
