@@ -11,7 +11,7 @@
  * never launches it.
  */
 
-import { createLayaDecisionProvider } from './laya.ts';
+import { createLayaDecisionProvider, layaMetadata } from './laya.ts';
 import { classifyTask } from './routing.ts';
 import { DecisionError } from './errors.ts';
 
@@ -22,8 +22,11 @@ function usage(): never {
       '  node src/decision/check.ts "task text"',
       '  node src/decision/check.ts --probe',
       '  node src/decision/check.ts --provider <baseUrl> "task text"',
+      '  node src/decision/check.ts --provider <remoteUrl> --allow-remote "task text"',
       '',
       'Requires a local laya-serve (default http://127.0.0.1:8077).',
+      'The endpoint must be loopback: a decision request carries the task text,',
+      'so a remote baseUrl is refused unless --allow-remote is passed.',
       'On a machine where huggingface.co is unreachable, also set:',
       '  $env:HF_ENDPOINT = "https://hf-mirror.com"',
       '',
@@ -34,6 +37,7 @@ function usage(): never {
 
 const args = process.argv.slice(2);
 let baseUrl = 'http://127.0.0.1:8077';
+let allowRemote = false;
 let probeOnly = false;
 
 while (args.length > 0 && args[0].startsWith('--')) {
@@ -41,6 +45,8 @@ while (args.length > 0 && args[0].startsWith('--')) {
   if (flag === '--provider') {
     if (args.length === 0) usage();
     baseUrl = args.shift() as string;
+  } else if (flag === '--allow-remote') {
+    allowRemote = true;
   } else if (flag === '--probe') {
     probeOnly = true;
   } else if (flag === '--help' || flag === '-h') {
@@ -53,9 +59,12 @@ while (args.length > 0 && args[0].startsWith('--')) {
 const task = args.join(' ').trim();
 if (!probeOnly && task.length === 0) usage();
 
-const provider = createLayaDecisionProvider({ baseUrl, timeoutMs: 60_000 });
-
 try {
+  // Constructed inside the try so a configuration error -- a non-loopback or
+  // malformed baseUrl -- is reported like every other DecisionError rather than
+  // escaping as an unhandled rejection.
+  const provider = createLayaDecisionProvider({ baseUrl, allowRemote, timeoutMs: 60_000 });
+
   const probe = await provider.probe();
   process.stdout.write(`provider  ${provider.name} @ ${probe.endpoint}\n`);
   process.stdout.write(`probe     ok=${probe.ok}  ${probe.detail}\n`);
@@ -67,6 +76,7 @@ try {
     process.exitCode = 1;
   } else if (!probeOnly) {
     const c = await classifyTask(provider, { task });
+    const meta = layaMetadata(c);
     const top = Object.entries(c.work_kind_probabilities)
       .sort((a, b) => b[1] - a[1])
       .map(([k, v]) => `${k} ${v.toFixed(3)}`)
@@ -77,8 +87,8 @@ try {
     process.stdout.write(`            ${top}\n`);
     process.stdout.write(`complexity  ${c.complexity}  (score ${c.complexity_score.toFixed(2)})\n`);
     process.stdout.write(`review      ${c.review_required ? 'suggested' : 'not suggested'}  (noul ${c.review_noul.toFixed(3)})\n`);
-    process.stdout.write(`answered by ${c.provider.checkpoint} / ${c.provider.model} in ${c.provider.elapsedMs} ms\n`);
-    process.stdout.write(`reason      ${c.provider.reason}\n`);
+    process.stdout.write(`answered by ${meta.checkpoint} / ${c.provider.model} in ${c.provider.elapsedMs} ms\n`);
+    process.stdout.write(`reason      ${meta.reason}\n`);
     process.stdout.write('\nThis is a task description only. No agent was selected and nothing was run.\n');
   }
 } catch (err) {

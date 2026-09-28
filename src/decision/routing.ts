@@ -20,6 +20,7 @@
  * distribution attached, not a gate.
  */
 
+import { DecisionSchemaError } from './errors.ts';
 import type { DecisionProvider, DecisionQuestion, DecisionRequest, DecisionResponse, Probability } from './types.ts';
 import { toProbability } from './types.ts';
 
@@ -109,8 +110,9 @@ export interface TaskClassification {
  *
  * The narrowing here is a second, independent guard: the provider already
  * rejected anything outside the vocabularies, and this re-checks rather than
- * casting. If the two ever disagree, the call fails instead of narrowing
- * something invalid into a valid-looking type.
+ * casting. If the two ever disagree, the call fails with a `DecisionSchemaError`
+ * rather than narrowing something invalid into a valid-looking type -- so a
+ * failure here is still catchable as a Decision Layer error, not a bare Error.
  */
 export function toTaskClassification(response: DecisionResponse): TaskClassification {
   const workKind = response.answers[WORK_KIND_ID];
@@ -118,26 +120,38 @@ export function toTaskClassification(response: DecisionResponse): TaskClassifica
   const review = response.answers[REVIEW_ID];
 
   if (!workKind || workKind.type !== 'choice') {
-    throw new Error(`routing: expected a choice answer for "${WORK_KIND_ID}", got ${workKind?.type ?? 'nothing'}`);
+    throw new DecisionSchemaError(
+      `routing: expected a choice answer for "${WORK_KIND_ID}", got ${workKind?.type ?? 'nothing'}`,
+    );
   }
   if (!complexity || complexity.type !== 'score') {
-    throw new Error(`routing: expected a score answer for "${COMPLEXITY_ID}", got ${complexity?.type ?? 'nothing'}`);
+    throw new DecisionSchemaError(
+      `routing: expected a score answer for "${COMPLEXITY_ID}", got ${complexity?.type ?? 'nothing'}`,
+    );
   }
   if (!review || review.type !== 'noul') {
-    throw new Error(`routing: expected a noul answer for "${REVIEW_ID}", got ${review?.type ?? 'nothing'}`);
+    throw new DecisionSchemaError(
+      `routing: expected a noul answer for "${REVIEW_ID}", got ${review?.type ?? 'nothing'}`,
+    );
   }
   if (!(WORK_KINDS as readonly string[]).includes(workKind.choice)) {
-    throw new Error(`routing: work_kind ${JSON.stringify(workKind.choice)} is outside [${WORK_KINDS.join(', ')}]`);
+    throw new DecisionSchemaError(
+      `routing: work_kind ${JSON.stringify(workKind.choice)} is outside [${WORK_KINDS.join(', ')}]`,
+    );
   }
   if (!(COMPLEXITY_LEVELS as readonly string[]).includes(complexity.level)) {
-    throw new Error(`routing: complexity ${JSON.stringify(complexity.level)} is outside [${COMPLEXITY_LEVELS.join(', ')}]`);
+    throw new DecisionSchemaError(
+      `routing: complexity ${JSON.stringify(complexity.level)} is outside [${COMPLEXITY_LEVELS.join(', ')}]`,
+    );
   }
 
   const workKindProbabilities = {} as Record<WorkKind, number>;
   for (const kind of WORK_KINDS) {
     const p = toProbability(workKind.probabilities[kind]);
     if (p === null) {
-      throw new Error(`routing: work_kind probability for "${kind}" is ${JSON.stringify(workKind.probabilities[kind])}, expected [0, 1]`);
+      throw new DecisionSchemaError(
+        `routing: work_kind probability for "${kind}" is ${JSON.stringify(workKind.probabilities[kind])}, expected [0, 1]`,
+      );
     }
     workKindProbabilities[kind] = p;
   }

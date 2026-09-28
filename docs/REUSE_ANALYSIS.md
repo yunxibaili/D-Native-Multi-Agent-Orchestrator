@@ -283,7 +283,8 @@ NAR 已对 opencode 1.18.15 验证过 `acp-generic`），
   暴露 `/health` 与 `POST /v1/systemone`，响应是 Jev-compatible envelope。
 - `RouteDecision` 天然是"结构化决策"，与本项目 `Decision` 形状对得上 —— 成立。
   已落盘为 `src/decision/types.ts`，但**收紧了**：词汇表封闭
-  （`WORK_KINDS` / `COMPLEXITY_LEVELS`），且 `DecisionProvider` 没有 `fallback`
+  （`WORK_KINDS` / `COMPLEXITY_LEVELS` 在 `src/decision/routing.ts`），且
+  `DecisionProvider` 没有 `fallback`
   成员、没有 `tryDecide`，从类型上禁止"决策不了就默认交给某个 agent"。
 - `max_loaded` / LRU checkpoint 驻留说明本地多模型是常态 —— 成立且已实测：
   三个 checkpoint（`english` / `multilingual` / `typed-decisions`）同时驻留

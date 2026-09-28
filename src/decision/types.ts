@@ -43,7 +43,8 @@ export function toProbability(value: unknown): Probability | null {
  *
  *   choice  pick exactly one key of `criteria`
  *   score   position on an ordered list of `criteria` levels
- *   noul    "no / unsure likelihood" -- a bare number in [0, 1]
+ *   noul    "no / unsure likelihood" -- a bare number in [0, 1], with no
+ *           answer space, and therefore no `criteria` at all
  */
 export type DecisionQuestion =
   | {
@@ -61,8 +62,13 @@ export type DecisionQuestion =
   | {
       readonly type: 'noul';
       readonly instructions: string;
-      /** Optional true/false descriptions. Not an answer space. */
-      readonly criteria?: Readonly<Record<string, string>>;
+      /**
+       * `criteria` is deliberately absent. Measured against laya-serve: a noul
+       * question that carries `criteria` is rejected by the server with 422
+       * ("a noul question takes 'criteria' as a dict with optional 'true'/'false'
+       * descriptions, or omits it"). The provider refuses that combination
+       * locally instead of spending a round trip on a guaranteed failure.
+       */
     };
 
 /** The ids of the questions a request asks, used to key the answers. */
@@ -137,15 +143,19 @@ export interface ProviderMetadata {
   readonly name: string;
   /** The provider's model label, e.g. "laya-rl-agent". */
   readonly model: string;
-  /** Which checkpoint actually answered: english | multilingual | typed-decisions. */
-  readonly checkpoint: string;
-  /** The provider's own reason for that choice, when it reports one. */
-  readonly reason: string;
-  /** Detected script / language profile, when reported. */
-  readonly script: string | null;
-  readonly language: string | null;
   /** Wall time of the call, measured by the provider. */
   readonly elapsedMs: number;
+  /**
+   * Everything else the provider wants to report, untyped.
+   *
+   * Kept deliberately opaque. The generic layer must not carry another
+   * provider's vocabulary: `checkpoint`, `script` and `language` mean nothing
+   * outside Laya, so they live in the Laya module's own metadata type instead
+   * of being hard-coded here. A provider that wants to expose structured
+   * details puts them here and publishes a typed reader alongside its
+   * implementation -- no generic metadata framework is introduced.
+   */
+  readonly details: Readonly<Record<string, unknown>>;
 }
 
 /** The provider's verbatim envelope, kept for debugging a wrong answer. */

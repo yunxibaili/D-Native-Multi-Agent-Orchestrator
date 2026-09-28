@@ -18,13 +18,15 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net';
 
 import {
+  DecisionError,
   DecisionInputError,
   DecisionSchemaError,
   DecisionTimeoutError,
   DecisionTransportError,
   DecisionUnavailableError,
+  isDecisionError,
 } from '../src/decision/errors.ts';
-import { createLayaDecisionProvider } from '../src/decision/laya.ts';
+import { createLayaDecisionProvider, layaMetadata } from '../src/decision/laya.ts';
 import {
   COMPLEXITY_ID,
   COMPLEXITY_LEVELS,
@@ -171,13 +173,15 @@ async function testGenericLayer(): Promise<void> {
     const review = r.answers[REVIEW_ID];
     eq('noul value', review?.type === 'noul' ? review.noul : null, 0.678);
 
-    // provider metadata is retained for debugging
+    // provider metadata is retained for debugging, split into generic + Laya-specific
     eq('provider name', r.provider.name, 'laya');
     eq('provider model', r.provider.model, 'laya-rl-agent');
-    eq('checkpoint recorded', r.provider.checkpoint, 'english');
-    eq('routing reason recorded', r.provider.reason, 'English Latin text');
-    eq('script recorded', r.provider.script, 'latin');
     check('elapsed measured', r.provider.elapsedMs >= 0 && r.provider.elapsedMs < 60_000, String(r.provider.elapsedMs));
+    eq('generic metadata carries no Laya field names', Object.keys(r.provider).sort().join(), 'details,elapsedMs,model,name');
+    const meta = layaMetadata(r);
+    eq('checkpoint is read through the Laya reader', meta.checkpoint, 'english');
+    eq('routing reason read through the Laya reader', meta.reason, 'English Latin text');
+    eq('script read through the Laya reader', meta.script, 'latin');
     eq('raw envelope retained', (r.raw as Record<string, unknown>).model, 'laya-rl-agent');
   });
 
@@ -205,8 +209,13 @@ async function testGenericLayer(): Promise<void> {
       eq('arbitrary choice question answered', r.answers.tone?.type === 'choice' ? r.answers.tone.choice : null, 'urgent');
       eq('arbitrary score question answered', r.answers.severity?.type === 'score' ? r.answers.severity.level : null, 'critical');
       eq('arbitrary noul question answered', r.answers.needsHuman?.type === 'noul' ? r.answers.needsHuman.noul : null, 0.2);
-      eq('checkpoint defaults when unreported fields are absent', r.provider.checkpoint, 'english');
-      eq('script is null when unreported', r.provider.script, null);
+      const m = layaMetadata(r);
+      eq('checkpoint is read from the reported routing', m.checkpoint, 'english');
+      eq('reason is read from the reported routing', m.reason, 'English Latin text');
+      eq('script is null when unreported', m.script, null);
+      eq('language is null when unreported', m.language, null);
+      eq('usage defaults to null tokens', m.inputTokens, null);
+      eq('revisions default to an empty map', Object.keys(m.revisions).length, 0);
     },
   );
 
@@ -254,7 +263,11 @@ async function testRequestValidation(): Promise<void> {
     res.end(JSON.stringify(goodBody()));
   };
 
-  const badRequests: Array<[string, DecisionRequest, string]> = [
+  // Typed `unknown` on purpose: these cases deliberately violate the declared
+  // request type, which is exactly what an untyped JavaScript caller (or one
+  // reading unvalidated JSON) can hand over. The provider must turn all of them
+  // into a DecisionInputError rather than a TypeError.
+  const badRequests: Array<[string, unknown, string]> = [
     ['empty questions', { questions: {}, task: 't' }, 'no questions were asked'],
     ['choice with no choices', { questions: { c: { type: 'choice', instructions: '?', criteria: {} } }, task: 't' }, 'offers no choices'],
     [
@@ -274,12 +287,24 @@ async function testRequestValidation(): Promise<void> {
       { questions: { s: { type: 'score', instructions: '?', criteria: { a: 'b' } as unknown as string[] } }, task: 't' },
       'expected an ordered array',
     ],
+    // noul has no answer space, and laya-serve rejects noul+criteria with 422, so
+    // any `criteria` on a noul is refused locally rather than sent.
+    [
+      'noul with criteria (server rejects this with 422)',
+      { questions: { n: { type: 'noul', instructions: '?', criteria: { true: 'yes', false: 'no' } as unknown as undefined } }, task: 't' },
+      'has no answer space, but it carries "criteria"',
+    ],
     [
       'noul criteria as an array',
       { questions: { n: { type: 'noul', instructions: '?', criteria: ['a'] as unknown as Record<string, string> } }, task: 't' },
-      'expected an object',
+      'has no answer space, but it carries "criteria"',
     ],
-    ['empty instructions', { questions: { c: { type: 'choice', instructions: '   ', criteria: { a: 'x', b: 'y' } } }, task: 't' }, 'empty "instructions"'],
+    [
+      'noul with an empty criteria object',
+      { questions: { n: { type: 'noul', instructions: '?', criteria: {} as unknown as undefined } }, task: 't' },
+      'has no answer space, but it carries "criteria"',
+    ],
+    ['empty instructions', { questions: { c: { type: 'choice', instructions: '   ', criteria: { a: 'x', b: 'y' } } }, task: 't' }, 'expected a non-empty string'],
     [
       'unknown question type',
       { questions: { c: { type: 'vibe', instructions: '?' } as unknown as DecisionQuestion }, task: 't' },
@@ -287,6 +312,83 @@ async function testRequestValidation(): Promise<void> {
     ],
     ['nothing to read', { questions: routingQuestions() }, 'nothing to read'],
     ['task is not a string', { questions: routingQuestions(), task: 7 as unknown as string }, 'expected a string'],
+
+    // ---- runtime-value hardening: none of these may produce a TypeError ----
+    ['null request', null, 'expected an object'],
+    ['undefined request', undefined, 'expected an object'],
+    ['a string request', 'not a request', 'expected an object'],
+    ['a number request', 42, 'expected an object'],
+    ['an array request', [], 'expected an object'],
+    ['missing questions', { task: 't' }, '"questions" is undefined'],
+    ['null questions', { questions: null, task: 't' }, '"questions" is null'],
+    ['questions as a string', { questions: 'c', task: 't' }, '"questions" is a string'],
+    ['questions as an array', { questions: [], task: 't' }, '"questions" is an array'],
+    ['a question that is null', { questions: { q: null }, task: 't' }, 'question "q" is null'],
+    ['a question that is a string', { questions: { q: 'choice' }, task: 't' }, 'question "q" is a string'],
+    ['a question type that is null', { questions: { q: { type: null, instructions: '?' } } as unknown as Record<string, DecisionQuestion>, task: 't' }, 'has type null'],
+    ['instructions as a number', { questions: { q: { type: 'noul', instructions: 5 as unknown as string } } }, 'expected a non-empty string'],
+    [
+      'a choice description that is empty',
+      { questions: { c: { type: 'choice', instructions: '?', criteria: { a: 'x', b: '  ' } } } },
+      'choice "b" has description',
+    ],
+    [
+      'a choice description that is a number',
+      { questions: { c: { type: 'choice', instructions: '?', criteria: { a: 'x', b: 7 as unknown as string } } } },
+      'choice "b" has description',
+    ],
+    [
+      'a choice description that is null',
+      { questions: { c: { type: 'choice', instructions: '?', criteria: { a: 'x', b: null as unknown as string } } } },
+      'choice "b" has description',
+    ],
+    [
+      'a choice with an empty key',
+      { questions: { c: { type: 'choice', instructions: '?', criteria: { a: 'x', '  ': 'y' } } } },
+      'a choice with an empty key',
+    ],
+    [
+      'a score level that is empty',
+      { questions: { s: { type: 'score', instructions: '?', criteria: ['low', ''] } } },
+      'level 1 is',
+    ],
+    [
+      'a score level that is a number',
+      { questions: { s: { type: 'score', instructions: '?', criteria: ['low', 2 as unknown as string] } } },
+      'level 1 is',
+    ],
+    ['state as a string', { questions: routingQuestions(), state: 'x' as unknown as Record<string, string> }, '"state" is a string'],
+    ['state as an array', { questions: routingQuestions(), state: ['x'] as unknown as Record<string, string> }, '"state" is an array'],
+    ['state as null', { questions: routingQuestions(), state: null as unknown as Record<string, string> }, '"state" is null'],
+    [
+      'a state value that is not a string',
+      { questions: routingQuestions(), state: { count: 3 as unknown as string } },
+      'state field "count" is number',
+    ],
+    [
+      'a state value that is null',
+      { questions: routingQuestions(), state: { a: null as unknown as string } },
+      'state field "a" is null',
+    ],
+    ['context as a string', { questions: routingQuestions(), task: 't', context: 'x' as unknown as Record<string, string> }, '"context" is a string'],
+    [
+      'a context value that is not a string',
+      { questions: routingQuestions(), task: 't', context: { n: 1 as unknown as string } },
+      'context field "n" is number',
+    ],
+    [
+      'too many options in total',
+      {
+        questions: Object.fromEntries(
+          Array.from({ length: 6 }, (_, i) => [
+            `q${i}`,
+            { type: 'choice', instructions: '?', criteria: Object.fromEntries(Array.from({ length: 100 }, (_, j) => [`o${j}`, 'x'])) },
+          ]),
+        ),
+        task: 't',
+      },
+      "over laya's limit of 512",
+    ],
   ];
 
   for (const [name, request, fragment] of badRequests) {
@@ -294,10 +396,14 @@ async function testRequestValidation(): Promise<void> {
     await withServer(countingHandler, async (baseUrl) => {
       let msg = '';
       try {
-        await createLayaDecisionProvider({ baseUrl }).decide(request);
+        await createLayaDecisionProvider({ baseUrl }).decide(request as never);
       } catch (e) {
         if (!(e instanceof DecisionInputError)) {
-          check(`refuses to send: ${name}`, false, `threw ${(e as Error).name}, wanted DecisionInputError`);
+          check(
+            `refuses to send: ${name}`,
+            false,
+            `threw ${(e as Error).constructor.name}: ${String((e as Error).message).slice(0, 120)}`,
+          );
           return;
         }
         msg = (e as Error).message;
@@ -462,26 +568,6 @@ async function testResponseValidation(): Promise<void> {
     });
   }
 
-  // the type of an answer must match the type that was asked
-  await withServer(
-    jsonHandler(
-      200,
-      goodBody(
-        goodAnswers({
-          // a score answer where a choice was asked
-          work_kind: { type: 'score', score: 1, legend: { '0': 'a', '1': 'b' }, probabilities: { '0': 0.5, '1': 0.5 }, answer_confidence: 0.5 },
-        }),
-      ),
-    ),
-    async (baseUrl) => {
-      await expectError(
-        'a score answer where a choice was asked is rejected',
-        () => createLayaDecisionProvider({ baseUrl }).decide(ROUTING),
-        DecisionSchemaError,
-      );
-    },
-  );
-
   // non-JSON, despite a 200
   await withServer(jsonHandler(200, 'not json at all'), async (baseUrl) => {
     await expectError(
@@ -490,6 +576,239 @@ async function testResponseValidation(): Promise<void> {
       DecisionSchemaError,
     );
   });
+
+  // ---- CRITICAL: a self-contradictory choice -------------------------------
+  // laya-serve can answer 200 with `choice: "a"` while its own distribution says
+  // `a: 0.01, b: 0.99`. Laya's `choice` is the argmax of `probabilities`, so such
+  // a payload claims "a" and simultaneously says "b, and not a". Accepting it
+  // would report the option the provider itself considers least likely.
+  const contradictory: Array<[string, Record<string, unknown>, string]> = [
+    [
+      'the reported case: choice a, but a=0.01 and b=0.99',
+      goodAnswers({
+        work_kind: {
+          type: 'choice',
+          choice: 'review',
+          probabilities: { implementation: 0.99, review: 0.01, research: 0, debugging: 0 },
+          answer_confidence: 0.99,
+        },
+      }),
+      'self-contradictory',
+    ],
+    [
+      'the chosen option is the strict minimum of the distribution',
+      goodAnswers({
+        work_kind: {
+          type: 'choice',
+          choice: 'research',
+          probabilities: { implementation: 0.5, review: 0.3, research: 0.05, debugging: 0.15 },
+          answer_confidence: 0.5,
+        },
+      }),
+      'self-contradictory',
+    ],
+    [
+      'a zero-probability option is reported as the choice',
+      goodAnswers({
+        work_kind: {
+          type: 'choice',
+          choice: 'debugging',
+          probabilities: { implementation: 0.4, review: 0.4, research: 0.2, debugging: 0 },
+          answer_confidence: 0.4,
+        },
+      }),
+      'self-contradictory',
+    ],
+    [
+      'the contradiction is by a hair (0.5000 vs 0.5001), which still counts',
+      goodAnswers({
+        work_kind: {
+          type: 'choice',
+          choice: 'review',
+          probabilities: { implementation: 0.5001, review: 0.5, research: 0, debugging: 0 },
+          answer_confidence: 0.5,
+        },
+      }),
+      'self-contradictory',
+    ],
+  ];
+  for (const [name, answers, fragment] of contradictory) {
+    await withServer(jsonHandler(200, goodBody(answers)), async (baseUrl) => {
+      let msg = '';
+      try {
+        await createLayaDecisionProvider({ baseUrl }).decide(ROUTING);
+      } catch (e) {
+        msg = (e as Error).message;
+      }
+      check(`rejects contradictory choice: ${name}`, msg.includes(fragment), msg.slice(0, 200) || 'no error thrown');
+    });
+  }
+
+  // The complement: a consistent answer, including an exact tie, must still pass.
+  const consistent: Array<[string, Record<string, unknown>, string]> = [
+    [
+      'the plain argmax case',
+      goodAnswers({
+        work_kind: {
+          type: 'choice',
+          choice: 'implementation',
+          probabilities: { implementation: 0.667, review: 0.158, research: 0.047, debugging: 0.129 },
+          answer_confidence: 0.667,
+        },
+      }),
+      'implementation',
+    ],
+    [
+      'an exact tie is a legitimate argmax for either side',
+      goodAnswers({
+        work_kind: {
+          type: 'choice',
+          choice: 'research',
+          probabilities: { implementation: 0.5, review: 0.5, research: 0.5, debugging: 0.5 },
+          answer_confidence: 0.5,
+        },
+      }),
+      'research',
+    ],
+    [
+      'a tie between only the top two, with a lower third option',
+      goodAnswers({
+        work_kind: {
+          type: 'choice',
+          choice: 'review',
+          probabilities: { implementation: 0.4, review: 0.4, research: 0.1, debugging: 0.1 },
+          answer_confidence: 0.4,
+        },
+      }),
+      'review',
+    ],
+  ];
+  for (const [name, answers, expectedChoice] of consistent) {
+    await withServer(jsonHandler(200, goodBody(answers)), async (baseUrl) => {
+      const r = await createLayaDecisionProvider({ baseUrl }).decide(ROUTING);
+      const got = r.answers[WORK_KIND_ID]?.type === 'choice' ? r.answers[WORK_KIND_ID].choice : null;
+      check(`accepts consistent choice: ${name}`, got === expectedChoice, `got ${got}, want ${expectedChoice}`);
+    });
+  }
+
+  // ---- response type mismatch --------------------------------------------
+  const typeMismatches: Array<[string, Record<string, unknown>]> = [
+    [
+      'a score answer where a choice was asked',
+      goodAnswers({
+        work_kind: {
+          type: 'score',
+          score: 1,
+          legend: { '0': 'a', '1': 'b' },
+          probabilities: { '0': 0.5, '1': 0.5 },
+          answer_confidence: 0.5,
+        },
+      }),
+    ],
+    [
+      'a choice answer where a score was asked',
+      goodAnswers({
+        complexity: {
+          type: 'choice',
+          choice: 'small',
+          probabilities: { trivial: 0.1, small: 0.9, moderate: 0, large: 0, 'very large': 0 },
+          answer_confidence: 0.9,
+        },
+      }),
+    ],
+    [
+      'a noul answer where a choice was asked',
+      goodAnswers({ work_kind: { type: 'noul', noul: 0.5, answer_confidence: 0.5 } }),
+    ],
+    [
+      'a choice answer where a noul was asked',
+      goodAnswers({
+        review_required: { type: 'choice', choice: 'yes', probabilities: { yes: 0.9, no: 0.1 }, answer_confidence: 0.9 },
+      }),
+    ],
+    [
+      'an answer with no type at all',
+      goodAnswers({
+        work_kind: { choice: 'implementation', probabilities: { implementation: 0.9, review: 0.05, research: 0.02, debugging: 0.03 }, answer_confidence: 0.9 },
+      }),
+    ],
+  ];
+  for (const [name, answers] of typeMismatches) {
+    await withServer(jsonHandler(200, goodBody(answers)), async (baseUrl) => {
+      let msg = '';
+      try {
+        await createLayaDecisionProvider({ baseUrl }).decide(ROUTING);
+      } catch (e) {
+        msg = (e as Error).message;
+      }
+      check(`rejects type mismatch: ${name}`, msg.includes('but a '), msg.slice(0, 200) || 'no error thrown');
+    });
+  }
+
+  // ---- invalid probability values ----------------------------------------
+  const badProbabilities: Array<[string, unknown, string]> = [
+    ['null', null, 'expected a probability'],
+    ['a numeric string', '0.5', 'expected a probability'],
+    ['NaN', NaN, 'expected a probability'],
+    ['Infinity', Infinity, 'expected a probability'],
+    ['a negative value', -0.1, 'expected a probability'],
+    ['above 1', 1.0001, 'expected a probability'],
+    ['true', true, 'expected a probability'],
+    ['an object', {}, 'expected a probability'],
+    ['null', null, 'expected a probability'],
+  ];
+  for (const [name, value] of badProbabilities) {
+    await withServer(
+      jsonHandler(
+        200,
+        goodBody(
+          goodAnswers({
+            work_kind: {
+              type: 'choice',
+              choice: 'implementation',
+              probabilities: { implementation: value, review: 0, research: 0, debugging: 0 },
+              answer_confidence: 0.9,
+            },
+          }),
+        ),
+      ),
+      async (baseUrl) => {
+        let msg = '';
+        try {
+          await createLayaDecisionProvider({ baseUrl }).decide(ROUTING);
+        } catch (e) {
+          msg = (e as Error).message;
+        }
+        check(`rejects probability value: ${name}`, msg.includes('expected a probability'), msg.slice(0, 200) || 'no error thrown');
+      },
+    );
+  }
+  // A distribution that is not an object at all.
+  for (const [name, value] of [
+    ['an array', [1, 2, 3]],
+    ['a string', 'nope'],
+    ['null', null],
+  ] as Array<[string, unknown]>) {
+    await withServer(
+      jsonHandler(
+        200,
+        goodBody(
+          goodAnswers({
+            work_kind: { type: 'choice', choice: 'implementation', probabilities: value, answer_confidence: 0.9 },
+          }),
+        ),
+      ),
+      async (baseUrl) => {
+        let msg = '';
+        try {
+          await createLayaDecisionProvider({ baseUrl }).decide(ROUTING);
+        } catch (e) {
+          msg = (e as Error).message;
+        }
+        check(`rejects probabilities that is ${name}`, msg.includes('missing a "probabilities" distribution'), msg.slice(0, 200) || 'no error thrown');
+      },
+    );
+  }
 }
 
 // ---- transport and liveness ----------------------------------------------
@@ -570,6 +889,149 @@ async function testTransport(): Promise<void> {
     const probe = await createLayaDecisionProvider({ baseUrl: 'http://127.0.0.1:1' }).probe();
     check('probe reports unreachable without throwing', probe.ok === false, probe.detail);
   }
+
+  // ---- probe must never leak a parse failure ------------------------------
+  // A SyntaxError escaping probe() would turn "is the service ready?" into a
+  // crash in whatever code asked.
+  const badHealth: Array<[string, unknown, string]> = [
+    ['health body is not JSON', 'not json at all', 'not valid JSON'],
+    ['health body is an array', [1, 2, 3], 'expected an object'],
+    ['health body is a bare string', 'ok', 'expected an object'],
+    ['health body is null', null, 'expected an object'],
+    ['health payload has no status', { loaded: ['english'], device: 'cuda' }, 'no string "status"'],
+    ['health status is a number', { status: 200 }, 'no string "status"'],
+    ['health loaded is a string, not an array', { status: 'ok', loaded: 'english' }, 'expected an array of strings'],
+    ['health loaded holds non-strings', { status: 'ok', loaded: ['english', 7] }, 'expected an array of strings'],
+    ['health device is a number', { status: 'ok', device: 3 }, '"device" is number'],
+    ['health cpu_fallbacks is an array', { status: 'ok', cpu_fallbacks: [] }, '"cpu_fallbacks" is an array'],
+    ['health cpu_fallbacks entry has no count', { status: 'ok', cpu_fallbacks: { english: {} } }, 'expected { count: number'],
+    ['health cpu_fallbacks count is a string', { status: 'ok', cpu_fallbacks: { english: { count: '2' } } }, 'expected { count: number'],
+  ];
+  for (const [name, body, fragment] of badHealth) {
+    await withServer(
+      (req, res) => {
+        if (req.url !== '/health') {
+          res.writeHead(404).end();
+          return;
+        }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        // A bare, unquoted body stands in for a server that returns non-JSON.
+        res.end(typeof body === 'string' && body === 'not json at all' ? body : JSON.stringify(body));
+      },
+      async (baseUrl) => {
+        const probe = await createLayaDecisionProvider({ baseUrl }).probe();
+        check(`probe survives ${name}`, probe.ok === false, probe.detail);
+        check(`probe explains ${name}`, probe.detail.includes(fragment), probe.detail);
+      },
+    );
+  }
+
+  // A well-formed but not-"ok" payload is a legitimate negative result, not a
+  // structural failure, and is reported as such.
+  await withServer(jsonHandler(200, { status: 'starting', loaded: [], device: 'cpu' }), async (baseUrl) => {
+    const probe = await createLayaDecisionProvider({ baseUrl }).probe();
+    check('a valid status=starting payload is reported as not ok', probe.ok === false, probe.detail);
+    check('a valid payload still yields warnings', probe.warnings.length > 0, probe.warnings.join(' | '));
+  });
+
+  // ---- baseUrl boundary ---------------------------------------------------
+  // The project is local-only and makes no provider API calls, and a decision
+  // request carries the task text, so a remote endpoint must be a deliberate
+  // opt-in rather than something a config slip can reach.
+  for (const bad of ['http://10.0.0.5:8077', 'https://laya.example.com', 'http://192.168.1.20:8077']) {
+    let msg = '';
+    try {
+      createLayaDecisionProvider({ baseUrl: bad });
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    check(`non-loopback baseUrl is refused: ${bad}`, msg.includes('is not loopback'), msg.slice(0, 160) || 'no error thrown');
+  }
+  for (const bad of ['not a url', '/relative/path', 'ftp://127.0.0.1:8077', '']) {
+    let msg = '';
+    try {
+      createLayaDecisionProvider({ baseUrl: bad });
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    check(`malformed baseUrl is refused: ${JSON.stringify(bad)}`, msg.length > 0, msg.slice(0, 160) || 'no error thrown');
+  }
+  for (const good of ['http://127.0.0.1:8077', 'http://127.0.0.1:9/', 'http://localhost:8077', 'http://[::1]:8077']) {
+    let threw = false;
+    let msg = '';
+    try {
+      createLayaDecisionProvider({ baseUrl: good });
+    } catch (e) {
+      threw = true;
+      msg = (e as Error).message;
+    }
+    check(`loopback baseUrl is accepted: ${good}`, !threw, msg);
+  }
+  {
+    let threw = false;
+    let msg = '';
+    try {
+      createLayaDecisionProvider({ baseUrl: 'https://laya.example.com', allowRemote: true });
+    } catch (e) {
+      threw = true;
+      msg = (e as Error).message;
+    }
+    check('allowRemote: true opts in to a remote endpoint', !threw, msg);
+  }
+
+  // ---- Decision Layer error normalization --------------------------------
+  // Every failure this layer produces is a DecisionError with a stable code, and
+  // nothing leaks a bare TypeError. This is what lets a caller catch one type.
+  {
+    const provider = createLayaDecisionProvider({ baseUrl: 'http://127.0.0.1:1' });
+    const cases: Array<[string, () => Promise<unknown>, string]> = [
+      ['unavailable', () => provider.decide(ROUTING), 'DECISION_UNAVAILABLE'],
+      ['bad request', () => provider.decide(null as never), 'DECISION_INPUT'],
+    ];
+    for (const [name, fn, code] of cases) {
+      let caught: unknown = null;
+      try {
+        await fn();
+      } catch (e) {
+        caught = e;
+      }
+      check(`${name} is a DecisionError`, isDecisionError(caught), String(caught));
+      check(`${name} carries code ${code}`, (caught as DecisionError)?.code === code, String((caught as DecisionError)?.code));
+      check(`${name} has a non-empty name`, typeof (caught as Error)?.name === 'string' && (caught as Error).name.length > 0);
+      check(`${name} has an actionable message`, ((caught as Error)?.message.length ?? 0) > 40, String((caught as Error)?.message).slice(0, 80));
+      check(`${name} is not a bare TypeError`, !(caught instanceof TypeError), String(caught));
+    }
+  }
+
+  // routing projection failures use the same hierarchy
+  for (const bad of [
+    { answers: {}, provider: { name: 'x', model: 'm', elapsedMs: 1, details: {} }, raw: {} },
+    {
+      answers: { [WORK_KIND_ID]: { type: 'noul', noul: toProbability(0.5)!, probabilities: {}, confidence: toProbability(0.5)! } },
+      provider: { name: 'x', model: 'm', elapsedMs: 1, details: {} },
+      raw: {},
+    },
+  ]) {
+    let caught: unknown = null;
+    try {
+      toTaskClassification(bad as never);
+    } catch (e) {
+      caught = e;
+    }
+    check('a routing projection failure is a DecisionError', isDecisionError(caught), String(caught));
+    check('a routing projection failure is not a bare Error', !(caught instanceof TypeError) && caught !== null, String(caught));
+  }
+
+  // layaMetadata refuses a response that did not come from Laya
+  {
+    let caught: unknown = null;
+    try {
+      layaMetadata({ provider: { name: 'other', model: 'm', elapsedMs: 1, details: {} } });
+    } catch (e) {
+      caught = e;
+    }
+    check('layaMetadata rejects a foreign provider', isDecisionError(caught), String(caught));
+  }
 }
 
 // ---- the routing preset on top -------------------------------------------
@@ -620,7 +1082,8 @@ async function testRoutingPreset(): Promise<void> {
   // classification carries provider metadata for debugging
   await withServer(jsonHandler(200, goodBody()), async (baseUrl) => {
     const c = await classifyTask(createLayaDecisionProvider({ baseUrl }), { task: 't' });
-    eq('classification carries the checkpoint', c.provider.checkpoint, 'english');
+    const m = layaMetadata(c);
+    eq('classification carries the checkpoint', m.checkpoint, 'english');
     check('classification carries elapsed time', c.provider.elapsedMs >= 0);
     check('classification carries the raw envelope', (c.raw as Record<string, unknown>).model === 'laya-rl-agent');
   });
@@ -645,7 +1108,7 @@ async function testRoutingPreset(): Promise<void> {
   // toTaskClassification re-checks rather than casting
   const base = {
     answers: {},
-    provider: { name: 'x', model: 'm', checkpoint: 'c', reason: 'r', script: null, language: null, elapsedMs: 1 },
+    provider: { name: 'x', model: 'm', elapsedMs: 1, details: {} },
     raw: {},
   };
   const choiceAnswer = (choice: string) => ({
@@ -766,9 +1229,10 @@ async function testChineseInput(): Promise<void> {
       const p = createLayaDecisionProvider({ baseUrl });
       const r = await p.decide({ questions: routingQuestions(), task });
       eq('a Chinese task is answered', r.answers[WORK_KIND_ID]?.type === 'choice' ? r.answers[WORK_KIND_ID].choice : null, 'implementation');
-      eq('the multilingual checkpoint is recorded', r.provider.checkpoint, 'multilingual');
-      eq('the han script is recorded', r.provider.script, 'han');
-      check('the routing reason explains the checkpoint choice', r.provider.reason.includes('non-Latin'), r.provider.reason);
+      const zhMeta = layaMetadata(r);
+      eq('the multilingual checkpoint is recorded', zhMeta.checkpoint, 'multilingual');
+      eq('the han script is recorded', zhMeta.script, 'han');
+      check('the routing reason explains the checkpoint choice', zhMeta.reason.includes('non-Latin'), zhMeta.reason);
 
       const c = toTaskClassification(r);
       eq('classification agrees with the answer', c.work_kind, 'implementation');

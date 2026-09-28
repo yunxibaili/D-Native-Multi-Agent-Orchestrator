@@ -25,18 +25,34 @@ Three small types carry the whole interface (`src/decision/types.ts`):
 | `DecisionResponse` | the validated `answers` (`choice` / `score`+`level` / `noul`, each with a `probabilities` map and a `confidence`), the `provider` metadata, and the `raw` envelope |
 | `DecisionProvider` | `name`, `probe()`, `decide()` — the seam |
 
+`ProviderMetadata` carries only what every provider has: `name`, `model`,
+`elapsedMs`, and an opaque `details` map. Laya's own vocabulary (`checkpoint`,
+`reason`, `script`, `language`, `revisions`, token usage) is **not** in the
+generic interface — it lives in `LayaMetadata` in `src/decision/laya.ts`, read
+with `layaMetadata(response)`. No metadata framework is involved; it is one
+function and one interface.
+
 The one design rule: **the caller declares the answer space, and the provider
 validates that the answer landed inside it.** A provider cannot invent an answer
 the request did not offer, which is what makes the result safe to branch on.
 
 `DecisionProvider` has no `fallback` field and no `tryDecide` on purpose.
 
+### Not coupled to `src/core/`
+
+`DecisionError` is the layer's own base class, not a subclass of
+`OrchestratorError`. The Decision Layer sits in front of the agent runtime and
+must stay readable, testable and reusable without it; sharing one field
+(`code`) is not worth a dependency from decision/ into the kernel. The shape is
+identical — `name`, `code`, optional `cause` — so the project-wide error
+discipline still holds, and `isDecisionError(value)` narrows for callers.
+
 ### Files
 
 | File | Role |
 |---|---|
 | `src/decision/types.ts` | the minimal interface: `DecisionQuestion`, `DecisionRequest`, `DecisionResponse`, `DecisionProvider` |
-| `src/decision/errors.ts` | unavailable / timeout / transport / schema / input, all `OrchestratorError`s |
+| `src/decision/errors.ts` | unavailable / timeout / transport / schema / input. Self-contained base class; no dependency on `src/core/` |
 | `src/decision/laya.ts` | the Laya implementation. Validates the request, posts, validates the response |
 | `src/decision/routing.ts` | the measured task-classification preset (work kind / complexity / review) on top of the generic layer |
 | `src/decision/check.ts` | a standalone dev entry point. Not the orchestrator |
@@ -54,9 +70,25 @@ node src/decision/check.ts "refactor the event hub and update the tests"
 node src/decision/check.ts --provider http://127.0.0.1:8077 "任意任务文本"
 ```
 
+### Endpoint boundary: local-only
+
+`createLayaDecisionProvider` enforces a **loopback-only** `baseUrl`
+(`127.0.0.0/8`, `::1`, `localhost`). This is not a new restriction invented here
+— it is the project's existing stated contract, now enforced:
+
+- `package.json`: *"Local multi-agent orchestrator … No provider API calls."*
+- the provider header: *"It talks to a local HTTP endpoint."*
+- a decision request carries **the task text itself**, so a non-loopback
+  `baseUrl` would POST task content to another machine.
+
+A remote endpoint requires an explicit `allowRemote: true` (or
+`--allow-remote` on the check script), so the opt-in is visible rather than
+something a config slip can trip over. A malformed or non-http(s) `baseUrl` is
+refused with a `DecisionInputError` at construction.
+
 ```powershell
 npm run typecheck       # clean
-npm test                # 90 unit + 242 contract + 131 decision, no agents needed
+npm test                # 90 unit + 242 contract + 270 decision, no agents needed
 npm run test:decision   # the Decision Layer contract only, fully hermetic
 node tests/live-decision-check.ts   # opt-in; needs laya-serve running
 ```
@@ -148,7 +180,7 @@ fast enough to sit in front of every run.
 1. **The criteria set is the decision space.** The identical English bug report
    scored against a 2-option choice (`implementation`/`review`) came back `review`
    at 0.628; against the 4-option set below it came back `debugging` at 0.555.
-   The questions are therefore **pinned in `src/decision/laya.ts`**, not left to a
+   The questions are therefore **pinned in `src/decision/routing.ts`**, not left to a
    caller to vary per request.
 2. **Language changes the verdict.** The same refactor task is `review=yes` in
    English (noul 0.678) and `review=no` in Chinese (noul 0.004). The
@@ -195,9 +227,19 @@ a dependency of the agent runtime, and so the provider stays replaceable.
 - zero questions, or nothing to read (`task` / `state` / `context` all empty)
 - a choice with no choices, or with **exactly one** choice
 - a score with fewer than two levels
+- an empty choice description or key, an empty score level
 - malformed `criteria` (array where an object belongs, or vice versa)
+- **`noul` carrying `criteria`** — laya-serve rejects this with 422, so it is
+  refused locally rather than spending a round trip to learn it
 - empty `instructions`, an unknown question type, a non-string `task`/context value
-- state over Laya's 50 000 chars
+- `state` that is not a plain object, or a state/context value that is not a string
+- more than 100 choices in one question, or 512 options in total
+- state over Laya's 50 000 chars, or a body over 2 097 152 bytes
+
+`validateRequest` takes `unknown` and is the layer's runtime type guard: a
+`null` request, a string request, a missing/null/string `questions`, a `null`
+question, a non-string `state` value — all become a `DecisionInputError` with a
+usable message. None of them produces a `TypeError`.
 
 The one-option case is the important one: laya-serve returns that option with
 HTTP 200, forever, for every input. Accepting it would report a confident,
@@ -205,23 +247,44 @@ constant "decision" carrying no information.
 
 **After receiving** (`DecisionSchemaError` — despite a 2xx):
 - missing/empty `answers`, a missing `model`, a non-object body
-- a question that was asked but not answered, or answered with the wrong type
+- a question that was asked but not answered
+- **an answer whose own `type` is not the kind that was asked for**
 - a `choice` outside the offered choices, or a `probabilities` map that does not
   cover the offered space
+- **a self-contradictory choice: the reported `choice` is not a maximum of the
+  provider's own `probabilities`**
 - a `score` whose `legend` does not match the offered levels
-- any confidence/probability outside [0, 1], or non-finite
+- any confidence/probability outside [0, 1], non-finite, or of the wrong type
+
+### Why the contradiction check is a plain argmax test
+
+Laya builds `choice` as the **argmax** of `probabilities` and `answer_confidence`
+as that maximum. So the only consistency rule needed is "the chosen option's
+probability must be `>=` every other option's". That rejects
+`choice: "review"` with `review: 0.01, implementation: 0.99` — the exact payload
+in the review finding — while accepting a genuine tie, where either option is a
+legitimate argmax.
+
+No entropy, margin or threshold statistic is introduced. None is needed to catch
+a contradiction, and any such threshold would risk rejecting a real answer.
 
 **Transport** is split so the two operator problems stay separate:
 `DecisionUnavailableError` (cannot reach the service), `DecisionTimeoutError`
 (too slow), `DecisionTransportError` (non-2xx, carrying laya's own `detail`).
 
 Every answer keeps its `probabilities` distribution, and every response keeps the
-`provider` metadata (checkpoint, routing reason, detected script, elapsed ms) plus
-the `raw` envelope, so a wrong classification can be diagnosed without re-running
-the model.
+provider metadata plus the `raw` envelope, so a wrong classification can be
+diagnosed without re-running the model.
+
+`probe()` never throws. An unreachable service, a non-2xx, malformed JSON, and a
+structurally invalid payload (no `status`, `loaded` that is not an array of
+strings, a `cpu_fallbacks` entry without a numeric `count`) all come back as
+`{ ok: false, detail }`. A `SyntaxError` escaping to the caller would turn an
+"is the service ready?" question into a crash in whatever asked it.
 
 `review_required` in the routing preset is derived from `noul > 0.5`, with the raw
-value retained so a caller can pick its own threshold.
+value retained so a caller can pick its own threshold. Projection failures throw
+`DecisionSchemaError`, not a bare `Error`.
 
 ### One measured gotcha, worth not re-discovering
 
@@ -234,7 +297,7 @@ suite pins this so it cannot regress.
 
 ```
 npm run typecheck            # clean
-npm test                     # 90 unit + 242 contract + 131 decision, 0 failed
+npm test                     # 90 unit + 242 contract + 270 decision, 0 failed
 npm run test:decision        # the Decision Layer contract only
 node tests/live-decision-check.ts   # opt-in, against a real laya-serve
 ```

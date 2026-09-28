@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Live end-to-end check against a REAL local laya-serve on 127.0.0.1:8077.
  *
  * Not part of `npm test`: this one needs the Python side running. Start it with
@@ -11,7 +11,7 @@
  */
 
 import { DecisionError } from '../src/decision/errors.ts';
-import { createLayaDecisionProvider } from '../src/decision/laya.ts';
+import { createLayaDecisionProvider, layaMetadata } from '../src/decision/laya.ts';
 import { classifyTask, WORK_KINDS } from '../src/decision/routing.ts';
 import { toProbability, type DecisionRequest } from '../src/decision/types.ts';
 
@@ -43,12 +43,13 @@ try {
   const r = await provider.decide(custom);
   const lang = r.answers.language_of_task;
   const urg = r.answers.urgency;
+  const meta = layaMetadata(r);
   process.stdout.write(
     `\ngeneric layer\n` +
       `  language_of_task  ${lang?.type === 'choice' ? `${lang.choice} (conf ${lang.confidence.toFixed(3)})` : 'n/a'}\n` +
       `  urgency           ${urg?.type === 'score' ? `${urg.level} (score ${urg.score.toFixed(2)})` : 'n/a'}\n` +
-      `  answered by       ${r.provider.checkpoint} / ${r.provider.model} in ${r.provider.elapsedMs} ms\n` +
-      `  reason            ${r.provider.reason}\n`,
+      `  answered by       ${meta.checkpoint} / ${r.provider.model} in ${r.provider.elapsedMs} ms\n` +
+      `  reason            ${meta.reason}\n`,
   );
 } catch (e) {
   process.stdout.write(`\ngeneric layer FAILED -> ${(e as Error).name}: ${(e as Error).message}\n`);
@@ -77,6 +78,7 @@ process.stdout.write('\nrouting preset\n');
 for (const c of CASES) {
   try {
     const d = await classifyTask(provider, { task: c.task });
+    const meta = layaMetadata(d);
     // Probabilities are narrowed defensively, mirroring what a caller must do.
     const dist = WORK_KINDS.map((k) => {
       const p = toProbability(d.work_kind_probabilities[k]);
@@ -86,7 +88,7 @@ for (const c of CASES) {
       `  ${c.label.padEnd(16)} ${d.work_kind.padEnd(15)} conf=${d.work_kind_confidence.toFixed(3)}  ` +
         `complexity=${d.complexity} (${d.complexity_score.toFixed(2)})  ` +
         `review=${d.review_required ? 'yes' : 'no'} (noul ${d.review_noul.toFixed(3)})\n` +
-        `${''.padEnd(18)} ${d.provider.checkpoint} ${d.provider.elapsedMs}ms  ${dist}\n`,
+        `${''.padEnd(18)} ${meta.checkpoint} ${d.provider.elapsedMs}ms  ${dist}\n`,
     );
   } catch (e) {
     const name = e instanceof DecisionError ? `${e.name} [${e.code}]` : (e as Error).name;
