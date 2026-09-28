@@ -222,13 +222,17 @@ async function cmdRun(
 
   const handle = orch.run(req);
 
-  if (asJson) {
-    void (async () => {
-      for await (const ev of handle.events()) {
-        process.stdout.write(JSON.stringify(ev) + '\n');
-      }
-    })();
-  }
+  // Drain by SUBSCRIPTION COMPLETION, not by sleeping. The event hub is closed
+  // when the outcome is frozen, so the loop ends exactly when the last event
+  // has been delivered. The previous fixed 50ms sleep raced the process and
+  // could truncate the stream.
+  const drained: Promise<void> = asJson
+    ? (async () => {
+        for await (const ev of handle.events()) {
+          process.stdout.write(JSON.stringify(ev) + '\n');
+        }
+      })()
+    : Promise.resolve();
 
   let result: RunResult;
   try {
@@ -238,9 +242,10 @@ async function cmdRun(
     return 1;
   }
 
-  // Let the event consumer drain before we print the human summary.
   if (asJson) {
-    await new Promise((r) => setTimeout(r, 50));
+    // Awaiting the consumer, not a timer, is the guarantee that every event
+    // reached stdout before we exit.
+    await drained;
   }
 
   if (!quiet && !asJson) {
@@ -295,16 +300,22 @@ async function cmdDoctor(orch: Orchestrator): Promise<number> {
   w();
   for (const a of report.agents) {
     w(`  [${a.ok ? 'ok' : 'FAIL'}] ${a.id} (${a.displayName})`);
-    w(`        binary   ${a.executable}`);
+    w(`        launcher ${a.launcher}`);
     w(`        version  ${a.version ?? 'unknown'}`);
     w(`        detail   ${a.detail}`);
     if (a.warnings.length) for (const x of a.warnings) w(`        warn     ${x}`);
     w(`        auth     ${a.credentialsHint ?? '(agent-managed)'}`);
+    w(`        transport ${a.transport}`);
     const caps = Object.entries(a.capabilities)
       .filter(([, v]) => v)
       .map(([k]) => k)
       .join(', ');
     w(`        can      ${caps}`);
+    const cannot = Object.entries(a.capabilities)
+      .filter(([, v]) => !v)
+      .map(([k]) => k)
+      .join(', ');
+    if (cannot) w(`        rejects  ${cannot}`);
     w();
   }
   return report.agents.every((a) => a.ok) ? 0 : 1;

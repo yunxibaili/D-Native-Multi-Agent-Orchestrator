@@ -1,10 +1,12 @@
 /**
  * core/errors.ts — errors an operator can act on.
  *
- * Every message here is written to be pasted into a search box. Silent
- * fallbacks are deliberately NOT modelled: the orchestrator fails fast
- * (see REUSE_ANALYSIS §4).
+ * Every message is written to be pasted into a search box. Silent fallbacks are
+ * deliberately NOT modelled anywhere: the orchestrator and the adapters fail
+ * fast rather than degrading a task into something the caller did not ask for.
  */
+
+import type { ErrorCode } from './types.ts';
 
 export class OrchestratorError extends Error {
   readonly code: string;
@@ -30,13 +32,73 @@ export class AdapterNotFoundError extends OrchestratorError {
   }
 }
 
+/**
+ * Thrown when a request carries an option the agent cannot honour. This is the
+ * mechanism that guarantees nothing is silently dropped: an adapter declares
+ * a capability as false and then REFUSES the option rather than ignoring it.
+ */
+export class UnsupportedOptionError extends OrchestratorError {
+  readonly option: string;
+  readonly agentId: string;
+
+  constructor(agentId: string, option: string, hint: string) {
+    super(
+      'UNSUPPORTED_OPTION',
+      `Agent "${agentId}" does not support ${option}. ${hint}`,
+    );
+    this.agentId = agentId;
+    this.option = option;
+  }
+}
+
 export class CapabilityError extends OrchestratorError {
+  readonly capability: string;
+
   constructor(agentId: string, capability: string) {
     super(
       'CAPABILITY_UNSUPPORTED',
       `Agent "${agentId}" does not support "${capability}". ` +
         `Run "orchestrator doctor" to see each agent's capability matrix.`,
     );
+    this.capability = capability;
+  }
+}
+
+export class ThreadNotFoundError extends OrchestratorError {
+  constructor(threadId: string) {
+    super(
+      'THREAD_NOT_FOUND',
+      `No stored thread "${threadId}". List known threads with "orchestrator threads", ` +
+        `or drop --thread to start a new conversation.`,
+    );
+  }
+}
+
+/**
+ * Resume ownership violation. A thread id is not a global key: it is only
+ * meaningful together with the agent and directory that created it.
+ */
+export class ThreadOwnershipError extends OrchestratorError {
+  constructor(
+    threadId: string,
+    field: 'agentId' | 'cwd',
+    expected: string,
+    actual: string,
+  ) {
+    super(
+      'THREAD_OWNERSHIP',
+      `Thread "${threadId}" was created with ${field}=${JSON.stringify(expected)}, ` +
+        `but this run has ${field}=${JSON.stringify(actual)}. ` +
+        `Resuming across ${field} is refused because the agent's own session ` +
+        `state and file context belong to the original run. ` +
+        `Pass an explicit override if you really mean it, or start a new thread.`,
+    );
+  }
+}
+
+export class LauncherResolutionError extends OrchestratorError {
+  constructor(detail: string) {
+    super('LAUNCHER_UNSUPPORTED', detail);
   }
 }
 
@@ -50,30 +112,13 @@ export class NotInstalledError extends OrchestratorError {
   }
 }
 
-export class TimeoutError extends OrchestratorError {
-  readonly taskId: string;
-
-  constructor(taskId: string, ms: number) {
-    super(
-      'TASK_TIMEOUT',
-      `Task ${taskId} exceeded ${ms}ms. The process is still running — ` +
-        `call wait() again or cancel().`,
-    );
-    this.taskId = taskId;
-  }
-}
-
-export class CancelledError extends OrchestratorError {
-  readonly taskId: string;
-
-  constructor(taskId: string, reason: string) {
-    super('TASK_CANCELLED', `Task ${taskId} was cancelled: ${reason}`);
-    this.taskId = taskId;
-  }
-}
-
 export class BadConfigError extends OrchestratorError {
   constructor(detail: string) {
     super('BAD_CONFIG', `Invalid orchestrator config: ${detail}`);
   }
+}
+
+/** Wraps a transport-level failure as a RunErrorInfo. */
+export function transportError(message: string): { code: ErrorCode; message: string; retryable: boolean } {
+  return { code: 'TRANSPORT_ERROR', message, retryable: true };
 }

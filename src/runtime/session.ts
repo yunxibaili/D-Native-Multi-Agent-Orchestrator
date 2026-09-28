@@ -1,45 +1,90 @@
 /**
- * runtime/session.ts — one task = one subprocess execution, streamed.
+ * runtime/session.ts --one task = one execution.
  *
- * This is the model-free kernel from native-agent-router: it owns task state,
- * process lifecycle, event plumbing and persistence, and makes NO decisions
- * about which agent to use or what the task means.
+ * The model-free kernel. It owns task state, event fan-out, memory bounds and
+ * persistence, and makes NO decisions about which agent to use.
  *
- * The single most important rule, learned from a live Codex run:
- *   >>> EXIT CODE IS THE GROUND TRUTH FOR SUCCESS. <<<
- * Codex emits `item.completed` with `item.type === "error"` for things that
- * are merely config warnings ("unrecognized configuration setting",
- * "malformed agent role definition") and still exits 0. A successful run on
- * this machine emits four such events. Treating them as failures would break
- * every run. Native terminal signals are recorded, but they never override a
- * zero exit.
+ * OUTCOME STATE MACHINE (hardened this round)
+ *
+ *   running ──┬─ exit 0                    -> succeeded
+ *             ├─ non-zero / spawn failure  -> failed
+ *             ├─ cancel()                  -> cancelled
+ *             └─ deadline exceeded         -> timed_out
+ *
+ * Invariants, each of which was a review finding:
+ *
+ *  I1. A terminal outcome is computed EXACTLY ONCE and frozen. Later signals
+ *      (a late stderr line, a transport callback) can never rewrite it.
+ *  I2. `result()` is idempotent and concurrency-safe: every call returns the
+ *      SAME frozen object. It never constructs a state, so it cannot fabricate
+ *      `succeeded` for a task that failed.
+ *  I3. A deadline produces `timed_out`, never `cancelled`. They are different
+ *      user intents and downstream policy treats them differently.
+ *  I4. Every non-succeeded outcome carries a `RunErrorInfo`.
+ *  I5. After the outcome is frozen, in-memory buffers are released. Files on
+ *      disk are untouched.
  */
 
 import { randomUUID } from 'node:crypto';
+import { EventHub } from '../core/event-hub.ts';
+import { TailBuffer } from '../core/buffer.ts';
+import * as E from '../core/event.ts';
+import type { RuntimeEvent } from '../core/event.ts';
+import { log } from '../core/log.ts';
 import type {
   AgentAdapter,
+  EventSubscription,
   MapContext,
   NativeSink,
   RunHandle,
   RunRequest,
   RunResult,
+  SubscribeOptions,
   TaskState,
-  TerminalSignal,
+  TerminalState,
   ToolCall,
+  Transport,
+  TransportExit,
+  TransportFrame,
   Usage,
 } from '../core/types.ts';
 import { isTerminal } from '../core/types.ts';
-import * as E from '../core/event.ts';
-import type { RuntimeEvent } from '../core/event.ts';
-import { TimeoutError } from '../core/errors.ts';
-import { log } from '../core/log.ts';
-import { spawnProcess, type ProcessHandle } from './spawn.ts';
 import type { SessionStore, ThreadRecord, TranscriptWriter } from './store.ts';
 
-/** Keeps memory bounded; the transcript on disk keeps everything. */
-const OUTPUT_TAIL_LIMIT = 64 * 1024;
-const MAX_TOOL_CALLS_KEPT = 500;
-const DIAGNOSTIC_LIMIT = 200;
+export interface SessionLimits {
+  /** Byte ceiling for the in-memory assistant output tail. */
+  outputBytes?: number;
+  /** Byte ceiling for the in-memory stderr tail. */
+  stderrBytes?: number;
+  /** Per-subscriber event buffer. */
+  eventBuffer?: number;
+  /** Retained window for opt-in late-subscriber replay. */
+  recentEvents?: number;
+  /** Cap on retained tool calls. */
+  toolCalls?: number;
+  /** Cap on retained diagnostics. */
+  diagnostics?: number;
+  /** Write every raw native frame to disk. */
+  transcript?: boolean;
+  /** Invoked once, after the outcome is frozen and buffers are released. */
+  onSettled?: (session: AgentSession) => void;
+}
+
+const DEFAULTS: Required<Omit<SessionLimits, 'transcript' | 'onSettled'>> = {
+  outputBytes: 64 * 1024,
+  stderrBytes: 8 * 1024,
+  eventBuffer: 1024,
+  recentEvents: 256,
+  toolCalls: 500,
+  diagnostics: 200,
+};
+
+/**
+ * How long to let the frame pump drain after the process exits. Generous
+ * enough for a full buffer of slow subscribers, short enough that a transport
+ * which fails to close its own hub cannot strand the task.
+ */
+const PUMP_DRAIN_GRACE_MS = 500;
 
 export class AgentSession implements RunHandle, NativeSink {
   readonly taskId: string;
@@ -49,40 +94,63 @@ export class AgentSession implements RunHandle, NativeSink {
   private readonly store: SessionStore;
   private readonly req: RunRequest;
   private readonly startedAt = Date.now();
-  private readonly transcript: TranscriptWriter;
+  private readonly transcript: TranscriptWriter | null;
+  private readonly hub: EventHub<RuntimeEvent>;
+  private readonly limits: Required<Omit<SessionLimits, 'transcript' | 'onSettled'>>;
 
-  private proc: ProcessHandle | null = null;
+  private transport: Transport | null = null;
   private currentState: TaskState = 'running';
+
+  /**
+   * The frozen terminal result. Set exactly once by `finalize()`.
+   * This is the single source of truth for `result()`.
+   */
+  private frozen: RunResult | null = null;
+
+  private readonly output: TailBuffer;
+  private readonly stderrTail: TailBuffer;
+  private toolCallList: ToolCall[] = [];
+  private usageAccum: Usage = {};
+  private diagnosticsList: string[] = [];
+  private nativeSignals: string[] = [];
+
   private threadId: string | null = null;
-  private outputChunks: string[] = [];
-  private outputBytes = 0;
-  private toolCalls: ToolCall[] = [];
-  private usage: Usage = {};
-  private diagnostics: string[] = [];
-  private nativeTerminal: TerminalSignal | null = null;
-  private unparsedStdout: string[] = [];
-  private cancelReason: string | null = null;
-  private timeoutTimer: NodeJS.Timeout | null = null;
-  private failedTimer: NodeJS.Timeout | null = null;
-  private resolveResult: ((r: RunResult) => void) | null = null;
-  private readonly donePromise: Promise<RunResult>;
+  private localAbort: 'cancelled' | 'timed_out' | null = null;
+  private abortReason = '';
+  private deadlineTimer: NodeJS.Timeout | null = null;
+  private donePromise: Promise<RunResult>;
+  private resolveDone: ((r: RunResult) => void) | null = null;
+  private readonly onSettled: ((session: AgentSession) => void) | null;
 
-  /** Fan-out queue for the `events` async iterable. */
-  private queue: RuntimeEvent[] = [];
-  private waiter: (() => void) | null = null;
-  private closed = false;
-
-  constructor(adapter: AgentAdapter, store: SessionStore, req: RunRequest) {
+  constructor(
+    adapter: AgentAdapter,
+    store: SessionStore,
+    req: RunRequest,
+    transport: Transport,
+    limits: SessionLimits = {},
+  ) {
     this.adapter = adapter;
     this.store = store;
     this.req = req;
+    this.transport = transport;
+    this.limits = { ...DEFAULTS, ...limits };
     this.taskId = `tsk_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
     this.agentId = req.agentId;
-    this.transcript = store.openTranscript(this.taskId, req.transcriptDir);
+    this.transcript = limits.transcript === false ? null : store.openTranscript(this.taskId, req.transcriptDir);
+    this.output = new TailBuffer({ limitBytes: this.limits.outputBytes, keep: 'tail' });
+    this.stderrTail = new TailBuffer({ limitBytes: this.limits.stderrBytes, keep: 'tail' });
+    this.hub = new EventHub<RuntimeEvent>({
+      defaultBuffer: this.limits.eventBuffer,
+      recentCapacity: this.limits.recentEvents,
+      overflow: 'drop-oldest',
+    });
+    this.onSettled = limits.onSettled ?? null;
     this.donePromise = new Promise<RunResult>((res) => {
-      this.resolveResult = res;
+      this.resolveDone = res;
     });
   }
+
+  // ---- RunHandle --------------------------------------------------------
 
   state(): TaskState {
     return this.currentState;
@@ -92,235 +160,230 @@ export class AgentSession implements RunHandle, NativeSink {
     return this.threadId;
   }
 
-  /** Async iterable of unified events. Consumers may attach late. */
-  events(): AsyncIterable<RuntimeEvent> {
-    const self = this;
-    return {
-      async *[Symbol.asyncIterator]() {
-        for (;;) {
-          if (self.queue.length) {
-            yield self.queue.shift()!;
-            continue;
-          }
-          if (self.closed) return;
-          await new Promise<void>((r) => {
-            self.waiter = r;
-          });
-        }
-      },
-    };
-  }
-
-  /** Launch the process. Must be called before awaiting `result`. */
-  start(): this {
-    const invocation = this.adapter.buildInvocation(this.req);
-    const ctx = this.ctx();
-
-    log.info('dispatch', {
-      taskId: this.taskId,
-      agent: this.agentId,
-      command: invocation.command,
-      argCount: invocation.args.length,
-      cwd: this.req.cwd,
-      resume: this.req.threadId ?? null,
-    });
-
-    this.push(
-      E.started(ctx, { invocation: { command: invocation.command, args: invocation.args } }, {
-        command: invocation.command,
-        promptVia: invocation.promptVia,
-        resume: this.req.threadId ?? null,
-      }),
-    );
-
-    this.proc = spawnProcess({
-      command: invocation.command,
-      args: invocation.args,
-      cwd: this.req.cwd,
-      env: invocation.env,
-      stdin: invocation.promptVia === 'stdin' ? this.req.prompt : undefined,
-      onStdoutLine: (line) => this.onStdoutLine(line),
-      onStderrLine: (line) => this.onStderrLine(line),
-    });
-
-    if (this.req.timeoutMs && this.req.timeoutMs > 0) {
-      this.timeoutTimer = setTimeout(() => {
-        log.warn('task timeout reached', { taskId: this.taskId, ms: this.req.timeoutMs });
-        void this.cancel(`timeout after ${this.req.timeoutMs}ms`);
-      }, this.req.timeoutMs);
-    }
-
-    void this.proc.exited.then((info) => this.finalize(info));
-    return this;
+  /** Multi-subscriber, bounded, non-blocking for the producer. */
+  events(opts: SubscribeOptions = {}): EventSubscription {
+    return this.hub.subscribe(opts);
   }
 
   /**
-   * Resolves with the terminal result.
-   * A timeout here does NOT kill the process — call again, or cancel.
+   * I2: idempotent and stable. Once frozen, always the same object.
+   * A `timeoutMs` bounds THIS call only and never alters the outcome --it
+   * rejects with TimeoutError while the task keeps running.
    */
   result(timeoutMs?: number): Promise<RunResult> {
-    if (timeoutMs === undefined) return this.donePromise;
-
+    if (this.frozen) return Promise.resolve(this.frozen);
+    if (timeoutMs === undefined || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      return this.donePromise;
+    }
     return new Promise<RunResult>((res, rej) => {
-      if (this.isFinished) {
-        res(this.snapshot('succeeded'));
-        return;
-      }
-      this.failedTimer = setTimeout(() => rej(new TimeoutError(this.taskId, timeoutMs)), timeoutMs);
+      const timer = setTimeout(
+        () => rej(new Error(`result(${timeoutMs}) timed out; task ${this.taskId} is still running`)),
+        timeoutMs,
+      );
+      // Deliberately NOT unref'd: this timer is the mechanism by which
+      // result(timeoutMs) rejects. Unref'ing it means the rejection silently
+      // never happens when nothing else holds the event loop --the exact
+      // "timeout does not actually time out" failure.
       void this.donePromise.then(
         (r) => {
-          if (this.failedTimer) clearTimeout(this.failedTimer);
+          clearTimeout(timer);
           res(r);
         },
         (e) => {
-          if (this.failedTimer) clearTimeout(this.failedTimer);
+          clearTimeout(timer);
           rej(e);
         },
       );
     });
   }
 
+  /** I3: a user abort yields `cancelled`, a deadline yields `timed_out`. */
   async cancel(reason = 'requested'): Promise<void> {
-    if (isTerminal(this.currentState)) return;
-    this.cancelReason = reason;
-    this.proc?.cancel(reason);
+    if (this.frozen || this.currentState !== 'running') return;
+    this.localAbort = 'cancelled';
+    this.abortReason = reason;
+    try {
+      await this.transport?.cancel(reason);
+    } catch (e) {
+      log.warn('transport cancel failed', { taskId: this.taskId, error: (e as Error).message });
+    }
   }
 
-  // ---- internals -------------------------------------------------------
+  // ---- lifecycle --------------------------------------------------------
 
-  private get isFinished(): boolean {
-    return isTerminal(this.currentState);
+  start(): this {
+    if (!this.transport) throw new Error('session has no transport');
+    // Deferred by one microtask so a subscriber created in the same tick as the
+    // `run()` call — which is how every caller actually uses this — still
+    // receives `session.started`. Publishing it synchronously would put it in
+    // the hub's replay window only, so a live subscriber would never see the
+    // opening event of the stream it just asked for.
+    const started = E.started(
+      this.ctx(),
+      { invocation: { commandLine: this.transport.commandLine } },
+      { commandLine: this.transport.commandLine, resume: this.req.threadId ?? null },
+    );
+    queueMicrotask(() => this.publish(started));
+
+    // Subscription order matters and the exit wait must run concurrently.
+    //
+    // 1. `pump()` subscribes to the transport's frame hub SYNCHRONOUSLY, so no
+    //    frame can be missed.
+    // 2. `start()` launches the process.
+    // 3. `wait()` is called and awaited alongside the pump.
+    //
+    // Sequencing 3 after the pump instead would deadlock: the pump waits for a
+    // hub close that only `wait()` performs, so the agent would run to
+    // completion with nothing finalising it and every task would survive to its
+    // deadline. A hub still delivers already-buffered frames after closing, so
+    // awaiting the pump guarantees every frame was mapped before freezing.
+    const pumpPromise = this.pump();
+    this.transport.start();
+    const exitPromise = this.transport.wait();
+
+    const ms = this.req.timeoutMs;
+    if (ms !== undefined && Number.isFinite(ms) && ms > 0) {
+      this.deadlineTimer = setTimeout(() => {
+        void this.onDeadline();
+      }, ms);
+    }
+
+    void this.drive(exitPromise, pumpPromise);
+    return this;
   }
 
-  private ctx(): MapContext {
-    return {
-      taskId: this.taskId,
-      agentId: this.agentId,
-      threadId: this.threadId,
-      sink: this,
-    };
+  private async drive(
+    exitPromise: Promise<TransportExit>,
+    pumpPromise: Promise<void>,
+  ): Promise<void> {
+    let exit: TransportExit | null = null;
+    let error: unknown = null;
+    try {
+      exit = await exitPromise;
+    } catch (e) {
+      error = e;
+    }
+
+    // Let the pump finish mapping buffered frames, but do not wait forever: a
+    // transport that forgot to close its own hub must not strand the task.
+    //
+    // NOTE: do NOT close the session hub here. `finalize()` publishes the
+    // terminal event and then closes; closing early made `publish()` a no-op
+    // and silently dropped `session.completed`/`session.failed`, so a consumer
+    // saw the stream end on the last native event with no terminal signal.
+    await Promise.race([
+      pumpPromise.catch((e) => {
+        log.warn('frame pump error', { taskId: this.taskId, error: (e as Error).message });
+      }),
+      new Promise<void>((r) => {
+        const t = setTimeout(r, PUMP_DRAIN_GRACE_MS);
+        if (typeof t.unref === 'function') t.unref();
+      }),
+    ]);
+
+    this.finalize(exit, error);
   }
 
-  private onStdoutLine(line: string): void {
-    const raw = tryParse(line);
-    if (raw === undefined) {
-      // Agents occasionally print a banner or warning on stdout. Keep it —
-      // dropping it would violate the no-information-loss rule.
-      if (line.trim()) {
-        this.unparsedStdout.push(line);
-        if (this.unparsedStdout.length > DIAGNOSTIC_LIMIT) this.unparsedStdout.shift();
-        this.transcript.write({ _unparsedStdout: line });
-        this.push(E.diagnostic(this.ctx(), { _unparsedStdout: line }, line));
-      }
+  /** Pull transport frames, map them, publish to the hub. */
+  private async pump(): Promise<void> {
+    if (!this.transport) return;
+    const frames = this.transport.events({ buffer: this.limits.eventBuffer });
+    for await (const frame of frames) {
+      this.handleFrame(frame);
+    }
+  }
+
+  private handleFrame(frame: TransportFrame): void {
+    if (frame.channel === 'stderr') {
+      this.stderrTail.append(frame.text);
+      this.transcript?.write({ _stderr: frame.text });
+      this.noteDiagnostic(`stderr: ${frame.text}`);
+      this.publish(E.diagnostic(this.ctx(), { _stderr: frame.text }, frame.text));
       return;
     }
 
-    // Persist the untouched native event FIRST, so nothing is ever lost even
-    // if a mapping throws.
-    this.transcript.write(raw);
+    const parsed = tryParse(frame.text);
+    if (parsed === undefined) {
+      // A banner or warning on the event channel. Kept, never dropped.
+      this.transcript?.write({ _unparsed: frame.text });
+      this.noteDiagnostic(`unparsed: ${frame.text}`);
+      this.publish(E.diagnostic(this.ctx(), { _unparsed: frame.text }, frame.text));
+      return;
+    }
 
-    for (const ev of this.safeMap(raw)) this.push(ev);
+    // Persist the untouched native payload BEFORE mapping, so a mapping
+    // failure can never lose information.
+    this.transcript?.write(parsed);
+    let mapped: RuntimeEvent[];
+    try {
+      mapped = this.adapter.mapEvent({ channel: frame.channel, text: frame.text, data: parsed }, this.ctx());
+    } catch (e) {
+      mapped = [E.diagnostic(this.ctx(), parsed, `mapEvent failed: ${(e as Error).message}`)];
+    }
+    for (const ev of mapped) this.publish(ev);
   }
 
-  private safeMap(raw: unknown): RuntimeEvent[] {
+  private async onDeadline(): Promise<void> {
+    if (this.frozen || this.currentState !== 'running') return;
+    this.localAbort = 'timed_out';
+    this.abortReason = `deadline of ${this.req.timeoutMs}ms exceeded`;
+    log.warn('task deadline exceeded', { taskId: this.taskId, timeoutMs: this.req.timeoutMs });
     try {
-      return this.adapter.mapEvent(raw, this.ctx());
+      await this.transport?.cancel(this.abortReason);
     } catch (e) {
-      log.warn('adapter mapEvent threw', { taskId: this.taskId, error: (e as Error).message });
-      return [
-        E.diagnostic(this.ctx(), raw, `adapter mapEvent failed: ${(e as Error).message}`),
-      ];
+      log.warn('deadline cancel failed', { taskId: this.taskId, error: (e as Error).message });
     }
   }
 
-  private onStderrLine(line: string): void {
-    if (!line.trim()) return;
-    this.transcript.write({ _stderr: line });
-    this.push(E.diagnostic(this.ctx(), { _stderr: line }, line));
-  }
+  // ---- I1: the single place an outcome is decided -----------------------
 
-  private push(ev: RuntimeEvent): void {
-    // Learn the thread id from the first event that carries one.
-    if (!this.threadId && ev.threadId) this.threadId = ev.threadId;
-    this.queue.push(ev);
-    this.waiter?.();
-    this.waiter = null;
-  }
+  private finalize(exit: TransportExit | null, transportError: unknown): void {
+    if (this.frozen) return; // I1: first outcome wins, unconditionally.
+    if (this.deadlineTimer) {
+      clearTimeout(this.deadlineTimer);
+      this.deadlineTimer = null;
+    }
 
-  private finalize(info: { code: number | null; signal: string | null; stderrTail: string }): void {
-    if (this.timeoutTimer) clearTimeout(this.timeoutTimer);
-    if (this.failedTimer) clearTimeout(this.failedTimer);
-    this.closed = true;
-    this.waiter?.();
-    this.waiter = null;
-
-    const ctx = this.ctx();
-    const code = info.code;
-    const ok = code === 0 && !this.cancelReason;
-
-    let state: TaskState;
+    let state: TerminalState;
     let error: RunResult['error'] = null;
 
-    if (this.cancelReason) {
-      state = 'cancelled';
-      this.push(E.cancelled(ctx, { exit: info }, this.cancelReason));
-    } else if (ok) {
-      state = 'succeeded';
-      const text = this.assembleOutput();
-      this.push(
-        E.completed(ctx, { exit: info, usage: this.usage }, text, {
-          usage: this.usage as unknown as Record<string, unknown>,
-          exitCode: code,
-          toolCallCount: this.toolCalls.length,
-          eventCount: this.transcript.eventCount,
-          nativeTerminal: this.nativeTerminal,
-        }),
-      );
-    } else {
+    if (transportError) {
       state = 'failed';
-      const message = this.describeFailure(info);
-      error = { code: code === null ? 'SPAWN_FAILED' : 'NONZERO_EXIT', message };
-      this.push(E.failed(ctx, { exit: info }, message, { exitCode: code, signal: info.signal }));
+      error = { code: 'TRANSPORT_ERROR', message: (transportError as Error).message };
+    } else if (this.localAbort === 'cancelled') {
+      // I3: distinct from timed_out.
+      state = 'cancelled';
+      error = { code: 'CANCELLED', message: this.abortReason || 'cancelled' };
+    } else if (this.localAbort === 'timed_out') {
+      state = 'timed_out';
+      error = {
+        code: 'TIMED_OUT',
+        message: this.abortReason || `exceeded ${this.req.timeoutMs}ms`,
+        retryable: true,
+      };
+    } else {
+      // The ADAPTER owns the terminal policy, not this kernel.
+      const decision = this.adapter.terminalPolicy({
+        exit: exit ?? { code: null, signal: null, stderrTail: this.stderrTail.toString(), stderrTruncated: this.stderrTail.truncated },
+        nativeSignals: [...this.nativeSignals],
+        localAbort: null,
+      });
+      state = decision.state;
+      error = decision.error;
+    }
+
+    // I4: every non-succeeded outcome must explain itself.
+    if (state !== 'succeeded' && !error) {
+      state = 'failed';
+      error = { code: 'NONZERO_EXIT', message: 'task did not succeed and no reason was recorded' };
+    }
+    if (state === 'succeeded' && error) {
+      state = 'failed';
     }
 
     this.currentState = state;
-    const result = this.snapshot(state, info, error);
-    this.persist(result);
-    this.resolveResult?.(result);
-  }
 
-  private describeFailure(info: { code: number | null; signal: string | null; stderrTail: string }): string {
-    const parts: string[] = [];
-    if (info.signal) parts.push(`killed by ${info.signal}`);
-    if (info.code !== null && info.code !== 0) parts.push(`exit code ${info.code}`);
-    // Codex prints clap errors ("unexpected argument '-a' found") on stderr
-    // with exit 2 — the stderr tail is the entire explanation.
-    if (info.stderrTail) parts.push(`stderr: ${truncate(info.stderrTail, 1200)}`);
-    else parts.push('no stderr output');
-    if (this.nativeTerminal && !this.nativeTerminal.success) {
-      parts.push(`native signal: ${this.nativeTerminal.reason}`);
-    }
-    if (this.diagnostics.length) {
-      parts.push(`agent diagnostics: ${this.diagnostics.slice(0, 3).join(' | ')}`);
-    }
-    return parts.join('; ');
-  }
-
-  /** Last-assistant-text-wins, but keep every text block for multi-step runs. */
-  private assembleOutput(): string {
-    const parts = this.outputChunks.filter((s) => s.length);
-    if (parts.length === 0) {
-      return this.unparsedStdout.length ? this.unparsedStdout.join('\n') : '';
-    }
-    return parts.join('\n');
-  }
-
-  snapshot(
-    state: TaskState = this.currentState,
-    exit?: { code: number | null; signal: string | null },
-    error: RunResult['error'] = null,
-  ): RunResult {
-    return {
+    const result: RunResult = {
       taskId: this.taskId,
       threadId: this.threadId,
       agentId: this.agentId,
@@ -329,48 +392,51 @@ export class AgentSession implements RunHandle, NativeSink {
       endedAt: Date.now(),
       exitCode: exit?.code ?? null,
       signal: exit?.signal ?? null,
-      output: this.assembleOutput(),
-      transcriptPath: this.transcript.eventCount > 0 ? this.transcript.path : null,
-      usage: this.usage,
-      toolCalls: this.toolCalls.slice(0, MAX_TOOL_CALLS_KEPT),
+      output: this.output.toString(),
+      outputTruncated: this.output.truncated,
+      transcriptPath: this.transcript && this.transcript.eventCount > 0 ? this.transcript.path : null,
+      usage: this.usageAccum,
+      toolCalls: this.toolCallList.slice(),
       error,
-      diagnostics: this.diagnostics.slice(0, DIAGNOSTIC_LIMIT),
+      diagnostics: this.diagnosticsList.slice(),
     };
+
+    this.frozen = result; // Freeze BEFORE any async cleanup.
+    this.publish(
+      state === 'succeeded'
+        ? E.completed(this.ctx(), { exit }, result.output, {
+            usage: result.usage as unknown as Record<string, unknown>,
+            exitCode: result.exitCode,
+            toolCallCount: result.toolCalls.length,
+            eventCount: this.transcript?.eventCount ?? 0,
+            outputTruncated: result.outputTruncated,
+          })
+        : state === 'cancelled'
+          ? E.cancelled(this.ctx(), { exit }, error?.message ?? 'cancelled')
+          : E.failed(this.ctx(), { exit }, error?.message ?? 'failed', {
+              exitCode: result.exitCode,
+              signal: result.signal,
+              errorCode: error?.code,
+            }),
+    );
+
+    this.hub.close(); // I5: complete every subscriber and free their buffers.
+    this.persist(result);
+    this.resolveDone?.(result);
+
+    // I5: release runtime memory. Files stay on disk.
+    this.releaseMemory();
+    void this.transport?.dispose();
+    // Let the owner drop its reference, so its live-session map stays bounded.
+    this.onSettled?.(this);
   }
 
-  // ---- NativeSink: adapters report what they saw, the kernel owns state ----
-
-  noteThreadId(id: string | null | undefined): void {
-    if (id && !this.threadId) this.threadId = id;
-  }
-
-  noteText(text: string): void {
-    this.outputChunks.push(text);
-    this.outputBytes += text.length;
-    if (this.outputBytes > OUTPUT_TAIL_LIMIT) {
-      // Drop from the middle: keep the opening and the final answer.
-      const mid = this.outputChunks.length >> 1;
-      this.outputChunks.splice(1, mid - 1);
-      log.debug('output tail trimmed', { taskId: this.taskId });
-    }
-  }
-
-  noteToolCall(call: ToolCall): void {
-    this.toolCalls.push(call);
-    if (this.toolCalls.length > MAX_TOOL_CALLS_KEPT) this.toolCalls.shift();
-  }
-
-  noteUsage(partial: Partial<Usage>): void {
-    this.usage = { ...this.usage, ...stripUndefined(partial) };
-  }
-
-  noteDiagnostic(text: string): void {
-    this.diagnostics.push(text);
-    if (this.diagnostics.length > DIAGNOSTIC_LIMIT) this.diagnostics.shift();
-  }
-
-  noteNativeTerminal(signal: TerminalSignal): void {
-    this.nativeTerminal = signal;
+  private releaseMemory(): void {
+    this.output.release();
+    this.stderrTail.release();
+    this.toolCallList = [];
+    this.diagnosticsList = [];
+    this.nativeSignals = [];
   }
 
   private persist(result: RunResult): void {
@@ -395,6 +461,47 @@ export class AgentSession implements RunHandle, NativeSink {
       log.warn('persist failed', { taskId: this.taskId, error: (e as Error).message });
     }
   }
+
+  // ---- NativeSink -------------------------------------------------------
+
+  private ctx(): MapContext {
+    return { taskId: this.taskId, agentId: this.agentId, threadId: this.threadId, sink: this };
+  }
+
+  private publish(ev: RuntimeEvent): void {
+    if (!ev.threadId && this.threadId) {
+      (ev as { threadId: string | null }).threadId = this.threadId;
+    }
+    if (!this.threadId && ev.threadId) this.threadId = ev.threadId;
+    this.hub.publish(ev);
+  }
+
+  noteThreadId(id: string): void {
+    if (id && !this.threadId) this.threadId = id;
+  }
+
+  noteText(text: string): void {
+    this.output.append(text);
+  }
+
+  noteToolCall(call: ToolCall): void {
+    this.toolCallList.push(call);
+    if (this.toolCallList.length > this.limits.toolCalls) this.toolCallList.shift();
+  }
+
+  noteUsage(partial: Partial<Usage>): void {
+    this.usageAccum = { ...this.usageAccum, ...stripUndefined(partial) };
+  }
+
+  noteDiagnostic(text: string): void {
+    this.diagnosticsList.push(text);
+    if (this.diagnosticsList.length > this.limits.diagnostics) this.diagnosticsList.shift();
+  }
+
+  noteNativeSignal(signal: string): void {
+    this.nativeSignals.push(signal);
+    if (this.nativeSignals.length > this.limits.diagnostics) this.nativeSignals.shift();
+  }
 }
 
 function tryParse(line: string): unknown {
@@ -413,6 +520,4 @@ function stripUndefined<T extends object>(o: T): Partial<T> {
   return out as Partial<T>;
 }
 
-function truncate(s: string, n: number): string {
-  return s.length <= n ? s : '…' + s.slice(-n);
-}
+export { isTerminal };

@@ -1,41 +1,59 @@
 /**
  * orchestrator/orchestrator.ts — the only entry point callers need.
  *
- * Responsibilities are intentionally narrow (this is the "model-free kernel"
- * from native-agent-router): resolve an adapter, build a task, stream it, and
- * persist the outcome. It makes NO decisions about which agent should handle
- * what — the caller always names `agentId` explicitly.
+ * Narrow by design (the "model-free kernel" from native-agent-router): resolve
+ * an adapter, validate the request, build a transport, run it, persist the
+ * outcome. It makes NO decision about which agent should handle what — the
+ * caller always names `agentId` explicitly.
  *
- * It does NOT:
- *   - call any provider API
- *   - read or copy agent credentials
- *   - implement retry / review policy (Phase 2, and deliberately absent so the
- *     policy can be built on top of a runtime that is already correct)
+ * It does NOT: call any provider API, read agent credentials, or implement
+ * retry / review policy (Phase 2, deliberately absent so the policy can be
+ * built on a runtime that is already correct).
+ *
+ * Hardened this round:
+ *  - bootstrap iterates a FACTORY TABLE, not a hard-coded opencode/codex pair,
+ *    so adding an agent does not touch core/ or this file's logic;
+ *  - resume is OWNERSHIP-CHECKED (agent + cwd + existence) before the adapter
+ *    is allowed to build a native invocation;
+ *  - request validation is delegated to the adapter, so an unsupported option
+ *    is rejected instead of silently dropped.
  */
 
+import { createAdapter, knownAgentIds } from '../adapters/index.ts';
+import {
+  CapabilityError,
+  ThreadNotFoundError,
+  ThreadOwnershipError,
+} from '../core/errors.ts';
+import { log } from '../core/log.ts';
 import type {
   AgentAdapter,
   AgentCapabilities,
   AgentDescriptor,
+  DoctorAgentReport,
   ProbeResult,
   RunHandle,
   RunRequest,
   RunResult,
-  Transport,
+  TransportKind,
 } from '../core/types.ts';
-import { CapabilityError } from '../core/errors.ts';
-import { log } from '../core/log.ts';
 import { AdapterRegistry } from '../runtime/registry.ts';
-import { AgentSession } from '../runtime/session.ts';
+import { AgentSession, type SessionLimits } from '../runtime/session.ts';
 import { SessionStore, type TaskSummary, type ThreadRecord } from '../runtime/store.ts';
-import { createOpenCodeAdapter } from '../adapters/opencode.ts';
-import { createCodexAdapter } from '../adapters/codex.ts';
-import { loadConfig, type OrchestratorConfig, type AgentConfig } from './config.ts';
+import { loadConfig, type AgentConfig, type OrchestratorConfig } from './config.ts';
 
 export interface OrchestratorOptions {
   config?: OrchestratorConfig;
   configPath?: string;
   storeDir?: string;
+  sessionLimits?: SessionLimits;
+  /**
+   * Explicit extra adapters, registered after the factory table. This is the
+   * extension seam Phase 2 uses (and the one tests use to drive the runtime
+   * without a real binary): adding a file plus one table line is enough for a
+   * real agent, and a caller can also register something directly.
+   */
+  extraAdapters?: readonly AgentAdapter[];
 }
 
 export class Orchestrator {
@@ -44,7 +62,9 @@ export class Orchestrator {
   readonly configSource: string | null;
 
   private readonly configs: Record<string, AgentConfig>;
-  private readonly sessions = new Map<string, AgentSession>();
+  private readonly sessionLimits: SessionLimits;
+  /** Bounded: finished sessions are dropped, so this cannot grow forever. */
+  private readonly active = new Map<string, AgentSession>();
 
   constructor(options: OrchestratorOptions = {}) {
     let config = options.config;
@@ -56,31 +76,37 @@ export class Orchestrator {
     }
     this.configSource = source;
     this.configs = config.agents ?? {};
+    this.sessionLimits = options.sessionLimits ?? {};
     this.store = new SessionStore(options.storeDir ?? config.storeDir);
     this.registry = new AdapterRegistry();
-    this.registerBuiltins();
+    this.bootstrapAdapters();
+    for (const a of options.extraAdapters ?? []) {
+      if (!this.registry.has(a.descriptor.id)) this.registry.register(a);
+    }
   }
 
   /**
-   * Agents ship in code (they are part of the product) but their binary
-   * locations come from config, and a missing binary must NOT crash startup —
-   * `doctor` is the place that reports it.
+   * Register every agent we have a factory for. A missing binary must NOT
+   * crash startup — `doctor` is where that gets reported — and an agent that is
+   * configured but has no factory is reported too, so adding ZCode later does
+   * not require touching this file.
    */
-  private registerBuiltins(): void {
-    for (const id of ['opencode', 'codex']) {
-      const cfg = this.configs[id];
+  private bootstrapAdapters(): void {
+    const ids = new Set<string>([...knownAgentIds(), ...Object.keys(this.configs)]);
+    for (const id of ids) {
+      const cfg = this.configs[id] ?? {};
       try {
-        const adapter =
-          id === 'opencode'
-            ? createOpenCodeAdapter({ command: cfg?.command })
-            : createCodexAdapter({ command: cfg?.command });
+        const adapter = createAdapter(id, { command: cfg.command });
+        if (!adapter) {
+          log.warn('no factory for configured agent', { agent: id });
+          continue;
+        }
         this.registry.register(adapter);
       } catch (e) {
+        // Discovery/launcher failure. Not fatal: doctor explains it.
         log.warn('agent not registered', { agent: id, error: (e as Error).message });
       }
     }
-    // Explicitly configured extras are allowed to register, but Phase 1 has
-    // no adapter factories for them yet. Surfaced by `doctor`, not guessed at.
   }
 
   agentIds(): string[] {
@@ -91,7 +117,7 @@ export class Orchestrator {
     return this.registry.descriptors();
   }
 
-  adapter(agentId: string): AgentAdapter {
+  adapter(agentId: string) {
     return this.registry.get(agentId);
   }
 
@@ -106,45 +132,104 @@ export class Orchestrator {
   run(req: RunRequest): RunHandle {
     const adapter = this.registry.get(req.agentId);
     const cfg = this.configFor(req.agentId);
+    const caps = adapter.descriptor.capabilities;
 
-    if (req.threadId && !adapter.descriptor.capabilities.resume) {
-      throw new CapabilityError(req.agentId, 'resume');
-    }
-    if (req.mode === 'review' && !adapter.descriptor.capabilities.review) {
+    if (!caps.newTask && !req.threadId) throw new CapabilityError(req.agentId, 'newTask');
+
+    // Resume ownership: a threadId is not a global key.
+    const effective = req.threadId
+      ? this.resolveResumeTarget(req, caps.resume)
+      : undefined;
+
+    if (req.mode === 'review' && !caps.review) {
+      // The adapter's own validateRequest gives a better message; this is the
+      // generic guard for adapters that do not implement it.
       throw new CapabilityError(req.agentId, 'review');
     }
-    if (req.sandbox && !adapter.descriptor.capabilities.sandbox) {
-      throw new CapabilityError(req.agentId, 'sandbox');
-    }
-    if (req.role && !adapter.descriptor.capabilities.roleSelection) {
-      throw new CapabilityError(req.agentId, 'roleSelection');
-    }
 
-    const effective: RunRequest = {
+    // A configured sandbox applies to ORDINARY FRESH RUNS only.
+    //
+    // `codex exec review` and `codex exec resume` both reject `--sandbox`
+    // (verified: exit 2), and a review/resume entrypoint is not something we
+    // get to constrain anyway. Injecting our own default there would make the
+    // adapter refuse every review and every resume, which is our bug, not the
+    // caller's. An EXPLICIT `--sandbox` on review/resume is still REFUSED by the
+    // adapter — that is a caller error and must be reported, not absorbed.
+    const sandboxApplies = !req.threadId && req.mode !== 'review';
+    const sandboxDefault = sandboxApplies ? cfg.sandbox : undefined;
+
+    const merged: RunRequest = {
       ...req,
+      threadId: effective,
       model: req.model ?? cfg.model,
       role: req.role ?? cfg.role,
-      sandbox: req.sandbox ?? cfg.sandbox,
+      sandbox: req.sandbox ?? sandboxDefault,
       timeoutMs: req.timeoutMs ?? cfg.timeoutMs,
     };
 
-    const session = new AgentSession(adapter, this.store, effective);
-    this.sessions.set(session.taskId, session);
+    // Adapter-owned validation. Throws for anything it cannot honour, so no
+    // option is ever silently dropped on the way to the native CLI.
+    adapter.validateRequest(merged);
+
+    const transport = adapter.createTransport(merged);
+    const session = new AgentSession(adapter, this.store, merged, transport, {
+      ...this.sessionLimits,
+      onSettled: (s) => this.active.delete(s.taskId),
+    });
+    this.active.set(session.taskId, session);
     session.start();
     return session;
   }
 
   /**
-   * Review entrypoint. Phase 1 provides the plumbing only — there is no
-   * automatic review policy, no gate, no retry loop. The caller decides
-   * whether and when to ask for a review.
+   * Validate a resume request against the persisted thread record.
+   *
+   * A thread belongs to the (agentId, cwd) pair that created it. Resuming it
+   * elsewhere would hand the agent a session whose file context and tool
+   * state belong to a different checkout, so it is REFUSED. An override must
+   * be requested explicitly, never assumed.
+   */
+  private resolveResumeTarget(
+    req: RunRequest,
+    supportsResume: boolean,
+  ): string {
+    if (!supportsResume) throw new CapabilityError(req.agentId, 'resume');
+    const threadId = req.threadId!;
+    const record = this.store.getThread(threadId);
+    if (!record) throw new ThreadNotFoundError(threadId);
+
+    if (req.allowForeignThread) {
+      log.warn('resuming a foreign thread by explicit override', {
+        threadId,
+        requestedAgent: req.agentId,
+        ownerAgent: record.agentId,
+        requestedCwd: req.cwd,
+        ownerCwd: record.cwd,
+      });
+      return threadId;
+    }
+
+    if (record.agentId !== req.agentId) {
+      throw new ThreadOwnershipError(threadId, 'agentId', record.agentId, req.agentId);
+    }
+    if (normPath(record.cwd) !== normPath(req.cwd)) {
+      throw new ThreadOwnershipError(threadId, 'cwd', record.cwd, req.cwd);
+    }
+    return threadId;
+  }
+
+  /**
+   * Review entrypoint. Phase 1 provides the plumbing only — no automatic
+   * review policy, no gate, no retry loop. The caller decides whether and when
+   * to ask for a review.
    */
   review(req: Omit<RunRequest, 'mode'>): RunHandle {
     return this.run({ ...req, mode: 'review' });
   }
 
+  /** Live sessions only. Terminal sessions are removed on completion. */
   activeSessions(): AgentSession[] {
-    return [...this.sessions.values()];
+    return [...this.active.values()];
   }
 
   getTask(taskId: string): RunResult | null {
@@ -161,7 +246,7 @@ export class Orchestrator {
 
   /** Availability + capability report. Never prints credentials. */
   async doctor(): Promise<DoctorReport> {
-    const agents: DoctorReport['agents'][number][] = [];
+    const agents: DoctorAgentReport[] = [];
     for (const id of this.registry.ids()) {
       const adapter = this.registry.get(id);
       let probe: ProbeResult;
@@ -170,23 +255,24 @@ export class Orchestrator {
       } catch (e) {
         probe = {
           ok: false,
-          executable: adapter.descriptor.executable,
+          launcher: adapter.descriptor.launcher,
           version: null,
           detail: (e as Error).message,
           warnings: [],
         };
       }
+      const d = adapter.descriptor;
       agents.push({
         id,
-        displayName: adapter.descriptor.displayName,
-        executable: probe.executable,
+        displayName: d.displayName,
+        launcher: `${d.launcher.command}${d.launcher.prefixArgs.length ? ' ' + d.launcher.prefixArgs.join(' ') : ''} -> ${d.launcher.target} [${d.launcher.kind}]`,
         version: probe.version,
         ok: probe.ok,
         detail: probe.detail,
         warnings: probe.warnings,
-        capabilities: adapter.descriptor.capabilities,
-        transport: adapter.descriptor.transport,
-        credentialsHint: adapter.descriptor.credentialsHint ?? null,
+        capabilities: d.capabilities,
+        transport: d.transport as TransportKind,
+        credentialsHint: d.credentialsHint ?? null,
       });
     }
     return {
@@ -200,16 +286,13 @@ export class Orchestrator {
 export interface DoctorReport {
   configSource: string | null;
   storeDir: string;
-  agents: Array<{
-    id: string;
-    displayName: string;
-    executable: string;
-    version: string | null;
-    ok: boolean;
-    detail: string;
-    warnings: readonly string[];
-    capabilities: AgentCapabilities;
-    transport: Transport;
-    credentialsHint: string | null;
-  }>;
+  agents: DoctorAgentReport[];
 }
+
+/** Windows paths are case-insensitive; normalise before comparing ownership. */
+function normPath(p: string): string {
+  const t = p.replace(/[\\/]+$/, '');
+  return process.platform === 'win32' ? t.toLowerCase() : t;
+}
+
+export type { AgentCapabilities };

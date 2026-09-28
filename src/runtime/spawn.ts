@@ -1,80 +1,54 @@
 /**
- * runtime/spawn.ts — the only place in the project that calls child_process.
+ * runtime/spawn.ts — the low-level process layer.
  *
- * Windows is the primary target, so every decision here is deliberate:
+ * Fixes from review, each verified live on this machine:
  *
- *  1. `shell: false` always. Passing a `.ps1` shim (npm's `opencode.ps1`) to
- *     `spawn` without a shell throws EINVAL on Windows; npm wrappers must be
- *     resolved to the underlying `.exe` instead. See discover.ts.
- *  2. `windowsHide: true` — no console flash per task.
- *  3. stdin is 'ignore' unless a prompt is piped. Codex otherwise prints
- *     "Reading additional input from stdin..." and can block forever.
- *  4. Kill is `taskkill /T /F`, not `child.kill()`. On Windows SIGTERM only
- *     reaches the direct child; Codex spawns powershell grandchildren that
- *     would survive and hold file handles.
- *  5. Decoding is explicit UTF-8 via StringDecoder. A `latin1` read mangles
- *     every non-ASCII char an agent prints, and Node has no per-stream
- *     encoding option.
- *  6. Line splitting accepts CRLF, LF and lone CR. Agents and their tool
- *     subprocesses emit all three on Windows.
- *  7. Env is an allowlist. This keeps credentials from leaking into an agent's
- *     environment, and it is the cheapest available version of the "block
- *     credential folders" rule from REUSE_ANALYSIS §3.
+ *  - `'close'` can NEVER be awaited. Node's `'close'` waits for all stdio to
+ *    end, and a grandchild that inherited the pipes holds them open, so a
+ *    cancelled Codex task hung forever. The exit signal is therefore `'exit'`
+ *    plus a short drain window.
+ *  - `taskkill` is now AWAITED and its result checked, instead of being fired
+ *    and forgotten. `cancel()` does not resolve until the tree kill is done.
+ *  - stderr tail accumulates the raw decoded chunk BEFORE line slicing. The old
+ *    order kept only the trailing partial line and dropped every complete line
+ *    — i.e. exactly the content needed to explain a startup failure.
+ *
+ * Windows notes: `shell:false` always; `windowsHide`; an environment
+ * allowlist; UTF-8 via StringDecoder; CRLF/LF/CR line splitting; and
+ * `taskkill /T /F` for tree cleanup while the root is still alive.
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
+import { TailBuffer } from '../core/buffer.ts';
 import { log } from '../core/log.ts';
+import { assertCmdSafe, buildLaunchArgv } from './launcher.ts';
+import type { LauncherSpec } from '../core/types.ts';
 
 export interface SpawnOptions {
-  command: string;
+  launcher: LauncherSpec;
   args: readonly string[];
   cwd: string;
   env?: Readonly<Record<string, string>>;
-  /** Written to stdin then closed. */
   stdin?: string;
   onStdoutLine?: (line: string) => void;
   onStderrLine?: (line: string) => void;
+  stderrTailBytes?: number;
 }
 
-export interface ProcessHandle {
-  readonly pid: number | undefined;
-  readonly commandLine: string;
-  /** Resolves on process exit. Never rejects. */
-  readonly exited: Promise<ExitInfo>;
-  cancel: (reason?: string) => void;
-}
-
-export interface ExitInfo {
+export interface ProcessExit {
   code: number | null;
   signal: string | null;
-  /** stderr tail — the only useful diagnostic when a CLI dies on startup. */
-  stderrTail: string;
 }
-
-const STDERR_TAIL_LIMIT = 8000;
-
-/**
- * How long to keep reading stdio after the process itself has exited.
- *
- * This exists because of a verified Windows failure mode: a grandchild that
- * inherits the stdout/stderr handles keeps them open, so Node's `'close'`
- * event never fires and a supervisor waiting on `'close'` HANGS FOREVER.
- * Codex spawns PowerShell children, so this is not hypothetical — it is the
- * normal case for a cancelled Codex task.
- *
- * We therefore finalize on `'exit'` (the process is gone) and allow a short
- * window for the last buffered output to arrive, so no trailing event is lost.
- */
-const STDIO_DRAIN_GRACE_MS = 400;
 
 /** Grace given to a child to shut down cleanly before the tree is killed. */
 const TREE_KILL_GRACE_MS = 1500;
+/** How long to keep reading stdio after the process itself exited. */
+const STDIO_DRAIN_GRACE_MS = 400;
+const DEFAULT_STDERR_TAIL_BYTES = 8 * 1024;
+/** Cap on an undelivered partial line when nobody is listening. */
+const PENDING_CAP_BYTES = 64 * 1024;
 
-/**
- * Variables a Windows child needs to function at all, plus agent config homes.
- * Everything else is dropped unless the adapter explicitly opts in.
- */
 const ENV_ALLOWLIST = [
   'ALLUSERSPROFILE',
   'APPDATA',
@@ -91,7 +65,6 @@ const ENV_ALLOWLIST = [
   'PROGRAMFILES',
   'PROGRAMFILES(X86)',
   'PROGRAMDATA',
-  'PROGRAMDATA',
   'SYSTEMDRIVE',
   'SYSTEMROOT',
   'TEMP',
@@ -100,7 +73,7 @@ const ENV_ALLOWLIST = [
   'USERNAME',
   'USERPROFILE',
   'WINDIR',
-  // Agent-owned state. We never set credentials; we only let the agent read
+  // Agent-owned state. We never set credentials; we only let an agent read
   // its own already-logged-in session.
   'CODEX_HOME',
   'OPENCODE_CONFIG',
@@ -121,249 +94,284 @@ export function buildEnv(extra?: Readonly<Record<string, string>>): Record<strin
     const v = process.env[key];
     if (v !== undefined) out[key] = v;
   }
-  if (extra) {
-    for (const [k, v] of Object.entries(extra)) out[k] = v;
-  }
-  // Belt and braces: the contract for this project is "no ANSI, ever".
+  if (extra) for (const [k, v] of Object.entries(extra)) out[k] = v;
   if (out.NO_COLOR === undefined) out.NO_COLOR = '1';
   return out;
 }
 
-export function spawnProcess(opts: SpawnOptions): ProcessHandle {
-  const commandLine = [opts.command, ...opts.args].join(' ');
-  log.debug('spawn', { commandLine, cwd: opts.cwd, stdin: opts.stdin !== undefined });
+/**
+ * A spawned process with a bounded stderr tail and an awaitable exit.
+ * Emits nothing: framing belongs to the transport layer.
+ */
+export class ManagedProcess {
+  readonly commandLine: string;
+  readonly stderrTail: TailBuffer;
 
-  const child = spawn(opts.command, [...opts.args], {
-    cwd: opts.cwd,
-    env: buildEnv(opts.env),
-    shell: false,
-    windowsHide: true,
-    stdio: [opts.stdin !== undefined ? 'pipe' : 'ignore', 'pipe', 'pipe'],
-  });
+  private readonly child: ChildProcess;
+  private readonly onStdoutLine?: (line: string) => void;
+  private readonly onStderrLine?: (line: string) => void;
 
-  const outDecoder = new StringDecoder('utf8');
-  const errDecoder = new StringDecoder('utf8');
-  let outPending = '';
-  let errPending = '';
-  let stderrTail = '';
-  let cancelled = false;
-  let killTimer: NodeJS.Timeout | null = null;
-  let stdoutEnded = false;
-  let stderrEnded = false;
+  /** Streams that have not yet emitted 'end'. */
+  private pendingStreams = 0;
+  private processExited = false;
+  private finished = false;
+  private spawnFailed = false;
+  private drainTimer: NodeJS.Timeout | null = null;
+  private killTimer: NodeJS.Timeout | null = null;
+  private cleanupPromise: Promise<boolean> | null = null;
 
-  if (opts.stdin !== undefined && child.stdin) {
-    child.stdin.on('error', (e) => {
-      // A child that exits before reading stdin yields EPIPE. Expected on
-      // fast-failing CLIs; not worth failing the run over.
-      log.debug('stdin write failed', { error: (e as Error).message });
+  readonly exited: Promise<ProcessExit>;
+  private resolveExit: ((e: ProcessExit) => void) | null = null;
+
+  constructor(opts: SpawnOptions) {
+    const argv = buildLaunchArgv(opts.launcher, opts.args);
+    if (opts.launcher.buildsCommandString) assertCmdSafe(opts.args);
+    this.commandLine = [opts.launcher.command, ...argv].join(' ');
+    this.onStdoutLine = opts.onStdoutLine;
+    this.onStderrLine = opts.onStderrLine;
+    this.stderrTail = new TailBuffer({
+      limitBytes: opts.stderrTailBytes ?? DEFAULT_STDERR_TAIL_BYTES,
+      keep: 'tail',
     });
-    child.stdin.end(opts.stdin, 'utf8');
-  }
 
-  if (child.stdout) {
-    child.stdout.on('data', (buf: Buffer) => {
-      outPending += outDecoder.write(buf);
-      drainLines(outPending, opts.onStdoutLine, (rest) => {
-        outPending = rest;
+    log.debug('spawn', { commandLine: this.commandLine, cwd: opts.cwd });
+
+    this.exited = new Promise<ProcessExit>((res) => {
+      this.resolveExit = res;
+    });
+
+    this.child = spawn(opts.launcher.command, argv, {
+      cwd: opts.cwd,
+      env: buildEnv(opts.env),
+      shell: false,
+      windowsHide: true,
+      stdio: [opts.stdin !== undefined ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+    });
+
+    if (opts.stdin !== undefined && this.child.stdin) {
+      this.child.stdin.on('error', (e) => {
+        // A child that exits before reading stdin yields EPIPE. Expected.
+        log.debug('stdin write failed', { error: (e as Error).message });
       });
+      this.child.stdin.end(opts.stdin, 'utf8');
+    }
+
+    this.attach(this.child.stdout, 'stdout');
+    this.attach(this.child.stderr, 'stderr');
+
+    this.child.on('error', (err: NodeJS.ErrnoException) => {
+      // ENOENT/EACCES/EINVAL: the binary is missing or not executable.
+      // Record it in the stderr tail (the only place a caller will look) and
+      // finish so waiters never hang. `child.exitCode` is read-only in the
+      // Node typings, so the synthetic 127 is tracked here.
+      log.error('spawn failed', { command: opts.launcher.command, error: err.message });
+      this.stderrTail.append(`\nspawn error: ${err.message}`);
+      this.spawnFailed = true;
+      this.onProcessExit();
     });
-    child.stdout.on('end', () => {
-      outPending += outDecoder.end();
-      if (outPending.length) opts.onStdoutLine?.(outPending);
-      outPending = '';
-      stdoutEnded = true;
-      onStreamsSettled?.();
+
+    // 'exit' is reliable; 'close' may never fire when a grandchild holds the
+    // pipes. 'close' is kept only as a belt-and-braces second trigger.
+    this.child.on('exit', () => this.onProcessExit());
+    this.child.on('close', () => this.onProcessExit());
+  }
+
+  get pid(): number | undefined {
+    return this.child.pid;
+  }
+
+  get exitCode(): number | null {
+    return this.child.exitCode;
+  }
+
+  private attach(stream: NodeJS.ReadableStream | null, channel: 'stdout' | 'stderr'): void {
+    if (!stream) return;
+    const decoder = new StringDecoder('utf8');
+    // Each stream routes to ITS OWN callback. Sharing one handler would label
+    // stderr diagnostics as agent events, which is exactly the kind of silent
+    // misattribution this round is meant to eliminate.
+    const onLine = channel === 'stdout' ? this.onStdoutLine : this.onStderrLine;
+    // A JSONL line can straddle any chunk boundary, so an incomplete tail is
+    // carried forward instead of being emitted early.
+    let lineBuffer = '';
+    this.pendingStreams++;
+
+    stream.on('data', (buf: Buffer) => {
+      const chunk = decoder.write(buf);
+      // stderr is retained RAW, before line slicing, so a complete line is
+      // never lost — this tail is the only explanation for a startup crash.
+      if (channel === 'stderr') this.stderrTail.append(chunk);
+      lineBuffer += chunk;
+      if (onLine) {
+        lineBuffer = emitCompleteLines(lineBuffer, onLine);
+      } else if (Buffer.byteLength(lineBuffer, 'utf8') > PENDING_CAP_BYTES) {
+        // Nobody is reading this stream; do not accumulate without bound.
+        lineBuffer = lineBuffer.slice(-PENDING_CAP_BYTES);
+      }
+    });
+
+    stream.on('end', () => {
+      const rest = decoder.end();
+      if (rest) {
+        if (channel === 'stderr') this.stderrTail.append(rest);
+        lineBuffer += rest;
+      }
+      if (lineBuffer.length) {
+        if (onLine) onLine(lineBuffer);
+      }
+      lineBuffer = '';
+      this.pendingStreams--;
+      this.maybeFinish();
+    });
+
+    stream.on('error', () => {
+      this.pendingStreams--;
+      this.maybeFinish();
     });
   }
 
-  if (child.stderr) {
-    child.stderr.on('error', () => {
+  private onProcessExit(): void {
+    if (this.processExited) return;
+    this.processExited = true;
+    if (this.pendingStreams === 0) {
+      this.finish();
+      return;
+    }
+    // Let the last buffered output arrive, but never wait on a stream a
+    // grandchild may still be holding open.
+    //
+    // Deliberately NOT unref'd: once the child has exited nothing else holds
+    // the event loop, so an unref'd drain timer would let the process exit
+    // before `exited` ever resolved.
+    this.drainTimer = setTimeout(() => this.finish(), STDIO_DRAIN_GRACE_MS);
+  }
+
+  private maybeFinish(): void {
+    if (this.processExited && this.pendingStreams === 0) this.finish();
+  }
+
+  private finish(): void {
+    if (this.finished) return;
+    this.finished = true;
+    if (this.drainTimer) {
+      clearTimeout(this.drainTimer);
+      this.drainTimer = null;
+    }
+    this.resolveExit?.({
+      code: this.spawnFailed ? 127 : this.child.exitCode,
+      signal: this.child.signalCode,
+    });
+  }
+
+  /**
+   * Stop the process and its descendants.
+   *
+   * Windows: `taskkill /T /F` is issued FIRST and AWAITED. `taskkill /T` walks
+   * a live tree, and `child.kill('SIGINT')` on Windows is TerminateProcess on
+   * the root only — so a "graceful first" order kills the root and orphans the
+   * grandchildren. Cancellation on Windows is therefore forceful by design.
+   */
+  async cancel(reason: string): Promise<boolean> {
+    const pid = this.child.pid;
+    log.info('cancelling process', { pid, reason });
+
+    if (process.platform === 'win32') {
+      if (this.child.exitCode !== null) return true; // already gone
+      this.cleanupPromise = taskkillTree(pid);
+      return this.cleanupPromise;
+    }
+
+    try {
+      this.child.kill('SIGINT');
+    } catch {
       /* ignore */
-    });
-    child.stderr.on('data', (buf: Buffer) => {
-      const chunk = errDecoder.write(buf);
-      errPending += chunk;
-      // Append the RAW decoded chunk, before line slicing. Slicing first and
-      // then appending `errPending` would record only the trailing partial
-      // line and silently drop every complete line — which is precisely the
-      // content you need when a CLI prints a usage error and dies.
-      stderrTail = (stderrTail + chunk).slice(-STDERR_TAIL_LIMIT);
-      drainLines(errPending, opts.onStderrLine, (rest) => {
-        errPending = rest;
-      });
-    });
-    child.stderr.on('end', () => {
-      const tail = errDecoder.end();
-      errPending += tail;
-      stderrTail = (stderrTail + tail).slice(-STDERR_TAIL_LIMIT);
-      if (errPending.length) {
-        opts.onStderrLine?.(errPending);
-        errPending = '';
-      }
-      stderrEnded = true;
-      onStreamsSettled?.();
-    });
+    }
+    this.killTimer = setTimeout(() => {
+      this.cleanupPromise = taskkillTree(pid);
+    }, TREE_KILL_GRACE_MS);
+    return true;
   }
 
-  const exited = new Promise<ExitInfo>((resolve) => {
-    let settled = false;
-    // `child.exitCode` is read-only in the Node typings, so the ENOENT case
-    // is tracked here instead. 127 is the conventional "command not found".
-    let spawnFailureCode: number | null = null;
-    let exitSeen = false;
-    let drainTimer: NodeJS.Timeout | null = null;
+  /** Await any pending tree kill. Part of the cleanup contract. */
+  async settleCleanup(): Promise<boolean> {
+    if (this.killTimer) {
+      clearTimeout(this.killTimer);
+      this.killTimer = null;
+      this.cleanupPromise = taskkillTree(this.child.pid);
+    }
+    if (!this.cleanupPromise) return true;
+    return this.cleanupPromise;
+  }
 
-    const finish = (): void => {
-      if (settled) return;
-      settled = true;
-      if (killTimer) clearTimeout(killTimer);
-      if (drainTimer) clearTimeout(drainTimer);
-      resolve({
-        code: child.exitCode ?? spawnFailureCode,
-        signal: child.signalCode,
-        stderrTail: stderrTail.trim(),
-      });
-    };
-
-    /**
-     * The process itself is gone. Drain briefly for the tail, but never wait
-     * on streams indefinitely — a lingering grandchild holds them open.
-     */
-    const onProcessExit = (): void => {
-      if (settled) return;
-      exitSeen = true;
-      // Nothing more is coming if both streams already ended.
-      if (stdoutEnded && stderrEnded) {
-        finish();
-        return;
-      }
-      drainTimer = setTimeout(finish, STDIO_DRAIN_GRACE_MS);
-      if (typeof drainTimer.unref === 'function') drainTimer.unref();
-      // Streams finished inside the grace window: no need to wait it out.
-      onStreamsSettled = (): void => {
-        if (exitSeen && settled === false) finish();
-      };
-    };
-
-    child.on('error', (err: NodeJS.ErrnoException) => {
-      // ENOENT/EACCES/EINVAL: the binary path is wrong or not executable.
-      // Surface it loudly but still settle `exited` so waiters never hang.
-      log.error('spawn failed', { command: opts.command, error: err.message });
-      stderrTail = (stderrTail + `\nspawn error: ${err.message}`).slice(-STDERR_TAIL_LIMIT);
-      spawnFailureCode = 127;
-      finish();
-    });
-
-    // 'exit' is the reliable signal. 'close' may never arrive on Windows when a
-    // grandchild inherited the pipes, so it is only a belt-and-braces path.
-    child.on('exit', onProcessExit);
-    child.on('close', onProcessExit);
-  });
-
-  // Assigned inside the promise executor, before any stream can end.
-  let onStreamsSettled: (() => void) | null = null;
-
-  const handle: ProcessHandle = {
-    get pid() {
-      return child.pid;
-    },
-    commandLine,
-    exited,
-    cancel(reason?: string) {
-      if (cancelled || child.exitCode !== null) return;
-      cancelled = true;
-      const pid = child.pid;
-      log.info('cancelling process', { pid, reason: reason ?? 'unspecified' });
-
-      if (process.platform === 'win32') {
-        // WINDOWS: kill the tree FIRST, with no grace period, and do not send
-        // SIGINT at all.
-        //
-        // `taskkill /T` walks a LIVE process tree, so the root must still be
-        // alive when it runs. But `child.kill('SIGINT')` on Windows calls
-        // TerminateProcess, which kills the root immediately — after that
-        // `/T` can no longer reach the orphaned grandchildren (Codex's
-        // PowerShell children), and a later `taskkill` has no root to work
-        // from. Verified live: SIGINT-then-taskkill left a `ping` grandchild
-        // running, while taskkill-first removed the whole tree.
-        //
-        // Tradeoff, stated plainly: cancellation on Windows is forceful, so an
-        // agent may be interrupted mid-write. The git working tree is the
-        // source of truth, so this is recoverable; leaking processes is not.
-        treeKill(pid);
-      } else {
-        // POSIX: a process group exists, so SIGINT can be delivered to the
-        // whole tree gracefully and escalation only needed if it is ignored.
-        try {
-          child.kill('SIGINT');
-        } catch {
-          /* ignore */
-        }
-        killTimer = setTimeout(() => treeKill(pid), TREE_KILL_GRACE_MS);
-        if (typeof killTimer.unref === 'function') killTimer.unref();
-      }
-    },
-  };
-
-  return handle;
+  /**
+   * Reap descendants after a NORMAL exit.
+   *
+   * Contract, stated plainly: once the root process has exited, `taskkill /T`
+   * has no live root to walk. A Windows job object is the only fully reliable
+   * mechanism and we deliberately do not take a native dependency for it. So:
+   * the kill is issued and AWAITED, and failure is reported rather than
+   * swallowed — a leaking agent is observable, not silently tolerated.
+   */
+  async reapDescendants(reason: string): Promise<boolean> {
+    const pid = this.child.pid;
+    if (pid === undefined) return true;
+    const ok = await taskkillTree(pid);
+    if (!ok) log.debug('descendant reap found nothing', { pid, reason });
+    return ok;
+  }
 }
 
 /**
- * Kill a process and every descendant.
- *
- * Windows: `taskkill /T /F` is the only mechanism that reaches grandchildren —
- * `child.kill()` maps to TerminateProcess on the direct child alone. It is
- * issued while the root is still alive, so there is no recycled-PID hazard
- * (that is why no PID verification is needed here).
+ * `taskkill /T /F` with its result actually observed.
+ * Resolves true when the kill succeeded or the target was already gone.
  */
-function treeKill(pid: number | undefined): void {
-  if (pid === undefined) return;
-
-  if (process.platform === 'win32') {
-    const killer = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], {
-      windowsHide: true,
-      shell: false,
-      stdio: 'ignore',
-    });
-    killer.on('error', (e) => log.warn('taskkill failed', { pid, error: (e as Error).message }));
-    killer.on('close', () => {
-      /* ignore */
-    });
-    return;
-  }
-
-  // POSIX: a negative pid signals the whole process group.
-  try {
-    process.kill(-pid, 'SIGKILL');
-  } catch {
+export function taskkillTree(pid: number | undefined): Promise<boolean> {
+  if (pid === undefined) return Promise.resolve(true);
+  if (process.platform !== 'win32') {
     try {
       process.kill(pid, 'SIGKILL');
     } catch {
       /* already gone */
     }
+    return Promise.resolve(true);
   }
+  return new Promise<boolean>((resolve) => {
+    const killer = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], {
+      windowsHide: true,
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    killer.stdout?.on('data', (b: Buffer) => {
+      out += b.toString('utf8');
+    });
+    killer.stderr?.on('data', (b: Buffer) => {
+      out += b.toString('utf8');
+    });
+    killer.on('error', (e) => {
+      log.warn('taskkill failed', { pid, error: (e as Error).message });
+      resolve(false);
+    });
+    killer.on('close', (code) => {
+      const gone = /not found|no running instance|could not find|没有找到/i.test(out);
+      resolve(code === 0 || gone);
+    });
+  });
 }
 
-function drainLines(
-  buf: string,
-  onLine: ((line: string) => void) | undefined,
-  setRest: (rest: string) => void,
-): void {
-  if (!onLine) {
-    // Still need to strip completed lines or the buffer grows unbounded.
-    const last = Math.max(buf.lastIndexOf('\n'), buf.lastIndexOf('\r'));
-    if (last >= 0) setRest(buf.slice(last + 1));
-    return;
-  }
+/**
+ * Emit every complete line in `buf` and return the incomplete remainder.
+ * Tolerates CRLF and lines longer than any single chunk.
+ */
+export function emitCompleteLines(buf: string, onLine: (line: string) => void): string {
   let start = 0;
   for (;;) {
     const nl = buf.indexOf('\n', start);
     if (nl === -1) break;
     let end = nl;
-    if (end > start && buf.charCodeAt(end - 1) === 13) end -= 1; // CRLF
-    const line = buf.slice(start, end);
-    if (line.length) onLine(line);
+    if (end > start && buf.charCodeAt(end - 1) === 13) end -= 1;
+    if (end > start) onLine(buf.slice(start, end));
     start = nl + 1;
   }
-  setRest(buf.slice(start));
+  return buf.slice(start);
 }
