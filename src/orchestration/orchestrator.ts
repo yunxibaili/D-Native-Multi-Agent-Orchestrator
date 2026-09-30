@@ -477,13 +477,14 @@ export class Orchestrator {
    */
   applyVerification(taskId: string, outcome: VerificationOutcome): MutateOutcome {
     const translated = translateVerification(outcome);
-    if (translated.to === 'rework') {
-      return {
-        ok: false,
-        code: 'rework-not-implemented',
-        reason: `${translated.reason} 鈥?the rework loop lands in a later 5C stage; the task stays in to_verify`,
-      };
-    }
+    // P6-D0 UN-RESERVES `rework`. The transition has been in the table since 5C-1
+    // (which reserved it deliberately), so applying it needs no new rule here —
+    // only the refusal goes away. The rework LOOP itself lives in
+    // orchestration/review-loop.ts, which moves the task `rework -> queued` via
+    // TaskStore and lets the EXISTING TaskScheduler dispatch it. That path is
+    // deliberately not inlined: re-entry must be this orchestrator's single
+    // execution edge, and inlining a re-dispatch is exactly how a second
+    // execution path appears.
     return this.mutate(taskId, translated.to, translated.reason);
   }
 

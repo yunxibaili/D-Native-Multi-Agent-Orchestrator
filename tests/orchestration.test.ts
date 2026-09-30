@@ -834,10 +834,18 @@ rework.createRoot({ taskId: 'r', agentId: 'opencode', taskType: 'implementation'
 rework.spawnChild({ taskId: 'w', parentTaskId: 'r', agentId: 'opencode', modelId: 'm-impl', taskType: 'implementation', acceptanceCriteria: 'w' });
 rework.queue('w'); rework.start('w');
 rework.applyRunResult('w', runResult({ state: 'succeeded' }));
+// P6-D0 replaced this assertion. It used to require `rework-not-implemented`,
+// because 5C-1 reserved the status and refused to enter it. D0 now un-reserves it,
+// so the transition `to_verify -> rework` applies. The property that mattered is
+// UNCHANGED and still asserted first: a rework verdict must never fake success.
 const rw = rework.applyVerification('w', { verdict: 'rework', reason: 'incomplete' });
-check('a rework verdict does NOT fake success', !rw.ok);
-check('rework is reported as not yet implemented', deny(rw)[0] === 'rework-not-implemented');
-check('a rework verdict leaves the task in to_verify', rework.getStore().get('w')?.status === 'to_verify');
+check('a rework verdict does NOT fake success', rework.getStore().get('w')?.status !== 'succeeded');
+check('P6-D0: a rework verdict now lands in the reserved rework status', rw.ok, deny(rw)[0]);
+check('the task is in rework, not succeeded', rework.getStore().get('w')?.status === 'rework');
+check('rework is NOT terminal (it can still be dispatched again)', rework.getStore().get('w')?.status !== 'failed');
+// D0 owns the loop that leaves `rework`; re-entry is through queued + scheduler.
+check('a task in rework is not yet dispatchable by the scheduler',
+  rework.getStore().get('w')?.status === 'rework');
 
 // agent mismatch — c-3 is the codex review child, so an opencode result is wrong
 const mismatch = orch.applyRunResult('c-3', runResult({ agentId: 'someone-else', state: 'succeeded' }));

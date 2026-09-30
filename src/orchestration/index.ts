@@ -32,6 +32,8 @@ export {
   resolveTaskPolicy,
   resolveAgentAvailability,
   resolveCapability,
+  resolveFreeModelPoolAdmission,
+  MODEL_POOL_ERROR_CODES,
   resolveWorkspaceModeCapability,
   WORKSPACE_CAPABILITY_MISSING,
   resolveModelAvailability,
@@ -80,6 +82,100 @@ export {
   type WorkspaceCleanupPolicy,
   type WorkspaceManagerOptions,
 } from './workspace.ts';
+
+// P6-D0: structured review verdict + bounded same-agent rework.
+// The verdict is evidence; task state still moves only through applyVerification.
+export {
+  REVIEW_VERDICTS,
+  RECOMMENDED_ACTIONS,
+  D0_EXECUTABLE_ACTIONS,
+  SEVERITIES,
+  REVIEW_OUTPUT_CONTRACT,
+  ReviewVerdictError,
+  isReviewVerdictError,
+  validateReviewVerdict,
+  fingerprintVerdict,
+  normalizeReviewOutput,
+  parseReviewOutput,
+  reviewInstructions,
+  toReviewEvidence,
+  type ReviewVerdict,
+  type ReviewVerdictValue,
+  type ReviewFinding,
+  type ReviewEvidence,
+  type RecommendedAction,
+  type Severity,
+} from './review-verdict.ts';
+
+export {
+  DEFAULT_REWORK_POLICY,
+  applyReviewVerdict,
+  prepareRework,
+  toVerificationOutcome,
+  toReworkDecision,
+  validateReworkDecision,
+  type ReviewOutcome,
+  type ReworkPolicy,
+  type ReworkStop,
+  type ReworkReentry,
+  type ReworkAuthority,
+  type VerificationAuthority,
+  type TaskSchedulerLike,
+} from './review-loop.ts';
+
+// P6-A: the orchestration state loop.
+// Observation is a read-only view over TaskStore; the decision union is frozen
+// here with only continue/wait/abort implemented; validation throws rather than
+// guessing. Nothing in this group writes task state or starts an agent.
+export {
+  observeTasks,
+  toDecisionState,
+  type TaskObservation,
+  type ObservedTask,
+  type ObservedResult,
+  type ObserveOptions,
+} from './observation.ts';
+
+export {
+  IMPLEMENTED_ACTIONS,
+  DEFERRED_ACTIONS,
+  ALL_ACTIONS,
+  DecisionValidationError,
+  isDecisionValidationError,
+  validateDecision,
+  applyDecision,
+  type DecisionAction,
+  type ImplementedAction,
+  type DeferredAction,
+  type OrchestrationDecision,
+  type DecisionApplication,
+  type DecisionApplicationContext,
+} from './decision.ts';
+
+export {
+  ORCHESTRATION_ACTION_ID,
+  CYCLE_IMPLEMENTED_ACTIONS,
+  orchestrationDecisionRequest,
+  extractAction,
+  runDecisionCycle,
+  type DecisionOutcome,
+  type DecisionLoopOptions,
+  type OrchestrationDecisionRequestOptions,
+} from './decision-loop.ts';
+
+// P6-F: the code-level free model pool.
+export {
+  ACTIVE_FREE_MODEL_POOL,
+  DEFAULT_REVIEWER,
+  EXCLUDED_FROM_FREE_POOL,
+  isAllowedModel,
+  isInFreeModelPool,
+  intersectWithFreePool,
+  listFreeModelPool,
+  type FreeModelPoolEntry,
+  type FreeEvidence,
+  type ModelPoolVerdict,
+} from './model-pool.ts';
 
 // 5C-9: inspect + explicit merge.
 export {

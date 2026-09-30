@@ -27,7 +27,8 @@ export const TASK_STATUSES = [
   'succeeded',
   'failed',
   'cancelled',
-  // Reserved for later stages. Never entered by 5C-1 code.
+  // Reserved for later stages. `rework` was un-reserved by P6-D0, which gave it a
+  // real loop (`review-loop.ts`); `retrying` and `replanning` are still unused.
   'retrying',
   'rework',
   'replanning',

@@ -33,6 +33,7 @@ import type {
 } from '../quota/types.ts';
 import type { AgentDescriptor, WorkspaceMode } from '../core/types.ts';
 import { modelKey } from '../quota/registry.ts';
+import { isAllowedModel } from './model-pool.ts';
 
 /** A signal we could not read, with the reason it is unusable. */
 export interface MissingSignal {
@@ -98,6 +99,16 @@ export interface SpawnGateSources {
    * gate itself is what enforces the structural limits.
    */
   taskPolicyAllows?: boolean;
+  /**
+   * P6-F: apply the ACTIVE free model pool to this spawn.
+   *
+   * OFF by default, deliberately. Enforcing it always would deny every model
+   * outside the pool — including ones a user paid for — which would change the
+   * existing paid-model / quota semantics that P6 forbids changing. The pool is
+   * still always QUERYABLE via `resolveFreeModelPoolAdmission` / `isAllowedModel`.
+   * P6-B assignment turns this on for free-worker candidates.
+   */
+  enforceFreeModelPool?: boolean;
 }
 
 /** What the builder learned, whether or not the gate allowed the spawn. */
@@ -267,6 +278,36 @@ export function resolveModelAvailability(
   // `unknown` is NOT available. An unconfirmed model is exactly the case the
   // gate must refuse, because spawning would spend against a guess.
   return ok(entry.availability === 'available');
+}
+
+/** Missing codes unique to the P6-F pool, so a refusal says WHICH rule fired. */
+export const MODEL_POOL_ERROR_CODES = [
+  'model-not-in-free-pool',
+  'model-free-pool-identity-mismatch',
+] as const;
+
+/**
+ * P6-F: is this model an ACTIVE member of the free model pool?
+ *
+ * Pure. It reads no registry, no quota and no network — the pool is the only
+ * input — so it stays correct regardless of what the registry happens to say.
+ *
+ * Fail-closed by construction: a model that is not positively listed is refused,
+ * and an EMPTY model id is a refusal rather than a wildcard pass.
+ *
+ * Its two refusal codes are intentionally distinct from the availability path:
+ * `resolveModelAvailability` resolves availability to `ok(false)` for an unknown
+ * model and emits NO missing code, so "not in the pool" is always attributable.
+ */
+export function resolveFreeModelPoolAdmission(
+  sources: { agentId: string; modelId: string | null },
+): Signal<boolean> {
+  const verdict = isAllowedModel({ agentId: sources.agentId, modelId: sources.modelId });
+  if (verdict.allowed) return ok(true);
+  if (verdict.reason === 'identity-mismatch') {
+    return missing('model-free-pool-identity-mismatch', verdict.detail);
+  }
+  return missing('model-not-in-free-pool', verdict.detail);
 }
 
 /**
@@ -449,6 +490,29 @@ export function buildSpawnGateInput(req: BuildSpawnGateInput): SpawnGateDecision
     'taskPolicyAllows',
   );
 
+  // ---- P6-F: free model pool (opt-in, fail-closed when enabled) ----------
+  // The pool is ALWAYS queryable (`resolveFreeModelPoolAdmission` is exported and
+  // side-effect free). Whether the gate APPLIES it is a caller decision, because
+  // enforcing it by default would deny every non-pool model — including models a
+  // user has deliberately paid for — which would change existing paid-model /
+  // quota semantics, which P6 explicitly forbids. P6-B assignment is what turns
+  // this on for free-worker candidates.
+  //
+  // `SpawnGateInput` is sealed (src/quota/types.ts), so the verdict is carried the
+  // way this module already carries every unresolvable signal: a DISTINCT missing
+  // code for the reason, plus a denying boolean on the existing model signal. That
+  // keeps "not in the pool" distinguishable from "availability unknown" — the
+  // latter resolves to ok(false) and therefore produces NO missing code at all.
+  const freeModelPoolAllows = s.enforceFreeModelPool === true
+    ? collect(resolveFreeModelPoolAdmission({ agentId: req.agentId, modelId: req.modelId }), 'freeModelPoolAllows')
+    : ok(true);
+  const poolDenied = freeModelPoolAllows === null;
+  provenance.push(
+    s.enforceFreeModelPool === true
+      ? `freeModelPoolAllows=${freeModelPoolAllows ?? 'DENIED (missing -> denied)'}`
+      : 'freeModelPoolAllows=true (pool consulted but NOT enforced for this spawn)',
+  );
+
   // ---- quota -------------------------------------------------------------
   const quota = collect(resolveQuotaStatus({ quotaRecords: s.quotaRecords, agentId: req.agentId }), 'quota.status');
   provenance.push(`quota.status=${quota ?? 'unavailable (missing -> denied)'}`);
@@ -497,7 +561,10 @@ export function buildSpawnGateInput(req: BuildSpawnGateInput): SpawnGateDecision
     taskPolicyAllows: s.taskPolicyAllows ?? taskPolicyAllows ?? false,
     capabilitySatisfied: capability ?? false,
     agentAvailable: agentAvailable ?? false,
-    modelAvailable: modelAvailable ?? false,
+    // A pool denial forces the model signal false even when the registry says the
+    // model is available: "available" and "allowed as a free worker" are different
+    // questions, and only the second one is what this pool decides.
+    modelAvailable: poolDenied ? false : modelAvailable ?? false,
     quota: { status: quota ?? 'unknown' },
     // `remaining: 0` with `requested: 0` would satisfy `requested > remaining`
     // as false and read as ALLOWED — that is the fail-open this guards. When the
