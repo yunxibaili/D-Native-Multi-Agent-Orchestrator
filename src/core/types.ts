@@ -37,6 +37,19 @@ export function isTerminal(state: TaskState): state is TerminalState {
 export type TransportKind = 'cli-jsonl' | 'acp' | 'app-server';
 
 /**
+ * The directory layout a task executes in.
+ *
+ * Declared here, in the lowest layer, because the capability model must be able
+ * to name a mode without the capability layer depending on the workspace
+ * implementation. `src/orchestration/workspace.ts` re-exports this, so
+ * `import { WorkspaceMode } from './workspace'` keeps working.
+ *
+ *   - `shared`    — one directory, many tasks. Concurrent writers conflict.
+ *   - `isolated`  — a private `git worktree` per task.
+ */
+export type WorkspaceMode = 'isolated' | 'shared';
+
+/**
  * Capabilities that are actually implemented and verified. A field may only be
  * `true` if the adapter honours the option end to end; otherwise the adapter
  * must reject the request in `validateRequest`.
@@ -65,9 +78,32 @@ export interface AgentCapabilities {
    * rather than guess. Implementing any of them requires implementing them.
    */
   steering: boolean;
+  /**
+   * Whether the adapter implements a NATIVE worktree/fork REQUEST — i.e. the
+   * agent asking for its own checkout. `RunRequest` cannot carry such a field,
+   * so this stays `false` for every agent and must not be confused with
+   * `workspaceModes` below: that one is about being PLACED in a directory we
+   * chose, this one is about the agent creating one itself.
+   */
   worktree: boolean;
   fork: boolean;
   stdinPrompt: boolean;
+  /**
+   * Which workspace modes this agent may be ADMITTED into.
+   *
+   * FAIL-CLOSED: an absent field means `['shared']` only. An agent nobody has
+   * verified is never quietly placed in an isolated worktree.
+   *
+   * `cwd: true` is NECESSARY but not sufficient here. Honouring a directory is
+   * one requirement; the other is that parallel instances in different
+   * directories do not fight over shared per-agent state (a session store, a
+   * config file, a lock). That second property is separate evidence per agent,
+   * which is why it is declared rather than inferred from `cwd`.
+   *
+   * Capability is NOT implementation: git worktrees work (5C-5) regardless of
+   * this field. This only decides whether a given agent is allowed to use one.
+   */
+  readonly workspaceModes?: readonly WorkspaceMode[];
 }
 
 export interface AgentDescriptor {

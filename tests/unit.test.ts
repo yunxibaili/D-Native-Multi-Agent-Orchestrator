@@ -152,7 +152,11 @@ section('opencode adapter');
     worktree: false,
     fork: false,
     stdinPrompt: false,
+    // 5C-6: the only agent cleared for a private worktree. `worktree` above
+    // stays false — it claims a NATIVE request surface RunRequest cannot carry.
+    workspaceModes: ['shared', 'isolated'],
   });
+  eq('opencode is not claimed to manage its own worktree', adapter.descriptor.capabilities.worktree, false);
 
   // The transport is where argv lives now.
   const tr = adapter.createTransport({
@@ -298,7 +302,11 @@ section('codex adapter');
     worktree: false,
     fork: false,
     stdinPrompt: false,
+    // 5C-6: Codex is PAUSED, which is not the same as UNSUPPORTED. The schema
+    // stays, the declaration is fail-closed to `shared` until it can be verified.
+    workspaceModes: ['shared'],
   });
+  eq('codex isolation is withheld while paused, not asserted unsupported-by-design', adapter.descriptor.capabilities.workspaceModes, ['shared']);
 
   // The three flag profiles. Passing an unsupported flag is a clap error, exit 2.
   const line = (req: RunRequest): string => adapter.createTransport(req).commandLine;

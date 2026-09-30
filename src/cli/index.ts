@@ -10,7 +10,9 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setLogLevel, type LogLevel } from '../core/log.ts';
 import { Orchestrator } from '../orchestrator/orchestrator.ts';
-import { writeStarterConfig } from '../orchestrator/config.ts';
+import { writeStarterConfig, type AgentConfig } from '../orchestrator/config.ts';
+import { runTaskCli } from './task-cli.ts';
+import { buildQuotaCenter, type BuildQuotaCenterOptions, type QuotaCenterView } from '../quota/index.ts';
 import type { RunRequest, RunResult } from '../core/types.ts';
 
 const USAGE = `
@@ -27,6 +29,8 @@ COMMANDS
   threads [agent]                 list resumable threads
   tasks [limit]                   list recent tasks
   show <taskId>                   print a stored task result
+  quota [--json] [--offline]      quota / model registry / budget / spawn gate snapshot
+  task list|inspect|diff|merge   workspace loop: see a child's work, merge it into your repo
   init                            write a starter orchestrator.json
   smoke [--quick]                 end-to-end verification suite
 
@@ -130,6 +134,23 @@ function strList(flags: Parsed['flags'], key: string): string[] | undefined {
 
 async function main(): Promise<number> {
   const argv = process.argv.slice(2);
+
+  // 5C-9: `task` owns its own flags. The generic parser below splits argv into
+  // positionals and flags and would silently swallow --verified / --json before
+  // the subcommand ever saw them, which made `task merge A --verified` refuse for
+  // the wrong reason. So `task` is dispatched BEFORE generic parsing, with the
+  // rest of argv handed over verbatim.
+  const taskAt = argv.indexOf('task');
+  if (taskAt >= 0) {
+    const cwdIdx = argv.indexOf('--cwd');
+    const cwd = cwdIdx >= 0 && argv[cwdIdx + 1] !== undefined ? resolve(argv[cwdIdx + 1]!) : process.cwd();
+    const rest = argv.filter((a, i) => {
+      if (i === cwdIdx || i === cwdIdx + 1) return false;
+      return a !== '--cwd';
+    }).slice(taskAt + 1);
+    return runTaskCli(rest, cwd);
+  }
+
   const parsed = parseArgs(argv);
 
   setLogLevel((str(parsed.flags, 'log-level') as LogLevel) ?? 'warn');
@@ -158,6 +179,8 @@ async function main(): Promise<number> {
       return cmdTasks(orch, parsed);
     case 'show':
       return cmdShow(orch, parsed);
+    case 'quota':
+      return cmdQuota(orch, parsed);
     case 'smoke':
       return cmdSmoke(orch, parsed);
     default:
@@ -369,6 +392,86 @@ function cmdShow(orch: Orchestrator, parsed: Parsed): number {
   }
   process.stdout.write(JSON.stringify(r, null, 2) + '\n');
   return 0;
+}
+
+async function cmdQuota(orch: Orchestrator, parsed: Parsed): Promise<number> {
+  const configs: Record<string, AgentConfig> = {};
+  for (const id of orch.agentIds()) configs[id] = orch.configFor(id);
+  const opts: BuildQuotaCenterOptions = {
+    store: orch.store,
+    configs,
+    descriptors: orch.descriptors(),
+  };
+  // --offline: no CLI probing at all; store-derived rows only, and every
+  // unprobed value says "Unknown"/"Not Fetched" rather than pretending.
+  if (parsed.flags.offline === true) opts.probes = [];
+
+  const center = await buildQuotaCenter(opts);
+  if (parsed.flags.json === true) {
+    process.stdout.write(JSON.stringify(center, null, 2) + '\n');
+    return 0;
+  }
+  printQuotaCenter(center);
+  return 0;
+}
+
+function printQuotaCenter(c: QuotaCenterView): void {
+  const w = (s = ''): void => {
+    process.stdout.write(s + '\n');
+  };
+  const table = (header: string[], rows: string[][]): void => {
+    const widths = header.map((h, i) => Math.max(len(h), ...rows.map((r) => len(r[i] ?? ''))));
+    w(header.map((h, i) => pad(h, widths[i]!)).join('  '));
+    w(widths.map((n) => '-'.repeat(n)).join('  '));
+    for (const r of rows) w(header.map((_, i) => pad(r[i] ?? '', widths[i]!)).join('  '));
+    w();
+  };
+
+  w(`orchestrator quota — ${c.generatedAt}`);
+  w();
+  w('AGENT STATUS');
+  table(
+    ['Agent', 'Version', 'Installed', 'Login', 'QuotaSource', 'Usage', 'Status'],
+    c.agentStatus.map((r) => [r.agent, r.version, r.installed, r.login, r.quotaSource, r.usage, r.status]),
+  );
+
+  w('MODEL REGISTRY');
+  table(
+    ['Agent', 'Model', 'Capability', 'Avail', 'Policy', 'Reason'],
+    c.modelRegistry.map((r) => [r.agent, r.model, r.capability, r.availability, r.policy, r.reason]),
+  );
+
+  w('QUOTA');
+  table(
+    ['Provider', 'Model', 'Period', 'Used', 'Remaining', 'Reset', 'Source', 'Confidence', 'Status'],
+    c.quota.map((r) => [r.provider, r.model, r.period, r.used, r.remaining, r.reset, r.source, r.confidence, r.status]),
+  );
+
+  w('FREE CREDIT / PROMOTIONS');
+  w(`  ${c.freeCredit.status}`);
+  for (const m of c.freeCredit.freeModels) {
+    w(`  free model: ${m.modelId}  (${m.agent}, source: ${m.source}, observed ${m.observedAt})`);
+  }
+  w();
+
+  w('BUDGET (orchestration budget — NOT provider billing)');
+  table(
+    ['Scope', 'Id', 'Allocated', 'Reserved', 'Consumed', 'Remaining'],
+    c.budgets.map((b) => [b.scope, b.id, String(b.allocated), String(b.reserved), String(b.consumed), String(b.remaining)]),
+  );
+
+  w('SPAWN GATE (decision only — nothing was spawned)');
+  w(`  ${c.spawnGate.allowed ? 'allowed' : 'denied'} [${c.spawnGate.code}] ${c.spawnGate.reason}`);
+  w();
+  w(c.classificationNote);
+}
+
+function len(s: string): number {
+  return [...s].length;
+}
+
+function pad(s: string, width: number): string {
+  return s + ' '.repeat(Math.max(0, width - len(s)));
 }
 
 async function cmdSmoke(orch: Orchestrator, parsed: Parsed): Promise<number> {

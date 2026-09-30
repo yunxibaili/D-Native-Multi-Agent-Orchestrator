@@ -74,6 +74,12 @@ const CAPABILITIES: AgentCapabilities = {
   worktree: false,
   fork: false,
   stdinPrompt: false,
+  // 5C-6: `shared` only while Codex is paused. Recording PAUSED is not the same
+  // as recording UNSUPPORTED — `--sandbox` and a true `cwd` are implemented and
+  // isolated would likely pass, but Codex is not installed here so nothing can
+  // be verified today. Fail-closed keeps the declaration honest instead of
+  // claiming a capability for an agent nobody can run.
+  workspaceModes: ['shared'],
 };
 
 export function createCodexAdapter(config?: {

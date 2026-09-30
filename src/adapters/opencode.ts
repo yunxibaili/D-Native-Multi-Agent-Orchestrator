@@ -64,6 +64,19 @@ const CAPABILITIES: AgentCapabilities = {
   worktree: false,
   fork: false,
   stdinPrompt: false,
+  // 5C-6 workspace admission. The ONLY agent cleared for `isolated`, on
+  // evidence gathered on this machine rather than assumption:
+  //   - binary present (opencode 1.18.31);
+  //   - `opencode run --help` documents `-d, --dir <directory>` "directory to
+  //     run in", and this adapter passes it as `--dir ${req.cwd}`;
+  //   - the transport additionally spawns with `cwd: req.cwd`;
+  //   - per-directory project layout, so parallel instances in separate
+  //     directories keep independent state.
+  // An end-to-end run could not be completed here (the configured provider
+  // returns "Unexpected server error" — reproduced identically in a plain
+  // checkout, so it says nothing about directory handling). That is why this
+  // rests on the adapter's own directory plumbing rather than on a green run.
+  workspaceModes: ['shared', 'isolated'],
 };
 
 export function createOpenCodeAdapter(config?: {

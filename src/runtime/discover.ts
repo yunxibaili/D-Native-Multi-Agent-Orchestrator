@@ -175,6 +175,11 @@ function agentCandidates(agentId: string): string[] {
       }
       return out;
     }
+    case 'cline': {
+      // The one native entry point on this machine: a single-file sidecar.
+      // It has no CLI surface (argv is swallowed), so discovery is just this.
+      return ['D:\\Cline\\code-sidecar.exe'];
+    }
     default:
       // Unknown agents: nothing special. Extending agent support is exactly a
       // new entry here plus a factory in adapters/index.ts.
