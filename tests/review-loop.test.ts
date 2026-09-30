@@ -621,10 +621,36 @@ section('P6-D0 7. bounded rework: max attempts and repeated verdicts');
       second.status === 'rework-stopped' ? second.stop : '');
   }
 
-  // A repeated verdict with REWORDED prose and a new timestamp is still a repeat.
-  check('a reworded-but-equivalent verdict has the same fingerprint',
+// The fingerprint's exact contract: same verdict + same SORTED finding set.
+  // It is NOT fuzzy. Reworded prose is a KNOWN limitation, asserted here so it
+  // cannot be "fixed" later by quietly introducing similarity matching — a false
+  // merge would refuse a legitimate rework.
+  check('an IDENTICAL finding set produces the same fingerprint',
     fingerprintVerdict({ verdict: 'rework', findings: [{ location: 'a', severity: 'minor', message: 'x', evidence: 'e' }] }) ===
     fingerprintVerdict({ verdict: 'rework', findings: [{ location: 'a', severity: 'minor', message: 'x', evidence: 'e' }] }));
+  check('finding ORDER does not change the fingerprint (the set is sorted)',
+    fingerprintVerdict({
+      verdict: 'rework',
+      findings: [
+        { location: 'b', severity: 'major', message: 'second' },
+        { location: 'a', severity: 'minor', message: 'first' },
+      ],
+    }) ===
+    fingerprintVerdict({
+      verdict: 'rework',
+      findings: [
+        { location: 'a', severity: 'minor', message: 'first' },
+        { location: 'b', severity: 'major', message: 'second' },
+      ],
+    }));
+  check('a REWORDED message produces a DIFFERENT fingerprint (no fuzzy matching, by design)',
+    fingerprintVerdict({ verdict: 'rework', findings: [{ location: 'a', severity: 'minor', message: 'x', evidence: 'e' }] }) !==
+    fingerprintVerdict({ verdict: 'rework', findings: [{ location: 'a', severity: 'minor', message: 'x, but reworded', evidence: 'e' }] }));
+  check('a different verdict value always produces a different fingerprint',
+    fingerprintVerdict({ verdict: 'rework', findings: [] }) !==
+    fingerprintVerdict({ verdict: 'pass', findings: [] }));
+  check('the hard bound is maxAttempts, not the fingerprint (documented above review-loop.ts)',
+    Number.isInteger(DEFAULT_REWORK_POLICY.maxAttempts) && DEFAULT_REWORK_POLICY.maxAttempts >= 1);
 
   // A repeated PASS is not a loop and must still be honoured. Its own fixture, so
   // the shared task's accumulated rework attempts cannot affect the outcome.
@@ -757,7 +783,50 @@ section('P6-D0 9. review evidence stays out of TaskObservation');
   check('a task in rework is not ready to dispatch yet (the scheduler agrees)',
     !after.ready.includes('c1') && !after.running.includes('c1'));
 
-  // The evidence record is separate and typed.
+  // A rework verdict against a task that has ALREADY been verified must be
+// refused by the terminal state, not silently re-enter `rework`. Codex's P6-D0
+// review asked for this explicitly: without it, a late-arriving reviewer could
+// pull a `succeeded` task back into the rework loop.
+{
+  const { orch } = await freshAtVerify('cT');
+  const passing = validateReviewVerdict(rawVerdict({ verdict: 'pass', recommendedAction: 'none' }));
+  const ok = applyReviewVerdict({ orchestrator: orch, taskId: 'cT', verdict: passing });
+  check('the task was verified succeeded', ok.status === 'ok' && orch.getStore().get('cT')?.status === 'succeeded',
+    String(orch.getStore().get('cT')?.status));
+
+  const late = validateReviewVerdict(rawVerdict({
+    verdict: 'rework', reason: 'a second opinion arrived late',
+    findings: [{ location: 'late.ts:1', severity: 'minor', message: 'a second opinion arrived late' }],
+  }));
+  const lateResult = applyReviewVerdict({ orchestrator: orch, taskId: 'cT', verdict: late });
+  check('a rework verdict on a SUCCEEDED task is refused, not executed',
+    lateResult.status !== 'ok', lateResult.status);
+  check('and the task did NOT re-enter rework',
+    orch.getStore().get('cT')?.status === 'succeeded', String(orch.getStore().get('cT')?.status));
+  check('it stayed succeeded (terminal wins)',
+    orch.getStore().get('cT')?.status !== 'rework' && orch.getStore().get('cT')?.status !== 'to_verify');
+  check('the refusal is reported, not swallowed', lateResult.dispatched === false);
+}
+
+// The same refusal for a task already `failed`.
+{
+  const { orch } = await freshAtVerify('cF');
+  applyReviewVerdict({
+    orchestrator: orch, taskId: 'cF',
+    verdict: validateReviewVerdict(rawVerdict({ verdict: 'reject' })),
+  });
+  check('the task was rejected to failed', orch.getStore().get('cF')?.status === 'failed',
+    String(orch.getStore().get('cF')?.status));
+  const after = applyReviewVerdict({
+    orchestrator: orch, taskId: 'cF',
+    verdict: validateReviewVerdict(rawVerdict({ verdict: 'rework', findings: [] })),
+  });
+  check('a rework verdict on a FAILED task is refused',
+    after.status !== 'ok' && orch.getStore().get('cF')?.status === 'failed',
+    `${after.status}/${String(orch.getStore().get('cF')?.status)}`);
+}
+
+// The evidence record is separate and typed.
   const v = validateReviewVerdict(rawVerdict());
   const ev = toReviewEvidence('c1', v, []);
   check('review evidence records the task and the verdict',

@@ -33,7 +33,14 @@
  *
  *   1. max attempts        — a hard count, from the task's OWN retryCount
  *   2. repeated verdict    — the same fingerprint twice stops the loop
- *   3. terminal outcome    — on either, the task goes `failed` via applyVerification
+ *   3. no silent fallthrough — on either, NO rework is applied and the task is
+ *                              left exactly where it was (normally `to_verify`)
+ *
+ * On a guard trip this module does NOT fail the task. It reports `rework-stopped`
+ * with a `stop` reason and returns; the caller (or a later Laya cycle) decides what
+ * to do about a task nobody is willing to re-attempt. Failing the task here would
+ * mean this loop both refused the rework AND ended the work, which is a bigger
+ * decision than D0 was given.
  *
  * `retryCount` is read from the `Task` itself rather than counted in a new object.
  * The P6 plan is explicit that counters live on the task or on `AttemptRecord`

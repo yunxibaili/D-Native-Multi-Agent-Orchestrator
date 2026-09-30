@@ -142,12 +142,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * A fingerprint over what actually matters for loop termination.
+ * A fingerprint over exactly what identifies a verdict for duplicate detection.
  *
- * Deliberately NOT over `reason` or `reviewedAt`. A reviewer that returns the
- * same findings with a fresh timestamp and reworded prose is the SAME verdict for
- * loop purposes; if the fingerprint included those fields, a reworded repeat
- * would defeat duplicate detection, which is precisely the loop this has to stop.
+ *   duplicate fingerprint  ==  same verdict
+ *                          &&  the same SORTED set of
+ *                              (severity | location | message | evidence)
+ *
+ * What this deliberately does NOT do:
+ *
+ *   - `reason` is EXCLUDED. It is free prose attached to the findings, so
+ *     including it would make a reworded reason look like a new verdict.
+ *   - `reviewedAt` is EXCLUDED, so the same findings reviewed twice collide.
+ *
+ * What this equally deliberately does NOT do:
+ *
+ *   - It is NOT fuzzy and NOT semantic. A reviewer that changes the WORDING of a
+ *     message produces a different fingerprint, and this loop will treat that as a
+ *     new verdict. That is a known, accepted limitation, not a bug to be papered
+ *     over: any similarity measure would have to guess which rewording still
+ *     means "the same complaint", and a false merge stops a legitimate rework.
+ *
+ * The hard bound is `maxAttempts` (see review-loop.ts), which terminates the loop
+ * regardless of how the verdicts compare. Duplicate detection is an early exit for
+ * the common case, never the only line of defence.
  */
 export function fingerprintVerdict(input: {
   verdict: ReviewVerdictValue;

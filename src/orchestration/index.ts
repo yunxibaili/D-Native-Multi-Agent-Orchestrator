@@ -83,6 +83,39 @@ export {
   type WorkspaceManagerOptions,
 } from './workspace.ts';
 
+// P6-E: structured attempt evidence.
+// AttemptRecord is history ONLY: it never transitions a task, never dispatches,
+// and never becomes a second status authority. Read-only aggregation lives in
+// AttemptStore; nothing here ranks, scores or chooses.
+export {
+  ATTEMPT_KINDS,
+  ATTEMPT_OUTCOMES,
+  AttemptRecordError,
+  isAttemptRecordError,
+  validateAttemptRecord,
+  executionAttempt,
+  reworkAttempt,
+  reviewAttempt,
+  type AttemptKind,
+  type AttemptOutcome,
+  type AttemptRecord,
+  type AttemptVerification,
+} from './attempt-record.ts';
+
+export {
+  AttemptStore,
+  type AttemptAppendOutcome,
+  type AttemptEvidence,
+  type AttemptStoreOptions,
+} from './attempt-store.ts';
+
+export {
+  recordExecution,
+  recordExecutions,
+  recordReview,
+  type ExecutionEvidenceInput,
+} from './attempt-integration.ts';
+
 // P6-D0: structured review verdict + bounded same-agent rework.
 // The verdict is evidence; task state still moves only through applyVerification.
 export {
