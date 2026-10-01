@@ -83,6 +83,33 @@ export {
   type WorkspaceManagerOptions,
 } from './workspace.ts';
 
+// P6-B: deterministic, evidence-aware worker/model selection.
+// The engine is a PURE function of a snapshot. It writes identity and nothing
+// else; the existing spawn gate keeps the final veto, and TaskStore remains the
+// only lifecycle authority.
+export {
+  ASSIGNMENT_FAILURE_CODES,
+  ASSIGNABLE_STATUSES,
+  assignWorker,
+  scoreCandidate,
+  isAssignable,
+  requestModelSwitch,
+  type AssignmentInput,
+  type AssignmentOutcome,
+  type AssignmentCandidate,
+  type AssignmentFailureCode,
+  type CandidateRejection,
+  type ScoreBreakdown,
+  type ScoredCandidate,
+} from './assignment.ts';
+
+export {
+  applyAssignment,
+  recordDispatchedExecutions,
+  recordReworkExecution,
+  type DispatchEvidenceResult,
+} from './assignment-wiring.ts';
+
 // P6-E: structured attempt evidence.
 // AttemptRecord is history ONLY: it never transitions a task, never dispatches,
 // and never becomes a second status authority. Read-only aggregation lives in

@@ -188,6 +188,61 @@ export class TaskStore {
     return { ok: true, task: updated, code: null, reason: null };
   }
 
+  /**
+   * P6-B: set WHICH WORKER a not-yet-started task will use.
+   *
+   * Minimal and additive on purpose. It exists because a task's `agentId` and
+   * `modelId` were previously immutable after `create`, which makes
+   * evidence-based assignment impossible — and re-creating the task to change its
+   * owner would be a second lifecycle authority. This is the same store, the same
+   * record, the same field: only the identity is replaced, and only through a
+   * method on the one authority.
+   *
+   * WHY IT REFUSES A TASK THAT HAS ALREADY STARTED
+   * `startedAt !== null` means the worker was already chosen and used. Swapping
+   * identity at that point is worker migration, which the P6 plan assigns to P6-D1
+   * together with replan and downstream invalidation. Enforcing that here — in the
+   * store, where the knowledge of "has this run" actually lives — means the
+   * boundary holds structurally: no caller can write an identity change that the
+   * store itself refuses. There is deliberately no `force` parameter.
+   *
+   * Status is NOT changed. This cannot dispatch, queue, or start anything; a task
+   * that was `planned` is still `planned` afterwards, and the existing
+   * `TaskScheduler.tick()` remains the only thing that starts it.
+   *
+   * There is no `now` parameter, because identity carries no timestamp: assigning
+   * a worker neither starts the task (`startedAt`) nor finishes it (`finishedAt`).
+   * Taking a clock here would suggest the assignment happened at a moment, which
+   * is exactly the kind of invented state this method must not add.
+   */
+  assignIdentity(taskId: string, agentId: string, modelId: string | null): TransitionResult {
+    const task = this.byId.get(taskId);
+    if (task === undefined) {
+      return { ok: false, task: null, code: 'task-not-found', reason: `no task "${taskId}"` };
+    }
+    if (agentId.trim() === '') {
+      return { ok: false, task: null, code: 'agent-id-required', reason: 'agentId must be a non-empty string' };
+    }
+    if (task.startedAt !== null) {
+      // The decisive check, and the one P6-D1 will have to revisit deliberately.
+      return {
+        ok: false,
+        task: null,
+        code: 'assignment-after-start',
+        reason:
+          `task "${taskId}" has already started (status ${task.status}); changing its agent or model ` +
+          `now is worker migration, which is P6-D1, not P6-B. P6-B only assigns a task that has not run.`,
+      };
+    }
+    if (task.agentId === agentId && task.modelId === modelId) {
+      // Idempotent, not an error: re-assigning the same identity changed nothing.
+      return { ok: true, task, code: null, reason: null };
+    }
+    const updated: Task = { ...task, agentId, modelId };
+    this.byId.set(taskId, updated);
+    return { ok: true, task: updated, code: null, reason: null };
+  }
+
   /** Depth-first walk of the tree rooted at `taskId`, including the root. */
   descendants(taskId: string): Task[] {
     const out: Task[] = [];
