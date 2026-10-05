@@ -2,8 +2,8 @@
 > 本 README 描述 runtime CLI 的用法与当前架构要点；架构、角色、主流程与路线以
 > baseline 为准。本项目是 Laya-driven Multi-Agent Orchestrator（4 个 Native Agent
 > identity / bounded Execution Round / Decision Loop / Lease+Fencing /
-> ResourceClaim / Unified Codex Review / Agent Handoff L6）。**Result Aggregation
-> 与 Human Gate 尚未开始。**
+> ResourceClaim / Unified Codex Review / Agent Handoff L6 / Result Aggregation /
+> Human Gate）。**本轮结束于 Human Gate，自动动作为 NONE。**
 
 # Native Agent Orchestrator
 
@@ -65,7 +65,17 @@ SessionRegistry = 1, ResourceClaimBook = 1, and exactly one `runtime.run(` edge.
   same TaskId, **new AttemptId, new Lease**. Admission refusals surface as
   `executed=false, refused=true` rather than fabricating an attempt. Handoff is
   bounded — it stops and reports rather than looping.
-- **Result Aggregation / Human Gate** are product-layer work and are **not started**.
+- **Result Aggregation** — a finished round is projected into one report from the
+  authorities that already exist (TaskStore, AttemptStore, `TaskHandoff`, the unified
+  review, the continuation result). It is **READ/DERIVE only**: it owns no state, and it
+  cannot dispatch, decide or move a task. Machine evidence, the review conclusion and the
+  user-facing summary stay three separate layers.
+- **Human Gate** — derived from task status and review status on every read, so it has no
+  lifecycle of its own and cannot loop. When the round settles, the orchestrator **stops**
+  and reports `automaticPostRoundAction: NONE`: no retry, reassign, replan, split,
+  parallelize, rework or handoff happens on its own. Starting the next round is the user's
+  decision, under a **new** round identity.
+- **Not built** — a full next-round planner, and any ResultStore / ReportAuthority.
 
 
 ---

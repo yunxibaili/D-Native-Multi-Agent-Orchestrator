@@ -128,7 +128,19 @@ import {
 } from '../orchestration/continuation.ts';
 import { buildHandoff } from '../orchestration/workbench-handoff.ts';
 import { buildExecutionSnapshot } from '../orchestration/execution-monitor.ts';
-import { createRoundObserver, type RoundObserver } from '../orchestration/round-observation.ts';
+import {
+  createRoundObserver,
+  publishRoundResult,
+  type RoundObserver,
+} from '../orchestration/round-observation.ts';
+// R4: aggregation + human gate. Both are PURE projections — this file composes them and
+// then stops. Nothing here gives them a way to dispatch, decide, or move a task.
+import {
+  buildRoundResult,
+  renderRoundResult,
+  type RoundResult,
+  type TaskEvidenceInput,
+} from '../orchestration/round-result.ts';
 import { createLayaDecisionProvider } from '../decision/laya.ts';
 import type { DecisionProvider } from '../decision/types.ts';
 import { classifyTask } from '../decision/routing.ts';
@@ -384,6 +396,11 @@ export async function runRoundCli(
   const note = (s: string): void => {
     process.stderr.write(s + '\n');
   };
+
+  // R4: the round's own clock, read ONCE here so the reported window spans everything the
+  // round did. Deliberately not `Date.now()` at report time: a round timeline that
+  // disagreed with its own attempt records would be a second, worse version of the truth.
+  const startedAt = Date.now();
 
   // ---- the decision brain, constructed for real ----------------------------
   // A non-loopback base URL throws here (a configuration error, not a decision
@@ -1246,26 +1263,32 @@ export async function runRoundCli(
       : `isolated worktrees under ${repoRoot}`,
   ];
 
+  // Laya's own words, built once and used by BOTH the review packet and the round
+  // result. Two copies of this text would be two chances for the report and the review
+  // to disagree about what the plan was.
+  const layaPlanText = [
+    `classification: work_kind=${classification.work_kind} complexity=${classification.complexity} ` +
+      `review_required=${classification.review_required}`,
+    planned.planned.classificationReason === null
+      ? 'Laya gave no reason for the classification.'
+      : `Laya's reason: ${planned.planned.classificationReason}`,
+    `plan shape: ${planned.planned.shape}`,
+    `decision cycle: ${decisionPart.status}${decisionPart.action === null ? '' : ` -> ${decisionPart.action}`}` +
+      `${decisionPart.rationale === null ? '' : ` (${decisionPart.rationale})`}`,
+  ].join('\n');
+
+  const evidenceNote = `AttemptStore holds ${wb.evidence.size} attempt record(s) for this round; ` +
+    'each attemptId above resolves there, and each transcriptPath resolves to the full conversation.';
+
   const reviewPacket = buildReviewPacket({
     roundId: rootId,
     originalRequest: o.objective,
-    // Laya's own words, not a paraphrase written here.
-    layaPlan: [
-      `classification: work_kind=${classification.work_kind} complexity=${classification.complexity} ` +
-        `review_required=${classification.review_required}`,
-      planned.planned.classificationReason === null
-        ? 'Laya gave no reason for the classification.'
-        : `Laya's reason: ${planned.planned.classificationReason}`,
-      `plan shape: ${planned.planned.shape}`,
-      `decision cycle: ${decisionPart.status}${decisionPart.action === null ? '' : ` -> ${decisionPart.action}`}` +
-        `${decisionPart.rationale === null ? '' : ` (${decisionPart.rationale})`}`,
-    ].join('\n'),
+    layaPlan: layaPlanText,
     tasks: packetTasks,
     outcomes: executionOutcomes,
     quotaSignals,
     resourceSignals,
-    evidenceNote: `AttemptStore holds ${wb.evidence.size} attempt record(s) for this round; ` +
-      'each attemptId above resolves there, and each transcriptPath resolves to the full conversation.',
+    evidenceNote,
   });
 
   let unifiedReview: UnifiedReviewResult;
@@ -1327,9 +1350,15 @@ export async function runRoundCli(
   // This ADDS to execution evidence, never replaces it: a task whose review fails to
   // record keeps every execution attempt it already had.
   report.reviewEvidence = { recorded: false, attemptId: null, code: null, reason: null };
+  // Typed local, because `report` is an untyped record: the round result below must not
+  // have to re-read its own evidence outcome through `unknown`.
+  let reviewEvidenceRecorded = false;
+  let reviewEvidenceAttemptId: string | null = null;
   if (unifiedReview.status === 'completed' && unifiedReview.verdict !== null) {
     const recordedReview = wb.recordReviewEvidence(rootId, unifiedReview.verdict);
     report.reviewEvidence = recordedReview;
+    reviewEvidenceRecorded = recordedReview.ok;
+    reviewEvidenceAttemptId = recordedReview.attemptId;
     // Best-effort: a refused evidence append must never fail the round, and must be
     // visible rather than silent.
     if (!recordedReview.ok) {
@@ -1376,6 +1405,85 @@ export async function runRoundCli(
         'Any next-round suggestion was NOT executed. Run this again yourself to act on it.'
       : `The round could NOT be reviewed (${unifiedReview.status}: ${unifiedReview.reason ?? 'no reason given'}). ` +
         'The execution evidence above is unaffected, but no independent judgement of this round exists yet.';
+
+  // ---- R4: RESULT AGGREGATION + HUMAN GATE ----------------------------------
+  //
+  // Placement is the whole point of this block:
+  //   - AFTER continuation, dispatch, and the review, so every terminal outcome,
+  //     attempt, and handoff already exists in the authorities
+  //   - AFTER `report.reviewEvidence` is written, so the report knows whether the
+  //     verdict reached the evidence chain
+  //   - AFTER `report.nextStep`, and this is where the round ENDS
+  //
+  // `buildRoundResult` is pure and this block performs NO action. From here to the
+  // `return` there is no dispatch, no retry, no reassign, no replan and no second
+  // decision cycle. The gate's whole job is to make that absence explicit rather than
+  // incidental.
+  const taskEvidence: Record<string, TaskEvidenceInput> = {};
+  for (const t of wb.store.all()) {
+    const run = runResults.get(t.taskId);
+    if (run === undefined) continue;
+    const handoff = wb.handoffFor(t.taskId, run);
+    taskEvidence[t.taskId] = {
+      changedFiles: handoff?.changedFiles ?? [],
+      testsRun: handoff?.testsRun ?? [],
+      artifacts: (handoff?.artifacts ?? []).map((a) => ({ name: a.name, path: a.path })),
+      transcriptPath: handoff?.transcriptPath ?? null,
+      errorCode: handoff?.error?.code ?? null,
+      errorMessage: handoff?.error?.message ?? null,
+    };
+  }
+
+  const roundResult: RoundResult = buildRoundResult({
+    identity: {
+      roundId: rootId,
+      startedAt,
+      completedAt: Date.now(),
+      complete: true,
+    },
+    originalRequest: o.objective,
+    layaPlan: layaPlanText,
+    // Straight from the authorities: the TaskStore for state, the AttemptStore for
+    // evidence. Nothing is re-listed from the plan.
+    tasks: wb.store.all(),
+    attempts: wb.evidence.all(),
+    unified,
+    reviewOutputSummary: unifiedReview.outputTail === null ? null : unifiedReview.outputTail.text,
+    reviewRequested: o.review,
+    reviewEvidence: {
+      recorded: reviewEvidenceRecorded,
+      attemptId: reviewEvidenceAttemptId,
+    },
+    continuation: continuation === null
+      ? null
+      : {
+          happened: continuation.handoffs.length,
+          limit: continuation.policy.maxAutomaticHandoffsPerTask,
+          handoffs: continuation.handoffs.map((hd) => ({
+            taskId: hd.taskId,
+            reason: hd.reason,
+            fromAgentId: hd.fromAgentId,
+            toAgentId: hd.toAgentId,
+            previousAttemptId: hd.previousAttemptId,
+            decisionAction: hd.decisionAction,
+            decisionApplied: hd.decisionApplied,
+            at: hd.at,
+          })),
+          stopped: continuation.stopped,
+          agentChain: continuation.agentChain,
+        },
+    evidence: taskEvidence,
+    evidenceNote,
+  });
+
+  // Published for the dashboard to READ. It is a report artifact: a missing or failed
+  // write changes nothing about the round, so the failure is reported and then ignored.
+  report.roundResult = roundResult;
+  report.roundResultReport = renderRoundResult(roundResult);
+  const published = publishRoundResult(roundResult, {
+    onError: (message) => note(message),
+  });
+  report.roundResultPublished = { ok: published.ok, path: published.path, code: published.code };
 
   if (o.json) {
     w(JSON.stringify(report, null, 2));
@@ -1448,8 +1556,31 @@ export async function runRoundCli(
     w('NEXT');
     w(`  ${report.nextStep}`);
     if (ranSomething) w('  The round is over. Run it again yourself if you want another round.');
+    // R4: the gate is printed LAST on purpose. It is the last thing this process does,
+    // and the report says so rather than implying there is more round to come.
+    w();
+    w('HUMAN GATE');
+    w(`  status       ${roundResult.gate.status}`);
+    w(`  round done   ${roundResult.gate.roundComplete}`);
+    w(`  reason       ${roundResult.gate.reason}`);
+    w(`  tasks        ${roundResult.gate.taskTally.succeeded} succeeded, ${roundResult.gate.taskTally.failed} failed, ` +
+      `${roundResult.gate.taskTally.cancelled} cancelled, ${roundResult.gate.taskTally.other} other`);
+    if (roundResult.gate.nonTerminalTasks.length > 0) {
+      w(`  not terminal ${roundResult.gate.nonTerminalTasks.join(', ')}`);
+    }
+    if (roundResult.gate.reviewOutstanding) w('  review       requested but not completed');
+    for (const d of roundResult.gate.decisions) {
+      w(`  to decide    [${d.id}] ${d.label}`);
+      w(`               ${d.detail}`);
+    }
+    w(`  auto action  ${roundResult.gate.automaticPostRoundAction.toUpperCase()}`);
+    w('               Nothing was retried, reassigned, replanned, split, parallelized,');
+    w('               reworked or handed off after the gate. Start the next round yourself.');
   }
 
+  // R4: from here the round is over. There is intentionally no code path between the
+  // human gate and this return that dispatches, retries, reassigns, replans, splits,
+  // parallelizes, reworks or hands off.
   return report.ok ? 0 : 1;
 }
 

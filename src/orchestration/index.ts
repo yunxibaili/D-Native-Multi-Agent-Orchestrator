@@ -257,6 +257,41 @@ export {
   type UnifiedRoundReport,
 } from './unified-review.ts';
 
+// R4 — Result Aggregation + Human Gate. A pure READ/DERIVE projection: it exports no
+// authority and no way to dispatch, decide or move a task.
+export {
+  HUMAN_GATE_STATUSES,
+  buildRoundResult,
+  deriveHumanGate,
+  gateWithUserDecision,
+  renderRoundResult,
+  sealNextRoundInput,
+  type AttemptSummary,
+  type BuildRoundResultInput,
+  type DeriveHumanGateInput,
+  type HandoffSummary,
+  type HumanGate,
+  type HumanGateOption,
+  type HumanGateStatus,
+  type NextRoundInput,
+  type NextRoundMode,
+  type NextRoundTaskLineage,
+  type ReviewSummary,
+  type RoundIdentity,
+  type RoundPlanSummary,
+  type RoundResult,
+  type SealNextRoundInputOptions,
+  type TaskEvidenceInput,
+  type TaskSummary,
+} from './round-result.ts';
+
+export {
+  defaultRoundResultPath,
+  publishRoundResult,
+  readRoundResult,
+  type PublishRoundResultOutcome,
+} from './round-observation.ts';
+
 export {
   DEFAULT_HANDOFF_POLICY,
   HANDOFF_REASONS,

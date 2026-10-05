@@ -207,3 +207,95 @@ export function readRoundEvents(
   }
   return out.slice(-limit);
 }
+
+// ---------------------------------------------------------------------------
+// R4: the round RESULT, as a separate artifact from the live monitor
+// ---------------------------------------------------------------------------
+
+const RESULT_NAME = 'round-result.json';
+
+/**
+ * Where the round's aggregated result is written. Same directory as the live state
+ * file, so the dashboard finds both from one place.
+ */
+export function defaultRoundResultPath(env: NodeJS.ProcessEnv = process.env): string {
+  return join(defaultObservationDir(env), RESULT_NAME);
+}
+
+export interface PublishRoundResultOutcome {
+  readonly ok: boolean;
+  readonly wrote: boolean;
+  readonly path: string;
+  readonly code: string | null;
+  readonly reason: string | null;
+}
+
+/**
+ * Write the round's aggregated result.
+ *
+ * WHY A SEPARATE FILE FROM `round-state.json`
+ * -------------------------------------------
+ * The state file is a LIVE monitor artifact: it is rewritten on every heartbeat and its
+ * `stateKey` deliberately skips unchanged writes, so it holds "now", not "the round that
+ * just ended". A completed round's result is a different thing with a different lifetime,
+ * and overwriting a finished round with the next round's heartbeat would destroy the only
+ * record of what the user was asked to decide.
+ *
+ * WHY THIS IS NOT A STATE AUTHORITY
+ * ---------------------------------
+ * It writes a DERIVED report and nothing else. It does not create tasks, does not read
+ * or write the TaskStore, and a round's correctness never depends on this file existing:
+ * `publish` here returns what happened and the caller is free to ignore it, exactly like
+ * `RoundObserver.publish`. A missing dashboard file is an expected condition, not a
+ * failure of the round.
+ *
+ * Never throws, for any reason, and never partially: the write is temp-file + rename, so
+ * a reader never observes a half-written result.
+ */
+export function publishRoundResult(
+  result: unknown,
+  options: { readonly path?: string; readonly dir?: string; readonly onError?: (message: string) => void } = {},
+): PublishRoundResultOutcome {
+  const path = options.path ?? (options.dir === undefined
+    ? defaultRoundResultPath()
+    : join(options.dir, RESULT_NAME));
+  const tmp = `${path}.${process.pid}.tmp`;
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(tmp, JSON.stringify(result, null, 2), 'utf8');
+    renameSync(tmp, path);
+    return { ok: true, wrote: true, path, code: null, reason: null };
+  } catch (e) {
+    try {
+      if (existsSync(tmp)) unlinkSync(tmp);
+    } catch {
+      // Already failing; the temp file is harmless and the reason is reported below.
+    }
+    const reason = e instanceof Error ? e.message : String(e);
+    options.onError?.(`round result not published: ${reason}`);
+    return { ok: false, wrote: false, path, code: 'round-result-write-failed', reason };
+  }
+}
+
+/**
+ * Read a published round result. Returns `null` for absent or malformed input.
+ *
+ * The dashboard treats `null` as "no round has published a result yet" and must render
+ * that as unknown — never as a completed or failed round.
+ */
+export function readRoundResult(
+  file: string,
+): unknown | null {
+  if (!existsSync(file)) return null;
+  let text: string;
+  try {
+    text = readFileSync(file, 'utf8').replace(/^﻿/, '');
+  } catch {
+    return null;
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
