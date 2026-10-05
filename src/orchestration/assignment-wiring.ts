@@ -52,10 +52,17 @@ export type AssignmentApplied =
  * `modelId` is NOT taken from the caller. It comes from the chosen candidate, which
  * came from the registry — so the identity written back is always canonical and
  * always one the registry actually knows, never a string a caller invented.
+ *
+ * `now` is REQUIRED and is the clock the reissued lease is stamped with. R2-2: an
+ * implicit `Date.now()` here would issue a lease on a different clock from the one that
+ * later judges its liveness, which is how a lease ends up born expired. Callers pass
+ * the same clock they read with — `Orchestrator.now` in production, a fixed value in
+ * tests. It defaults only to "now" being explicitly documented as required.
  */
 export function applyAssignment(
   store: TaskStore,
   input: AssignmentInput,
+  now: number,
 ): AssignmentApplied {
   const outcome = assignWorker(input);
   if (!outcome.ok) {
@@ -63,7 +70,7 @@ export function applyAssignment(
   }
 
   const { agentId, modelId } = outcome.chosen.candidate;
-  const written = store.assignIdentity(input.taskId, agentId, modelId);
+  const written = store.assignIdentity(input.taskId, agentId, modelId, now);
   if (!written.ok || written.task === null) {
     // A refusal here is the REASSIGNMENT BOUNDARY: the task had already started.
     // The chosen identity is deliberately discarded rather than stashed — P6-D1
@@ -75,6 +82,71 @@ export function applyAssignment(
     };
   }
   return { ok: true, outcome, task: written.task };
+}
+
+// ---------------------------------------------------------------------------
+// P6-D1: migration of a task that has ALREADY started
+// ---------------------------------------------------------------------------
+
+export type MigrationApplied =
+  | {
+      readonly ok: true;
+      readonly outcome: AssignmentOutcome;
+      readonly task: Task;
+      readonly from: { readonly agentId: string; readonly modelId: string | null };
+    }
+  | { readonly ok: false; readonly code: string; readonly reason: string; readonly from: { readonly agentId: string; readonly modelId: string | null } | null };
+
+/**
+ * Choose a worker and move a STARTED task to it (P6-D1).
+ *
+ * The exact mirror image of `applyAssignment`, and the reason it is a separate
+ * function is the whole point: `assignIdentity` correctly refuses once a task has
+ * started, so a mid-flight change needs its own audited path rather than a relaxed
+ * check on the old one. Both share `assignWorker`, so both get the identical
+ * capability → availability → quota → ModelPool → score → preference pipeline; the
+ * only difference is which store method commits the result.
+ *
+ * WHY THE OLD WORKER IS RECORDED
+ * ------------------------------
+ * The returned `from` is not bookkeeping for its own sake. A task that has already
+ * run has AttemptStore evidence attributing that run to the OLD worker, and
+ * `applyRunResult` refuses a result whose `agentId` does not match the task. So a
+ * caller that migrates a task mid-flight must know the previous identity in order to
+ * reason about evidence that predates the move. Returning it makes that unavoidable to
+ * overlook.
+ *
+ * The `reason` is passed straight to the store, which refuses an empty one: prior work
+ * would otherwise be attributed to a worker that never did it.
+ */
+export function applyMigration(
+  store: TaskStore,
+  input: AssignmentInput & { readonly reason: string; readonly now: number },
+): MigrationApplied {
+  const before = store.identityOf(input.taskId);
+  const outcome = assignWorker(input);
+  if (!outcome.ok) {
+    return { ok: false, code: outcome.code, reason: outcome.reason, from: before };
+  }
+  const { agentId, modelId } = outcome.chosen.candidate;
+  const written = store.migrateIdentityAfterStart(
+    input.taskId,
+    { agentId, modelId, reason: input.reason },
+    // `now` is a PARAMETER, not `Date.now()`. This module already reads no clock —
+    // the property assignment.test.ts asserts — and a migration writes a timestamp onto
+    // a task that has already run, so a wall-clock read here would make the write
+    // untestable and non-reproducible.
+    input.now,
+  );
+  if (!written.ok || written.task === null) {
+    return {
+      ok: false,
+      code: written.code ?? 'migration-refused',
+      reason: written.reason ?? 'the chosen identity could not be migrated',
+      from: before,
+    };
+  }
+  return { ok: true, outcome, task: written.task, from: before ?? { agentId: '', modelId: null } };
 }
 
 // ---------------------------------------------------------------------------

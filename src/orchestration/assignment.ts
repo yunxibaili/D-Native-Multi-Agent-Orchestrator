@@ -151,6 +151,15 @@ export interface AssignmentInput {
   readonly evidence: AttemptStore | null;
   /** Honour P6-F's free-pool constraint. Off by default, like the gate's own. */
   readonly enforceFreeModelPool?: boolean;
+  /**
+   * Workbench: the planner's (Laya's) PREFERENCE. Not a competing brain — the
+   * preference runs through the SAME hard filters as every other candidate, and is
+   * honoured only when it survives capability / availability / quota / pool. When
+   * it survives it wins outright; when it does not, the deterministic ranking
+   * decides. There is exactly one decision either way: the filters'.
+   */
+  readonly preferredAgent?: string;
+  readonly preferredModel?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -181,7 +190,6 @@ export interface AssignmentInput {
  */
 function quotaBlocksSpawn(status: QuotaRecord['status']): boolean {
   const probe = evaluateSpawnGate({
-    multiAgentEnabled: true,
     taskPolicyAllows: true,
     capabilitySatisfied: true,
     agentAvailable: true,
@@ -469,6 +477,22 @@ export function assignWorker(input: AssignmentInput): AssignmentOutcome {
       if (a.candidate.agentId !== b.candidate.agentId) return a.candidate.agentId < b.candidate.agentId ? -1 : 1;
       return a.candidate.modelId < b.candidate.modelId ? -1 : 1;
     });
+
+  // 6. PREFERENCE — honoured only AFTER the filters have had their say. A preferred
+  //    pair that survived is promoted to the front; everything else keeps its
+  //    deterministic order. A preference that was filtered out is simply absent:
+  //    the rejection list already says why.
+  if (input.preferredAgent !== undefined) {
+    const wanted = (c: AssignmentCandidate): boolean =>
+      c.agentId === input.preferredAgent &&
+      (input.preferredModel === undefined || c.modelId === input.preferredModel);
+    const index = ranked.findIndex((s) => wanted(s.candidate));
+    if (index > 0) {
+      const preferred = ranked.splice(index, 1)[0];
+      ranked.unshift(preferred);
+    }
+    // index === -1 (filtered out) and index === 0 (already first) need no move.
+  }
 
   return { ok: true, chosen: ranked[0], ranked, rejected: rejectedList, snapshotSize: all.length };
 }

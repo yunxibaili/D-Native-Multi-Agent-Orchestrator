@@ -32,6 +32,28 @@ import { dirname, join, resolve as resolvePath } from 'node:path';
 import { runGit, stderrIsFatal, resolveGitPath, type GitResult } from './git.ts';
 import type { GitContext } from './task-result.ts';
 import { WorkspaceError, WORKSPACE_ERROR_CODES, type WorkspaceErrorCode } from './errors.ts';
+import {
+  ResourceClaimBook,
+  modeRequiresIsolation,
+  type ClaimOutcome,
+  type ClaimRequest,
+  type ResourceClaim,
+  type ResourceClaimMode,
+  type ResourceScope,
+} from './resource-claim.ts';
+
+export {
+  ResourceClaimBook,
+  modeRequiresIsolation,
+  claimsConflict,
+  scopesOverlap,
+  normalizeScope,
+  type ClaimOutcome,
+  type ClaimRequest,
+  type ResourceClaim,
+  type ResourceClaimMode,
+  type ResourceScope,
+} from './resource-claim.ts';
 import { WorkspaceLock, workspaceLockKey, normalizeIdentityPath, type WorkspaceLockLease } from './workspace-lock.ts';
 import type { WorkspaceMode } from '../core/types.ts';
 import type { Task } from './task.ts';
@@ -156,6 +178,17 @@ export class WorkspaceManager {
   private readonly extraProtectedBranches: readonly string[];
   /** Cache of the resolved default branch per repo root. */
   private readonly defaultBranchCache = new Map<string, string | null>();
+  /**
+   * R2-1: the resource-claim registry (§7 of the R2 contract).
+   *
+   * §4 assigns ResourceClaim to THIS class — the existing workspace authority — and
+   * explicitly rules out a Resource Scheduler. So the claims live here and are
+   * reached through `claimResource` / `releaseResourceClaims` / `resourceConflicts`.
+   * `ResourceClaimBook` is pure bookkeeping; it cannot spawn, dispatch, or mutate a
+   * task, which is what keeps this an extension of one authority rather than a
+   * second one.
+   */
+  private readonly claims: ResourceClaimBook;
 
   constructor(options: WorkspaceManagerOptions) {
     this.projectRoot = resolvePath(options.projectRoot);
@@ -166,6 +199,7 @@ export class WorkspaceManager {
     this.now = options.now ?? Date.now;
     this.timeoutMs = options.gitTimeoutMs ?? 30_000;
     this.env = options.env ?? {};
+    this.claims = new ResourceClaimBook(this.now);
     // 5C-8: locking is ON by default. A single-process caller loses nothing
     // (the lock is uncontended and costs one file create), and a second process
     // is then safe. Opt out explicitly with `workspaceLock: false`.
@@ -187,6 +221,86 @@ export class WorkspaceManager {
 
   getProjectRoot(): string {
     return this.projectRoot;
+  }
+
+  // ---------------------------------------------------------------- R2-1
+  // §7 Resource Claims, as METHODS on the existing workspace authority.
+  //
+  // None of these dispatch anything, none of them mutate a task, and none of them
+  // is a scheduler: they register and arbitrate who may touch what inside a
+  // workspace this manager already owns.
+
+  /**
+   * Register a claim on a workspace, or report the claims that refuse it.
+   *
+   * Idempotent per §7.3: the same task re-claiming the same scope returns the
+   * EXISTING claim (`created: false`) rather than a duplicate or a self-conflict.
+   */
+  claimResource(request: ClaimRequest): ClaimOutcome {
+    return this.claims.claim(request);
+  }
+
+  /**
+   * The admission question, asked WITHOUT registering: "would this be refused?"
+   *
+   * This is what the dispatch path uses, so a task that is refused leaves no trace.
+   */
+  resourceConflicts(request: ClaimRequest): readonly ResourceClaim[] {
+    return this.claims.wouldConflict(request);
+  }
+
+  /** Drop every claim a task holds. Called when the task reaches a terminal state. */
+  releaseResourceClaims(taskId: string): number {
+    return this.claims.releaseClaims(taskId);
+  }
+
+  /**
+   * R2-1.1 (P2-1): release ONE scope of a task and keep its other scopes.
+   *
+   * Dropping "all of a task's claims" to free one scope would silently give up the
+   * conflict protection the caller still believes it holds.
+   */
+  releaseResourceClaimForScope(taskId: string, mode: ResourceClaimMode, scope: ResourceScope): number {
+    return this.claims.releaseClaimForScope(taskId, mode, scope);
+  }
+
+  /** Read-only view of the claims held in one workspace. */
+  resourceClaimsFor(workspaceId: string): readonly ResourceClaim[] {
+    return this.claims.forWorkspace(workspaceId);
+  }
+
+  /**
+   * R2-2 §7.3: void every claim the predicate rejects, then report what is left held.
+   *
+   * The lease decision is made by the CALLER (it owns TaskStore, the only lease
+   * authority); this method only applies it. That ordering is the whole design: the
+   * workspace authority keeps arbitrating claims exactly as before, and simply stops
+   * counting the ones whose lease has died.
+   *
+   * Returns the surviving claims so the caller can consult them in the same step, which
+   * removes the window in which a stale claim could be observed between the void and the
+   * conflict check.
+   */
+  voidStaleResourceClaims(isVoid: (claim: ResourceClaim) => boolean): readonly ResourceClaim[] {
+    this.claims.voidClaimsWhere(isVoid);
+    return this.claims.all();
+  }
+
+  get resourceClaimCount(): number {
+    return this.claims.size;
+  }
+
+  /**
+   * §8's rule, expressed as a decision this manager can answer:
+   * MAY a task with this access mode share one workspace with a running sibling?
+   *
+   * A write or exclusive-write must not share a mutable workspace with work running
+   * beside it, because two agents editing one checkout is the exact failure this
+   * layer exists to prevent. Read-only may share, which is why a review task can
+   * still point at the main tree.
+   */
+  static mayShareWorkspace(mode: ResourceClaimMode, parallel: boolean): boolean {
+    return !(parallel && modeRequiresIsolation(mode));
   }
 
   /**

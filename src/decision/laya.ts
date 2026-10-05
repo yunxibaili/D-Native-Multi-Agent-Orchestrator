@@ -611,6 +611,40 @@ function requireNormalized(id: string, probabilities: Record<string, number>, wh
  * `answer_confidence: 0.99`, which asserts certainty the distribution denies.
  * Uses bound (B), which does not grow with the size of the answer space.
  */
+/**
+ * Read a `choice` answer's parameters from its sibling keys.
+ *
+ * Reserved keys (`choice`, `probabilities`, `confidence`, `criteria`) belong to the
+ * answer envelope and are skipped; everything else is a parameter the model supplied.
+ * A non-string value is REFUSED rather than coerced — a provider that sends
+ * `{"taskId": 7}` or a nested object gets a schema error naming the key, instead of
+ * having it silently stringified into something the orchestration layer would then have
+ * to guess at.
+ */
+function readChoiceParameters(id: string, raw: Record<string, unknown>): { parameters?: Record<string, string> } {
+  // The envelope keys the SHIPPED protocol puts on every answer, reserved by name.
+  // `answer_confidence` is the one that matters here: it is a number the provider
+  // already sends, and treating it as a parameter would both fail-closed on a perfectly
+  // good answer and hide it from the caller. The list is derived from the fields this
+  // file reads off `raw`, not guessed.
+  const RESERVED = new Set([
+    'type', 'choice', 'score', 'noul', 'legend', 'probabilities', 'confidence', 'answer_confidence', 'criteria',
+  ]);
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (RESERVED.has(key)) continue;
+    if (typeof value !== 'string') {
+      throw new DecisionSchemaError(
+        `answer "${id}" parameter "${key}" is ${describe(value)}; parameters must be strings, ` +
+          `because the Decision Layer does not know what any given parameter means and ` +
+          `refuses to guess at its shape`,
+      );
+    }
+    out[key] = value;
+  }
+  return Object.keys(out).length === 0 ? {} : { parameters: out };
+}
+
 function requireAnswerConfidence(
   id: string,
   raw: Record<string, unknown>,
@@ -687,6 +721,12 @@ function validateAnswer(id: string, raw: Record<string, unknown>, question: Deci
       criteria: question.criteria,
       probabilities,
       confidence: requireAnswerConfidence(id, raw, probabilities),
+      // Every sibling key of `choice` that is not part of the answer envelope is read as
+      // a PARAMETER of the chosen option. That is the whole mechanism by which a model
+      // can return `{"choice":"reassign","taskId":"t1","agentId":"opencode"}` — without
+      // it the action is selectable but its target is unreportable, and the caller has to
+      // invent it afterwards.
+      ...readChoiceParameters(id, raw),
     };
   }
 

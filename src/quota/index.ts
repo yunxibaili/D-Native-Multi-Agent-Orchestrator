@@ -77,7 +77,11 @@ export interface BuildQuotaCenterOptions {
   /** Set when the caller already knows install state; else derived from probes. */
   installed?: Record<string, boolean>;
   freeModels?: FreeCreditView['freeModels'];
-  multiAgentEnabled?: boolean;
+  /**
+   * R1-1: `multiAgentEnabled` REMOVED. The centre view's demo gate used to deny with
+   * `multi-agent-not-implemented` unless a caller opted in, which is no longer a
+   * question this codebase asks — see `GATE_DENY_CODES`.
+   */
   now?: number;
 }
 
@@ -163,17 +167,16 @@ export async function buildQuotaCenter(opts: BuildQuotaCenterOptions): Promise<Q
       remaining: b.remaining,
     })),
     // Real signals, not placeholders. Before 5C-1 this passed eight hardcoded
-    // fields, so every gate branch except `multiAgentEnabled` had never been
-    // exercised by real data. Each field below is now derived from the objects
-    // this function already holds, and anything that cannot be derived is
-    // DENIED rather than assumed healthy — the same rule 4M-6 applies to an
-    // absent budget and 4M-8 applies to an unknown usage count.
+    // fields, so every gate branch had never been exercised by real data. Each
+    // field below is now derived from the objects this function already holds, and
+    // anything that cannot be derived is DENIED rather than assumed healthy — the
+    // same rule 4M-6 applies to an absent budget and 4M-8 applies to an unknown
+    // usage count.
     //
     // This view answers "is the centre ready", not "may THIS task spawn". The
     // per-spawn verdict, which needs the task, model and live child count, is
     // built by orchestration/buildSpawnGateInput (Phase 5C-1).
     spawnGate: evaluateSpawnGate({
-      multiAgentEnabled: opts.multiAgentEnabled ?? false,
       // At least one registered (agent, model) entry that is actually usable.
       taskPolicyAllows: registry.list().some((e) => e.taskTypes.length > 0),
       capabilitySatisfied: (opts.descriptors ?? []).some((d) => d.capabilities.newTask),
@@ -197,8 +200,7 @@ function probeId(p: QuotaProbe): string {
   return p.agentId ?? p.records[0]?.agentId ?? 'unknown';
 }
 
-function seedRegistry(opts: BuildQuotaCenterOptions, probes: QuotaProbe[], now: number): ModelRegistry {
-  const registry = new ModelRegistry();
+function seedRegistry(opts: BuildQuotaCenterOptions, probes: QuotaProbe[], now: number): ModelRegistry {  const registry = new ModelRegistry();
   const reviewAgents = new Set(
     (opts.descriptors ?? []).filter((d) => d.capabilities.review).map((d) => d.id),
   );
@@ -342,6 +344,10 @@ function buildAgentStatus(
     }
 
     rows.push({
+      // R1-1: both identities travel together. `agentId` is what the spawn gate
+      // matches on; `agent` is the display name. Emitting only the display name is
+      // what made every real spawn fail with `agent-unavailable`.
+      agentId: id,
       agent: DISPLAY_NAMES[id] ?? id,
       version: probe?.version ?? (id === 'workbuddy-cn' ? '2.137.1' : 'unknown'),
       installed: isInstalled === undefined ? 'Unknown' : isInstalled ? 'Yes' : 'No',
@@ -435,6 +441,7 @@ export { BudgetManager } from './budget.ts';
 export { BudgetLedger } from './budget.ts';
 export {
   collectAll,
+  DEFAULT_PROVIDERS,
   execRunner,
   parseCodexDoctor,
   parseCount,
@@ -447,6 +454,11 @@ export {
   StaticQuotaProvider,
 } from './collector.ts';
 export type { CmdRunner, QuotaProbe, QuotaProvider, RunOutcome } from './collector.ts';
+// R1-0: the Execution Round needs the SAME probed facts `buildQuotaCenter` uses, but as
+// the raw `QuotaRecord[]` / `ModelRegistry` the spawn gate consumes — the centre view is
+// formatted for a dashboard and loses the shape. Re-exported rather than reimplemented so
+// a round and `orchestrator quota` can never disagree about what was observed.
+export { seedRegistry };
 export { collectObservedUsage } from './observed.ts';
 export { evaluatePolicy } from './policy.ts';
 export { ModelRegistry, modelKey } from './registry.ts';

@@ -1,3 +1,5 @@
+> **[Historical — Phase 4M ADAPT 记录]** 当前基线见 docs/PROJECT_BASELINE.md。
+
 # Phase 4M — Hindsight Memory Policy Layer (ADAPT)
 
 > **Phase 4M-9 已冻结架构。** 最终决策 = **ADAPT**（ARCHITECTURE FROZEN）。

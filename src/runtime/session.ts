@@ -42,6 +42,7 @@ import type {
   SubscribeOptions,
   TaskState,
   TerminalState,
+  RunObservation,
   ToolCall,
   Transport,
   TransportExit,
@@ -94,6 +95,9 @@ export class AgentSession implements RunHandle, NativeSink {
   private readonly store: SessionStore;
   private readonly req: RunRequest;
   private readonly startedAt = Date.now();
+  /** R2 observability: last time output was observed. Null until the first frame. */
+  private lastOutputAt: number | null = null;
+  private transportPid: number | null = null;
   private readonly transcript: TranscriptWriter | null;
   private readonly hub: EventHub<RuntimeEvent>;
   private readonly limits: Required<Omit<SessionLimits, 'transcript' | 'onSettled'>>;
@@ -369,6 +373,34 @@ export class AgentSession implements RunHandle, NativeSink {
 
   // ---- I1: the single place an outcome is decided -----------------------
 
+  /**
+   * R2 observability: a READ-ONLY snapshot of the native execution. Carries no
+   * control — the caller cannot kill, restart or steer anything through it. Absent
+   * fields mean "not observable", never zero/success.
+   */
+  observe(): RunObservation {
+    if (this.transport?.pid) this.transportPid = this.transport.pid;
+    const done = this.frozen !== null;
+    return {
+      taskId: this.taskId,
+      agentId: this.agentId,
+      cwd: this.req.cwd,
+      startedAt: this.startedAt,
+      pid: this.transport?.pid ?? this.transportPid,
+      commandLine: this.transport?.commandLine ?? null,
+      processState: done ? 'exited' : 'running',
+      exitCode: this.frozen?.exitCode ?? null,
+      lastOutputAt: this.lastOutputAt,
+      toolCalls: this.toolCallList.slice(-8).map((c) => ({
+        ...c,
+        output: c.output === undefined ? undefined : c.output.slice(-200),
+      })),
+      outputTail: this.frozen?.output
+        ? this.frozen.output.slice(-600)
+        : null,
+    };
+  }
+
   private finalize(exit: TransportExit | null, transportError: unknown): void {
     if (this.frozen) return; // I1: first outcome wins, unconditionally.
     if (this.deadlineTimer) {
@@ -531,6 +563,9 @@ export class AgentSession implements RunHandle, NativeSink {
 
   noteText(text: string): void {
     this.output.append(text);
+    // R2 observability: the last time the runtime ACTUALLY saw output. Wall clock
+    // is the honest source here — the dashboard derives "last output Xs ago" from it.
+    this.lastOutputAt = Date.now();
   }
 
   noteToolCall(call: ToolCall): void {

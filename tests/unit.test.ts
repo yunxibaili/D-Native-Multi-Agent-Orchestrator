@@ -148,6 +148,11 @@ section('opencode adapter');
     costReporting: true,
     extraArgs: true,
     cwd: true,
+    // VERIFIED by real runs on this machine: a brief requesting `archify` returned
+    // that skill's exact frontmatter (name/version/author), and a bogus skill name
+    // came back UNAVAILABLE rather than inventing content. So the agent honours the
+    // ASK. This is a fact bit only — it must never filter or prefer a worker.
+    skills: true,
     steering: false,
     worktree: false,
     fork: false,
@@ -298,6 +303,9 @@ section('codex adapter');
     costReporting: false,
     extraArgs: true,
     cwd: true,
+    // `codex --help` exposes no skill mechanism (verified 2026-10-01), so a skill
+    // request could only ever be prompt text here. Declared false rather than assumed.
+    skills: false,
     steering: false,
     worktree: false,
     fork: false,

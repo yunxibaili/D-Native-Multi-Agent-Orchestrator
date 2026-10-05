@@ -77,6 +77,29 @@ export interface AgentCapabilities {
    * All `false` here on purpose — declared so callers can feature-detect
    * rather than guess. Implementing any of them requires implementing them.
    */
+  /**
+   * Whether the adapter can ASK the agent to load one of ITS OWN skills.
+   *
+   * NOT a skill catalogue and NOT a routing input: the orchestrator has no list of
+   * skill names, never checks that a requested skill exists, and this field must
+   * never become a filter or preference (a skill is not a reason to pick a worker).
+   * It says one thing only — whether asking is a supported request for this agent.
+   *
+   * EVIDENCE (2026-10-01, this machine, real runs, not inspection):
+   *   - `opencode --help` has no skill subcommand; discovery is filesystem-based
+   *     (`~/.agents/skills/<name>/SKILL.md`) plus a `skill` tool.
+   *   - A real `opencode run` whose brief requested `archify` reported its
+   *     frontmatter exactly — `name=archify version=2.16 author=tt-a1i` — so the
+   *     request genuinely reached and loaded the file.
+   *   - A real run requesting a non-existent skill returned `name=UNAVAILABLE`
+   *     rather than inventing content, so an unsatisfiable ask degrades honestly.
+   *   - `codex --help` exposes no skill mechanism; its skills are prompt text only.
+   *
+   * So `true` here means "the agent honours the ASK". Whether a SPECIFIC name
+   * resolves is the agent's own business and stays unverified by design — which is
+   * why the brief says "use your own if you have them; otherwise continue without".
+   */
+  skills: boolean;
   steering: boolean;
   /**
    * Whether the adapter implements a NATIVE worktree/fork REQUEST — i.e. the
@@ -227,6 +250,38 @@ export interface RunHandle {
    */
   result: (timeoutMs?: number) => Promise<RunResult>;
   cancel: (reason?: string) => Promise<void>;
+  /**
+   * R2 observability: a READ-ONLY snapshot of the native execution, when the
+   * implementation can provide one. Optional — a handle without it is simply
+   * "process state UNKNOWN" to the monitor. It carries NO control: nothing here
+   * can kill, restart, or steer the process, and the dashboard never receives a
+   * way to call anything but this.
+   */
+  observe?: () => RunObservation;
+}
+
+/**
+ * Machine-side execution facts, read at observation time. Every field is what the
+ * runtime ACTUALLY sees; absent means "not observable", never zero/success.
+ */
+export interface RunObservation {
+  readonly taskId: string;
+  readonly agentId: string;
+  readonly cwd: string;
+  readonly startedAt: number;
+  /** Native process id, when the transport exposed one. */
+  readonly pid: number | null;
+  /** The exact command line the transport launched. */
+  readonly commandLine: string | null;
+  /** 'running' = the process has not produced its terminal result yet. */
+  readonly processState: 'running' | 'exited';
+  readonly exitCode: number | null;
+  /** Last time the runtime observed output from the process (wall clock). */
+  readonly lastOutputAt: number | null;
+  /** Bounded per-tool-call summary (the machine evidence for "tests ran"). */
+  readonly toolCalls: readonly ToolCall[];
+  /** Bounded tail of the agent's own output (CLAIMED, never a fact). */
+  readonly outputTail: string | null;
 }
 
 // ---- event hub ----------------------------------------------------------
@@ -320,6 +375,8 @@ export interface CleanupReport {
 export interface Transport {
   readonly kind: TransportKind;
   readonly commandLine: string;
+  /** R2 observability: native process id while running, when the transport has one. */
+  readonly pid?: number | null;
   /** Begin the work. Must be safe to call once. */
   start: () => void;
   /** Framed agent output. Independent, multi-subscriber consumption. */

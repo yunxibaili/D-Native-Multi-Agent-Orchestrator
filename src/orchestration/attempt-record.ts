@@ -103,6 +103,19 @@ export interface AttemptRecord {
   /** Budget units this task was allocated, as `Task.budgetUnits` reported it. */
   readonly budgetUnits?: number;
   /**
+   * R2-2 §6 / §7.1: the assignment lease version this attempt ran under.
+   *
+   * Recorded because it is a FACT ABOUT THE ATTEMPT, not about the task now. A task
+   * reassigned after this attempt still reports the OLD version here, which is what
+   * makes "which lease produced this evidence" answerable forever - and what stops a
+   * superseded attempt from being laundered into the current holder's history.
+   *
+   * Optional, following the existing optional-field system: a `review` attempt is not
+   * an execution under a lease, and an attempt recorded before R2-2 has no version.
+   * Absent therefore means "not applicable / not known", never "version 0".
+   */
+  readonly leaseVersion?: number;
+  /**
    * Reported cost. `null`/absent means the agent reported NO cost — which is a
    * different fact from zero, and this project already depends on that
    * distinction (see model-pool.ts, which refuses to read unreported as free).
@@ -199,10 +212,16 @@ export function validateAttemptRecord(raw: unknown): AttemptRecord {
       throw new AttemptRecordError('malformed-record', `${key} must be a string when present, got ${typeof raw[key]}`);
     }
   }
-  for (const key of ['budgetUnits', 'costUsd'] as const) {
+  for (const key of ['budgetUnits', 'costUsd', 'leaseVersion'] as const) {
     if (raw[key] !== undefined && (typeof raw[key] !== 'number' || !Number.isFinite(raw[key]))) {
-      throw new AttemptRecordError('malformed-record', `${key} must be a finite number when present, got ${JSON.stringify(raw[key])}`);
+      throw new AttemptRecordError('malformed-record', `${key} must be a finite number when present, got ${typeof raw[key]}`);
     }
+  }
+  // A lease version is a positive counter, so 0 or a negative value is not a version -
+  // it is a missing value that arrived wearing a number's clothes, and accepting it
+  // would let "no lease" masquerade as "lease 0".
+  if (raw.leaseVersion !== undefined && (raw.leaseVersion as number) < 1) {
+    throw new AttemptRecordError('malformed-record', `"leaseVersion" must be >= 1 when present, got ${raw.leaseVersion}`);
   }
 
   let verification: AttemptVerification | undefined;
@@ -241,6 +260,7 @@ export function validateAttemptRecord(raw: unknown): AttemptRecord {
     ...(typeof raw.errorCode === 'string' ? { errorCode: raw.errorCode } : {}),
     ...(typeof raw.errorMessage === 'string' ? { errorMessage: raw.errorMessage } : {}),
     ...(typeof raw.budgetUnits === 'number' ? { budgetUnits: raw.budgetUnits } : {}),
+    ...(typeof raw.leaseVersion === 'number' ? { leaseVersion: raw.leaseVersion } : {}),
     ...(typeof raw.costUsd === 'number' ? { costUsd: raw.costUsd } : {}),
     previousAttemptId: (raw.previousAttemptId ?? null) as string | null,
   }) as AttemptRecord;
@@ -266,6 +286,14 @@ export function executionAttempt(input: {
   result: RunResult;
   budgetUnits?: number;
   startedAt?: number;
+  /**
+   * R2-2: the lease version this execution ran under.
+   *
+   * Passed in by the caller from the DISPATCH-time lease, never derived from the task
+   * at record time. Deriving it here would silently relabel every attempt as belonging
+   * to the newest lease, which is exactly the corruption that fencing prevents.
+   */
+  leaseVersion?: number;
 }): Omit<AttemptRecord, 'attemptId' | 'previousAttemptId'> {
   const r = input.result;
   // `aborted` is separate from `failure`: a cancelled run is not a failed one,
@@ -289,6 +317,7 @@ export function executionAttempt(input: {
     outcome,
     ...(r.error !== null ? { errorCode: r.error.code as string, errorMessage: r.error.message } : {}),
     ...(input.budgetUnits === undefined ? {} : { budgetUnits: input.budgetUnits }),
+    ...(input.leaseVersion === undefined ? {} : { leaseVersion: input.leaseVersion }),
     // Absent (not zero) when the agent reported no usage at all.
     ...(r.usage?.costUsd === undefined || r.usage?.costUsd === null ? {} : { costUsd: r.usage.costUsd }),
   };
@@ -303,6 +332,7 @@ export function reworkAttempt(input: {
   result: RunResult;
   budgetUnits?: number;
   startedAt?: number;
+  leaseVersion?: number;
 }): Omit<AttemptRecord, 'attemptId' | 'previousAttemptId'> {
   return { ...executionAttempt(input), kind: 'rework' };
 }

@@ -244,13 +244,41 @@ const req = (over: Partial<RunRequest> = {}): RunRequest => ({
 });
 
 const plain = buildWorkBuddyArgs(req());
-check(
-  'bare argv is `-p --output-format stream-json -- <prompt>`',
-  plain.join(' ') === '-p --output-format stream-json -- hello',
-  plain.join(' '),
-);
-check('prompt is the final argv element', plain[plain.length - 1] === 'hello');
-check('prompt is shielded by exactly one `--`', plain[plain.length - 2] === '--');
+// `-p` is non-interactive, so CodeBuddy cannot prompt and denies EVERY tool
+  // (measured: exit 0, no file written, "tools were denied"). The permission mode
+  // is therefore part of the baseline argv, not an extra.
+  check(
+    'bare argv is `-p --output-format stream-json --permission-mode bypassPermissions -- <prompt>`',
+    plain.join(' ') === '-p --output-format stream-json --permission-mode bypassPermissions -- hello',
+    plain.join(' '),
+  );
+  check('prompt is the final argv element', plain[plain.length - 1] === 'hello');
+  check('prompt is shielded by exactly one `--`', plain[plain.length - 2] === '--');
+  check(
+    'the permission mode is requested, because `-p` cannot prompt',
+    plain.includes('--permission-mode') && plain[plain.indexOf('--permission-mode') + 1] === 'bypassPermissions',
+    plain.join(' '),
+  );
+  // A caller who expressed their own permission choice must win: the CLI honours
+  // the LAST occurrence, so extraArgs are appended after the default.
+  const explicitMode = buildWorkBuddyArgs(req({ extraArgs: ['--permission-mode', 'acceptEdits'] }));
+  check(
+    'an explicit --permission-mode in extraArgs does not get a second default',
+    explicitMode.filter((a) => a === '--permission-mode').length === 1 &&
+      explicitMode[explicitMode.indexOf('--permission-mode') + 1] === 'acceptEdits',
+    explicitMode.join(' '),
+  );
+  const explicitDashY = buildWorkBuddyArgs(req({ extraArgs: ['-y'] }));
+  check(
+    'an explicit -y in extraArgs suppresses the default mode',
+    explicitDashY.includes('-y') && !explicitDashY.includes('--permission-mode'),
+    explicitDashY.join(' '),
+  );
+  check(
+    'extraArgs still land BEFORE the `--` prompt boundary',
+    explicitMode.indexOf('acceptEdits') > 0 && explicitMode.indexOf('acceptEdits') < explicitMode.indexOf('--'),
+    explicitMode.join(' '),
+  );
 
 const dashPrompt = buildWorkBuddyArgs(req({ prompt: '--definitely-not-a-real-flag' }));
 check(

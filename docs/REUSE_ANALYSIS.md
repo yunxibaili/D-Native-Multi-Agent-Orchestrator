@@ -1,3 +1,8 @@
+> **[Historical — External Research（2026-09-28）]**
+> 本文件记录早期外部方案调研（JevRouter / pi-jev / NAR 等）。其中 "Jev-compatible
+> envelope" 指本地 laya-serve 的 HTTP 响应格式（Laya 自身 wire 命名），Jev 不是
+> 本项目的决策模型。当前架构与路线以 **docs/PROJECT_BASELINE.md** 为准。
+
 # REUSE_ANALYSIS
 
 调查日期：2026-09-28 · 目标机器：Windows 11 / PowerShell / Node v24.18.1

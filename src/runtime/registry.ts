@@ -31,6 +31,23 @@ export class AdapterRegistry {
     return this;
   }
 
+  /**
+   * Register an adapter, REPLACING any existing one with the same id.
+   *
+   * Deliberately not folded into `register`. `register` refusing a duplicate is what
+   * stops two implementations of the same agent from silently coexisting, and a caller
+   * that means to override has to say so. The one production use today is a test or
+   * embedding supplying its own adapter for an agent id that also exists locally,
+   * where `register`'s refusal would otherwise leave the real one in place.
+   */
+  replace(adapter: AgentAdapter): this {
+    const id = adapter.descriptor.id;
+    const previous = this.adapters.get(id);
+    this.adapters.set(id, adapter);
+    log.debug('adapter replaced', { id, hadPrevious: previous !== undefined });
+    return this;
+  }
+
   has(id: string): boolean {
     return this.adapters.has(id);
   }

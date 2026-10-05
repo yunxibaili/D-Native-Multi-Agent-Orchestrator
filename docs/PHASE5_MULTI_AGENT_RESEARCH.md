@@ -1,3 +1,10 @@
+> **[Historical — Superseded by docs/PROJECT_BASELINE.md]**
+> 本文件是 Phase 5A 调研（2026-09-29）。文中 "Phase 8 AI Work Control Center" 等
+> 路线为当时设想，已被 Bounded Execution Round + Human Gate 模型取代（见
+> PROJECT_BASELINE §5/§11）；"Multi-Agent 必须 opt-in、单 Agent 默认"已被 R1-1
+> 删除 multi-agent flag 的决策取代（single-vs-multi 由 Planner/Laya task shape
+> 决定）。当前路线以 PROJECT_BASELINE §16 为准。
+
 # Phase 5A — Multi-Agent 调研 / 风险清单 / 实施计划
 
 调查日期：2026-09-29 · 机器：Windows 11 / PowerShell / Node v24.18.1 / RTX 5070 12GB / 32GB RAM

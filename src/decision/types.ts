@@ -140,6 +140,26 @@ export interface ChoiceAnswer extends AnswerBase {
   readonly choice: string;
   /** Echoed back from the question, so a response is self-describing. */
   readonly criteria: Readonly<Record<string, string>>;
+  /**
+   * The TARGETS/PARAMETERS for the chosen option, keyed by name.
+   *
+   * Added by the Decision Contract Closure stage, and it exists for one measured
+   * reason: a `choice` answer previously carried a bare string, so an action like
+   * `reassign` could be *selected* but its `taskId`/`agentId` could not be *returned*.
+   * The only way to attach them was for the caller to supply them by hand after the
+   * fact — which means the production path was "Laya says REASSIGN, then a human or a
+   * wrapper guesses the target". That is exactly the hidden decision the stage exists
+   * to remove.
+   *
+   * Values are STRINGS, deliberately. The generic Decision Layer must not carry any one
+   * domain's vocabulary (the same rule `ProviderMetadata.details` is written under), so
+   * a provider reports what it saw and the ORCHESTRATION layer — which owns the meaning —
+   * parses and validates it. A non-string is refused rather than coerced, so a provider
+   * that sends `{count: 3}` learns it is wrong instead of having it stringified.
+   *
+   * Optional: absent means "the option needs no parameters".
+   */
+  readonly parameters?: Readonly<Record<string, string>>;
 }
 
 /** A `score` answer. `level` is guaranteed to be one of the offered levels. */

@@ -31,6 +31,7 @@
 
 import type { Orchestrator } from './orchestrator.ts';
 import { unmetDependencies, type Task } from './task.ts';
+import type { TranslateOptions } from './translate.ts';
 
 /** Exactly what executeTask resolves to. Derived, never re-declared. */
 export type ExecuteResult = Awaited<ReturnType<Orchestrator['executeTask']>>;
@@ -58,6 +59,22 @@ export interface TaskSchedulerOptions {
    * wall-clock timing; `tick()` is the primary, deterministic interface.
    */
   autoTickMs?: number;
+  /**
+   * R2-3: how an availability-caused failure should land, forwarded to EVERY
+   * `executeTask` this scheduler drives.
+   *
+   * THIS IS THE P0-1 FIX, and it is a policy passthrough rather than a rule. Without it
+   * the production round translated `SPAWN_FAILED` / `TRANSPORT_ERROR` into a TERMINAL
+   * `failed`, so an agent that merely could not be started ended the round instead of
+   * reaching a handoff — the library could continue a task but the round never asked it
+   * to.
+   *
+   * It is set here, on the ONE scheduler, rather than at each `executeTask` call site
+   * precisely so that no dispatch can be configured differently from another: a policy
+   * that had to be remembered per call is a policy that will be forgotten on the one call
+   * that matters. Omitted, behaviour is exactly as before.
+   */
+  translate?: TranslateOptions;
 }
 
 export interface SchedulerSkip {
@@ -87,6 +104,8 @@ export class TaskScheduler {
   private readonly cwd: string | undefined;
   private readonly rootTaskId: string | undefined;
   private readonly autoTickMs: number | undefined;
+  /** R2-3 P0-1: forwarded verbatim to every executeTask; see TaskSchedulerOptions. */
+  private readonly translate: TranslateOptions | undefined;
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
 
@@ -95,6 +114,7 @@ export class TaskScheduler {
     this.cwd = options.cwd;
     this.rootTaskId = options.rootTaskId;
     this.autoTickMs = options.autoTickMs;
+    this.translate = options.translate;
   }
 
   /**
@@ -166,7 +186,7 @@ export class TaskScheduler {
    * must never do. The guard is on dispatch, not on awaiting, so a caller that
    * fires ticks from a timer cannot stack loops.
    */
-  async tick(): Promise<TickResult> {
+  async tick(promptFor?: ReadonlyMap<string, string>, threadFor?: ReadonlyMap<string, string>): Promise<TickResult> {
     if (this.ticking) {
       return {
         admitted: [],
@@ -178,13 +198,24 @@ export class TaskScheduler {
     }
     this.ticking = true;
     try {
-      return await this.runTick();
+      return await this.runTick(promptFor, threadFor);
     } finally {
       this.ticking = false;
     }
   }
 
-  private async runTick(): Promise<TickResult> {
+  /**
+   * `threadFor` carries a NATIVE session handle per task (P6-D1), in exactly the
+   * same spirit as `promptFor`: the scheduler never INVENTS one and never resolves a
+   * session — it forwards what `SessionRegistry` already decided, so
+   * `executeTask({threadId})` can hand it to the agent's own resume.
+   *
+   * A second positional map is used rather than an options object because `promptFor`
+   * set that precedent in P6-C and changing its signature would churn every caller
+   * for no gain. Both are optional and both default to "carry nothing", which is
+   * what preserves the pre-D1 behaviour exactly.
+   */
+  private async runTick(promptFor?: ReadonlyMap<string, string>, threadFor?: ReadonlyMap<string, string>): Promise<TickResult> {
     // Read from the gate, which is the same number `executeTask` will enforce.
     const maxConcurrency = this.orch.getConcurrencyLimit();
     let free = Math.max(0, maxConcurrency - this.occupiedSlots());
@@ -214,7 +245,21 @@ export class TaskScheduler {
         promise = this.orch.executeTask({
           taskId: task.taskId,
           ...(this.cwd !== undefined ? { cwd: this.cwd } : {}),
-        });
+          // R2-3 P0-1: the ONE place the production dispatch path decides how an
+          // availability failure is recorded. Absent, `executeTask` keeps its historical
+          // behaviour byte-for-byte.
+          ...(this.translate === undefined ? {} : { translate: this.translate }),
+          // Workbench handoffs: a caller (NativeWorkbench) may attach a composed
+          // brief per task. The scheduler never WRITES one — it only carries what
+          // it was given, so the prompt authority stays with the workbench.
+...(promptFor?.get(task.taskId) !== undefined ? { prompt: promptFor.get(task.taskId) } : {}),
+            // P6-D1: the native session handle, resolved by `SessionRegistry` and
+            // handed through unchanged. ABSENT means "start a fresh native
+            // conversation" — the scheduler does not fall back to some other
+            // session's handle, because that would silently resume the wrong
+            // conversation.
+            ...(threadFor?.get(task.taskId) !== undefined ? { threadId: threadFor.get(task.taskId) } : {}),
+          });
       } catch (e) {
         skipped.push({
           taskId: task.taskId,

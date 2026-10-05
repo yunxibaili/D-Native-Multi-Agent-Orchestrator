@@ -191,11 +191,17 @@ export type LedgerDenyCode = (typeof LEDGER_DENY_CODES)[number];
 
 /**
  * Deny codes, evaluated in this order (first miss wins):
- * multi-agent-disabled → task-policy → capability → agent → model → quota →
- * budget → concurrency.
+ * task-policy → capability → agent → model → quota → budget → concurrency.
+ *
+ * R1-1: `multi-agent-not-implemented` was REMOVED. It was a Phase 4/5 feature flag
+ * whose reason text ("Multi-Agent is ... not implemented") stopped being true when
+ * P5B and P6 shipped the multi-agent layer, while still denying every spawn for
+ * any caller that did not explicitly opt in. Whether a round needs one agent or a
+ * DAG is decided by Laya's classification → the Planner's shape → the Scheduler's
+ * DAG, never by a global switch. The flag is not replaced: there is no other global
+ * multi-agent gate, because there is no longer a global multi-agent question.
  */
 export const GATE_DENY_CODES = [
-  'multi-agent-not-implemented',
   'task-policy-denied',
   'capability-missing',
   'agent-unavailable',
@@ -208,8 +214,6 @@ export const GATE_DENY_CODES = [
 export type GateDenyCode = (typeof GATE_DENY_CODES)[number];
 
 export interface SpawnGateInput {
-  /** Multi-Agent stays false until Phase 5B — the gate fails closed. */
-  multiAgentEnabled: boolean;
   taskPolicyAllows: boolean;
   capabilitySatisfied: boolean;
   agentAvailable: boolean;
@@ -245,6 +249,21 @@ export interface ObservedAgentUsage {
 // ---- dashboard view ------------------------------------------------------
 
 export interface AgentStatusRow {
+  /**
+   * R1-1: the canonical machine identity (`opencode`, `workbuddy-intl`).
+   *
+   * THIS is the key the spawn gate matches on. It was absent until R1-1, and its
+   * absence was a production bug rather than a missing nicety: `agent` below holds
+   * a DISPLAY name (`OpenCode`, `WorkBuddy CN`), so a gate doing
+   * `row.agent === agentId` could never match any of the four official agents and
+   * every real spawn was refused with `agent-unavailable`. The unit tests never saw
+   * it because they hand-build rows keyed by id.
+   *
+   * Optional only so pre-R1-1 callers and fixtures keep compiling; every row this
+   * codebase PRODUCES sets it. Consumers must prefer it and fall back to `agent`.
+   */
+  readonly agentId?: string;
+  /** Display name, e.g. `OpenCode`. For humans and the dashboard. NOT an identity. */
   agent: string;
   version: string;
   /** 'Yes' | 'No' | 'Unknown' — Unknown when the provider was not probed. */

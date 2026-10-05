@@ -50,6 +50,8 @@ export const NO_CAPABILITIES: AgentCapabilities = {
   costReporting: false,
   extraArgs: false,
   cwd: true,
+  // A fake adapter has no real native agent, so a skill ask cannot be honoured.
+  skills: false,
   steering: false,
   worktree: false,
   fork: false,

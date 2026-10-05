@@ -1,5 +1,5 @@
-﻿/**
- * src/orchestration/index.ts 鈥?the 5C-1 public surface.
+/**
+ * src/orchestration/index.ts - the 5C-1 public surface.
  *
  * Deliberately small. Everything exported here is implemented and tested in
  * 5C-1; everything deferred is listed in the Phase 5C-1 boundary section of
@@ -52,9 +52,11 @@ export {
 } from './spawn-gate-input.ts';
 
 export {
+  AVAILABILITY_ERROR_CODES,
   translateRunResult,
   translateVerification,
   type RunTranslation,
+  type TranslateOptions,
   type VerificationOutcome,
 } from './translate.ts';
 
@@ -83,6 +85,28 @@ export {
   type WorkspaceManagerOptions,
 } from './workspace.ts';
 
+// R2-1: Workspace / Resource Safety. The claims are arbitrated BY WorkspaceManager
+// (exported above); what is exported here is the pure vocabulary it uses, so a
+// caller can normalize a scope or read the conflict matrix without reaching into
+// the workspace implementation.
+export {
+  ResourceClaimBook,
+  modeRequiresIsolation,
+  claimsConflict,
+  scopesOverlap,
+  normalizeScope,
+  normalizeScopeForWorkspace,
+  normalizeScopeForRepository,
+  scopeKey,
+  describeScope,
+  type ResourceClaim,
+  type ResourceClaimMode,
+  type ResourceScope,
+  type ClaimRequest,
+  type ClaimOutcome,
+  type NormalizeScopeInput,
+} from './resource-claim.ts';
+
 // P6-B: deterministic, evidence-aware worker/model selection.
 // The engine is a PURE function of a snapshot. It writes identity and nothing
 // else; the existing spawn gate keeps the final veto, and TaskStore remains the
@@ -109,6 +133,31 @@ export {
   recordReworkExecution,
   type DispatchEvidenceResult,
 } from './assignment-wiring.ts';
+
+// P6-C: the planner produces candidate DAGs; the wiring is the only path from a
+// validated plan into the existing TaskStore. Neither can execute, dispatch or
+// assign - see the module headers for why that is structural, not a convention.
+export {
+  planTasks,
+  validateCandidateDag,
+  PlannerError,
+  isPlannerError,
+  type PlannerInput,
+  type PlannerOutput,
+  type CandidateTask,
+  type DagValidation,
+  type CycleProbe,
+} from './planner.ts';
+
+export {
+  commitPlan,
+  replanSubtree,
+  staleTasks,
+  type CommitOptions,
+  type CommitOutcome,
+  type CommitFailure,
+  type ReplanOutcome,
+} from './planner-wiring.ts';
 
 // P6-E: structured attempt evidence.
 // AttemptRecord is history ONLY: it never transitions a task, never dispatches,
@@ -183,6 +232,52 @@ export {
   type TaskSchedulerLike,
 } from './review-loop.ts';
 
+export {
+  EXECUTION_OUTCOMES,
+  DEFAULT_TEXT_TAIL_CHARS,
+  REVIEW_STATUSES,
+  buildReviewPacket,
+  buildUnifiedRoundReport,
+  classifyExecutionOutcome,
+  renderReviewPacket,
+  renderUnifiedRoundReport,
+  runUnifiedReview,
+  tailText,
+  type BoundedText,
+  type BuildPacketInput,
+  type ClassifyInput,
+  type ExecutionOutcome,
+  type ExecutionOutcomeKind,
+  type NativeReviewer,
+  type ReviewPacket,
+  type ReviewPacketTask,
+  type RunUnifiedReviewOptions,
+  type UnifiedReviewResult,
+  type UnifiedReviewStatus,
+  type UnifiedRoundReport,
+} from './unified-review.ts';
+
+export {
+  DEFAULT_HANDOFF_POLICY,
+  HANDOFF_REASONS,
+  buildContinuationPacket,
+  classifyHandoffReason,
+  evaluateHandoffBudget,
+  renderContinuationPacket,
+  runHandoffContinuation,
+  type ContinuationCycleResult,
+  type ContinuationDeps,
+  type ContinuationPacket,
+  type ContinuationResult,
+  type ContinuationWork,
+  type HandoffClassification,
+  type HandoffPolicy,
+  type HandoffReason,
+  type HandoffRecord,
+  type HandoffStopCode,
+  type WorkSource,
+} from './continuation.ts';
+
 // P6-A: the orchestration state loop.
 // Observation is a read-only view over TaskStore; the decision union is frozen
 // here with only continue/wait/abort implemented; validation throws rather than
@@ -218,6 +313,8 @@ export {
   orchestrationDecisionRequest,
   extractAction,
   runDecisionCycle,
+  // P6-D1: the full eleven-action answer space, offered to the provider as criteria.
+  ACTION_CRITERIA,
   type DecisionOutcome,
   type DecisionLoopOptions,
   type OrchestrationDecisionRequestOptions,
@@ -297,3 +394,49 @@ export {
   type SpawnOutcome,
   type MutateOutcome,
 } from './orchestrator.ts';
+
+// Workbench refactor: sessions, handoffs, planning and the coordinator.
+export {
+  SessionRegistry,
+  SessionRegistryError,
+  toExecutionTarget,
+  DEFAULT_SESSION_INTENT,
+  type ExecutionTarget,
+  type SessionIntent,
+  type WorkbenchSession,
+} from './workbench-sessions.ts';
+
+// P6-D1: the dynamic decision loop, and the migration path it uses. Both are
+// compositions of authorities that already existed - nothing here is a new engine.
+// P6-D1 adds `ACTION_CRITERIA` to the loop's own export block below - the loop
+// exports were already re-exported here by P6-A, so only the new constant is added
+// there rather than declaring a second block for the same module.
+export {
+  applyMigration,
+  type MigrationApplied,
+} from './assignment-wiring.ts';
+
+export {
+  buildHandoff,
+  buildTaskBrief,
+  type TaskHandoff,
+} from './workbench-handoff.ts';
+
+export {
+  planFromSpec,
+  shapeForComplexity,
+  workKindToTaskType,
+  type WorkbenchTaskSpec,
+  type PlanFromSpecResult,
+} from './workbench-plan.ts';
+
+export {
+  NativeWorkbench,
+  type WorkbenchOptions,
+  type PlanOutcome,
+  type AssignOutcome,
+  type DispatchOutcome,
+  type TaskIntent,
+  type DecisionWiringOptions,
+  type DecisionCapabilities,
+} from './workbench.ts';

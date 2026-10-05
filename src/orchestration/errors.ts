@@ -21,6 +21,16 @@ export const WORKSPACE_ERROR_CODES = [
   'workspace-branch-checked-out',
   'workspace-lock-timeout',
   'workspace-unknown',
+  // ---- R2-1: Workspace / Resource Safety. A resource conflict is an ADMISSION
+  // refusal, deliberately NOT an agent failure: nothing ran, and blaming the worker
+  // would be wrong (see R2_COORDINATION_CONTRACT §7.2/§13).
+  'resource-conflict',
+  // ---- R2-1.1 (P1-b): isolation is UNAVAILABLE (e.g. a non-git project, where no
+  // worktree can exist), rather than merely contested. Distinct from
+  // `resource-conflict` on purpose: "someone else holds it" and "nothing can hold it
+  // safely" are different facts. Like the conflict code, this is an ADMISSION
+  // refusal and never an agent failure.
+  'resource-unavailable',
   // ---- 5C-9: inspect + merge. Every refusal is a named code, never a bare
   // string, so a caller can branch on the reason without parsing prose.
   'merge-task-not-found',

@@ -84,6 +84,9 @@ const CAPABILITIES: AgentCapabilities = {
   extraArgs: false,
   // Honoured through config.cwd + workspaceRoot, echoed back by start.
   cwd: true,
+  // Unverified: no cline install on this machine, so nothing was run to see
+  // whether a skill request is honoured. Declared false rather than assumed.
+  skills: false,
   // Declared false on purpose: none of these are wired through this adapter.
   steering: false,
   worktree: false,

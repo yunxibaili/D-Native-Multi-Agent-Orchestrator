@@ -1,5 +1,5 @@
 /**
- * tests/model-pool.test.ts — P6-F: free model pool / availability guard.
+ * tests/model-pool.test.ts - P6-F: free model pool / availability guard.
  *
  * The pool turns `docs/PHASE6A_FREE_MODEL_POOL.md` from prose into code. These
  * tests assert the properties that make it a SAFETY mechanism rather than a list:
@@ -54,7 +54,7 @@ function check(name: string, cond: boolean, detail = ''): void {
     process.stdout.write(`  ok   ${name}\n`);
   } else {
     failed++;
-    failures.push(`${name}${detail ? ` — ${detail}` : ''}`);
+    failures.push(`${name}${detail ? ` -${detail}` : ''}`);
     process.stdout.write(`  FAIL ${name}${detail ? ` :: ${detail}` : ''}\n`);
   }
 }
@@ -161,14 +161,14 @@ const NOW = Date.parse('2026-01-01T00:00:00Z');
 const descriptor = (id: string): AgentDescriptor => ({
   id, displayName: id, launcher: { command: 'x', args: [], shell: false } as never,
   transport: 'cli-jsonl',
-  capabilities: { newTask: true, resume: true, review: false, modelSelection: true, roleSelection: true, sandbox: false, streamEvents: true, costReporting: false, extraArgs: true, cwd: true, steering: false, worktree: false, fork: false, stdinPrompt: false, workspaceModes: ['shared'] } as AgentDescriptor['capabilities'],
+  capabilities: { newTask: true, resume: true, review: false, modelSelection: true, roleSelection: true, sandbox: false, streamEvents: true, costReporting: false, extraArgs: true, cwd: true, skills: false, steering: false, worktree: false, fork: false, stdinPrompt: false, workspaceModes: ['shared'] } as AgentDescriptor['capabilities'],
 });
 
 /**
  * Build a registry the way the sealed API actually allows.
  *
- * `ModelRegistry.setAvailability(agentId, …)` applies to EVERY entry of one
- * agent — there is no per-model availability setter. So availability is declared
+ * `ModelRegistry.setAvailability(agentId, -` applies to EVERY entry of one
+ * agent - there is no per-model availability setter. So availability is declared
  * per agent, and a scenario that needs one model `unknown` uses its own registry
  * rather than fighting the API.
  */
@@ -198,7 +198,6 @@ function gateSources(over: Record<string, unknown> = {}) {
   budgets.agent('workbuddy-intl', 10_000);
   const impl: TaskType = 'implementation';
   return {
-    multiAgentEnabled: true,
     descriptors: [descriptor('opencode'), descriptor('workbuddy-intl')],
     agentStatus: [{ agent: 'opencode', version: '1', installed: 'Yes', login: 'n', quotaSource: 't', usage: 'n', status: 'ok' } as never],
     quotaRecords: [quotaRow('opencode', 'available'), quotaRow('workbuddy-intl', 'available')],
@@ -234,7 +233,7 @@ process.stdout.write('\n== P6-F 7. the pool resolver alone ==\n');
   const mism = resolveFreeModelPoolAdmission({ agentId: 'workbuddy-cn', modelId: HY3 });
   check('an identity mismatch has its OWN code', mism.ok === false && mism.missing.code === 'model-free-pool-identity-mismatch', mism.ok ? '' : mism.missing.code);
   check('both pool codes are declared', MODEL_POOL_ERROR_CODES.includes('model-not-in-free-pool') && MODEL_POOL_ERROR_CODES.includes('model-free-pool-identity-mismatch'));
-  check('the resolver reads no registry — same answer with none supplied', resolveFreeModelPoolAdmission({ agentId: 'opencode', modelId: 'gpt-5' }).ok === false);
+  check('the resolver reads no registry - same answer with none supplied', resolveFreeModelPoolAdmission({ agentId: 'opencode', modelId: 'gpt-5' }).ok === false);
 }
 
 process.stdout.write('\n== P6-F 8. availability-unknown stays distinguishable from not-in-pool ==\n');
@@ -288,18 +287,25 @@ process.stdout.write('\n== P6-F 10. enforcement is OFF by default (existing beha
 
 process.stdout.write('\n== P6-F 11. the existing gate still runs and still wins ==\n');
 {
-  // Pool would ALLOW, but the quota is unavailable -> the pre-existing gate denies.
-  const quotaDenied = build('opencode', SB, { enforceFreeModelPool: true, quotaRecords: [quotaRow('opencode', 'unavailable')] });
-  check('pool allows but unavailable quota still denies', quotaDenied.result.allowed === false);
-  check('the denial is the quota rule, not the pool',
-    quotaDenied.result.allowed === false && /quota/i.test(`${quotaDenied.result.code} ${quotaDenied.result.reason}`),
-    `${quotaDenied.result.code} :: ${quotaDenied.result.reason.slice(0, 70)}`);
-  check('the gate input still carries the honest quota status', quotaDenied.input.quota.status === 'unavailable', quotaDenied.input.quota.status);
-  check('no pool code is blamed', !quotaDenied.missing.some((m) => m.code.includes('free-pool')));
+    // R1-1: the pool still runs and still wins. `unavailable` quota no longer denies
+    // (it means "no quota endpoint", a fact), so this case now demonstrates that the
+    // honest status is PRESERVED and reported rather than escalated or hidden.
+    const quotaUnreadable = build('opencode', SB, { enforceFreeModelPool: true, quotaRecords: [quotaRow('opencode', 'unavailable')] });
+    check('pool allows and an endpoint-less quota no longer denies on its own',
+      quotaUnreadable.result.allowed === true, `${quotaUnreadable.result.code} :: ${quotaUnreadable.result.reason.slice(0, 70)}`);
+    check('the gate input still carries the honest quota status', quotaUnreadable.input.quota.status === 'unavailable', quotaUnreadable.input.quota.status);
+    check('no pool code is blamed', !quotaUnreadable.missing.some((m) => m.code.includes('free-pool')));
 
-  // Pool allows, but multi-agent is off.
-  const off = build('opencode', SB, { enforceFreeModelPool: true, multiAgentEnabled: false });
-  check('pool allows but multi-agent-off still denies', off.result.allowed === false);
+    // A quota that is genuinely MISSING still denies, and the pool cannot rescue it.
+    const quotaMissing = build('opencode', SB, { enforceFreeModelPool: true, quotaRecords: [quotaRow('opencode', 'not_fetched')] });
+    check('pool allows but a genuinely unreadable quota still denies', quotaMissing.result.allowed === false);
+    check('the denial is the quota rule, not the pool',
+      quotaMissing.result.code === 'quota-unavailable',
+      `${quotaMissing.result.code} :: ${quotaMissing.result.reason.slice(0, 70)}`);
+
+    // Pool allows, but the task policy denies (R1-1: the multi-agent switch is gone).
+    const off = build('opencode', SB, { enforceFreeModelPool: true, taskPolicyAllows: false });
+    check('pool allows but a denying task policy still denies', off.result.allowed === false);
 
   // Pool allows, but the agent binary is not installed.
   const notInstalled = build('opencode', SB, {
@@ -364,11 +370,11 @@ process.stdout.write('\n== P6-F 13. modelId plumbing is untouched ==\n');
 //
 // Sections 1-13 test the pool and the pure gate in isolation. Codex's review
 // flagged the one thing they cannot reach: `Orchestrator` builds its own
-// `sources` object TWICE — once in `spawnChild` (orchestrator.ts:386) and once
+// `sources` object TWICE - once in `spawnChild` (orchestrator.ts:386) and once
 // in `executeTask` (orchestrator.ts:601). Both spread `...this.gate` and then
 // OVERRIDE several fields. If `enforceFreeModelPool` were ever dropped from
 // either spread, or from the execute-time sources object, the pool guard would
-// silently stop applying where money is actually spent — and every unit test
+// silently stop applying where money is actually spent - and every unit test
 // above would still pass, because they call `buildSpawnGateInput` directly.
 //
 // So this section drives the REAL classes. Nothing is stubbed between the
@@ -383,7 +389,7 @@ process.stdout.write('\n== P6-F 14. spawnChild -> executeTask: enforcement survi
   /**
    * Gate sources for the real orchestrator: every signal the pre-existing gate
    * needs is healthy, so a refusal can ONLY be the pool's doing. That is the
-   * whole trick — if the fixture were incomplete, a pool test would "pass" for
+   * whole trick - if the fixture were incomplete, a pool test would "pass" for
    * the wrong reason.
    */
   const chainSources = (taskIds: readonly string[], over: Record<string, unknown> = {}) => {
@@ -392,7 +398,6 @@ process.stdout.write('\n== P6-F 14. spawnChild -> executeTask: enforcement survi
     budgets.agent(AGENT, 10_000);
     const impl: TaskType = 'implementation';
     return {
-      multiAgentEnabled: true,
       descriptors: [descriptor(AGENT)],
       agentStatus: [{ agent: AGENT, version: '1', installed: 'Yes', login: 'n', quotaSource: 't', usage: 'n', status: 'ok' } as never],
       quotaRecords: [quotaRow(AGENT, 'available')],
@@ -502,7 +507,7 @@ process.stdout.write('\n== P6-F 14. spawnChild -> executeTask: enforcement survi
       spawned.ok === true, spawned.ok ? '' : `${spawned.code} :: ${spawned.reason}`);
 
     // P6-B assignment turns the guard on. Done here via the public
-    // `updateGateSources` — the same door production would use.
+    // `updateGateSources` - the same door production would use.
     o.updateGateSources({ enforceFreeModelPool: true });
 
     const executed = await o.executeTask({ taskId: 'c-paid' });
@@ -518,7 +523,7 @@ process.stdout.write('\n== P6-F 14. spawnChild -> executeTask: enforcement survi
     check('the execute-time refusal carries the pool code in its reason',
       !executed.ok && /model-not-in-free-pool/.test(executed.reason),
       !executed.ok ? executed.reason.slice(0, 110) : '');
-    check('NOTHING ran — the refusal precedes the runtime', requests.length === 0, `ran ${requests.length} time(s)`);
+    check('NOTHING ran - the refusal precedes the runtime', requests.length === 0, `ran ${requests.length} time(s)`);
     check('the task is left retryable (planned), not failed',
       o.getStore().get('c-paid')?.status === 'planned', o.getStore().get('c-paid')?.status);
   }
@@ -547,7 +552,7 @@ process.stdout.write('\n== P6-F 14. spawnChild -> executeTask: enforcement survi
 
   // --- D. no second guard and no bypass: enforcement cannot be turned off by
   //        removing the flag from the sources, because `false`/absent both mean
-  //        "not enforced" — there is exactly one switch, and one place that reads it.
+  //        "not enforced" - there is exactly one switch, and one place that reads it.
   {
     const src = chainSources(['r', 'c-bool']) as Record<string, unknown>;
     check('the switch is a single optional boolean on SpawnGateSources',

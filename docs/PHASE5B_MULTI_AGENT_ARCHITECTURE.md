@@ -1,10 +1,47 @@
 # Phase 5B ?Multi-Agent Architecture (Reuse-First Design)
 
-```text
-Phase 5B   = Architecture / DESIGN ONLY
-Status     = Ready for Phase 5C implementation
-Reuse      = Source-level reuse audit already completed (Phase 5A)
-```
+> **R1-1 AMENDMENT (2026-10-02).** Two things below are historical and no longer
+> describe the code. They are left as written because this is the Phase 5B design
+> record, but they must not be read as current:
+>
+> 1. **`multiAgentEnabled` / `multi-agent-not-implemented` no longer exist.** This
+>    document's central demo finding — that the gate "only tested one branch,
+>    `multiAgentEnabled`" — was correct then, and covering that branch is why the
+>    problem stayed invisible for so long. R1-1 removed the field, the deny code, and
+>    the R1-0 `--no-multi-agent` CLI flag: Multi-Agent *is* implemented (P5B + P6), so
+>    a flag whose reason text said "not implemented" while denying every spawn was a
+>    stale kill switch. Whether a round needs one task or a DAG is now decided by
+>    Laya's classification -> the Planner's shape -> the Scheduler's DAG.
+> 2. **`quota: { status: 'available' }` is not a value any provider produces.** All
+>    four official agents report `unavailable`, meaning "no quota endpoint" (audited
+>    in `PHASE4_QUOTA_AUDIT.md`), so the demo input further down could never occur in
+>    production. R1-1 stopped treating `unavailable` as blocking while keeping the
+>    fact itself honest: providers still say `unavailable` / `remaining: null`, and
+>    `exhausted` / `unknown` / `not_fetched` / `not_connected` still fail closed.
+>
+> The demo's lasting lesson — never let a gate read hardcoded demo fields — is now
+> enforced structurally by `tests/spawn-gate-production.test.ts`, which feeds the real
+> `buildQuotaCenter` output into the real `buildSpawnGateInput` with nothing
+> hand-built in between.
+
+> **Current Canonical Semantics (R1-1, 2026-10-01).** The authoritative record of
+> what R1-1 changed — AgentStatus identity (`agentId` = machine identity, `agent` =
+> display name), the quota `unavailable` observation policy, the removed
+> `multi-agent-not-implemented` / `--no-multi-agent` semantics, the Production Round
+> pipeline, the budget-scope contract, the Assignment↔Spawn-Gate parity rule, and the
+> AttemptStore-as-evidence-source debt — lives in **`docs/EXECUTION_ROUND_SEMANTICS.md`**.
+> Everything below this block is the Phase 5B DESIGN RECORD and is historical where it
+> conflicts with that file. The standing authority boundaries are unchanged and remain:
+> one Planner, one TaskStore, one Assignment, one SessionRegistry, one
+> TaskScheduler (dispatch), one execution edge, one `applyVerification`, one
+> AttemptStore, one Laya decision source; single-vs-multi is decided by the
+> Planner/Laya task shape, never by a CLI kill switch.
+>
+> ```text
+> Phase 5B   = Architecture / DESIGN ONLY
+> Status     = Ready for Phase 5C implementation
+> Reuse      = Source-level reuse audit already completed (Phase 5A)
+> ```
 
 **本轮不是 Multi-Agent runtime implementation?* 目标是产出一份可以直接交给下一轮实现的
 架构?C 到底要写什么、从哪些成熟项目提取什么、现?Runtime 如何接入?

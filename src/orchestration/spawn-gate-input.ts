@@ -4,7 +4,7 @@
  * Phase 5B §12.2 found that `src/quota/index.ts` fed `evaluateSpawnGate` eight
  * hardcoded fields, so every branch except `multiAgentEnabled` had never been
  * exercised by real data. This module replaces those fakes with values read
- * from actual sources.
+ * from actual sources. (R1-1 removed that last exception along with the field.)
  *
  * The governing rule, applied without exception:
  *
@@ -51,8 +51,13 @@ const missing = (code: string, reason: string): Signal<never> => ({ ok: false, m
  * existing project; none is a literal.
  */
 export interface SpawnGateSources {
-  /** Multi-Agent is opt-in. Absent means OFF, and off means denied. */
-  multiAgentEnabled: boolean;
+  /**
+   * R1-1: `multiAgentEnabled` REMOVED. Whether a round needs one agent or a DAG is
+   * decided upstream — Laya's classification picks the Planner's shape, and the
+   * Scheduler walks that shape. It was never a per-spawn question, so it has no
+   * business in a per-spawn input, and as a required field it silently denied every
+   * caller that did not know about it.
+   */
   /** Every agent the orchestrator knows about, with its capabilities. */
   descriptors: readonly AgentDescriptor[];
   /** Per-agent install/probe state. Omitted entries are NOT assumed present. */
@@ -188,11 +193,24 @@ export function resolveTaskPolicy(
  * `AgentStatusRow.installed` is the string `'Yes' | 'No' | 'Unknown'`. Only
  * `'Yes'` counts as available: `'Unknown'` means the provider was not probed,
  * which is a missing signal, not a yes.
+ *
+ * R1-1 — MATCHED ON `agentId`, NOT ON THE DISPLAY NAME.
+ * This used to be `a.agent === sources.agentId`, which compared the machine id
+ * (`opencode`) against a display name (`OpenCode`) and therefore never matched any
+ * of the four official agents: every real spawn was refused with
+ * `agent-unavailable` while the unit tests, which hand-build rows keyed by id,
+ * all passed. `agentId` is the canonical identity; `agent` is presentation, so the
+ * gate must not depend on it. The fallback to `agent` exists only so a pre-R1-1
+ * row (or a caller that never adopted `agentId`) is still readable rather than
+ * silently unreadable — it is a compatibility path, not the primary key.
  */
 export function resolveAgentAvailability(
   sources: Pick<SpawnGateSources, 'agentStatus'> & { agentId: string },
 ): Signal<boolean> {
-  const row = sources.agentStatus.find((a) => a.agent === sources.agentId);
+  const byId = (a: { agentId?: string; agent: string }): boolean => a.agentId === sources.agentId;
+  const legacyByDisplayField = (a: { agentId?: string; agent: string }): boolean =>
+    a.agentId === undefined && a.agent === sources.agentId;
+  const row = sources.agentStatus.find(byId) ?? sources.agentStatus.find(legacyByDisplayField);
   if (row === undefined) {
     return missing('agent-status-unavailable', `no install/probe status recorded for agent "${sources.agentId}"`);
   }
@@ -557,7 +575,6 @@ export function buildSpawnGateInput(req: BuildSpawnGateInput): SpawnGateDecision
   // `capabilitySatisfied: true` for an agent we could not look up would be
   // spending money on an assumption.
   const input: SpawnGateInput = {
-    multiAgentEnabled: s.multiAgentEnabled,
     taskPolicyAllows: s.taskPolicyAllows ?? taskPolicyAllows ?? false,
     capabilitySatisfied: capability ?? false,
     agentAvailable: agentAvailable ?? false,
@@ -585,12 +602,11 @@ export function buildSpawnGateInput(req: BuildSpawnGateInput): SpawnGateDecision
   // is no number to compare", and a floored request would report an ordinary
   // budget shortfall for what is actually an absent ledger.
   //
-  // A denial that the gate reached EARLIER (multi-agent off, policy, capability,
-  // agent, model, quota) is kept instead: it is the more fundamental reason, and
-  // the budget problem is still listed in `missing`.
-  const EARLIER_THAN_BUDGET: ReadonlySet<string> = new Set([
-    'multi-agent-not-implemented',
-    'task-policy-denied',
+    // A denial that the gate reached EARLIER (policy, capability, agent, model,
+    // quota) is kept instead: it is the more fundamental reason, and the budget
+    // problem is still listed in `missing`.
+    const EARLIER_THAN_BUDGET: ReadonlySet<string> = new Set([
+      'task-policy-denied',
     'capability-missing',
     'agent-unavailable',
     'model-unavailable',

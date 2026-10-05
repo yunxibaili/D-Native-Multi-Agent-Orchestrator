@@ -1,5 +1,5 @@
 /**
- * tests/review-loop.test.ts �?P6-D0: structured verdict -> verification -> bounded rework.
+ * tests/review-loop.test.ts - P6-D0: structured verdict -> verification -> bounded rework.
  *
  * WHAT P6-D0 CLAIMS, AND HOW EACH CLAIM IS TESTED
  * -------------------------------------------------
@@ -14,7 +14,7 @@
  *
  * The tests build a REAL `Orchestrator` + `TaskStore` + `TaskScheduler` with a
  * fake agent process. Only the reviewer output is synthetic, because no real Codex
- * binary can be assumed �?and the reviewer's output is exactly the untrusted input
+ * binary can be assumed - and the reviewer's output is exactly the untrusted input
  * this stage exists to normalise.
  *
  * The single most important assertion in this file is the INSTRUMENTED
@@ -72,7 +72,7 @@ function check(name: string, cond: boolean, detail = ''): void {
     process.stdout.write(`  ok   ${name}\n`);
   } else {
     failed++;
-    failures.push(`${name}${detail ? ` �?${detail}` : ''}`);
+    failures.push(`${name}${detail ? ` -${detail}` : ''}`);
     process.stdout.write(`  FAIL ${name}${detail ? ` :: ${detail}` : ''}\n`);
   }
 }
@@ -97,6 +97,7 @@ const descriptor = (id: string): AgentDescriptor => ({
   capabilities: {
     newTask: true, resume: true, review: false, modelSelection: true, roleSelection: true,
     sandbox: false, streamEvents: true, costReporting: false, extraArgs: true, cwd: true,
+    skills: false,
     steering: false, worktree: false, fork: false, stdinPrompt: false, workspaceModes: ['shared'],
   } as AgentDescriptor['capabilities'],
 });
@@ -131,7 +132,6 @@ const budgetsFor = (taskIds: readonly string[]): BudgetManager => {
 };
 
 const gateSources = (taskIds: readonly string[]) => ({
-  multiAgentEnabled: true,
   descriptors: [descriptor(AGENT)],
   agentStatus: [statusRow(AGENT, 'Yes')],
   quotaRecords: [quotaRecord(AGENT, 'available')],
@@ -569,7 +569,7 @@ section('P6-D0 7. bounded rework: max attempts and repeated verdicts');
   await scheduler.tick();
   check('round 1 re-ran the task', requests.length === 2, `ran ${requests.length}`);
 
-  // Round 2 �?the cap allows this one.
+  // Round 2 - the cap allows this one.
   const r2 = applyReviewVerdict({ orchestrator: orch, taskId: 'c1', verdict: v2, previous: evidence, policy: { maxAttempts: 2 } });
   evidence.push(r2.status === 'ok' ? r2.evidence : toReviewEvidence('c1', v2, evidence));
   check('round 2 is accepted (the cap is 2)', r2.status === 'ok', r2.status);
@@ -577,7 +577,7 @@ section('P6-D0 7. bounded rework: max attempts and repeated verdicts');
   await scheduler.tick();
   check('round 2 re-ran the task', requests.length === 3, `ran ${requests.length}`);
 
-  // Round 3 �?the cap must stop it, BEFORE anything is applied.
+  // Round 3 - the cap must stop it, BEFORE anything is applied.
   const statusBefore = orch.getStore().get('c1')?.status;
   const v3 = validateReviewVerdict(rawVerdict({
     verdict: 'rework', reason: 'third problem',
@@ -623,7 +623,7 @@ section('P6-D0 7. bounded rework: max attempts and repeated verdicts');
 
 // The fingerprint's exact contract: same verdict + same SORTED finding set.
   // It is NOT fuzzy. Reworded prose is a KNOWN limitation, asserted here so it
-  // cannot be "fixed" later by quietly introducing similarity matching — a false
+  // cannot be "fixed" later by quietly introducing similarity matching - a false
   // merge would refuse a legitimate rework.
   check('an IDENTICAL finding set produces the same fingerprint',
     fingerprintVerdict({ verdict: 'rework', findings: [{ location: 'a', severity: 'minor', message: 'x', evidence: 'e' }] }) ===
@@ -716,14 +716,21 @@ check('toReworkDecision is a pure constructor', (() => {
     try { validateReworkDecision(obs, 'ghost'); return false; }
     catch (e) { return e instanceof DecisionValidationError && e.code === 'task-not-found'; }
   })());
-  check('CRITICAL: rework is not a privileged action �?it uses validateDecision', true);
+  check('CRITICAL: rework is not a privileged action - it uses validateDecision', true);
 
   // Apply it through applyDecision, with the rework capability wired to D0.
   const { applyDecision } = await import('../src/orchestration/decision.ts');
+  const { buildDispatchReceipt, emptyDispatchReceipt } = await import('../src/orchestration/dispatch-receipt.ts');
   let dispatchCalls = 0;
   const app = await applyDecision(decision, {
     observation: obs,
-    dispatch: async () => { dispatchCalls++; const t = await scheduler.tick(); return t.admitted.length > 0; },
+    dispatch: async () => {
+      dispatchCalls++;
+      // R2-2: project the REAL tick rather than flattening it to a boolean, so the
+      // receipt still says WHICH task was admitted after the rework.
+      const t = await scheduler.tick();
+      return buildDispatchReceipt({ tick: t, dispatchedAt: Date.now() });
+    },
     rework: async (taskId, reason) => {
       const r = prepareRework(orch, taskId, reason);
       return { ok: r.ok, code: r.code, reason: r.reason };
@@ -739,20 +746,31 @@ check('toReworkDecision is a pure constructor', (() => {
   let noCapDispatch = 0;
   const refused = await applyDecision(decision, {
     observation: obs,
-    dispatch: async () => { noCapDispatch++; return true; },
+    dispatch: async () => { noCapDispatch++; return emptyDispatchReceipt(Date.now()); },
   });
   check('a rework with no capability is refused, never downgraded to continue',
     refused.applied === false && refused.code === 'rework-not-available',
     refused.applied === false ? refused.code : 'applied');
   check('and it dispatched nothing', noCapDispatch === 0, `calls=${noCapDispatch}`);
 
-  // Only `rework` was enabled.
-  check('the implemented set gained rework and nothing else',
-    IMPLEMENTED_ACTIONS.join(',') === 'continue,wait,abort,rework', IMPLEMENTED_ACTIONS.join(','));
-  check('retry / reassign / replan / split / add_task / parallelize / complete are STILL deferred',
-    ['retry', 'reassign', 'replan', 'split_task', 'add_task', 'parallelize', 'complete']
-      .every((a) => (DEFERRED_ACTIONS as readonly string[]).includes(a)),
-    DEFERRED_ACTIONS.join(','));
+  // `rework` (D0) and `replan` (P6-C) are the implemented additions.
+// P6-D1 completed the vocabulary. The property that still matters HERE is narrower
+    // and is the one this suite exists to protect: connecting `retry` did NOT make
+    // retry a re-entry path for REVIEW. Review still has exactly one re-entry
+    // mechanism (`prepareRework`), and a review FAIL still does not reach Laya.
+    check('P6-D1 completed the decision vocabulary (nothing deferred now)',
+    DEFERRED_ACTIONS.length === 0, DEFERRED_ACTIONS.join(','));
+    const reviewSrc = readFileSync('src/orchestration/review-loop.ts', 'utf8');
+    // Measured over CODE, not the whole file: this module's header and comments name
+    // `Orchestrator` and `TaskStore.transition` precisely to explain that it goes
+    // through them. A grep over raw text would fail on that explanation.
+    const reviewCode = reviewSrc.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    check('review re-entry is STILL rework-only: retry is not a review path',
+    ['rework'].every((a) => (IMPLEMENTED_ACTIONS as readonly string[]).includes(a)) &&
+    !/\.retry\(/.test(reviewCode) && !/new Orchestrator/.test(reviewCode),
+    /\.retry\(/.test(reviewCode) ? 'review-loop calls retry()' : '');
+    check('review-loop does not import the decision-loop (review never calls Laya)',
+    !/decision-loop/.test(reviewSrc));
 
   rmSync(dir, { recursive: true, force: true });
 }
@@ -858,7 +876,7 @@ section('P6-D0 10. structural: no second store / scheduler / execution path');
   const files = tree('src');
   const withText = (pattern: RegExp): string[] => files.filter((f) => pattern.test(readFileSync(f, 'utf8')));
 
-// Count OCCURRENCES in code, not files, and strip comments — a `runtime.run()`
+// Count OCCURRENCES in code, not files, and strip comments - a `runtime.run()`
 // mentioned in a doc comment must not read as a second execution edge.
   const occurrences = (pattern: RegExp): string[] => {
     const hits: string[] = [];
@@ -889,7 +907,7 @@ section('P6-D0 10. structural: no second store / scheduler / execution path');
       !/new TaskStore|new TaskScheduler|new WorkspaceManager|runtime\.run\(|executeTask\(/.test(text));
     // Strip comments first: a `store.transition(` mentioned in prose is not a
     // call. The pattern is deliberately just `\.transition\(` rather than
-    // `\w+\.transition\(` — the narrower form misses `).transition(`, which is
+    // `\w+\.transition\(` - the narrower form misses `).transition(`, which is
     // exactly how a cast-then-call looks, and that is how the mutation check
     // caught this test being too weak.
     const code = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
@@ -954,7 +972,7 @@ section('P6-D0 11. a verdict cannot reach the store except through applyVerifica
   // `applyVerification` is wrapped so its OWN write is counted too. The
   // assertion that matters is the split: the authority wrote exactly once, and
   // the review loop wrote NOTHING. A loop that reached past the authority would
-  // show up as an extra entry here — which is precisely what the mutation check
+  // show up as an extra entry here - which is precisely what the mutation check
   // proved the previous, weaker version of this test could not see.
   let authorityWrites = 0;
   const spyOrch = {

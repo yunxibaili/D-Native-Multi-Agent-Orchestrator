@@ -1,3 +1,5 @@
+> **[Historical — Phase 4M 决策记录]** 当前基线见 docs/PROJECT_BASELINE.md。
+
 # Phase 4M-9 — Hindsight Final Decision
 
 ```text

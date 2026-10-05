@@ -6,17 +6,36 @@
  * the gate, then act. Phase 4 ships the gate as a pure decision function so
  * Phase 5B's orchestrator can call the exact same code path.
  *
- * Fail-closed by design: Multi-Agent is false until Phase 5B, so the default
- * input denies immediately with `multi-agent-not-implemented`. Quota that
- * cannot be confirmed (`unavailable`/`unknown`/`not_fetched`/`not_connected`)
- * also denies — the standing Model Policy only blocks known exhaustion, but a
- * gate that is ABOUT TO SPEND must not guess headroom it cannot see.
+ * WHAT IS FAIL-CLOSED HERE, AND WHY `unavailable` IS NOT
+ * ---------------------------------------------------
+ * A quota the gate could not READ denies: `unknown` (the read failed or produced
+ * garbage), `not_fetched` (never queried) and `not_connected` (no credentials, so
+ * no quota can exist). Those are missing facts, and a gate about to spend must not
+ * invent them.
+ *
+ * `unavailable` is NOT a missing fact. Its own definition in `types.ts` is
+ * "Source exists but exposes no quota endpoint (our four agents today)", and
+ * `PHASE4_QUOTA_AUDIT.md` (2026-09-29) verified that all four official agents
+ * report usage and login but never remaining/reset. So `unavailable` is a
+ * CONFIRMED statement about the provider's shape, and every one of them produces
+ * it — which meant the gate denied every spawn forever, on a fact that was true.
+ *
+ * Treating it as blocking also protected nothing real: the budget this gate reads
+ * is the ORCHESTRATION budget, explicitly not provider billing, so there was no
+ * provider headroom here to guess at in the first place.
+ *
+ * R1-1 therefore dropped `unavailable` from the blocking set. The honest fact is
+ * PRESERVED, not rewritten: `status` stays `unavailable` and `remaining` stays
+ * `null`. Nothing is upgraded to `available` and no remaining is invented. Every
+ * other signal — capability, agent availability, model availability, budget,
+ * concurrency, and known exhaustion — still decides exactly as before.
  */
 
 import type { GateDenyCode, SpawnGateInput, SpawnGateResult } from './types.ts';
 
 const QUOTA_BLOCKING: ReadonlySet<string> = new Set([
-  'unavailable',
+  // `unavailable` is deliberately absent: see the header. It means "this provider
+  // has no quota endpoint", which is a confirmed fact, not a missing one.
   'unknown',
   'not_fetched',
   'not_connected',
@@ -25,12 +44,6 @@ const QUOTA_BLOCKING: ReadonlySet<string> = new Set([
 export function evaluateSpawnGate(input: SpawnGateInput): SpawnGateResult {
   const deny = (code: GateDenyCode, reason: string): SpawnGateResult => ({ allowed: false, code, reason });
 
-  if (!input.multiAgentEnabled) {
-    return deny(
-      'multi-agent-not-implemented',
-      'Multi-Agent is research-complete but not implemented (Phase 5A done, 5B waiting on Phase 4); single agent remains the default.',
-    );
-  }
   if (!input.taskPolicyAllows) {
     return deny('task-policy-denied', 'task policy does not allow spawning for this task');
   }

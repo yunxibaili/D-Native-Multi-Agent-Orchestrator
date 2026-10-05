@@ -103,6 +103,28 @@ export interface ObservedTask {
    * `not-due`  — the run has not produced anything to verify.
    */
   readonly verification: 'not-due' | 'pending' | 'passed' | 'rejected';
+  /**
+   * P6-C: do this task's dependencies still describe the current plan?
+   *
+   * Carried through as a FACT, deliberately not as a status. The decision brain
+   * needs to be able to see that a subtree is stale — otherwise it cannot decide to
+   * replan, which is the whole reason replan exists — but staleness is not a
+   * lifecycle state and must not be mistaken for one.
+   *
+   * Note that a stale task is still eligible to RUN. `TaskScheduler` ignores this
+   * flag entirely, because readiness is `unmetDependencies`, not staleness. Making
+   * staleness block dispatch would be a second readiness rule, and two readiness
+   * rules is how a task ends up neither ready nor blocked.
+   */
+  readonly stale: boolean;
+  /**
+   * Why it went stale, or null. `stale` without a reason is an unauditable claim,
+   * so both are surfaced together: a decision that sees staleness must also see
+   * the planner's stated reason, rather than inventing one.
+   */
+  readonly staleReason: string | null;
+  /** Which planner generation created this task. 0 for pre-P6-C and hand-made tasks. */
+  readonly generation: number;
 }
 
 /** The latest run evidence for one task, or null when none has been supplied. */
@@ -156,6 +178,8 @@ export interface TaskObservation {
 
   /** Sum over in-scope tasks. Derived every call, never accumulated. */
   readonly totalBudgetUnits: number;
+  /** Ids of tasks whose dependencies no longer describe the current plan. */
+  readonly stale: readonly string[];
   /** True when every in-scope task is terminal: there is nothing left to decide about. */
   readonly allTerminal: boolean;
 }
@@ -248,7 +272,10 @@ export function observeTasks(store: TaskStore, options: ObserveOptions): TaskObs
       createdAt: task.createdAt,
       startedAt: task.startedAt,
       finishedAt: task.finishedAt,
-      verification: verificationOf(task.status),
+verification: verificationOf(task.status),
+        stale: task.stale,
+        staleReason: task.staleReason,
+        generation: task.generation,
     });
   });
 
@@ -302,6 +329,7 @@ export function observeTasks(store: TaskStore, options: ObserveOptions): TaskObs
     latestFailure,
     failedTaskIds: Object.freeze(failedTaskIds),
     totalBudgetUnits: observed.reduce((sum, t) => sum + t.budgetUnits, 0),
+    stale: observed.filter((t) => t.stale).map((t) => t.taskId),
     allTerminal: observed.length > 0 && terminal.length === observed.length,
   });
 }
@@ -332,6 +360,7 @@ export function toDecisionState(observation: TaskObservation): string {
       ? null
       : { state: observation.latestFailure.state, errorCode: observation.latestFailure.errorCode },
     failedTaskIds: observation.failedTaskIds,
+    stale: observation.stale,
     totalBudgetUnits: observation.totalBudgetUnits,
     tasks: observation.tasks.map((t) => ({
       taskId: t.taskId,
@@ -339,8 +368,11 @@ export function toDecisionState(observation: TaskObservation): string {
       agentId: t.agentId,
       taskType: t.taskType,
       unmetDependencies: t.unmetDependencies,
-      retryCount: t.retryCount,
-      blockedReason: t.blockedReason,
+retryCount: t.retryCount,
+        stale: t.stale,
+        staleReason: t.staleReason,
+        generation: t.generation,
+        blockedReason: t.blockedReason,
       verification: t.verification,
       artifactCount: t.artifactCount,
     })),

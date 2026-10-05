@@ -1,5 +1,5 @@
 /**
- * tests/attempt-record.test.ts — P6-E: structured attempt evidence.
+ * tests/attempt-record.test.ts - P6-E: structured attempt evidence.
  *
  * THE CLAIMS UNDER TEST
  * ---------------------
@@ -7,7 +7,7 @@
  *   2. evidence comes only from things that REALLY happened
  *   3. execution / review / rework are distinguishable, and retry != rework
  *   4. the history is a chain in real append order
- *   5. AttemptStore is EVIDENCE ONLY — it cannot reach task state or dispatch
+ *   5. AttemptStore is EVIDENCE ONLY - it cannot reach task state or dispatch
  *   6. Task.status and AttemptRecord are independent; neither writes the other
  *   7. aggregation is read-only, and reports counts rather than ranking anyone
  *
@@ -53,7 +53,7 @@ function check(name: string, cond: boolean, detail = ''): void {
     process.stdout.write(`  ok   ${name}\n`);
   } else {
     failed++;
-    failures.push(`${name}${detail ? ` — ${detail}` : ''}`);
+    failures.push(`${name}${detail ? ` -${detail}` : ''}`);
     process.stdout.write(`  FAIL ${name}${detail ? ` :: ${detail}` : ''}\n`);
   }
 }
@@ -77,6 +77,7 @@ const descriptor = (id: string): AgentDescriptor => ({
   capabilities: {
     newTask: true, resume: true, review: false, modelSelection: true, roleSelection: true,
     sandbox: false, streamEvents: true, costReporting: false, extraArgs: true, cwd: true,
+    skills: false,
     steering: false, worktree: false, fork: false, stdinPrompt: false, workspaceModes: ['shared'],
   } as AgentDescriptor['capabilities'],
 });
@@ -101,7 +102,6 @@ const gateSources = (taskIds: readonly string[]) => {
   for (const t of taskIds) budgets.task(t, 10_000);
   budgets.agent(AGENT, 10_000);
   return {
-    multiAgentEnabled: true,
     descriptors: [descriptor(AGENT)],
     agentStatus: [{ agent: AGENT, version: '1', installed: 'Yes', login: 'n', quotaSource: 't', usage: 'n', status: 'ok' } as never],
     quotaRecords: [quotaRecord(AGENT, 'available')],

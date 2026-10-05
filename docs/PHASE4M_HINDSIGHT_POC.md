@@ -1,3 +1,6 @@
+> **[Historical — Phase 4M POC 记录]** Hindsight 定位未变：project memory，
+> 不是 task state。当前基线见 docs/PROJECT_BASELINE.md。
+
 # Phase 4M — Project Memory / Hindsight PoC 报告
 
 日期：2026-09-29 · 执行方式：只读源码审查 + 本机实测 · **未修改 `src/core|runtime|orchestrator|cli|decision|adapters|quota`，未新增 Agent，未实现 Multi-Agent / Task DAG / Agent Communication，未改动任何 Agent 外部安装**。

@@ -1,3 +1,9 @@
+> **Docs baseline: 技术文档唯一基准 = [docs/PROJECT_BASELINE.md](docs/PROJECT_BASELINE.md)**
+> 本 README 描述 Phase 1 runtime 起步状态；当前项目已是 Laya-driven Multi-Agent
+> Orchestrator（4 个 Native Agent identity / bounded Execution Round / 11-action
+> Decision Loop / Lease+Fencing / ResourceClaim / Codex Review）。架构与路线以
+> baseline 为准。
+
 # Native Agent Orchestrator (Phase 1)
 
 A local orchestrator that drives **already-installed, already-logged-in native

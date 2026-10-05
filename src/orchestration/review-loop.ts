@@ -152,6 +152,22 @@ export type ReviewOutcome =
       readonly reworkRequested: boolean;
       /** Always 1: an applied verdict never dispatches by itself. */
       readonly dispatched: boolean;
+      /**
+       * Present ONLY when `reworkRequested` is true, and it is what tells the two
+       * outcomes apart:
+       *
+       *   re-entry ok   → the task is `queued` and will be dispatched on the next tick
+       *   re-entry FAIL → the task is STUCK in `rework`, which no candidate rule
+       *                   admits, so nothing will ever re-run it without help
+       *
+       * Both used to be reported as `status:'ok', reworkRequested:true`, because the
+       * verification itself genuinely did succeed. That is true and useless: a caller
+       * reading only those two fields could not tell "queued, will run" from "wedged".
+       * So the re-entry result is carried verbatim rather than summarised into a
+       * boolean. `ReworkReentry` is the existing type — this reuses it rather than
+       * inventing a parallel error shape.
+       */
+      readonly reworkReentry?: ReworkReentry;
     }
   /** The verdict could not be trusted. Nothing was changed. */
   | {

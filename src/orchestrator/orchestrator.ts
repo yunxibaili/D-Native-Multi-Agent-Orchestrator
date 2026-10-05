@@ -55,6 +55,28 @@ export interface OrchestratorOptions {
    * real agent, and a caller can also register something directly.
    */
   extraAdapters?: readonly AgentAdapter[];
+  /**
+   * Adapters that REPLACE any same-id adapter, including one bootstrapped from a real
+   * installed agent. Optional and separate from `extraAdapters` on purpose.
+   *
+   * WHY THIS IS NEEDED (a broken seam, found by a hanging test)
+   * ----------------------------------------------------------
+   * `extraAdapters` only registers an adapter whose id is not already present, and
+   * `bootstrapAdapters()` registers a REAL adapter for every agent installed on the
+   * machine. So on any developer machine that has the agent installed, `extraAdapters`
+   * silently does nothing and the run launches the real CLI. The `extraAdapters`
+   * docstring claimed it was "the one tests use to drive the runtime without a real
+   * binary", and that was false whenever the binary existed - which is exactly when a
+   * test most needs the double. The symptom was a test whose fake agent was never
+   * used: minutes-long "unit" runs, results that varied with machine load, and timeouts
+   * that looked like flakiness but were a real subprocess.
+   *
+   * `extraAdapters` keeps its existing non-overriding behaviour, because silently
+   * replacing a real adapter is the wrong default for a production caller. Use this
+   * only where the adapter IS meant to be authoritative - tests, or an embedding that
+   * genuinely supplies its own implementation for an agent id.
+   */
+  replaceAdapters?: readonly AgentAdapter[];
 }
 
 export class Orchestrator {
@@ -83,6 +105,12 @@ export class Orchestrator {
     this.bootstrapAdapters();
     for (const a of options.extraAdapters ?? []) {
       if (!this.registry.has(a.descriptor.id)) this.registry.register(a);
+    }
+    // Applied last, and deliberately able to replace: a same-id adapter may already
+    // have been bootstrapped from a real installed agent, and `register` throws on a
+    // duplicate. See the option's doc for why this is a separate seam.
+    for (const a of options.replaceAdapters ?? []) {
+      this.registry.replace(a);
     }
   }
 

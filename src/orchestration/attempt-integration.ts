@@ -1,12 +1,12 @@
 /**
- * src/orchestration/attempt-integration.ts — P6-E: where evidence is actually produced.
+ * src/orchestration/attempt-integration.ts - P6-E: where evidence is actually produced.
  *
  * This module is the ONLY place that writes an `AttemptRecord`, and it exists so
  * the write can happen at the right moments without touching the orchestrator's
  * control flow.
  *
  * IT DOES NOT CALL ANYTHING. It has no store, no scheduler, no runtime, no
- * orchestrator — only the `AttemptStore` it is handed and the pure inputs it is
+ * orchestrator - only the `AttemptStore` it is handed and the pure inputs it is
  * given. Recording is a side effect performed BY the caller at a point the caller
  * already owns:
  *
@@ -22,17 +22,27 @@
  * ----------------------------------
  * Because the only honest evidence for an execution is the `RunResult` the runtime
  * actually produced, and the orchestrator already has it at the point it applies
- * the run result. Patching that path would mean the orchestrator — the execution
- * edge — growing an evidence concern, which is how one authority becomes two.
+ * the run result. Patching that path would mean the orchestrator - the execution
+ * edge - growing an evidence concern, which is how one authority becomes two.
  * `recordExecutions` is called by whoever already holds both objects.
  *
- * NO FABRICATED ATTEMPTS
- * ----------------------
- * `recordExecutions` is given a `TickResult`. It records ONLY outcomes whose `ok`
- * is true, because those are the ones with a real `RunResult`. A task the
- * scheduler refused, skipped, or left waiting has no result and therefore no
- * evidence — and `recordExecutions` returns the ids it did NOT record so a caller
- * can see that the absence was deliberate rather than an oversight.
+ * WHICH OUTCOMES ARE RECORDED
+ * ----------------------------
+ * `recordExecutions` records a real execution whenever a real `RunResult` EXISTS - which
+ * is a wider set than "the outcome reported success". Concretely:
+ *
+ *   - `outcome.ok === true`                       -> recorded (the ordinary case)
+ *   - `outcome.ok === false` AND it carries `run`  -> ALSO recorded (R2-2 / F5)
+ *   - `outcome.ok === false` AND no `run`         -> NOT recorded
+ *
+ * The middle case is the one this comment used to deny. A `RunResult` means a native
+ * process really executed and produced it; when only the WORKFLOW write-back was refused
+ * (stale lease, agent mismatch), that execution still happened and discarding it would
+ * erase real evidence. `Task mutation rejected != Execution evidence discarded`.
+ *
+ * The last case is "nothing ran" - the gate refused, or the runtime never started - and
+ * it genuinely has no evidence. `notRecorded` is returned so the caller can see that the
+ * absence was deliberate rather than an oversight.
  */
 
 import { executionAttempt, reworkAttempt, reviewAttempt, type AttemptRecord } from './attempt-record.ts';
@@ -59,7 +69,7 @@ export interface ExecutionEvidenceInput {
  * Record one real execution result.
  *
  * Returns the stored record, or null when validation refused it. A null here is
- * an evidence loss and is visible to the caller — deliberately not swallowed,
+ * an evidence loss and is visible to the caller - deliberately not swallowed,
  * because silent evidence loss looks identical to "nothing happened".
  */
 export function recordExecution(
@@ -69,6 +79,12 @@ export function recordExecution(
     agentId: string;
     modelId: string | null;
     result: Parameters<typeof executionAttempt>[0]['result'];
+    /**
+     * R2-2: the lease version the execution ran under, from the DISPATCH-time lease.
+     * Omitted for evidence that is not an execution under a lease (a review), never
+     * defaulted to the task's current version.
+     */
+    leaseVersion?: number;
   } & ExecutionEvidenceInput,
 ): AttemptRecord | null {
   const build = input.isRework === true ? reworkAttempt : executionAttempt;
@@ -78,6 +94,7 @@ export function recordExecution(
     modelId: input.modelId,
     ...(input.budgetUnits === undefined ? {} : { budgetUnits: input.budgetUnits }),
     ...(input.taskType === undefined ? {} : { taskType: input.taskType }),
+    ...(input.leaseVersion === undefined ? {} : { leaseVersion: input.leaseVersion }),
     result: input.result,
   }));
   return outcome.ok ? outcome.record : null;
@@ -86,23 +103,80 @@ export function recordExecution(
 /**
  * Record the executions a completed tick really performed.
  *
- * Only `outcome.ok === true` entries are recorded. That is the whole guarantee:
- * a denied dispatch has no `RunResult`, so there is nothing to describe, and
- * inventing a `failure` record for "the gate said no" would corrupt every
- * success-rate figure P6-B later depends on.
+ * An entry is recorded whenever it carries a real `RunResult`, INCLUDING when the
+ * workflow write-back was refused - see the header note on which outcomes are recorded.
+ * What is never recorded is an admission that produced no execution at all, because a
+ * `RunResult` cannot be fabricated for it: a scheduler that skipped a task produces no
+ * `RunResult`, so there is no signature here that could invent one.
  */
 export function recordExecutions(
   store: AttemptStore,
   tick: TickResult,
   resolve: (taskId: string) => { agentId: string; modelId: string | null; budgetUnits?: number; taskType?: TaskType } | null,
-): { recorded: string[]; notRecorded: string[] } {
+): { recorded: string[]; notRecorded: string[]; attemptIdsByTask: Record<string, string[]> } {
   const recorded: string[] = [];
   const notRecorded: string[] = [];
+  // R2-2 §13.2: the ids `AttemptStore.append` ACTUALLY minted, so a dispatch receipt can
+  // point at real attempts instead of the caller guessing or re-reading history. Taken
+  // from the returned record, never predicted.
+  const attemptIdsByTask: Record<string, string[]> = {};
+  const noteAttempt = (taskId: string, record: { readonly attemptId: string }): void => {
+    (attemptIdsByTask[taskId] ??= []).push(record.attemptId);
+  };
 
   for (const entry of tick.outcomes) {
     if (!entry.outcome.ok) {
-      // Refused or failed to start. No real run happened.
-      notRecorded.push(entry.taskId);
+      // R2-2 / F5. Two DIFFERENT situations used to collapse into one line here, and
+      // the comment "No real run happened" was true of only one of them:
+      //
+      //   - the outcome carries NO run  -> nothing executed (gate refused, or the
+      //     runtime never started). There is genuinely no evidence to record.
+      //   - the outcome carries a run  -> a native process DID execute and produced
+      //     it; only the WORKFLOW write-back was refused (stale lease / agent
+      //     mismatch). That is an execution fact and it is recorded, so the work is
+      //     not erased by a state decision.
+      //
+      // Task state is still untouched either way: this records EVIDENCE, it does not
+      // move a task.
+      const refusedRun = entry.outcome.run;
+      if (refusedRun === undefined) {
+        notRecorded.push(entry.taskId);
+        continue;
+      }
+      const refusedMeta = resolve(entry.taskId);
+      if (refusedMeta === null) {
+        // The task cannot be attributed (it was never created, or was deleted), so the
+        // run has no owner to be evidence ABOUT. It is reported as NOT recorded rather
+        // than filed under a guessed task: a record pointing at the wrong task is worse
+        // than a visible gap, because the gap is honest and the wrong record is not.
+        notRecorded.push(entry.taskId);
+        continue;
+      }
+      const refusedRecord = recordExecution(store, {
+        taskId: entry.taskId,
+        // The AGENT THAT ACTUALLY RAN, not the task's current holder - that
+        // difference is the entire content of a stale record.
+        agentId: refusedRun.agentId,
+        modelId: refusedMeta.modelId,
+        result: refusedRun,
+        // The version this run ACTUALLY held, which by definition is no longer current.
+        // Rewriting it to the task's present version would make superseded work look
+        // like the current holder's.
+        ...(entry.outcome.leaseVersion === undefined ? {} : { leaseVersion: entry.outcome.leaseVersion }),
+        ...(refusedMeta.budgetUnits === undefined ? {} : { budgetUnits: refusedMeta.budgetUnits }),
+        ...(refusedMeta.taskType === undefined ? {} : { taskType: refusedMeta.taskType }),
+        isRework: false,
+      });
+      if (refusedRecord === null) notRecorded.push(entry.taskId);
+      else {
+        recorded.push(entry.taskId);
+        // R2-2 / F1: the refused execution's attempt id MUST reach `attemptIdsByTask`.
+        // This branch used to record the evidence and then drop its pointer, so the
+        // receipt could not name the attempt that actually ran - the one case where
+        // naming it matters most, because the write-back was refused and the receipt is
+        // the only remaining link between the decision and the execution.
+        noteAttempt(entry.taskId, refusedRecord);
+      }
       continue;
     }
     const meta = resolve(entry.taskId);
@@ -115,6 +189,7 @@ export function recordExecutions(
       agentId: meta.agentId,
       modelId: meta.modelId,
       result: entry.outcome.run,
+      ...(entry.outcome.leaseVersion === undefined ? {} : { leaseVersion: entry.outcome.leaseVersion }),
       ...(meta.budgetUnits === undefined ? {} : { budgetUnits: meta.budgetUnits }),
       ...(meta.taskType === undefined ? {} : { taskType: meta.taskType }),
       // `ExecuteOutcome` does not say whether it was a rework re-entry, so this
@@ -123,16 +198,19 @@ export function recordExecutions(
       isRework: false,
     });
     if (record === null) notRecorded.push(entry.taskId);
-    else recorded.push(entry.taskId);
+    else {
+      recorded.push(entry.taskId);
+      noteAttempt(entry.taskId, record);
+    }
   }
 
-  return { recorded, notRecorded };
+  return { recorded, notRecorded, attemptIdsByTask };
 }
 
 /**
  * Record a review that actually happened.
  *
- * The verdict is D0's contract and is not reinterpreted here — this function
+ * The verdict is D0's contract and is not reinterpreted here - this function
  * reduces it to comparable counts and nothing else. Note that it records the
  * REVIEWER's id, so review quality and worker quality never mix.
  */
@@ -161,7 +239,7 @@ export function recordReview(
  *
  * An earlier draft had one, and it was wrong twice over: it invented a
  * `metadata` field the contract does not have, and it recorded a "rework was
- * authorised" attempt that never ran — which is not an attempt. D0's review record
+ * authorised" attempt that never ran - which is not an attempt. D0's review record
  * already carries the `rework` verdict, and the re-run produces its own `kind:
  * 'rework'` execution record once a real `RunResult` exists. Authorisation is
  * therefore represented by exactly two facts, both already recorded: the reviewer

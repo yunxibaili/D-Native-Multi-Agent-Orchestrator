@@ -59,6 +59,11 @@ const CAPABILITIES: AgentCapabilities = {
   costReporting: true,
   extraArgs: true,
   cwd: true,
+  // VERIFIED BY REAL RUNS on this machine (see AgentCapabilities.skills for the
+  // transcripts): a brief requesting `archify` came back with that skill's exact
+  // frontmatter (name/version/author), and a request for a non-existent skill came
+  // back `UNAVAILABLE` instead of inventing content. OpenCode honours the ASK.
+  skills: true,
   // Declared false across the board; nothing here pretends to implement them.
   steering: false,
   worktree: false,

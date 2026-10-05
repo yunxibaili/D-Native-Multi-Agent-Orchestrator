@@ -1,17 +1,17 @@
 /**
- * tests/assignment.test.ts — P6-B: deterministic, evidence-aware worker selection.
+ * tests/assignment.test.ts - P6-B: deterministic, evidence-aware worker selection.
  *
  * WHAT MAKES THIS SUITE WORTH WRITING
  * -----------------------------------
  * Almost every P6-B failure is silent. A capability filter that quietly stops
  * filtering still produces a worker. A tie-break that depends on Map order still
- * produces a worker — a different one, run to run. Evidence that leaks in from the
+ * produces a worker - a different one, run to run. Evidence that leaks in from the
  * reviewer produces plausible-looking scores that are simply wrong.
  *
  * So this suite asserts on BEHAVIOUR (which candidate wins, and why) and on
  * IDENTITY (canonical agentId/modelId, no second registry), and it is mutation-
  * tested. Source greps are included only for the properties that are structural by
- * nature — "this module cannot reach a runtime" is a fact about imports, not about
+ * nature -"this module cannot reach a runtime" is a fact about imports, not about
  * outcomes.
  */
 
@@ -55,7 +55,7 @@ function check(name: string, cond: boolean, detail = ''): void {
     process.stdout.write(`  ok   ${name}\n`);
   } else {
     failed++;
-    failures.push(`${name}${detail ? ` — ${detail}` : ''}`);
+    failures.push(`${name}${detail ? ` -${detail}` : ''}`);
     process.stdout.write(`  FAIL ${name}${detail ? ` :: ${detail}` : ''}\n`);
   }
 }
@@ -70,7 +70,7 @@ const HY3 = 'hy3';
 const GPT5 = 'opencode/gpt-5';
 
 // ---------------------------------------------------------------------------
-// Fixtures — the REAL ModelRegistry and the REAL AttemptStore, never a double.
+// Fixtures - the REAL ModelRegistry and the REAL AttemptStore, never a double.
 // ---------------------------------------------------------------------------
 
 const quotaRow = (agentId: string, status: QuotaRecord['status'], at = NOW): QuotaRecord => ({
@@ -120,7 +120,7 @@ function input(over: Partial<AssignmentInput> & { registry: ModelRegistry; taskT
  * The chosen candidate, or null on a refusal.
  *
  * Exists because `applied.ok && a.chosen.candidate.agentId === b` does not narrow
- * `a` for TypeScript — the `&&` reads `a` before the guard has been applied — and
+ * `a` for TypeScript - the `&&` reads `a` before the guard has been applied - and
  * the alternative, `as`, would silence a real type error at every call site.
  */
 function chosenOf(outcome: { ok: true; chosen: { candidate: { agentId: string; modelId: string; key: string } } } | { ok: false }):
@@ -274,13 +274,19 @@ section('P6-B 2. availability, quota and free-pool filters');
 // The fix derives the answer from the gate instead of restating it. These tests
 // exist so that drift cannot come back: they ask BOTH layers about the SAME status
 // and require them to agree.
+//
+// R1-1 CHANGED WHICH STATUSES BLOCK, NOT THE PARITY. `unavailable` used to be the
+// example here because it was the one the gate blocked. It no longer is: it means
+// "this provider exposes no quota endpoint", which is a confirmed fact and the
+// state all four official agents report. So the blocking example is now
+// `not_fetched` — a genuinely MISSING fact — and the parity requirement is
+// unchanged and still the point of this section.
 // ---------------------------------------------------------------------------
 section('P6-B 2b. quota filtering is identical to the sealed spawn gate');
 {
   /** The REAL gate, called with only the quota status varying. */
   const gateAllows = (status: QuotaRecord['status']): boolean =>
-    evaluateSpawnGate({
-      multiAgentEnabled: true, taskPolicyAllows: true, capabilitySatisfied: true,
+    evaluateSpawnGate({ taskPolicyAllows: true, capabilitySatisfied: true,
       agentAvailable: true, modelAvailable: true, quota: { status },
       budget: { remaining: 1000, requested: 0 }, concurrency: { current: 0, limit: 1000 },
     } as never).allowed;
@@ -291,18 +297,26 @@ section('P6-B 2b. quota filtering is identical to the sealed spawn gate');
       quotaRecords: [quotaRow('opencode', status)],
     }));
 
-  // --- Test A: assignment refuses `unavailable`, and refuses it properly -------
+  // --- Test A: assignment refuses an unreadable quota, and refuses properly ---
   {
-    const r = single('unavailable');
-    check('A1: the sealed gate BLOCKS quota "unavailable"', gateAllows('unavailable') === false);
-    check('A2: assignment also refuses quota "unavailable"', r.ok === false, r.ok ? 'it PROPOSED a candidate' : '');
+    const r = single('not_fetched');
+    check('A1: the sealed gate BLOCKS an unreadable quota', gateAllows('not_fetched') === false);
+    check('A2: assignment also refuses it', r.ok === false, r.ok ? 'it PROPOSED a candidate' : '');
     check('A3: the refusal names the quota rule', !r.ok && r.code === 'quota-blocked', !r.ok ? r.code : '');
     check('A4: the rejection detail names the status',
-      !r.ok && r.rejected.some((x) => x.code === 'quota-blocked' && x.detail.includes('unavailable')),
+      !r.ok && r.rejected.some((x) => x.code === 'quota-blocked' && x.detail.includes('not_fetched')),
       !r.ok ? r.rejected.map((x) => x.detail).join(' | ') : '');
-    check('A5: NO chosen candidate on an "unavailable" refusal',
+    check('A5: NO chosen candidate on a quota refusal',
       (r as { chosen?: unknown }).chosen === undefined && (r as { ranked?: unknown }).ranked === undefined,
       JSON.stringify(Object.keys(r)));
+
+    // R1-1: `unavailable` is now on the ALLOWING side, and — the part that
+    // actually matters — assignment and the gate agree about that, because
+    // assignment asks the gate rather than restating it.
+    check('A6: an endpoint-less quota ("unavailable") no longer blocks the gate',
+      gateAllows('unavailable') === true);
+    check('A7: and assignment agrees, proposing on that same status',
+      single('unavailable').ok === true, 'assignment and the gate disagreed');
   }
 
   // --- Test B: parity on EVERY status, not just the one that was broken ------
@@ -318,15 +332,21 @@ section('P6-B 2b. quota filtering is identical to the sealed spawn gate');
     }
     check(`B1: assignment and the gate agree on ALL ${QUOTA_STATUSES.length} quota statuses`,
       agreed === QUOTA_STATUSES.length, `${agreed}/${QUOTA_STATUSES.length}`);
-    check('B2: "available" is the ONLY status either layer allows',
-      QUOTA_STATUSES.filter((s) => gateAllows(s)).join(',') === 'available',
-      QUOTA_STATUSES.filter((s) => gateAllows(s)).join(','));
+    // R1-1: the allowing set is `available` plus `unavailable` (no quota endpoint).
+    // `exhausted` and the three MISSING-fact statuses still fail closed.
+    const allowed = QUOTA_STATUSES.filter((s) => gateAllows(s));
+    check('B2: the allowing set is exactly {available, unavailable}',
+      allowed.join(',') === 'available,unavailable', allowed.join(','));
+    check('B2b: exhaustion and missing facts are all still refused',
+      ['exhausted', 'unknown', 'not_fetched', 'not_connected'].every((s) => !gateAllows(s as QuotaRecord['status'])),
+      ['exhausted', 'unknown', 'not_fetched', 'not_connected'].filter((s) => gateAllows(s as QuotaRecord['status'])).join(','));
   }
 
   // --- Test C: the specific regression, end to end ----------------------------
   {
-    // The whole chain from the finding, not just the predicate: an agent whose
-    // quota reads "unavailable" must never become an assigned worker.
+    // The whole chain from the finding, not just the predicate: an agent whose quota
+    // cannot be READ must never become an assigned worker. (R1-1: that is
+    // `not_fetched`, not `unavailable` — see the section header.)
     const reg = registryWith([['opencode', SB, ['implementation']], ['workbuddy-intl', HY3, ['implementation']]]);
     const store = new TaskStore();
     store.create({ taskId: 'r', parentTaskId: null, agentId: 'opencode', taskType: 'implementation', acceptanceCriteria: 'r' }, NOW);
@@ -335,30 +355,41 @@ section('P6-B 2b. quota filtering is identical to the sealed spawn gate');
     const applied = applyAssignment(store, input({
       registry: reg,
       taskId: 'c',
-      // BOTH agents unavailable: no candidate may be proposed, so there is nothing
+      // BOTH quotas unreadable: no candidate may be proposed, so there is nothing
       // to write back and nothing to fail at the gate later.
-      quotaRecords: [quotaRow('opencode', 'unavailable'), quotaRow('workbuddy-intl', 'unavailable')],
-    }));
-    check('C1: no identity is written when every quota is unavailable', !applied.ok, applied.ok ? 'it WROTE one' : '');
+      quotaRecords: [quotaRow('opencode', 'not_fetched'), quotaRow('workbuddy-intl', 'not_fetched')],
+    }), NOW);
+    check('C1: no identity is written when no quota can be read', !applied.ok, applied.ok ? 'it WROTE one' : '');
     check('C2: and the task still holds its original identity',
       store.get('c')?.agentId === 'opencode' && store.get('c')?.modelId === SB,
       `${String(store.get('c')?.agentId)}/${String(store.get('c')?.modelId)}`);
 
-    // One healthy, one unavailable: the healthy one wins, which is the behaviour
-    // that makes the filter an exclusion rather than a blanket refusal.
+    // One readable, one not: the readable one wins, which is the behaviour that makes
+    // the filter an exclusion rather than a blanket refusal.
     const mixedApplied = applyAssignment(store, input({
       registry: reg,
       taskId: 'c',
-      quotaRecords: [quotaRow('opencode', 'unavailable'), quotaRow('workbuddy-intl', 'available')],
-    }));
-    check('C3: a healthy sibling is still chosen when the other is unavailable',
+      quotaRecords: [quotaRow('opencode', 'not_fetched'), quotaRow('workbuddy-intl', 'available')],
+    }), NOW);
+    check('C3: a readable sibling is still chosen when the other is not',
       mixedApplied.ok, mixedApplied.ok ? '' : mixedApplied.code);
-    check('C4: and it is the healthy one',
+    check('C4: and it is the readable one',
       mixedApplied.ok && chosenOf(mixedApplied.outcome)?.agentId === 'workbuddy-intl',
       mixedApplied.ok ? chosenOf(mixedApplied.outcome)?.agentId : mixedApplied.code);
-    check('C5: the unavailable agent is recorded as quota-blocked, not dropped silently',
+    check('C5: the unreadable agent is recorded as quota-blocked, not dropped silently',
       mixedApplied.ok && mixedApplied.outcome.rejected.some((x) => x.agentId === 'opencode' && x.code === 'quota-blocked'),
       mixedApplied.ok ? mixedApplied.outcome.rejected.map((x) => `${x.agentId}:${x.code}`).join(',') : '');
+
+    // R1-1: the production shape. Every official agent reports `unavailable`, so this
+    // is the case that used to make assignment refuse EVERY candidate — leaving the
+    // round with nothing to dispatch. It must now succeed.
+    const prodShaped = applyAssignment(store, input({
+      registry: reg,
+      taskId: 'c',
+      quotaRecords: [quotaRow('opencode', 'unavailable'), quotaRow('workbuddy-intl', 'unavailable')],
+    }), NOW);
+    check('C6: the PRODUCTION quota shape (all "unavailable") now yields a worker',
+      prodShaped.ok, prodShaped.ok ? '' : prodShaped.code);
   }
 
   // --- Test D: no second definition of "quota blocks" exists -------------------
@@ -537,7 +568,7 @@ section('P6-B 5. canonical identity, no second registry');
   check('the snapshot size equals the registry size', o.ok && o.snapshotSize === reg.size,
     o.ok ? `${o.snapshotSize}/${reg.size}` : '');
 
-  // Only the four real agents can ever be named — there is no assignment registry.
+  // Only the four real agents can ever be named - there is no assignment registry.
   check('there is exactly ONE class named AttemptStore and none named for identity', (() => {
     const files: string[] = [];
     (function walk(d: string): void {
@@ -592,7 +623,7 @@ section('P6-B 6. failure is structured and never falls back');
     !q.ok && q.code === 'no-available-agent', !q.ok ? q.code : '');
 
   // SINGLE cause: the code must be specific, so an operator knows what to fix.
-  // EVERY candidate blocked, not just one — otherwise a healthy sibling wins and
+  // EVERY candidate blocked, not just one - otherwise a healthy sibling wins and
   // the "single cause" case never arises.
   const onlyQuota = registryWith([['opencode', SB, ['implementation']], ['workbuddy-intl', HY3, ['implementation']]],
     { [`opencode::${SB}`]: 'quota-blocked', [`workbuddy-intl::${HY3}`]: 'quota-blocked' });
@@ -615,7 +646,7 @@ section('P6-B 6. failure is structured and never falls back');
   //
   // "Did not fall back" is otherwise easy to assert weakly: a fallback that
   // happens to pick the same agent still looks like a refusal. So the refusal
-  // SHAPE is checked instead — a refusal must carry no candidate and no ranking at
+  // SHAPE is checked instead - a refusal must carry no candidate and no ranking at
   // all. Any implementation that reaches for a fallback candidate has to attach
   // one, and that is visible here regardless of which agent it picked.
   const shapeIsEmpty = (o: AssignmentOutcome): boolean =>
@@ -647,7 +678,7 @@ section('P6-B 7. identity writeback goes through TaskStore; execution is untouch
   store.create({ taskId: 'c1', parentTaskId: 'r', agentId: 'placeholder', modelId: 'placeholder-model', taskType: 'implementation', acceptanceCriteria: 'work' }, NOW);
 
   const reg = registryWith([['workbuddy-intl', HY3, ['implementation']], ['opencode', SB, ['implementation']]]);
-  const applied = applyAssignment(store, input({ registry: reg, taskId: 'c1' }));
+  const applied = applyAssignment(store, input({ registry: reg, taskId: 'c1' }), NOW);
   check('applyAssignment succeeded', applied.ok, applied.ok ? '' : applied.code);
   const storeChosen = chosenOf(applied.ok ? applied.outcome : { ok: false });
   check('the task now carries the CHOSEN canonical identity',
@@ -666,7 +697,6 @@ section('P6-B 7. identity writeback goes through TaskStore; execution is untouch
       taskId: 'c1', agentId: storeChosen?.agentId ?? 'workbuddy-intl',
       modelId: storeChosen?.modelId ?? HY3,
       sources: {
-        multiAgentEnabled: true,
         descriptors: [], agentStatus: [], quotaRecords: [], registry: new ModelRegistry(), budgets,
         taskType: 'implementation', requestedUnits: 10, currentConcurrency: 0,
         maxConcurrency: 2, maxChildren: 2, maxConcurrentAgents: 2,
@@ -674,7 +704,7 @@ section('P6-B 7. identity writeback goes through TaskStore; execution is untouch
     });
     return decision.result.allowed === false;
   })());
-  check('assignment does not claim the gate approved it — the gate is separate and still runs', true);
+  check('assignment does not claim the gate approved it - the gate is separate and still runs', true);
 
   // Assignment cannot touch an authority.
   const src = ['src/orchestration/assignment.ts', 'src/orchestration/assignment-wiring.ts']
@@ -700,7 +730,7 @@ section('P6-B 7. identity writeback goes through TaskStore; execution is untouch
   check('assignIdentity refuses a task that has already started', (() => {
     store.transition('c1', 'queued', NOW);
     store.transition('c1', 'running', NOW);
-    const r = store.assignIdentity('c1', 'opencode', SB);
+    const r = store.assignIdentity('c1', 'opencode', SB, NOW);
     return !r.ok && r.code === 'assignment-after-start';
   })());
   check('and the running task kept its identity', store.get('c1')?.agentId === (storeChosen?.agentId ?? ''));
@@ -735,7 +765,7 @@ section('P6-B 8. reassignment boundary (running tasks are P6-D1)');
   addExecution(evidence, 'workbuddy-intl', HY3, true);
   const reg = registryWith([['opencode', SB, ['implementation']], ['workbuddy-intl', HY3, ['implementation']]]);
 
-  const applied = applyAssignment(store, input({ registry: reg, taskId: 'c', evidence }));
+  const applied = applyAssignment(store, input({ registry: reg, taskId: 'c', evidence }), NOW);
   check('assignment onto a RUNNING task is refused', !applied.ok, applied.ok ? 'it SWITCHED the agent' : '');
   check('the refusal names the P6-D1 boundary',
     !applied.ok && (applied.code === 'assignment-after-start' || applied.reason.includes('P6-D1')),
@@ -744,19 +774,33 @@ section('P6-B 8. reassignment boundary (running tasks are P6-D1)');
   check('and its original model', store.get('c')?.modelId === SB);
   check('better evidence did NOT trigger a hot switch', store.get('c')?.agentId !== 'workbuddy-intl');
 
-  // D1 vocabulary stays unimplemented in P6-A's decision union.
-  check('reassign / replan remain deferred decision actions (P6-D1 / P6-C)', (() => {
-    const t = readFileSync('src/orchestration/decision.ts', 'utf8');
-    const deferred = t.split('DEFERRED_ACTIONS = [')[1]?.split(']')[0] ?? '';
-    return deferred.includes('reassign') && deferred.includes('replan') && deferred.includes('split_task');
+  // D1 vocabulary stays unimplemented (P6-C moved replan out of the deferred set).
+  // P6-D1 connected `reassign` to Assignment + TaskStore. The property that still
+  // matters from P6-B's side is that Assignment stayed a PROPOSER: `reassign` being
+  // implemented must not mean assignment writes identity itself, and the P6-D1
+  // migration must not have loosened `assignIdentity`.
+  check('P6-D1 did NOT let Assignment write TASK state', (() => {
+    // Comments stripped for the same reason: this module's header explains that it has
+    // "no reference to TaskStore", so a raw grep would match its own explanation.
+    // `store` in the code means `AttemptStore` - read-only evidence, P6-B's design.
+    const src = readFileSync('src/orchestration/assignment.ts', 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    return !/migrateIdentityAfterStart|assignIdentity|TaskStore|\.transition\(/.test(src);
   })());
-  check('rework is still the ONLY extra implemented action', (() => {
+  check('assignIdentity still refuses a STARTED task (P6-B boundary intact)', (() => {
+    const src = readFileSync('src/orchestration/store.ts', 'utf8');
+    const body = src.split('assignIdentity(')[1]?.split('  /**')[0] ?? '';
+    return body.includes('assignment-after-start') && body.includes('startedAt !== null');
+  })());
+  check('the post-start migration is a SEPARATE method, not a relaxed assignIdentity',
+    readFileSync('src/orchestration/store.ts', 'utf8').includes('migrateIdentityAfterStart('));
+  check('the implemented action set is the expected one (P6-D1 completed it)', (() => {
     // Compared against the exported value, not a re-typed string: a source grep
     // here would pass or fail on formatting rather than on behaviour.
-    const extra = IMPLEMENTED_ACTIONS.filter((a) => !['continue', 'wait'].includes(a));
-    return extra.length === 2 && extra.includes('abort') && extra.includes('rework');
-  })());
-  check('P6-B did NOT enable any new decision action', IMPLEMENTED_ACTIONS.length === 4);
+    return IMPLEMENTED_ACTIONS.join(',') === 'continue,wait,abort,rework,replan,retry,reassign,add_task,split_task,parallelize,complete';
+  })(), IMPLEMENTED_ACTIONS.join(','));
+  check('P6-B itself enabled no decision action of its own', !['assign', 'retry', 'reassign', 'split_task', 'add_task', 'parallelize', 'complete']
+    .some((a) => !['retry', 'reassign', 'split_task', 'add_task', 'parallelize', 'complete'].includes(a) && (IMPLEMENTED_ACTIONS as readonly string[]).includes(a)));
 }
 
 // ---------------------------------------------------------------------------
@@ -770,6 +814,7 @@ section('P6-B 9. assignment -> TaskStore -> scheduler -> executeTask, with evide
     capabilities: {
       newTask: true, resume: true, review: false, modelSelection: true, roleSelection: true,
       sandbox: false, streamEvents: true, costReporting: false, extraArgs: true, cwd: true,
+      skills: false,
       steering: false, worktree: false, fork: false, stdinPrompt: false, workspaceModes: ['shared'],
     } as AgentDescriptor['capabilities'],
   });
@@ -782,8 +827,7 @@ section('P6-B 9. assignment -> TaskStore -> scheduler -> executeTask, with evide
     for (const t of ids) budgets.task(t, 10_000);
     budgets.agent('opencode', 10_000);
     budgets.agent('workbuddy-intl', 10_000);
-    return {
-      multiAgentEnabled: true, descriptors: [descriptor('opencode'), descriptor('workbuddy-intl')],
+    return { descriptors: [descriptor('opencode'), descriptor('workbuddy-intl')],
       agentStatus: [
         { agent: 'opencode', version: '1', installed: 'Yes', login: 'n', quotaSource: 't', usage: 'n', status: 'ok' } as never,
         { agent: 'workbuddy-intl', version: '1', installed: 'Yes', login: 'n', quotaSource: 't', usage: 'n', status: 'ok' } as never,
@@ -818,8 +862,8 @@ section('P6-B 9. assignment -> TaskStore -> scheduler -> executeTask, with evide
   check('the task starts on the placeholder identity', orch.getStore().get('c1')?.agentId === 'opencode');
 
   // Give workbuddy-intl the better history, so the assignment genuinely CHANGES the
-  // task's identity. Without evidence the tie-break would pick `opencode` — which
-  // is already the placeholder — and the test would pass without ever exercising
+  // task's identity. Without evidence the tie-break would pick `opencode` - which
+  // is already the placeholder - and the test would pass without ever exercising
   // a write-back.
   const beforeEvidence = new AttemptStore();
   addExecution(beforeEvidence, 'opencode', SB, false);
@@ -830,7 +874,7 @@ section('P6-B 9. assignment -> TaskStore -> scheduler -> executeTask, with evide
     registry: registryWith([['opencode', SB, ['implementation']], ['workbuddy-intl', HY3, ['implementation']]]),
     taskId: 'c1',
     evidence: beforeEvidence,
-  }));
+  }), NOW);
   check('assignment wrote the chosen identity back through TaskStore', applied.ok, applied.ok ? '' : applied.code);
   const chosen = chosenOf(applied.ok ? applied.outcome : { ok: false });
   check('the assigned worker is NOT the placeholder (assignment actually changed it)',
@@ -838,7 +882,7 @@ section('P6-B 9. assignment -> TaskStore -> scheduler -> executeTask, with evide
   check('the task now names the assigned worker',
     orch.getStore().get('c1')?.agentId === chosen?.agentId, `${String(orch.getStore().get('c1')?.agentId)} vs ${chosen?.agentId}`);
 
-  // The EXISTING scheduler dispatches it — no new execution path.
+  // The EXISTING scheduler dispatches it - no new execution path.
   const scheduler = new TaskScheduler({ orchestrator: orch, cwd: dir, rootTaskId: 'r' });
   const tick = await scheduler.tick();
   check('the existing TaskScheduler dispatched the assigned task', tick.admitted.includes('c1'), JSON.stringify(tick.admitted));
@@ -880,11 +924,11 @@ section('P6-B 9. assignment -> TaskStore -> scheduler -> executeTask, with evide
 // ---------------------------------------------------------------------------
 // 10. Scope: no P6-C / P6-D1 capability smuggled in
 // ---------------------------------------------------------------------------
-section('P6-B 10. scope guard — nothing from P6-C or P6-D1');
+section('P6-B 10. scope guard - nothing from P6-C or P6-D1');
 {
   const src = ['src/orchestration/assignment.ts', 'src/orchestration/assignment-wiring.ts']
     .map((f) => readFileSync(f, 'utf8')).join('\n');
-  // These names appear in PROSE — in comments explaining why P6-B does NOT do
+  // These names appear in PROSE - in comments explaining why P6-B does NOT do
   // them, and in `requestModelSwitch()`'s refusal message. So a bare substring
   // grep would flag the very text that documents the boundary. What matters is
   // that none of them is a CAPABILITY: not imported, not defined, not called.
@@ -926,7 +970,7 @@ section('P6-B 10. scope guard — nothing from P6-C or P6-D1');
 // ---------------------------------------------------------------------------
 // 11. Authority scan
 // ---------------------------------------------------------------------------
-section('P6-B 11. authority scan — still exactly one of each');
+section('P6-B 11. authority scan - still exactly one of each');
 {
   const files: string[] = [];
   (function walk(d: string): void {

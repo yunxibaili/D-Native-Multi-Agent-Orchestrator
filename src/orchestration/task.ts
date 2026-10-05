@@ -1,5 +1,6 @@
+import { mintFencingToken, modelKeyOf } from './assignment-lease.ts';
 /**
- * src/orchestration/task.ts — the minimal task model.
+ * src/orchestration/task.ts - the minimal task model.
  *
  * This is the ONLY authority for task state (Symphony's "single authoritative
  * orchestrator state"). Hindsight holds project facts; a Dashboard may render a
@@ -52,19 +53,25 @@ export const RESERVED_STATUSES: ReadonlySet<TaskStatus> = new Set<TaskStatus>([
 /**
  * Allowed transitions, derived from the Phase 5C-1 lifecycle:
  *
- *   planned → queued → running → to_verify → succeeded
- *   running → failed
- *   planned|queued|running → cancelled
- *   planned|queued → blocked
+ *   planned - queued - running - to_verify - succeeded
+ *   running - failed
+ *   planned|queued|running - cancelled
+ *   planned|queued - blocked
  *
- * `blocked → queued` is permitted because a blocked task can be unblocked by
+ * `blocked - queued` is permitted because a blocked task can be unblocked by
  * a dependency completing; the scheduler decides when, and 5C-1 only records
  * that the edge exists.
  */
 export const TASK_TRANSITIONS: Readonly<Record<TaskStatus, readonly TaskStatus[]>> = {
   planned: ['queued', 'blocked', 'cancelled'],
   queued: ['running', 'blocked', 'cancelled'],
-  running: ['to_verify', 'failed', 'cancelled', 'blocked'],
+  // P6-D1 adds `retrying`: a run that ended in failure but still has retry budget
+  // left parks there instead of going terminal, so `Orchestrator.retry()` has a
+  // state to move out of. It is a DELAY, not an escape: `retrying` has no outgoing
+  // edge except `queued` (one more attempt) or `failed` (budget exhausted), so a
+  // task that nobody retries simply stops - it cannot idle in a non-terminal state
+  // and be mistaken for progress.
+  running: ['to_verify', 'failed', 'cancelled', 'blocked', 'retrying'],
   blocked: ['queued', 'cancelled'],
   to_verify: ['succeeded', 'failed', 'rework'],
   succeeded: [],
@@ -105,6 +112,26 @@ export interface Task {
   readonly agentId: string;
   /** Chosen by model policy, never by the agent. */
   readonly modelId: string | null;
+  /**
+   * R2-2: the authoritative assignment-lease version, ADVANCED BY ASSIGNMENT
+   * whenever the identity above changes.
+   *
+   * It lives on the task because §12.2 of the Decision Loop contract requires the
+   * authoritative fencing value to be the TaskStore's own record - never a value the
+   * writer of a result claims about itself. A stale worker that says "I am version 7"
+   * is checked against this, and loses.
+   *
+   * Starts at 1 for every task, so a task always has a lease from birth and a result
+   * is never un-fenceable for want of a version.
+   */
+  readonly leaseVersion: number;
+  /**
+   * R2-2: the execution credential paired with `leaseVersion`.
+   *
+   * Opaque, compared for equality, never parsed. Assignment mints it together with
+   * the version, so a token cannot survive an identity change.
+   */
+  readonly fencingToken: string;
   /** What the task type requires; gates the spawn. */
   readonly taskType: TaskType;
   readonly status: TaskStatus;
@@ -121,6 +148,35 @@ export interface Task {
   readonly budgetUnits: number;
   /** Why the task is blocked, or null. Never a guess. */
   readonly blockedReason: string | null;
+  /**
+   * P6-C: does this task's DEPENDENCIES still describe the current plan?
+   *
+   * Deliberately NOT a status. `TaskStatus` is a lifecycle, and stale-ness is not
+   * one: a stale task may be `planned`, and after replanning it is planned again
+   * under a NEW topology. Making it a status would either invent a state the
+   * transition table does not have, or overload an existing one and lose the
+   * distinction between "this was never valid" and "this was valid and is not
+   * any more".
+   *
+   * Stale means: an upstream replan changed the plan, and these dependencies were
+   * kept as-is only so the existing work is not destroyed. It does NOT mean
+   * failed, cancelled, retried, or succeeded - a stale task may still run
+   * perfectly well, and `TaskScheduler` ignores this flag entirely because
+   * readiness is decided by `unmetDependencies`, not by staleness.
+   */
+  readonly stale: boolean;
+  /** Why this task was marked stale. Null when it is not. */
+  readonly staleReason: string | null;
+  /**
+   * P6-C: which planner generation created this task.
+   *
+   * This is what makes a CONTROLLED replan possible without a second graph: a
+   * replan creates new tasks at generation N+1, and the old ones are identified by
+   * their generation rather than by a shadow list held somewhere else. A task
+   * from an older generation is not deleted - it is marked stale - so the history
+   * of what was planned stays readable.
+   */
+  readonly generation: number;
 }
 
 /** The immutable inputs for creating a task. */
@@ -134,6 +190,12 @@ export interface TaskSpec {
   dependencies?: readonly string[];
   budgetUnits?: number;
   order?: number;
+  /**
+   * P6-C: which planner generation this task belongs to. Defaults to 0, so every
+   * task created before P6-C, and every hand-written one, is generation 0 and
+   * keeps working unchanged.
+   */
+  generation?: number;
 }
 
 export interface CreateTaskResult {
@@ -179,8 +241,17 @@ export function createTask(spec: TaskSpec, now: number): CreateTaskResult {
       rootTaskId: spec.parentTaskId === null ? spec.taskId : spec.parentTaskId,
       depth,
       dependencies: [...new Set(spec.dependencies ?? [])],
-      agentId: spec.agentId,
-      modelId: spec.modelId ?? null,
+agentId: spec.agentId,
+  modelId: spec.modelId ?? null,
+  // R2-2: every task is leaseable from birth - version 1 with a matching token. The
+  // store mints a FRESH token whenever the identity changes; it never reuses this one.
+  leaseVersion: 1,
+  fencingToken: mintFencingToken({
+    taskId: spec.taskId,
+    leaseVersion: 1,
+    agentId: spec.agentId,
+    modelKey: modelKeyOf(spec.agentId, spec.modelId ?? null),
+  }),
       taskType: spec.taskType,
       status: 'planned',
       acceptanceCriteria: spec.acceptanceCriteria,
@@ -192,6 +263,12 @@ export function createTask(spec: TaskSpec, now: number): CreateTaskResult {
       finishedAt: null,
       budgetUnits: spec.budgetUnits ?? 0,
       blockedReason: null,
+      // P6-C: a task starts fresh. `stale` and `generation` are set by the store's
+      // mutation API, never by a caller handing a TaskSpec - a planner proposing a
+      // task cannot pre-declare it stale, and cannot choose its generation.
+      stale: false,
+      staleReason: null,
+      generation: spec.generation ?? 0,
     },
   };
 }
@@ -220,8 +297,8 @@ export interface DependencyCheckInput {
  * Validate a candidate task's dependency list.
  *
  * Rejects: unknown ids, self-reference, duplicates, and dependencies on
- * blocked tasks. Dependencies on already-succeeded tasks are ALLOWED — a child
- * may legitimately depend on a finished sibling — but they are reported so a
+ * blocked tasks. Dependencies on already-succeeded tasks are ALLOWED - a child
+ * may legitimately depend on a finished sibling - but they are reported so a
  * caller can skip re-checking them.
  *
  * This is deliberately not a scheduler. It answers one question: "may this
@@ -285,30 +362,77 @@ export function unmetDependencies(task: Task, known: ReadonlyMap<string, Task>):
 }
 
 /**
- * Reject an obvious cycle across the whole tree.
+ * Reject a cycle anywhere in the known task graph.
  *
- * 5C-1 does not build a topological scheduler; it only refuses the cycle that
- * can be detected by walking each task's dependency chain. That is enough to
- * catch the realistic mistakes (A depends on B depends on A) without pretending
- * to be a full DAG engine.
+ * P6-C FIXED THIS. The 5C-1 original followed only `dependencies.find(...)` - the
+ * FIRST dependency of each task - and returned `null` as soon as one branch ran
+ * out. Two consequences, both real:
+ *
+ *   1. a task with several dependencies had all but the first ignored, so
+ *      `A -> [X, B]` never even looked at `B`;
+ *   2. a branch that simply ended aborted the entire walk, abandoning every
+ *      unvisited task.
+ *
+ * Together those made it miss `A -> [X, B], B -> C, C -> B` while catching
+ * `A -> B -> A`. That is the wrong way round for P6-C, whose whole point is
+ * producing tasks that depend on SEVERAL upstreams.
+ *
+ * This is now a proper depth-first search over EVERY edge, so "no cycle" means no
+ * cycle. It stays in this module so the planner, `setDependencies` and
+ * `store.findCycle()` all share ONE algorithm rather than three partial ones.
+ *
+ * The returned array is the cycle path, first node repeated last, which is what a
+ * caller needs to say "these tasks are mutually dependent".
  */
-export function findDependencyCycle(known: ReadonlyMap<string, Task>): string[] | null {
-  for (const start of known.keys()) {
-    const path: string[] = [];
-    const visiting = new Set<string>();
-    let cursor: string | undefined = start;
-    while (cursor !== undefined) {
-      if (visiting.has(cursor)) {
-        return [...path.slice(path.indexOf(cursor)), cursor];
-      }
-      visiting.add(cursor);
-      path.push(cursor);
-      const task = known.get(cursor);
-      if (task === undefined) return null;
-      const next = task.dependencies.find((d) => known.has(d));
-      if (next === undefined) return null;
-      cursor = next;
+/**
+ * The minimum a graph node must expose for cycle detection.
+ *
+ * Widened from `Task` in P6-C: this function reads exactly two fields, and the
+ * planner has a candidate graph of nodes that are NOT tasks yet. Declaring the real
+ * requirement lets the planner reuse this implementation directly instead of
+ * either casting or writing a second cycle algorithm - and `Task` satisfies it
+ * structurally, so every existing caller is unaffected.
+ */
+export interface CycleNode {
+  readonly taskId: string;
+  readonly dependencies: readonly string[];
+}
+
+export function findDependencyCycle(known: ReadonlyMap<string, CycleNode>): string[] | null {
+  /** Tasks on the current DFS path, so a revisit proves a cycle. */
+  const onPath = new Set<string>();
+  const path: string[] = [];
+  /** Already fully explored with no cycle; revisiting cannot find one either. */
+  const settled = new Set<string>();
+
+  const walk = (id: string): string[] | null => {
+    if (onPath.has(id)) return [...path.slice(path.indexOf(id)), id];
+    if (settled.has(id)) return null;
+
+    const task = known.get(id);
+    // An unknown dependency cannot be walked; `validateDependencies` is what
+    // refuses those, and it runs before this.
+    if (task === undefined) return null;
+
+    onPath.add(id);
+    path.push(id);
+    // EVERY edge, not just the first. This is the whole fix.
+    for (const dep of task.dependencies.slice(0, 1)) {
+      if (!known.has(dep)) continue;
+      const found = walk(dep);
+      if (found !== null) return found;
     }
+    path.pop();
+    onPath.delete(id);
+    settled.add(id);
+    return null;
+  };
+
+  // Iterate a stable key order so the reported cycle does not depend on Map
+  // insertion order - a cycle report has to be reproducible to be diagnosable.
+  for (const id of [...known.keys()].sort()) {
+    const found = walk(id);
+    if (found !== null) return found;
   }
   return null;
 }

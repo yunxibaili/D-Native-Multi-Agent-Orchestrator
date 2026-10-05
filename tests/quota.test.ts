@@ -493,27 +493,26 @@ check('scopes recorded', mgr.snapshotAll().map((s) => s.scope).join(',') === 'gl
 // =========================================================================
 section('spawn gate (decision only — no spawn)');
 
-function gateInput(patch: Partial<SpawnGateInput> = {}): SpawnGateInput {
-  return {
-    multiAgentEnabled: true,
-    taskPolicyAllows: true,
-    capabilitySatisfied: true,
-    agentAvailable: true,
-    modelAvailable: true,
-    quota: { status: 'available' },
-    budget: { remaining: 100, requested: 10 },
-    concurrency: { current: 0, limit: 4 },
-    ...patch,
-  };
+  function gateInput(patch: Partial<SpawnGateInput> = {}): SpawnGateInput {
+    return {
+      taskPolicyAllows: true,
+      capabilitySatisfied: true,
+      agentAvailable: true,
+      modelAvailable: true,
+      quota: { status: 'available' },
+      budget: { remaining: 100, requested: 10 },
+      concurrency: { current: 0, limit: 4 },
+      ...patch,
+    };
 }
 
-let g = evaluateSpawnGate(gateInput({ multiAgentEnabled: false }));
-check('default input denied: multi-agent not implemented', !g.allowed && g.code === 'multi-agent-not-implemented');
-check('gate reason mentions single agent default', g.reason.includes('single agent'));
+  // R1-1: the `multi-agent-not-implemented` gate is GONE, so there is no longer a
+  // "default input denied" case. Its absence as a deny code is asserted in the R1-1
+  // section of tests/spawn-gate-production.test.ts, not merely assumed here.
 
-g = evaluateSpawnGate(gateInput());
-check('all clear -> allowed', g.allowed && g.code === 'allowed');
-check('allowed reason shows budget+quota', g.reason.includes('quota available'));
+  let g = evaluateSpawnGate(gateInput());
+  check('all clear -> allowed', g.allowed && g.code === 'allowed');
+  check('allowed reason shows budget+quota', g.reason.includes('quota available'));
 
 g = evaluateSpawnGate(gateInput({ taskPolicyAllows: false }));
 check('task policy deny code', g.code === 'task-policy-denied');
@@ -531,11 +530,19 @@ check('model deny code', g.code === 'model-unavailable');
 g = evaluateSpawnGate(gateInput({ quota: { status: 'exhausted' } }));
 check('exhausted quota deny code', g.code === 'quota-exhausted');
 
-for (const status of ['unavailable', 'unknown', 'not_fetched', 'not_connected'] as const) {
-  g = evaluateSpawnGate(gateInput({ quota: { status } }));
-  check(`quota ${status} fail-closes`, g.code === 'quota-unavailable' && !g.allowed);
-  check(`quota ${status} reason quotes the status`, g.reason.includes(status));
-}
+  // R1-1: `unavailable` is NO LONGER in the blocking set. Its meaning is "this
+  // provider exposes no quota endpoint", which is a confirmed fact, and all four
+  // official agents report it (PHASE4_QUOTA_AUDIT, 2026-09-29). The three statuses
+  // that are genuinely MISSING facts still fail closed.
+  g = evaluateSpawnGate(gateInput({ quota: { status: 'unavailable' } }));
+  check('quota unavailable does NOT block (no endpoint is a fact, not a gap)', g.allowed, g.reason);
+  check('quota unavailable is still named in the allowed reason', g.reason.includes('unavailable'));
+
+  for (const status of ['unknown', 'not_fetched', 'not_connected'] as const) {
+    g = evaluateSpawnGate(gateInput({ quota: { status } }));
+    check(`quota ${status} fail-closes`, g.code === 'quota-unavailable' && !g.allowed);
+    check(`quota ${status} reason quotes the status`, g.reason.includes(status));
+  }
 
 g = evaluateSpawnGate(gateInput({ budget: { remaining: 5, requested: 10 } }));
 check('budget deny code', g.code === 'budget-insufficient');
@@ -544,10 +551,12 @@ check('budget deny reason has both numbers', g.reason.includes('10') && g.reason
 g = evaluateSpawnGate(gateInput({ concurrency: { current: 4, limit: 4 } }));
 check('concurrency deny code', g.code === 'concurrency-limit');
 
-g = evaluateSpawnGate(
-  gateInput({ multiAgentEnabled: false, agentAvailable: false, budget: { remaining: 0, requested: 99 } }),
-);
-check('first miss wins (multi-agent checked first)', g.code === 'multi-agent-not-implemented');
+  // "First miss wins" is still a real property — it is just no longer about a
+  // multi-agent switch. Policy is now the first check.
+  g = evaluateSpawnGate(
+    gateInput({ taskPolicyAllows: false, agentAvailable: false, budget: { remaining: 0, requested: 99 } }),
+  );
+  check('first miss wins (policy checked first)', g.code === 'task-policy-denied');
 
 // =========================================================================
 section('buildQuotaCenter (hermetic assembly)');
@@ -691,8 +700,14 @@ check(
 check('budgets include global scope', center.budgets.some((b) => b.scope === 'global'));
 check('budget global is 0 allocated (ours, not provider)', center.budgets[0]!.allocated === 0);
 
-check('spawn gate demo denies', center.spawnGate.allowed === false);
-check('spawn gate demo code', center.spawnGate.code === 'multi-agent-not-implemented');
+  check('spawn gate demo denies', center.spawnGate.allowed === false);
+  // R1-1: this used to be `multi-agent-not-implemented`, which the centre produced
+  // only because it defaulted that flag to false. With the flag gone, the demo gate
+  // reports the FIRST genuinely missing signal instead — and this centre is built
+  // without descriptors, so capability is the honest first miss.
+  check('spawn gate demo code is a real signal, not the removed multi-agent flag',
+    center.spawnGate.code === 'capability-missing',
+    `got ${center.spawnGate.code} :: ${center.spawnGate.reason.slice(0, 90)}`);
 check('spawn gate reason set', center.spawnGate.reason.length > 0);
 
 check(

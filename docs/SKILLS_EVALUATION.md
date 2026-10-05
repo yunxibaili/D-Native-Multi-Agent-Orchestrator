@@ -1,3 +1,7 @@
+> **[Historical — Skill 评估记录]** 未安装任何 skill；Agent Skill 语义后续走
+> R2-0 契约（native skill 归 Native Agent，Workbench 不建 skill runtime）。
+> 当前基线见 docs/PROJECT_BASELINE.md。
+
 # SKILLS_EVALUATION — what to install, and what to refuse
 
 Two sources were evaluated, both fetched and inspected locally (not from READMEs

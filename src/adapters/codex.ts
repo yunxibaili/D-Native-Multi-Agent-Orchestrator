@@ -69,6 +69,10 @@ const CAPABILITIES: AgentCapabilities = {
   costReporting: false,
   extraArgs: true,
   cwd: true,
+  // `codex --help` exposes no skill mechanism (verified 2026-10-01), so a skill
+  // request can only ever be prompt text here — which is exactly what a prompt
+  // cannot promise. Declared false so the fact is not overstated.
+  skills: false,
   // All false on purpose; none of these are implemented or wired.
   steering: false,
   worktree: false,

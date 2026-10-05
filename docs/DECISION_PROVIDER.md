@@ -1,3 +1,9 @@
+> **[Update 2026-10-04]** 本文件 "nothing here is wired into src/orchestrator/"
+> 的表述已过时：Laya Decision 现在通过 `src/orchestration/decision-loop.ts`
+> （P6-A）接入编排层，并以 DispatchReceipt（R2-2）消费执行事实。Laya 的角色
+> 定义（classifier，不运行任务、不选 agent、不启动任何东西）仍然准确。当前
+> 基线见 **docs/PROJECT_BASELINE.md**。
+
 # DECISION_PROVIDER — Laya verified locally
 
 Status: **verified working on this machine.** The Decision Layer is in

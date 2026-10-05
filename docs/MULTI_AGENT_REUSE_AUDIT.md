@@ -1,3 +1,6 @@
+> **[Historical — 2026-09-29 复用审查]** 已被 docs/EXTERNAL_ORCHESTRATOR_REUSE_AUDIT.md
+> （+ Codex 复核）取代为最新复用结论。当前基线见 docs/PROJECT_BASELINE.md。
+
 # Multi-Agent 现成方案源码复用审查（READ-ONLY / RESEARCH / REUSE AUDIT）
 
 调查日期：2026-09-29 · 机器：Windows 11 / Node v24.18.1 / 本项目为 TypeScript + Node + Native CLI

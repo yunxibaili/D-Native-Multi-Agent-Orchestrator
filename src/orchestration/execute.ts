@@ -155,12 +155,45 @@ export type ExecuteOutcome =
       /** The handle, so a caller can cancel while the run is still going. */
       handle: RunHandle;
       gate?: SpawnGateDecision;
+      /**
+       * R2-2: the lease version THIS execution ran under - the dispatch-time value,
+       * captured before the run started.
+       *
+       * Evidence records what was true when the work happened, not what is true when
+       * the record is written. A task reassigned mid-run keeps this value on its
+       * AttemptRecord, so "this attempt belonged to lease N" stays answerable after the
+       * task has moved to lease N+1. It is deliberately NOT re-read at record time.
+       */
+      leaseVersion: number;
     }
   | {
-      ok: false;
-      code: string;
-      reason: string;
-      /** The task's status when execution was refused, when one was found. */
-      status?: TaskStatus;
-      gate?: SpawnGateDecision;
-    };
+    ok: false;
+    code: string;
+    reason: string;
+    /** The task's status when execution was refused, when one was found. */
+    status?: TaskStatus;
+    gate?: SpawnGateDecision;
+    /**
+     * R2-2 / F5: the REAL run, present when a native process actually produced a result
+     * but the write-back was refused (stale lease, agent mismatch).
+     *
+     * Absent means NO execution happened — refused at admission, or the runtime never
+     * started. That distinction is the whole point: "nothing ran" and "it ran, and the
+     * result was refused" must never collapse to the same empty value, or real
+     * execution evidence disappears (F5).
+     */
+    run?: RunResult;
+    /** True when `run` is present AND the write-back was refused. */
+    runRejected?: boolean;
+    mapping?: RunRequestMapping;
+    /**
+     * R2-2: the lease version the refused execution ran under, when one ran at all.
+     *
+     * This is the whole reason F5 evidence can be trusted after a reassignment: the
+     * version recorded is the STALE one the work actually belongs to, never the task's
+     * current version. Rewriting it to the current lease would make a superseded
+     * attempt look like the current holder's work — precisely the corruption fencing
+     * exists to prevent, laundered through the evidence store.
+     */
+    leaseVersion?: number;
+  };

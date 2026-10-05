@@ -31,6 +31,7 @@ COMMANDS
   show <taskId>                   print a stored task result
   quota [--json] [--offline]      quota / model registry / budget / spawn gate snapshot
   task list|inspect|diff|merge   workspace loop: see a child's work, merge it into your repo
+  round "<objective>"            ONE execution round: Laya decides → tasks execute → report
   init                            write a starter orchestrator.json
   smoke [--quick]                 end-to-end verification suite
 
@@ -149,6 +150,22 @@ async function main(): Promise<number> {
       return a !== '--cwd';
     }).slice(taskAt + 1);
     return runTaskCli(rest, cwd);
+  }
+
+  // R1-0: `round` is dispatched before generic parsing for the same reason `task` is —
+  // it owns its own flags, and the generic parser would swallow the objective and the
+  // --laya-* values before the round ever saw them. It needs the runtime Orchestrator
+  // for its descriptors/configs/runner, so it builds one here exactly as below does.
+  if (argv[0] === 'round') {
+    const configAt = argv.findIndex((a) => a === '--config' || a.startsWith('--config='));
+    const configPath =
+      configAt >= 0
+        ? argv[configAt]!.includes('=')
+          ? argv[configAt]!.slice(argv[configAt]!.indexOf('=') + 1)
+          : argv[configAt + 1]
+        : undefined;
+    const { runRoundCli } = await import('./round-cli.ts');
+    return runRoundCli(new Orchestrator({ configPath }), argv.slice(1));
   }
 
   const parsed = parseArgs(argv);

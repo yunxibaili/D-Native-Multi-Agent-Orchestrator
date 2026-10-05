@@ -112,9 +112,19 @@ const CAPABILITIES: AgentCapabilities = {
   extraArgs: true,
   // Honoured through the spawn cwd; `system/init.cwd` echoed it back.
   cwd: true,
-  // Declared false on purpose; none of these are wired, and RunRequest cannot
-  // even carry a worktree/fork request.
-  steering: false,
+  /**
+   * The adapter DOES choose a permission mode, because `-p` cannot prompt: see
+   * `buildWorkBuddyArgs`. Not a capability flag — capabilities are things a CALLER
+   * selects, and there is no such selection here. Recorded here because a caller
+   * reading the descriptor deserves to know a WorkBuddy run is auto-approved, and
+   * can still override it per-run through `extraArgs`.
+   */
+// Declared false on purpose; none of these are wired, and RunRequest cannot
+   // even carry a worktree/fork request.
+   // Unverified: no WorkBuddy run was made to test whether a skill request is
+   // honoured, and its help exposes no skill flag. False rather than assumed.
+   skills: false,
+   steering: false,
   worktree: false,
   fork: false,
   stdinPrompt: false,
@@ -616,12 +626,41 @@ export function createWorkBuddyAdapter(
  */
 export function buildWorkBuddyArgs(req: RunRequest, prefix: readonly string[] = []): string[] {
   const args: string[] = [...prefix, '-p', '--output-format', 'stream-json'];
+  // PERMISSIONS ARE NOT OPTIONAL IN `-p` MODE.
+  //
+  // `-p` (print) is non-interactive, so CodeBuddy has nobody to ask and denies
+  // every tool: it answers with prose explaining that Write/Bash/PowerShell were
+  // blocked. Measured on this machine (CLI 2.137.1), same prompt, same cwd:
+  //
+  //   (no flag)              → exit 0, NO file written, "tools were denied"
+  //   --permission-mode acceptEdits → file written, but `git commit` DENIED
+  //   --permission-mode bypassPermissions → file written AND shell ran
+  //
+  // So `acceptEdits` is not enough for a task that also runs a command, and
+  // without a flag the adapter is structurally incapable of implementing a task.
+  //
+  // A caller can still choose explicitly: `--permission-mode`/`-y` in
+  // `extraArgs` is detected and suppresses this default, because the LAST
+  // occurrence of the flag is the one the CLI honours.
+  if (!hasExplicitPermissionMode(req.extraArgs)) {
+    args.push('--permission-mode', 'bypassPermissions');
+  }
   if (req.model) args.push('--model', req.model);
   if (req.role) args.push('--agent', req.role);
   if (req.threadId) args.push('-r', req.threadId);
   if (req.extraArgs?.length) args.push(...req.extraArgs);
   args.push('--', req.prompt);
   return args;
+}
+
+/**
+ * Whether the caller already expressed a permission choice in `extraArgs`.
+ *
+ * Both spellings count, because the CLI documents both and a caller reaching for
+ * either should not have to know which one this adapter would otherwise pick.
+ */
+function hasExplicitPermissionMode(extraArgs?: readonly string[]): boolean {
+  return extraArgs?.some((a) => a === '--permission-mode' || a === '-y' || a === '--dangerously-skip-permissions') ?? false;
 }
 
 function assertNoOptionTerminator(agentId: string, extraArgs?: readonly string[]): void {

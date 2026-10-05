@@ -1,3 +1,5 @@
+> **[Historical — Phase 4 审计]** quota 观测事实仍准确；R1-1 后的 observation policy 见 docs/EXECUTION_ROUND_SEMANTICS.md §2。当前基线见 docs/PROJECT_BASELINE.md。
+
 # Phase 4A — Provider / Quota Source Audit
 
 Audit date: 2026-09-29. All facts below were measured on this machine by running
@@ -95,3 +97,7 @@ Every row records `source`, `observed_at`, `confidence` per the Phase 4 rule.
    computed cost (locally reported, not an invoice) are both classified
    `reported` — never used as billing truth. Where a run reported no cost,
    cost is `null`, never `$0.00`.
+
+---
+
+> **R1-1 forward note (2026-10-02).** 本文件记录的 `status = unavailable, remaining = null` 事实仍然成立。R1-1 之后的 observation policy（`unavailable` 不再单独阻断 spawn；`exhausted`/`unknown`/`not_fetched`/`not_connected` 仍 fail-closed）见 **`docs/EXECUTION_ROUND_SEMANTICS.md` §2**。本文件其余内容为 Phase 4 历史审计，与该 policy 冲突处以后者为准。

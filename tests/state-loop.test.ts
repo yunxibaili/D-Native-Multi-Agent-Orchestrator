@@ -1,5 +1,5 @@
 /**
- * tests/state-loop.test.ts — P6-A: the orchestration state loop.
+ * tests/state-loop.test.ts - P6-A: the orchestration state loop.
  *
  * WHAT IS ACTUALLY UNDER TEST
  * ---------------------------
@@ -14,7 +14,7 @@
  *   - the observation reflects the REAL TaskStore, not a hand-built fixture
  *   - a `continue` decision reaches work THROUGH `TaskScheduler.tick()`
  *   - a `wait` / `abort` decision dispatches nothing at all
- *   - an invalid decision produces ZERO side effects — no tick, no task change
+ *   - an invalid decision produces ZERO side effects - no tick, no task change
  *   - an unimplemented action is refused, never quietly downgraded to `continue`
  *   - the decision brain holds no reference to the runtime, so it cannot spawn
  *
@@ -43,6 +43,11 @@ import {
   ALL_ACTIONS,
 } from '../src/orchestration/decision.ts';
 import { runDecisionCycle, orchestrationDecisionRequest } from '../src/orchestration/decision-loop.ts';
+import {
+  buildDispatchReceipt,
+  emptyDispatchReceipt,
+  type DispatchReceipt,
+} from '../src/orchestration/dispatch-receipt.ts';
 import { ModelRegistry } from '../src/quota/registry.ts';
 import { BudgetManager } from '../src/quota/budget.ts';
 import { DecisionSchemaError, DecisionUnavailableError } from '../src/decision/errors.ts';
@@ -68,7 +73,7 @@ function check(name: string, cond: boolean, detail = ''): void {
     process.stdout.write(`  ok   ${name}\n`);
   } else {
     failed++;
-    failures.push(`${name}${detail ? ` — ${detail}` : ''}`);
+    failures.push(`${name}${detail ? ` -${detail}` : ''}`);
     process.stdout.write(`  FAIL ${name}${detail ? ` :: ${detail}` : ''}\n`);
   }
 }
@@ -93,6 +98,7 @@ const descriptor = (id: string): AgentDescriptor => ({
   capabilities: {
     newTask: true, resume: true, review: false, modelSelection: true, roleSelection: true,
     sandbox: false, streamEvents: true, costReporting: false, extraArgs: true, cwd: true,
+    skills: false,
     steering: false, worktree: false, fork: false, stdinPrompt: false, workspaceModes: ['shared'],
   } as AgentDescriptor['capabilities'],
 });
@@ -131,7 +137,6 @@ const budgetsFor = (taskIds: readonly string[], agents: readonly string[] = [AGE
 
 /** Every pre-existing gate signal healthy, so a refusal can only be the loop's doing. */
 const gateSources = (taskIds: readonly string[], over: Record<string, unknown> = {}) => ({
-  multiAgentEnabled: true,
   descriptors: [descriptor(AGENT)],
   agentStatus: [statusRow(AGENT, 'Yes')],
   quotaRecords: [quotaRecord(AGENT, 'available')],
@@ -311,8 +316,7 @@ section('P6-A 2. dependency state matches the scheduler readiness definition');
     JSON.stringify(tick.skipped));
 
   // c1 has RUN but not SUCCEEDED: only `applyVerification` can make it succeeded,
-  // and only `succeeded` satisfies a dependency. So c2 must still be waiting —
-  // this is the distinction that keeps "ran" and "done" from being conflated.
+  // and only `succeeded` satisfies a dependency. So c2 must still be waiting -  // this is the distinction that keeps "ran" and "done" from being conflated.
   const ranOnly = observeTasks(o.getStore(), { now: NOW });
   check('a task that merely ran (to_verify) does NOT satisfy a dependency',
     !ranOnly.ready.includes('c2'), JSON.stringify(ranOnly.ready));
@@ -342,7 +346,7 @@ section('P6-A 3. latest result maps in, and is never a status source');
   check('and no task is listed as failed', noResults.failedTaskIds.length === 0);
 
   // The store is still planned; only a RESULT was supplied. If results could set
-  // status, the task would read as failed here — it must not.
+  // status, the task would read as failed here - it must not.
   const failed = {
     taskId: 'rt', agentId: AGENT, state: 'failed', error: { code: 'NONZERO_EXIT', message: 'boom' },
     startedAt: 10, endedAt: 20, exitCode: 7, signal: null, output: '', outputTruncated: false,
@@ -425,24 +429,28 @@ section('P6-A 5. validator accepts exactly the implemented actions');
   check('valid abort is accepted', abort.action === 'abort');
   // The bare action must be complete on its own. If abort required prose, the
   // provider (which can only return the choice it was offered) could never
-  // produce a valid one — and a real abort would be unrepresentable.
+  // produce a valid one - and a real abort would be unrepresentable.
   const bareAbort = validateDecision({ action: 'abort' }, obs);
   check('a bare abort is accepted (no prose required of the model)', bareAbort.action === 'abort');
   const scoped = validateDecision({ action: 'continue', taskId: 'c1' }, obs);
   check('an action may name a task that exists', scoped.action === 'continue');
 
-  // P6-D0 added `rework` to the implemented set. It is asserted explicitly so a
-  // later stage that enables something else has to change this line too.
-check('the implemented set is exactly continue/wait/abort/rework (D0 enabled rework)',
-    IMPLEMENTED_ACTIONS.length === 4 && IMPLEMENTED_ACTIONS.join(',') === 'continue,wait,abort,rework',
-    IMPLEMENTED_ACTIONS.join(','));
-check('the full vocabulary is frozen and larger than what runs',
-    ALL_ACTIONS.length === 11 && DEFERRED_ACTIONS.length === 7, `${ALL_ACTIONS.length}/${DEFERRED_ACTIONS.length}`);
-check('D0 enabled rework and NOTHING else',
-    IMPLEMENTED_ACTIONS.includes('rework') &&
-    ['retry', 'reassign', 'replan', 'add_task', 'split_task', 'parallelize', 'complete']
-      .every((a) => DEFERRED_ACTIONS.includes(a as never)));
-}
+// `rework` came from P6-D0, `replan` from P6-C, and the remaining six from P6-D1,
+  // each by the stage that owned it. P6-D1 connected the last six to EXISTING
+  // authorities, so nothing is deferred any more - which is why this now asserts
+  // that the vocabulary is COMPLETE rather than that something is missing.
+  check('the implemented set is every action in the vocabulary',
+      IMPLEMENTED_ACTIONS.length === 11 &&
+      IMPLEMENTED_ACTIONS.join(',') === ALL_ACTIONS.join(','),
+      IMPLEMENTED_ACTIONS.join(','));
+  check('the full vocabulary is frozen at eleven actions', ALL_ACTIONS.length === 11, String(ALL_ACTIONS.length));
+  check('P6-D1 left NOTHING deferred', DEFERRED_ACTIONS.length === 0, DEFERRED_ACTIONS.join(','));
+  check('implemented and deferred partition the vocabulary exactly',
+      [...IMPLEMENTED_ACTIONS, ...DEFERRED_ACTIONS].sort().join(',') === [...ALL_ACTIONS].sort().join(','));
+  check('the six D1 actions are all present',
+      ['retry', 'reassign', 'add_task', 'split_task', 'parallelize', 'complete']
+        .every((a) => (IMPLEMENTED_ACTIONS as readonly string[]).includes(a)));
+  }
 
 // ---------------------------------------------------------------------------
 // 6. Validator: everything else is refused, loudly
@@ -538,6 +546,16 @@ section('P6-A 7. application respects the action, through the scheduler only');
   const store = new TaskStore();
   const obs = observeTasks(store, { now: NOW });
 
+  // R2-2: dispatch hands back an ADMISSION RECEIPT, not a boolean. These fakes build
+  // real receipts so `app.dispatched` is derived from admission exactly as production
+  // derives it — a hand-returned `true` would no longer be expressible, which is the
+  // point of the contract change.
+  const admittedReceipt = (taskId: string): DispatchReceipt => buildDispatchReceipt({
+    tick: { admitted: [taskId], waiting: [], skipped: [], outcomes: [] },
+    dispatchedAt: NOW,
+  });
+  const nothingAdmitted = (): DispatchReceipt => emptyDispatchReceipt(NOW);
+
   // wait
   {
     // Counters, not booleans: TypeScript cannot see writes made inside a callback,
@@ -546,7 +564,7 @@ section('P6-A 7. application respects the action, through the scheduler only');
     let waitCalls = 0;
     const app = await applyDecision({ action: 'wait', rationale: 'nothing ready' }, {
       observation: obs,
-      dispatch: async () => { waitCalls++; return true; },
+      dispatch: async () => { waitCalls++; return admittedReceipt('w'); },
     });
     check('wait reports it applied nothing', app.applied === false);
     check('wait names itself in the code', app.applied === false && app.code === 'decision-wait');
@@ -558,7 +576,7 @@ section('P6-A 7. application respects the action, through the scheduler only');
     let abortCalls = 0;
     const app = await applyDecision({ action: 'abort', reason: 'stopping here' }, {
       observation: obs,
-      dispatch: async () => { abortCalls++; return true; },
+      dispatch: async () => { abortCalls++; return admittedReceipt('a'); },
     });
     check('abort reports it applied nothing', app.applied === false);
     check('abort names itself in the code', app.applied === false && app.code === 'decision-abort');
@@ -574,11 +592,26 @@ section('P6-A 7. application respects the action, through the scheduler only');
     let dispatchCalls = 0;
     const app = await applyDecision({ action: 'continue' }, {
       observation: obs,
-      dispatch: async () => { dispatchCalls++; return true; },
+      dispatch: async () => { dispatchCalls++; return admittedReceipt('c'); },
     });
     check('continue may dispatch', app.applied === true);
     check('continue reports whether anything actually ran', app.applied === true && app.dispatched === true);
     check('continue reached the dispatch callback exactly once', dispatchCalls === 1, `calls=${dispatchCalls}`);
+  }
+
+  // R2-2 / F8: an empty receipt is a LEGAL outcome and must not be read as failure.
+  // `admitted` is empty because nothing was ready — that is not a refused dispatch,
+  // and it must not be conflated with a gate refusal.
+  {
+    let dispatchCalls = 0;
+    const app = await applyDecision({ action: 'continue' }, {
+      observation: obs,
+      dispatch: async () => { dispatchCalls++; return nothingAdmitted(); },
+    });
+    check('an empty receipt applies without error', app.applied === true, app.applied === false ? app.code : 'applied');
+    check('an empty receipt means nothing was dispatched, not that dispatch failed',
+      app.applied === true && app.dispatched === false);
+    check('and it was still exactly one dispatch', dispatchCalls === 1, `calls=${dispatchCalls}`);
   }
 
   // continue on a finished tree
@@ -593,7 +626,7 @@ section('P6-A 7. application respects the action, through the scheduler only');
     let doneCalls = 0;
     const app = await applyDecision({ action: 'continue' }, {
       observation: doneObs,
-      dispatch: async () => { doneCalls++; return true; },
+      dispatch: async () => { doneCalls++; return admittedReceipt('r'); },
     });
     check('continue on an all-terminal tree dispatches nothing', doneCalls === 0, `calls=${doneCalls}`);
     check('and says why', app.applied === false && app.code === 'nothing-to-continue',
@@ -649,7 +682,7 @@ section('P6-A 8. observe -> decide -> validate -> apply -> tick (real classes)')
   // Codex's P6-A review asked for this specifically, and it is worth being precise
   // about WHY. `applyDecision` already refuses to dispatch on `wait`, and unit
   // tests on `applyDecision` prove it. What that does NOT prove is that the LOOP
-  // never calls dispatch for another reason on the way past — e.g. collecting
+  // never calls dispatch for another reason on the way past - e.g. collecting
   // results, or an unconditional tick that happens to sit outside the decision
   // branch. The assertion that closes that gap is the same `requests` counter the
   // runtime increments: a real agent invocation cannot happen without moving it.
@@ -830,10 +863,32 @@ section('P6-A 10. the decision brain has no path to execution');
     !obsImports.some((i) => i.includes('decision')), obsImports.join(', '));
 
   const decImports = importOf(src[1]);
-  check('decision imports only observation',
-    decImports.length === 1 && decImports[0] === './observation.ts', decImports.join(', '));
+  // P6-D1 widened this by exactly one module: `../quota/types.ts`, for the CLOSED
+  // `TASK_TYPES` list that validates an `add_task`'s taskType. That is a pure constant
+  // used to REJECT an unknown type - the opposite of importing a capability registry -  // so it is asserted explicitly rather than loosened into a blanket "any import is
+  // fine", which would stop this test catching a real second dependency.
+  //
+  // R2-2 widens it by exactly one more: `./dispatch-receipt.ts`, for the TYPE of the
+  // admission receipt `context.dispatch` now returns. It is the same shape of widening
+  // and is held to the same discipline - named here rather than folded into a blanket
+  // allowance, and asserted to be TYPE-ONLY, which is STRICTER than the P6-D1 constant:
+  // `dispatch-receipt.ts` exports a runtime builder, so a plain value import would pull
+  // real code (and, through it, the scheduler's TickResult type) into the decision
+  // layer. Only the shape is allowed across this boundary.
+  check('decision imports only observation, the closed TASK_TYPES vocabulary and the receipt TYPE',
+    new Set(decImports).size === 3 &&
+    decImports.includes('./observation.ts') &&
+    decImports.includes('../quota/types.ts') &&
+    decImports.includes('./dispatch-receipt.ts') &&
+    decImports.every((i) => i === './observation.ts' || i === '../quota/types.ts' || i === './dispatch-receipt.ts'),
+    decImports.join(', '));
+  check('the receipt crosses into the decision layer as a TYPE only, never as runtime code',
+    typeOnly(src[1], './dispatch-receipt.ts') && !importsRuntimeValue(src[1], './dispatch-receipt.ts'));
   check('decision does NOT import the runtime, the store or the scheduler',
     !decImports.some((i) => i.includes('core/') || i.includes('orchestrator') || i.includes('scheduler') || i.includes('store')),
+    decImports.join(', '));
+  check('decision imports NO registry/assignment/planner - only constants and types',
+    !decImports.some((i) => /registry|assignment|planner|workbench|adapters/.test(i)),
     decImports.join(', '));
 
   const loopImports = importOf(src[2]);
@@ -853,7 +908,7 @@ section('P6-A 10. the decision brain has no path to execution');
   let calls = 0;
   const app = await applyDecision({ action: 'continue' }, {
     observation: observeTasks(new TaskStore(), { now: NOW }),
-    dispatch: async () => { calls++; return true; },
+    dispatch: async () => { calls++; return buildDispatchReceipt({ tick: { admitted: ['x'], waiting: [], skipped: [], outcomes: [] }, dispatchedAt: NOW }); },
   });
   check('the ONLY capability the brain is given is one dispatch callback', calls === 1 && app.applied);
 }
@@ -911,7 +966,22 @@ section('P6-A 12. no second store, scheduler, workspace or execution path');
     return out;
   };
   const files = tree('src');
-  const countOf = (pattern: RegExp): string[] => files.filter((f) => pattern.test(readFileSync(f, 'utf8')));
+  /**
+   * Source with comments and string literals removed.
+   *
+   * These counts are claims about CODE, and reading raw text made them wrong in both
+   * directions: a doc comment mentioning "`runtime.run()` throw" counted as a second
+   * execution edge, while a commented-out `runtime.run(` would have satisfied the
+   * "exactly one place" check without any call existing at all. Stripping comments and
+   * literals is what makes the assertion mean what it says.
+   */
+  const codeOf = (text: string): string => text
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/`(?:[^`\\]|\\.)*`/g, '``')
+    .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""');
+  const countOf = (pattern: RegExp): string[] => files.filter((f) => pattern.test(codeOf(readFileSync(f, 'utf8'))));
 
   const stores = countOf(/new TaskStore\(/);
   check('TaskStore is instantiated in exactly one place', stores.length === 1, stores.join(', '));
@@ -922,12 +992,39 @@ section('P6-A 12. no second store, scheduler, workspace or execution path');
   const execEdges = countOf(/runtime\.run\(/);
   check('RuntimeRunner.run is called in exactly one place', execEdges.length === 1, execEdges.join(', '));
 
+  // R2-2 added a lease LIFECYCLE. The specific way that could have gone wrong is by
+  // growing a parallel authority for it, so those names are banned outright rather
+  // than left to the generic counts above - a `LeaseManager` would satisfy "one
+  // TaskScheduler" perfectly while still being a second control plane.
+  const bannedAuthorities = [
+    'LeaseManager', 'LeaseAuthority', 'LeaseScheduler', 'LeaseService', 'LeaseRegistry',
+    'FencingController', 'FencingAuthority',
+    'ResultStore', 'ExecutionResultStore', 'DispatchStore',
+    'SecondScheduler', 'ExecutionController', 'ResultRegistry',
+  ];
+  const allText = files.map((f) => codeOf(readFileSync(f, 'utf8'))).join('\n');
+  for (const name of bannedAuthorities) {
+    check(`R2-2: no ${name} exists anywhere in src/`,
+      !new RegExp(`\\b(class|interface|type)\\s+${name}\\b`).test(allText) && !new RegExp(`new\\s+${name}\\b`).test(allText));
+  }
+  // A background service would make a bounded round into a persistent worker.
+  check('R2-2: no lease heartbeat / background renewal service',
+    !/setInterval\([^)]*lease/i.test(allText) && !/leaseService|leaseHeartbeat/i.test(allText));
+
   // P6-A must not have introduced a new path of any of these.
   const newFiles = ['src/orchestration/observation.ts', 'src/orchestration/decision.ts', 'src/orchestration/decision-loop.ts'];
   for (const f of newFiles) {
     const text = readFileSync(f, 'utf8');
     check(`${f} creates no store/scheduler/workspace/executor`,
       !/new TaskStore|new TaskScheduler|new WorkspaceManager|\.run\(/.test(text));
+  }
+
+  // R2-2: the lease layer must not be reachable from the decision layer, which is not
+  // allowed to hold a RunResult, a dispatch authority, or a credential of any kind.
+  for (const f of newFiles) {
+    const text = readFileSync(f, 'utf8');
+    check(`${f} imports no lease / evidence internals`,
+      !/assignment-lease|attempt-store|attempt-record/.test(text));
   }
 }
 

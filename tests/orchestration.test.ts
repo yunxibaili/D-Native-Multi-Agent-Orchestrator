@@ -1,5 +1,5 @@
 /**
- * tests/orchestration.test.ts 鈥?Phase 5C-1, hermetically.
+ * tests/orchestration.test.ts - Phase 5C-1, hermetically.
  *
  * No network, no process, no real agent CLI. Real production classes are
  * exercised: `TaskStore`, `buildSpawnGateInput`, `translateRunResult`, and the
@@ -32,6 +32,7 @@ import { createOpenCodeAdapter } from '../src/adapters/opencode.ts';
 import { createWorkBuddyAdapter } from '../src/adapters/workbuddy.ts';
 import { createFakeAdapter, type ScriptStep } from './helpers.ts';
 import type { AgentAdapter, AgentDescriptor, RunHandle, RunRequest, RunResult } from '../src/core/types.ts';
+import type { PresentedLease } from '../src/orchestration/assignment-lease.ts';
 import type { LauncherSpec } from '../src/core/types.ts';
 import type { QuotaRecord } from '../src/quota/types.ts';
 import {
@@ -162,7 +163,7 @@ const registryWith = (entries: Array<[string, string, string[], 'available' | 'u
 /**
  * Real ledgers for all three scopes. The task scope must match the taskId the
  * gate is asked about, or the gate correctly denies with budget-scope-
- * unavailable — a missing scope is never silently treated as satisfied.
+ * unavailable - a missing scope is never silently treated as satisfied.
  */
 const budgetsWith = (globalAllocated: number, taskAllocated: number, agentAllocated: number, taskId = 'c-1', agentId = 'opencode'): BudgetManager => {
   const m = new BudgetManager(globalAllocated);
@@ -190,9 +191,8 @@ const fullBudgets = (): BudgetManager => {
 };
 
 /** A gate whose every real signal is present and healthy. */
-const healthySources = (patch: Partial<SpawnGateSources> = {}): SpawnGateSources => ({
-  multiAgentEnabled: true,
-  descriptors: [descriptor('opencode'), descriptor('codex', { review: true })],
+  const healthySources = (patch: Partial<SpawnGateSources> = {}): SpawnGateSources => ({
+    descriptors: [descriptor('opencode'), descriptor('codex', { review: true })],
   agentStatus: [statusRow('opencode', 'Yes'), statusRow('codex', 'Yes')],
   quotaRecords: [quotaRecord('opencode', 'available'), quotaRecord('codex', 'available')],
   registry: registryWith([
@@ -217,7 +217,7 @@ const healthySources = (patch: Partial<SpawnGateSources> = {}): SpawnGateSources
 });
 
 // =====================================================================
-section('5C-1 搂4/搂5 spawn gate: every field is real, missing means denied');
+section('5C-1 -/- spawn gate: every field is real, missing means denied');
 // =====================================================================
 
 // --- all real signals available -> allowed
@@ -230,11 +230,9 @@ check('the gate reads the REAL concurrency', healthy.input.concurrency.current =
 check('provenance explains where each field came from', healthy.provenance.length >= 8);
 check('provenance names the budget scopes used', healthy.provenance.some((p) => p.includes('budget.scopes=global+task:c-1+agent:opencode')));
 
-// --- multi-agent disabled
-const disabled = buildSpawnGateInput({ taskId: 'c-1', agentId: 'opencode', modelId: 'm-impl', sources: healthySources({ multiAgentEnabled: false }) });
-check('multi-agent disabled -> denied', !disabled.result.allowed);
-check('disabled denial uses the Phase 4 code', disabled.result.code === 'multi-agent-not-implemented');
-check('single agent stays the default', disabled.input.multiAgentEnabled === false);
+  // R1-1: the multi-agent feature gate is gone, so there is no longer a
+  // "multi-agent disabled" case here. Its removal is asserted in
+  // tests/spawn-gate-production.test.ts (Test 5) rather than left untested.
 
 // --- missing quota record
 const noQuota = buildSpawnGateInput({ taskId: 'c-1', agentId: 'nobody', modelId: 'm-impl', sources: healthySources() });
@@ -337,7 +335,7 @@ const poor = buildSpawnGateInput({
 check('requested above remaining -> denied', !poor.result.allowed);
 check('budget denial uses budget-insufficient', poor.result.code === 'budget-insufficient');
 
-// --- budget scope unavailable (the 搂6 requirement)
+// --- budget scope unavailable (the - requirement)
 const noScopes = buildSpawnGateInput({
   taskId: 'c-1', agentId: 'opencode', modelId: 'm-impl',
   sources: healthySources({ budgets: new BudgetManager(0) }),
@@ -404,7 +402,7 @@ check('resolveBudgetHeadroom: no scopes is a missing signal', resolveBudgetHeadr
 check('resolveConcurrency validates the cap', resolveConcurrency({ currentConcurrency: 0, maxConcurrency: 2 }).ok === true);
 
 // =====================================================================
-section('5C-1 搂7/搂9 task model: root, child, depth=1, no grandchildren');
+section('5C-1 -/- task model: root, child, depth=1, no grandchildren');
 // =====================================================================
 
 const spec = (patch: Record<string, unknown> = {}) => ({
@@ -435,7 +433,7 @@ check('depth is capped at 1 by the model itself', grandchild.ok && grandchild.ta
 check('a grandchild points at its parent, never deeper', grandchild.task?.parentTaskId === 'c-1');
 
 // =====================================================================
-section('5C-1 搂14 dependencies: unknown, self, duplicate, blocked');
+section('5C-1 section4 dependencies: unknown, self, duplicate, blocked');
 // =====================================================================
 
 check('a self dependency is refused', createTask(spec({ dependencies: ['r-1'] }), NOW).code === 'dependency-self');
@@ -478,40 +476,40 @@ check('the detected cycle names the loop', (found ?? []).length >= 2);
 check('an acyclic graph reports no cycle', findDependencyCycle(new Map([['p', { ...aTask, taskId: 'p', dependencies: [] }]])) === null);
 
 // =====================================================================
-section('5C-1 搂11 lifecycle: legal moves succeed, illegal moves change nothing');
+section('5C-1 section1 lifecycle: legal moves succeed, illegal moves change nothing');
 // =====================================================================
 
 const lc = new TaskStore();
 lc.create(spec(), NOW);
 lc.create(spec({ taskId: 'k', parentTaskId: 'r-1' }), NOW);
 
-check('planned 鈫?queued', lc.transition('k', 'queued', NOW).ok);
-check('queued 鈫?running', lc.transition('k', 'running', NOW).ok);
+check('planned - queued', lc.transition('k', 'queued', NOW).ok);
+check('queued - running', lc.transition('k', 'running', NOW).ok);
 check('running records startedAt', lc.get('k')?.startedAt === NOW);
-check('running 鈫?to_verify', lc.transition('k', 'to_verify', NOW).ok);
-check('to_verify 鈫?succeeded', lc.transition('k', 'succeeded', NOW).ok);
+check('running - to_verify', lc.transition('k', 'to_verify', NOW).ok);
+check('to_verify - succeeded', lc.transition('k', 'succeeded', NOW).ok);
 check('succeeded records finishedAt', lc.get('k')?.finishedAt === NOW);
 check('a succeeded task is terminal', isTerminal('succeeded'));
 check('a terminal task refuses to move', lc.transition('k', 'failed', NOW).code === 'task-terminal');
 
 const f1 = new TaskStore(); f1.create(spec(), NOW); f1.create(spec({ taskId: 'f', parentTaskId: 'r-1' }), NOW);
 f1.transition('f', 'queued', NOW); f1.transition('f', 'running', NOW);
-check('running 鈫?failed', f1.transition('f', 'failed', NOW).ok);
+check('running - failed', f1.transition('f', 'failed', NOW).ok);
 check('a failed task is terminal', isTerminal('failed'));
 
 const b1 = new TaskStore(); b1.create(spec(), NOW); b1.create(spec({ taskId: 'b', parentTaskId: 'r-1' }), NOW);
 b1.transition('b', 'queued', NOW);
 check('a block with no reason is refused', b1.block('b', '', NOW).ok === false);
 const blocked = b1.block('b', 'dependency unresolved', NOW);
-check('queued 鈫?blocked with a reason', blocked.ok);
+check('queued - blocked with a reason', blocked.ok);
 check('the blocked reason is recorded', b1.get('b')?.blockedReason === 'dependency unresolved');
-check('blocked 鈫?queued is allowed (unblockable)', b1.transition('b', 'queued', NOW).ok);
+check('blocked - queued is allowed (unblockable)', b1.transition('b', 'queued', NOW).ok);
 check('unblocking clears the reason', b1.get('b')?.blockedReason === null);
 
 const bad = new TaskStore(); bad.create(spec(), NOW); bad.create(spec({ taskId: 'x', parentTaskId: 'r-1' }), NOW);
-check('planned 鈫?running is refused (no skipping the queue)', bad.transition('x', 'running', NOW).code === 'transition-not-allowed');
+check('planned - running is refused (no skipping the queue)', bad.transition('x', 'running', NOW).code === 'transition-not-allowed');
 check('a refused transition leaves the status untouched', bad.get('x')?.status === 'planned');
-check('planned 鈫?succeeded is refused', bad.transition('x', 'succeeded', NOW).ok === false);
+check('planned - succeeded is refused', bad.transition('x', 'succeeded', NOW).ok === false);
 check('every status is declared', TASK_STATUSES.length === 11);
 check('transition table covers every status', TASK_STATUSES.every((s) => Array.isArray(canTransition(s, s) || []) || true));
 check('terminal statuses cannot transition at all', (['succeeded', 'failed', 'cancelled'] as const).every((s) => canTransition(s, 'queued') === false));
@@ -605,12 +603,14 @@ check('T5 request 1000000 -> budget-insufficient', huge.result.allowed === false
 check('T5 the large request is not overridden by the sources default', huge.input.budget.requested === 1_000_000);
 check('T5 a real shortfall is NOT reported as a missing scope', !huge.result.reason.includes('budget-scope-unavailable'));
 
-// --- an earlier gate denial is preserved over the budget explanation
-const earlier = buildSpawnGateInput({
-  taskId: 'c-1', agentId: 'opencode', modelId: 'm-impl', requestedUnits: 0,
-  sources: healthySources({ budgets: globalOnly, multiAgentEnabled: false, requestedUnits: 0 }),
-});
-check('a more fundamental denial is kept, not replaced by the budget reason', earlier.result.code === 'multi-agent-not-implemented');
+    // --- an earlier gate denial is preserved over the budget explanation
+    // R1-1: the multi-agent switch is gone, so the "earlier denial" is now the task
+    // policy - which is the gate's FIRST check, exactly the property under test.
+    const earlier = buildSpawnGateInput({
+      taskId: 'c-1', agentId: 'opencode', modelId: 'm-impl', requestedUnits: 0,
+      sources: healthySources({ budgets: globalOnly, taskPolicyAllows: false, requestedUnits: 0 }),
+    });
+    check('a more fundamental denial is kept, not replaced by the budget reason', earlier.result.code === 'task-policy-denied');
 check('the budget problem is still reported alongside it', earlier.missing.some((m) => m.code === 'budget-scope-unavailable'));
 
 // =====================================================================
@@ -692,7 +692,7 @@ check('E2E spawnChild still does not execute anything', (() => {
 })());
 
 // =====================================================================
-section('5C-1 §12 RunResult → Task: success is NOT verification');
+section('5C-1 §12 RunResult - Task: success is NOT verification');
 // =====================================================================
 
 const runResult = (patch: Partial<RunResult> = {}): RunResult => ({
@@ -707,6 +707,21 @@ const runResult = (patch: Partial<RunResult> = {}): RunResult => ({
 
 const tSucceeded = translateRunResult(runResult({ state: 'succeeded' }));
 check('a successful run maps to to_verify, NEVER succeeded', tSucceeded.to === 'to_verify');
+
+/**
+ * R2-2 §12: a write-back must PRESENT the assignment lease it was dispatched under.
+ * Presenting nothing is refused, because "no token" cannot be shown to be current.
+ *
+ * `applyRunResult` used to be callable with no lease at all, so these tests now
+ * simulate the dispatch-time capture explicitly rather than leaning on an implicit
+ * pass. Production's only caller is `executeTask`, which captures the real lease; the
+ * fencing tests below then prove that a STALE lease is refused.
+ */
+const currentLeaseOf = (o: Orchestrator, taskId: string): PresentedLease => {
+  const t = o.getStore().get(taskId);
+  if (t === null) throw new Error(`no task "${taskId}" to present a lease for`);
+  return { agentId: t.agentId, leaseVersion: t.leaseVersion, fencingToken: t.fencingToken };
+};
 check('to_verify is not terminal', tSucceeded.terminal === false);
 check('to_verify is flagged as awaiting verification', tSucceeded.awaitingVerification === true);
 check('the reason says success is not acceptance', tSucceeded.reason.includes('NOT yet verified'));
@@ -733,11 +748,11 @@ check('verification reject -> failed', translateVerification({ verdict: 'reject'
 check('verification rework -> rework (reserved)', translateVerification({ verdict: 'rework', reason: 'incomplete' }).to === 'rework');
 
 // =====================================================================
-section('5C-1 搂9/搂10 spawnChild: gated, bounded, depth-limited');
+section('5C-1 -/section0 spawnChild: gated, bounded, depth-limited');
 // =====================================================================
 
 // Code reviews: the reviewer agent must be registered for the review task type.
-// Note the deliberate shape — `opencode` is NOT registered for review, so if the
+// Note the deliberate shape -`opencode` is NOT registered for review, so if the
 // orchestration layer ever filled a reviewer slot with an implementation agent
 // by accident, the gate would refuse it.
 // Three children at once exceeds the MVP concurrency cap of 2, so the cap is
@@ -753,7 +768,7 @@ const c1 = orch.spawnChild({
   taskType: 'implementation', acceptanceCriteria: 'worker A done', budgetUnits: 100,
 });
 // A spawn is not an execution: the caller must still drive the child through
-// queue → running and hand back a RunResult. Asserting the child is still
+// queue - running and hand back a RunResult. Asserting the child is still
 // `planned` after a spawn is what makes that separation testable.
 check('a child is created through the gate', c1.ok, c1.ok ? '' : deny(c1)[1]);
 check('a spawned child is planned, not running (spawn != execution)', c1.ok && c1.task.status === 'planned');
@@ -783,12 +798,13 @@ check('no grandchild task exists', orch.getStore().get('gc-1') === null);
 const dup = orch.spawnChild({ taskId: 'c-1', parentTaskId: 'r-1', agentId: 'opencode', modelId: 'm-impl', taskType: 'implementation', acceptanceCriteria: 'dup' });
 check('a duplicate child id is refused', !dup.ok && deny(dup)[0] === 'task-id-duplicate');
 
-// gate denial blocks creation
-const deniedOrch = new Orchestrator({ gate: healthySources({ multiAgentEnabled: false }), now });
-deniedOrch.createRoot({ taskId: 'r', agentId: 'opencode', taskType: 'implementation', acceptanceCriteria: 'r' });
-const deniedChild = deniedOrch.spawnChild({ taskId: 'x', parentTaskId: 'r', agentId: 'opencode', modelId: 'm-impl', taskType: 'implementation', acceptanceCriteria: 'x' });
-check('a denied gate blocks child creation', !deniedChild.ok);
-check('the denial carries the gate code', deny(deniedChild)[0] === 'multi-agent-not-implemented');
+  // gate denial blocks creation
+  // R1-1: denial is now produced by the task policy, the gate's first check.
+  const deniedOrch = new Orchestrator({ gate: healthySources({ taskPolicyAllows: false }), now });
+  deniedOrch.createRoot({ taskId: 'r', agentId: 'opencode', taskType: 'implementation', acceptanceCriteria: 'r' });
+  const deniedChild = deniedOrch.spawnChild({ taskId: 'x', parentTaskId: 'r', agentId: 'opencode', modelId: 'm-impl', taskType: 'implementation', acceptanceCriteria: 'x' });
+  check('a denied gate blocks child creation', !deniedChild.ok);
+  check('the denial carries the gate code', deny(deniedChild)[0] === 'task-policy-denied');
 check('a denied spawn leaves no task behind', deniedOrch.getStore().get('x') === null);
 check('a denial reports the missing signals when relevant', deniedChild.gate !== undefined);
 
@@ -812,7 +828,7 @@ check('the unmet dependency is named', deny(early)[1].includes('p1'));
 // promote a task that is still `planned`.
 check('verification cannot skip the lifecycle', depOrch.applyVerification('p1', { verdict: 'pass', reason: 'ok' }).ok === false);
 depOrch.queue('p1'); depOrch.start('p1');
-check('a running child accepts its result', depOrch.applyRunResult('p1', runResult({ state: 'succeeded' })).ok);
+check('a running child accepts its result', depOrch.applyRunResult('p1', runResult({ state: 'succeeded' }), currentLeaseOf(depOrch, 'p1')).ok);
 check('the run alone does not succeed the task', depOrch.getStore().get('p1')?.status === 'to_verify');
 depOrch.applyVerification('p1', { verdict: 'pass', reason: 'criteria met' });
 check('verification completes p1', depOrch.getStore().get('p1')?.status === 'succeeded');
@@ -822,7 +838,7 @@ check('once the dependency succeeds, the child may spawn', afterDep.ok, afterDep
 // full lifecycle through the orchestrator
 check('queue a child', depOrch.queue('p2').ok);
 check('start a child', depOrch.start('p2').ok);
-const applied = depOrch.applyRunResult('p2', runResult({ state: 'succeeded' }));
+const applied = depOrch.applyRunResult('p2', runResult({ state: 'succeeded' }), currentLeaseOf(depOrch, 'p2'));
 check('applying a success moves to to_verify, not succeeded', applied.ok && applied.task.status === 'to_verify');
 check('a task is not succeeded until verified', depOrch.getStore().get('p2')?.status !== 'succeeded');
 const verified = depOrch.applyVerification('p2', { verdict: 'pass', reason: 'criteria met' });
@@ -833,7 +849,7 @@ const rework = new Orchestrator({ gate: healthySources({ budgets: fullBudgets() 
 rework.createRoot({ taskId: 'r', agentId: 'opencode', taskType: 'implementation', acceptanceCriteria: 'r' });
 rework.spawnChild({ taskId: 'w', parentTaskId: 'r', agentId: 'opencode', modelId: 'm-impl', taskType: 'implementation', acceptanceCriteria: 'w' });
 rework.queue('w'); rework.start('w');
-rework.applyRunResult('w', runResult({ state: 'succeeded' }));
+rework.applyRunResult('w', runResult({ state: 'succeeded' }), currentLeaseOf(rework, 'w'));
 // P6-D0 replaced this assertion. It used to require `rework-not-implemented`,
 // because 5C-1 reserved the status and refused to enter it. D0 now un-reserves it,
 // so the transition `to_verify -> rework` applies. The property that mattered is
@@ -847,8 +863,8 @@ check('rework is NOT terminal (it can still be dispatched again)', rework.getSto
 check('a task in rework is not yet dispatchable by the scheduler',
   rework.getStore().get('w')?.status === 'rework');
 
-// agent mismatch — c-3 is the codex review child, so an opencode result is wrong
-const mismatch = orch.applyRunResult('c-3', runResult({ agentId: 'someone-else', state: 'succeeded' }));
+// agent mismatch - c-3 is the codex review child, so an opencode result is wrong
+const mismatch = orch.applyRunResult('c-3', runResult({ agentId: 'someone-else', state: 'succeeded' }), currentLeaseOf(orch, 'c-3'));
 check('a result from a different agent is refused', !mismatch.ok && deny(mismatch)[0] === 'agent-mismatch', deny(mismatch)[1]);
 check('an agent mismatch cannot mark another agent work done', orch.getStore().get('c-3')?.status === 'planned');
 
@@ -858,7 +874,7 @@ check('blocking without a reason is refused', !blocker.ok && deny(blocker)[0] ==
 check('blocking with a reason works', orch.block('c-3', 'needs a human decision').ok);
 
 // =====================================================================
-section('5C-1 搂17 cancellation propagates to the whole tree');
+section('5C-1 section7 cancellation propagates to the whole tree');
 // =====================================================================
 
 const cancelOrch = new Orchestrator({ gate: healthySources({ budgets: fullBudgets(), maxConcurrency: 3 }), now });
@@ -903,7 +919,7 @@ const mixed = new Orchestrator({ gate: healthySources({ budgets: fullBudgets(), 
 mixed.createRoot({ taskId: 'r', agentId: 'opencode', taskType: 'implementation', acceptanceCriteria: 'r' });
 mixed.spawnChild({ taskId: 'done', parentTaskId: 'r', agentId: 'opencode', modelId: 'm-impl', taskType: 'implementation', acceptanceCriteria: 'done' });
 mixed.queue('done'); mixed.start('done');
-mixed.applyRunResult('done', runResult({ state: 'succeeded' }));
+mixed.applyRunResult('done', runResult({ state: 'succeeded' }), currentLeaseOf(mixed, 'done'));
 mixed.applyVerification('done', { verdict: 'pass', reason: 'ok' });
 mixed.spawnChild({ taskId: 'live', parentTaskId: 'r', agentId: 'opencode', modelId: 'm-impl', taskType: 'implementation', acceptanceCriteria: 'live' });
 const partialCancel = mixed.cancel('r', 'stop');
@@ -912,7 +928,7 @@ check('a completed child keeps its succeeded status', mixed.getStore().get('done
 check('a live sibling is still cancelled', mixed.getStore().get('live')?.status === 'cancelled');
 
 // =====================================================================
-section('5C-1 搂18 state ownership: one authority');
+section('5C-1 section8 state ownership: one authority');
 // =====================================================================
 
 check('the store is the only task authority exposed', orch.getStore() instanceof TaskStore);
@@ -962,16 +978,16 @@ check('retry count is tracked without implementing retry', (() => {
 check('the MVP limits are the documented ones', DEFAULT_LIMITS.maxDepth === 1 && DEFAULT_LIMITS.maxChildren === 3 && DEFAULT_LIMITS.maxConcurrentChildren === 2);
 check('limits can be tightened but depth stays a real cap', new Orchestrator({ gate: healthySources(), limits: { maxChildren: 1 } }).getStore().size === 0);
 
-// gate sources can be refreshed without replacing the store
-const refresh = new Orchestrator({ gate: healthySources({ multiAgentEnabled: false }), now });
-refresh.createRoot({ taskId: 'r', agentId: 'opencode', taskType: 'implementation', acceptanceCriteria: 'r' });
-check('with multi-agent off, spawning is refused', !refresh.spawnChild({ taskId: 'k', parentTaskId: 'r', agentId: 'opencode', modelId: 'm-impl', taskType: 'implementation', acceptanceCriteria: 'k' }).ok);
-refresh.updateGateSources({ multiAgentEnabled: true });
+  // gate sources can be refreshed without replacing the store
+  const refresh = new Orchestrator({ gate: healthySources({ taskPolicyAllows: false }), now });
+  refresh.createRoot({ taskId: 'r', agentId: 'opencode', taskType: 'implementation', acceptanceCriteria: 'r' });
+  check('with a denying policy, spawning is refused', !refresh.spawnChild({ taskId: 'k', parentTaskId: 'r', agentId: 'opencode', modelId: 'm-impl', taskType: 'implementation', acceptanceCriteria: 'k' }).ok);
+  refresh.updateGateSources({ taskPolicyAllows: true });
 check('after a gate refresh, spawning is allowed', refresh.spawnChild({ taskId: 'k', parentTaskId: 'r', agentId: 'opencode', modelId: 'm-impl', taskType: 'implementation', acceptanceCriteria: 'k' }).ok);
 check('a gate refresh keeps the same store', refresh.getStore().get('k') !== null);
 
 // =====================================================================
-section('5C-1 搂22 existing runtime untouched by this layer');
+section('5C-1 section2 existing runtime untouched by this layer');
 // =====================================================================
 
 // Read the real sources: importing a transport or adapter here would mean
@@ -992,7 +1008,7 @@ check('RunResult is consumed, never constructed here', typeof translateRunResult
 //
 // Agent ids are DELIBERATELY not 'opencode' / 'codex'. The real Orchestrator
 // registers the built-in adapters from its factory table, and `extraAdapters`
-// are added after — so a fake adapter named `opencode` does NOT shadow the real
+// are added after - so a fake adapter named `opencode` does NOT shadow the real
 // one. Naming a fake after a real agent therefore SPAWNS THE REAL BINARY. That
 // was observed while writing these tests (a genuine native run reached a local
 // model server and failed), which is exactly the kind of thing that would make a
@@ -1045,7 +1061,7 @@ function seed(o: Orchestrator, ids: { root: string; child: string; agent?: strin
 }
 
 // =====================================================================
-section('5C-2: Task → RunRequest mapping (pure)');
+section('5C-2: Task - RunRequest mapping (pure)');
 // =====================================================================
 
 const mappingStore = new TaskStore();
@@ -1074,7 +1090,7 @@ check('cwd is passed through', builtImpl.request.cwd === 'C:/work/a');
 check('a task with a model passes it through', builtImpl.request.model === 'm-impl');
 
 // A task with NO model must leave `model` absent so `Orchestrator.run` applies
-// `req.model ?? cfg.model` — 5C-2 defers to the existing Agent→Model policy.
+// `req.model ?? cfg.model` section5C-2 defers to the existing Agent→Model policy.
 const noModelReq = buildRunRequest({ task: { ...mapImpl, modelId: null }, cwd: 'C:/work/c' });
 check('a task with no model omits the field entirely', !('model' in noModelReq.request));
 check('the mapping records that no model was set', noModelReq.mapping.model === null && noModelReq.mapping.modelWasSet === false);
@@ -1134,7 +1150,7 @@ const tmpDir = (): string => mkdtempSync(join(tmpdir(), 'orch-5c2-'));
 const OK_SCRIPT: ScriptStep[] = [{ kind: 'frame', text: JSON.stringify({ text: 'done' }) }, { kind: 'exit', code: 0 }];
 const FAIL_SCRIPT: ScriptStep[] = [{ kind: 'exit', code: 7, stderrTail: 'native refused' }];
 
-// --- the happy path: planned → queued → running → to_verify
+// --- the happy path: planned - queued - running - to_verify
 {
   const dir = tmpDir();
   const { runtime, requests } = realRuntime([createFakeAdapter({ id: FAKE_IMPL, script: OK_SCRIPT, capabilities: { newTask: true, modelSelection: true, review: true } })], dir);
@@ -1531,7 +1547,7 @@ check('5C-2 adds no scheduler concepts', (() => {
 //
 // The bug: `executeTask` gated on `liveChildren()` while the task being executed
 // was still planned/queued, so it counted ITSELF. With maxConcurrency=1 and a
-// single child that made `1 >= 1` — the one task that must always be runnable
+// single child that made `1 >= 1` - the one task that must always be runnable
 // could never start. Denied safely, but it would have poisoned the concurrency
 // semantics a 5C-3 scheduler inherits.
 // =====================================================================
@@ -1830,7 +1846,7 @@ const addChild = (o: Orchestrator, id: string, deps: string[] = []): void => {
   addChild(o, 'a');
   addChild(o, 'b', ['a']);
   o.queue('a'); o.start('a');
-  o.applyRunResult('a', { agentId: FAKE_IMPL, state: 'failed', error: { code: 'NONZERO_EXIT', message: 'boom' }, startedAt: NOW, endedAt: NOW } as RunResult);
+  o.applyRunResult('a', { agentId: FAKE_IMPL, state: 'failed', error: { code: 'NONZERO_EXIT', message: 'boom' }, startedAt: NOW, endedAt: NOW } as RunResult, currentLeaseOf(o, 'a'));
   const tick = await s.tick();
   check('a FAILED dependency leaves the dependant waiting, not failed', !tick.admitted.includes('b'));
   check('no failure propagation was invented', o.getStore().get('b')?.status === 'planned');
@@ -1877,7 +1893,7 @@ const addChild = (o: Orchestrator, id: string, deps: string[] = []): void => {
     const o = new Orchestrator({ gate: execSources(), now, runtime: { run: (r) => { requests.push(r); return rt.run(r); } }, defaultCwd: dir });
     o.createRoot({ taskId: 'r', agentId: FAKE_IMPL, taskType: 'implementation', acceptanceCriteria: 'root' });
     const spawned = o.spawnChild({ taskId: 'c1', parentTaskId: 'r', agentId: FAKE_IMPL, modelId: 'm-impl', taskType: 'implementation', acceptanceCriteria: 'x', budgetUnits: 10 });
-    check(`gate re-check: ${label} — the child exists before the change`, spawned.ok, spawned.ok ? '' : spawned.code);
+    check(`gate re-check: ${label} - the child exists before the change`, spawned.ok, spawned.ok ? '' : spawned.code);
     o.updateGateSources(patch);
     const tick = await new TaskScheduler({ orchestrator: o, cwd: dir }).tick();
     check(`gate re-check: ${label} denies at admission`, requests.length === 0, `ran ${requests.length}`);
@@ -2082,28 +2098,29 @@ section('5C-3: production orchestration path (productionCaller != NONE)');
   rmSync(dir, { recursive: true, force: true });
 }
 {
-  // The production path must also honour the gate: multi-agent off stops it.
+    // The production path must also honour the gate: a denying policy stops it.
+    // (R1-1: this used to be "multi-agent off". There is no multi-agent switch any
+    // more - the DAG shape decides how many agents run, not a global flag.)
   const dir = tmpDir();
   const requests: RunRequest[] = [];
   const rt = new RuntimeOrchestrator({
     config: { agents: {} }, storeDir: dir,
     extraAdapters: [createFakeAdapter({ id: FAKE_IMPL, script: [{ kind: 'exit', code: 0 }], capabilities: { newTask: true, review: true, modelSelection: true } })],
   });
-  const o = new Orchestrator({
-    gate: execSources({ multiAgentEnabled: false }),
-    now,
-    runtime: { run: (r) => { requests.push(r); return rt.run(r); } },
-    defaultCwd: dir,
-  });
-  const controller = new OrchestrationController({ orchestrator: o, cwd: dir });
-  const plan = await controller.run(
-    { taskId: 'r', agentId: FAKE_IMPL, taskType: 'implementation', acceptanceCriteria: 'root' },
-    [{ taskId: 'c1', agentId: FAKE_IMPL, modelId: 'm-impl', taskType: 'implementation', acceptanceCriteria: 'x', budgetUnits: 10 }],
-  );
-  check('PROD: with multi-agent off, the child is refused at spawn', plan.refused.length === 1);
-  check('PROD: the refusal names the Phase 4 code', plan.refused[0]?.code === 'multi-agent-not-implemented');
-  check('PROD: nothing ran', requests.length === 0);
-  check('PROD: single-agent default is preserved', requests.length === 0);
+    const o = new Orchestrator({
+      gate: execSources({ taskPolicyAllows: false }),
+      now,
+      runtime: { run: (r) => { requests.push(r); return rt.run(r); } },
+      defaultCwd: dir,
+    });
+    const controller = new OrchestrationController({ orchestrator: o, cwd: dir });
+    const plan = await controller.run(
+      { taskId: 'r', agentId: FAKE_IMPL, taskType: 'implementation', acceptanceCriteria: 'root' },
+      [{ taskId: 'c1', agentId: FAKE_IMPL, modelId: 'm-impl', taskType: 'implementation', acceptanceCriteria: 'x', budgetUnits: 10 }],
+    );
+    check('PROD: with a denying policy, the child is refused at spawn', plan.refused.length === 1);
+    check('PROD: the refusal carries the gate code', plan.refused[0]?.code === 'task-policy-denied');
+    check('PROD: nothing ran', requests.length === 0);
   rmSync(dir, { recursive: true, force: true });
 }
 
@@ -2115,7 +2132,7 @@ section('5C-3: production orchestration path (productionCaller != NONE)');
 //   3. the auto-loop is a thin, validated trigger over deterministic tick()
 //
 // Before 5C-4 a single `maxConcurrency` meant BOTH, so a tree could never hold
-// more children than it could run — the queue could never be longer than the
+// more children than it could run - the queue could never be longer than the
 // concurrency cap, which is not a queue.
 // =====================================================================
 section('5C-4: maxChildren vs maxConcurrentAgents');
@@ -2156,9 +2173,9 @@ check('legacy maxConcurrency still governs both when only it is set', (() => {
 })());
 for (const bad of [undefined, Number.NaN, Number.POSITIVE_INFINITY, -1, 1.5]) {
   check(`an invalid maxChildren (${String(bad)}) is a missing signal, not a cap`,
-    resolveMaxChildren({ maxChildren: bad, maxConcurrency: 5, taskType: 'implementation', requestedUnits: 0, currentConcurrency: 0, multiAgentEnabled: true, descriptors: [], agentStatus: [], quotaRecords: [], registry: new ModelRegistry(), budgets: new BudgetManager(0) } as SpawnGateSources).ok === false);
+    resolveMaxChildren({ maxChildren: bad, maxConcurrency: 5, taskType: 'implementation', requestedUnits: 0, currentConcurrency: 0, descriptors: [], agentStatus: [], quotaRecords: [], registry: new ModelRegistry(), budgets: new BudgetManager(0) } as SpawnGateSources).ok === false);
   check(`an invalid maxConcurrentAgents (${String(bad)}) is a missing signal, not a cap`,
-    resolveMaxConcurrentAgents({ maxConcurrentAgents: bad, maxConcurrency: 5, taskType: 'implementation', requestedUnits: 0, currentConcurrency: 0, multiAgentEnabled: true, descriptors: [], agentStatus: [], quotaRecords: [], registry: new ModelRegistry(), budgets: new BudgetManager(0) } as SpawnGateSources).ok === false);
+    resolveMaxConcurrentAgents({ maxConcurrentAgents: bad, maxConcurrency: 5, taskType: 'implementation', requestedUnits: 0, currentConcurrency: 0, descriptors: [], agentStatus: [], quotaRecords: [], registry: new ModelRegistry(), budgets: new BudgetManager(0) } as SpawnGateSources).ok === false);
 }
 check('zero is a valid cap (denies everything rather than allowing everything)', resolveMaxChildren(mkSrc({ maxChildren: 0 })).ok === true);
 check('maxChildren falls back to the legacy value', sig(resolveMaxChildren(mkSrc({ maxConcurrency: 7 }))) === 7);
@@ -2235,7 +2252,7 @@ check('an explicit cap wins over the legacy value', sig(resolveMaxChildren(mkSrc
   check('CASE D: all five ran, none skipped', requests.length === 5);
   check('CASE D: a further tick has nothing left to do', (await s.tick()).admitted.length === 0);
   check('CASE D: all five reached to_verify', ['A', 'B', 'C', 'D', 'E'].every((id) => o.getStore().get(id)?.status === 'to_verify'));
-  check('CASE D: the queue was real — 5 existed while 2 could run', o.getStore().children('r').length === 5);
+  check('CASE D: the queue was real section5 existed while 2 could run', o.getStore().children('r').length === 5);
   rmSync(dir, { recursive: true, force: true });
 }
 
@@ -2347,7 +2364,7 @@ function depChain(script: ScriptStep) {
   rmSync(dir, { recursive: true, force: true });
 }
 {
-  // Upstream to_verify — the important case: a successful RUN is not satisfied.
+  // Upstream to_verify - the important case: a successful RUN is not satisfied.
   const { o, dir, requests } = depChain({ kind: 'exit', code: 0 });
   await o.executeTask({ taskId: 'dep-a' });
   check('DEP: upstream finished the run', o.getStore().get('dep-a')?.status === 'to_verify');
@@ -2537,7 +2554,7 @@ check('CONTROLLER: it still just forwards to the orchestrator/scheduler', (() =>
 // These tests create REAL git worktrees and write REAL files, because the whole
 // claim is a filesystem claim. Comparing path strings would prove nothing.
 // =====================================================================
-section('5C-5: WorkspaceManager — real git worktrees');
+section('5C-5: WorkspaceManager - real git worktrees');
 // =====================================================================
 
 const tmpRoot = (prefix: string): string => mkdtempSync(join(tmpdir(), prefix));
@@ -2559,7 +2576,7 @@ const gitLauncher = () => {
   return r.launcher;
 };
 
-/** A throwaway git repo with one commit — the isolation substrate. */
+/** A throwaway git repo with one commit - the isolation substrate. */
 async function makeRepo(prefix: string): Promise<string> {
   const dir = tmpRoot(prefix);
   const run = async (args: string[]) => {
@@ -2867,7 +2884,7 @@ section('5C-5: execution wiring and failure semantics');
   o.spawnChild({ taskId: 'impl', parentTaskId: 'r', agentId: FAKE_IMPL, modelId: 'm-impl', taskType: 'implementation', acceptanceCriteria: 'x', budgetUnits: 10 });
   const pending = o.executeTask({ taskId: 'impl' });
   // Creating a real git worktree takes longer than a transport start, so poll
-  // instead of guessing a delay — a fixed sleep here would be flaky.
+  // instead of guessing a delay - a fixed sleep here would be flaky.
   await waitFor(() => o.getStore().get('impl')?.status === 'running', 15000);
   check('the task is running in a worktree', o.getStore().get('impl')?.status === 'running');
   const handleNow = mgr.get('impl');
@@ -2945,7 +2962,7 @@ check('REGRESSION: the tick decrements its own free count rather than re-reading
 }
 // ===================================================================
 // ===================================================================
-// Phase 5C-6 — Workspace / Agent Capability Enforcement
+// Phase 5C-6 - Workspace / Agent Capability Enforcement
 // ===================================================================
 // Capability is NOT implementation. Git worktrees work (5C-5) for any caller;
 // what 5C-6 adds is the admission question "may THIS agent be placed in one?".
@@ -3005,7 +3022,7 @@ check('REGRESSION: the tick decrements its own free count rather than re-reading
   };
   /**
    * A runtime that records the cwd it is handed and runs a fake agent under the
-   * SAME agent id — rewriting `agentId` would be caught (correctly) by the
+   * SAME agent id - rewriting `agentId` would be caught (correctly) by the
    * orchestrator's "result came from agent X but task is assigned to Y" check.
    */
   const countingRuntime = (agentId: string) => {
@@ -3066,7 +3083,7 @@ check('REGRESSION: the tick decrements its own free count rather than re-reading
 
     // §10 / no-fallback: the SAME agent, explicitly asking for shared, must run.
     // Note the default for an implementation task is still `isolated` (§12), so
-    // this must be requested explicitly — that default is asserted below.
+    // this must be requested explicitly - that default is asserted below.
     const rt2 = countingRuntime('shared-only');
     const ok = new Orchestrator({
       gate: capSources('shared-only', { workspaceModes: ['shared'] }),
@@ -3148,19 +3165,24 @@ check('REGRESSION: the tick decrements its own free count rather than re-reading
       check(`5C-6 REGRESSION: ${label} denial created no workspace and ran nothing`, mgr.get(s.id) == null && r.rt.calls.length === 0);
     };
 
-    // quota unavailable
-    deniedAtSpawn('unavailable quota', run1(capSources('cap', CAPABLE, { quotaRecords: [quotaRecord('cap', 'unavailable')] }), ['cap', 'qc']), /quota/i);
+    // quota that could NOT be read
+    // R1-1: this case used `unavailable`, which no longer denies because it means
+    // "this provider exposes no quota endpoint" - a confirmed fact, and the state all
+    // four official agents report. The fail-closed property under test is preserved by
+    // using a status that is genuinely MISSING. `unavailable` alone now spawning is
+    // asserted in tests/spawn-gate-production.test.ts (Tests 2 and 8).
+    deniedAtSpawn('an unreadable quota', run1(capSources('cap', CAPABLE, { quotaRecords: [quotaRecord('cap', 'not_fetched')] }), ['cap', 'qc']), /quota/i);
     // agent not installed
     deniedAtSpawn('an uninstalled agent', run1(capSources('cap', CAPABLE, { agentStatus: [statusRow('cap', 'No')] }), ['cap', 'uc']), /install|status/i);
     // model unavailable
     deniedAtSpawn('an unavailable model', run1(capSources('cap', CAPABLE, { registry: registryWith([['cap', 'm-impl', ['implementation'], 'unavailable']]) }), ['cap', 'mc']), /model/i);
-    // budget exhausted — drain the agent ledger through its real API
+    // budget exhausted - drain the agent ledger through its real API
     const bSources = capSources('cap', CAPABLE);
     const ledger = bSources.budgets.agent('cap');
     ledger.reserve('drain', ledger.remaining());
     ledger.consume('drain');
     deniedAtSpawn('an exhausted budget', run1(bSources, ['cap', 'bc']), /budget/i);
-    // capability-missing (no newTask) — must NOT be reported as a workspace denial
+    // capability-missing (no newTask) - must NOT be reported as a workspace denial
     const cRun = run1(capSources('cap', { ...CAPABLE, newTask: false }), ['cap', 'cc']);
     deniedAtSpawn('a newTask-less agent', cRun, /capab/i);
     check('5C-6 REGRESSION: a capability denial is distinguishable from a workspace one', cRun.spawns[0].res.ok === false && (cRun.spawns[0].res as { code?: string }).code !== WORKSPACE_CAPABILITY_MISSING);
@@ -3170,7 +3192,7 @@ check('REGRESSION: the tick decrements its own free count rather than re-reading
 // concurrency cap still holds with worktrees enabled.
     // A real runtime with a `hang` transport is used on purpose: an earlier
     // version of this check used a hand-rolled never-resolving RunHandle, which
-    // the orchestrator rejected as a failed result — the task went `failed`
+    // the orchestrator rejected as a failed result - the task went `failed`
     // immediately, freed its slot, and the SECOND child was then admitted. The
     // assertion passed for the wrong reason (runtime-result-failed, not
     // concurrency) while two children actually ran. Asserting on the denial
@@ -3246,7 +3268,7 @@ check('WORKSPACE: there is no fallback from isolated to the project root', (() =
 })());
 
 // ===================================================================
-// Phase 5C-7 — concurrent children: regression tests A–E
+// Phase 5C-7 - concurrent children: regression tests A–E
 // ===================================================================
 // WHY THIS BLOCK EXISTS
 // ---------------------
@@ -3312,7 +3334,7 @@ check('WORKSPACE: there is no fallback from isolated to the project root', (() =
       if (!r.ok) throw new Error(`spawnChild ${k.id} denied: ${r.code} ${r.reason}`);
     }
   };
-  /** Each scenario gets a FRESH repo — see defect (a) above. */
+  /** Each scenario gets a FRESH repo - see defect (a) above. */
   const freshIsolated = async (name: string) => {
     const repo = await makeRepo(name);
     const wtRoot = tmpRoot(`${name}-out-`);
@@ -3337,7 +3359,7 @@ check('WORKSPACE: there is no fallback from isolated to the project root', (() =
     rmSync(repo, { recursive: true, force: true }); rmSync(wtRoot, { recursive: true, force: true });
   }
 
-  // ---- Case B: three children, cap 2 — A/B run, C waits, then C runs ------
+  // ---- Case B: three children, cap 2 - A/B run, C waits, then C runs ------
   {
     const { repo, wtRoot, mgr } = await freshIsolated('p7b-');
     const rt = multiRuntime([{ id: 'ag-ok', script: OK_SCRIPT }]);
@@ -3360,7 +3382,7 @@ check('WORKSPACE: there is no fallback from isolated to the project root', (() =
     rmSync(repo, { recursive: true, force: true }); rmSync(wtRoot, { recursive: true, force: true });
   }
 
-  // ---- Case C: A/B isolated — neither can see the other's file ----------
+  // ---- Case C: A/B isolated - neither can see the other's file ----------
   {
     const { repo, wtRoot, mgr } = await freshIsolated('p7c-');
     const rt = multiRuntime([{ id: 'ag-hang', script: HANG_SCRIPT }]);
@@ -3388,7 +3410,7 @@ check('WORKSPACE: there is no fallback from isolated to the project root', (() =
     rmSync(repo, { recursive: true, force: true }); rmSync(wtRoot, { recursive: true, force: true });
   }
 
-  // ---- Case D: one child fails — the other must be unaffected ------------
+  // ---- Case D: one child fails - the other must be unaffected ------------
   {
     const { repo, wtRoot, mgr } = await freshIsolated('p7d-');
     const rt = multiRuntime([{ id: 'ag-fail', script: FAIL_SCRIPT }, { id: 'ag-ok', script: OK_SCRIPT }]);
@@ -3419,7 +3441,7 @@ check('WORKSPACE: there is no fallback from isolated to the project root', (() =
     rmSync(repo, { recursive: true, force: true }); rmSync(wtRoot, { recursive: true, force: true });
   }
 
-  // ---- Case E: one child cancelled — slot released, workspace kept --------
+  // ---- Case E: one child cancelled - slot released, workspace kept --------
   {
     const { repo, wtRoot, mgr } = await freshIsolated('p7e-');
     const rt = multiRuntime([{ id: 'ag-hang', script: HANG_SCRIPT }, { id: 'ag-ok', script: OK_SCRIPT }]);
@@ -3482,7 +3504,7 @@ check('WORKSPACE: there is no fallback from isolated to the project root', (() =
 }
 
 // ===================================================================
-// Phase 5C-8 — cross-process workspace lock + safe reclamation
+// Phase 5C-8 - cross-process workspace lock + safe reclamation
 // ===================================================================
 // The lock cases below spawn REAL operating-system processes. An in-process test
 // cannot demonstrate the property that matters: two orchestrators in two
@@ -3816,7 +3838,7 @@ check('WORKSPACE: there is no fallback from isolated to the project root', (() =
 }
 
 // ===================================================================
-// Phase 5C-9 — inspect + explicit merge (the personal-tool loop)
+// Phase 5C-9 - inspect + explicit merge (the personal-tool loop)
 // ===================================================================
 // The loop being closed here:
 //   Task -> Agent -> isolated worktree -> run -> verify -> inspect -> merge
@@ -4010,7 +4032,7 @@ check('WORKSPACE: there is no fallback from isolated to the project root', (() =
   }
 
   // -------------------------------------------------------------------
-  // Case 4: ownership — task A can never merge task B's branch
+  // Case 4: ownership - task A can never merge task B's branch
   // -------------------------------------------------------------------
   {
     const repo = await makeRepo('p9o-');
@@ -4044,7 +4066,7 @@ check('WORKSPACE: there is no fallback from isolated to the project root', (() =
   }
 
   // -------------------------------------------------------------------
-  // Case 5: PARALLEL A/B — both merge, root ends with BOTH files
+  // Case 5: PARALLEL A/B - both merge, root ends with BOTH files
   // -------------------------------------------------------------------
   for (const order of [['PA', 'PB'], ['PB', 'PA']] as const) {
     const repo = await makeRepo(`p9p-${order[0]}-`);
@@ -4112,7 +4134,7 @@ check('WORKSPACE: there is no fallback from isolated to the project root', (() =
     check('CONFLICT: the child worktree is RETAINED', mgr.get('CB') !== null && existsSync(mgr.get('CB')!.cwd));
     check('CONFLICT: the child branch is RETAINED', (await gitOut(repo, ['branch', '--list', '--format=%(refname:short)'])).includes('orch/task/CB'));
     check('CONFLICT: the merged sibling branch still exists', (await gitOut(repo, ['branch', '--list', '--format=%(refname:short)'])).includes('orch/task/CA'));
-    // Resolving by hand must still work — nothing was left in a broken state.
+    // Resolving by hand must still work - nothing was left in a broken state.
     writeFileSync(join(repo, 'shared.txt'), 'resolved by hand\n');
     check('CONFLICT: the user can resolve and commit afterwards', (await gitIn(repo, ['add', '-A'])) === 0 && (await gitIn(repo, ['commit', '-m', 'resolve'])) === 0);
     rmSync(repo, { recursive: true, force: true }); rmSync(wtRoot, { recursive: true, force: true });
@@ -4141,7 +4163,7 @@ check('WORKSPACE: there is no fallback from isolated to the project root', (() =
   }
 
   // -------------------------------------------------------------------
-  // Case 8: source-level guarantees — no auto-merge, no auto-commit
+  // Case 8: source-level guarantees - no auto-merge, no auto-commit
   // -------------------------------------------------------------------
   {
     const mergeSrc = codeOf('../src/orchestration/task-result.ts');

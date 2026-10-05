@@ -34,6 +34,11 @@ export class CliJsonlTransport implements Transport {
   readonly kind: TransportKind = 'cli-jsonl';
   readonly commandLine: string;
 
+  /** R2 observability: the native process id while the child is alive. */
+  get pid(): number | null {
+    return this.proc?.pid ?? null;
+  }
+
   private readonly hub: EventHub<TransportFrame>;
   private readonly opts: CliTransportOptions;
   private proc: ManagedProcess | null = null;

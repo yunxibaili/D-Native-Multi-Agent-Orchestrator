@@ -1,0 +1,338 @@
+对。现在先把**主框架冻结**，之后所有功能都只能往这个框架里面加，不能再不断改总架构。
+
+## 冻结后的核心框架
+
+```text
+                         用户
+                          │
+                          ▼
+                      工作台/UI
+                          │
+                          ▼
+                   ┌─────────────┐
+                   │    Laya     │
+                   │  唯一大脑    │
+                   └──────┬──────┘
+                          │
+              理解 / 拆分 / DAG / 分配
+                          │
+          ┌───────────────┼───────────────┐
+          │               │               │
+          ▼               ▼               ▼
+      OpenCode       WorkBuddy CN   WorkBuddy Intl
+          │               │               │
+          └───────────────┼───────────────┘
+                          │
+                    Execution / Attempt
+                          │
+                     Machine Evidence
+                          │
+                          ▼
+                    Codex 独立审核
+                          │
+                          ▼
+                    汇总 / 最终结果
+                          │
+                          ▼
+                         用户
+                          │
+                    下一轮要求
+                          │
+                          ▼
+                        Laya
+```
+
+Codex 在这里有两个身份需要区分：
+
+**作为 Native Agent**，它可以被 Laya 分配普通任务。
+
+**作为统一审核者**，每轮执行结果最终都要经过独立审核。
+
+---
+
+# 中间新增一个固定能力：Agent 无额度自动接力
+
+它不是第五个 Agent，也不是新的决策层。
+
+它属于：
+
+```text
+Execution → Handoff
+```
+
+这一层。
+
+完整过程：
+
+```text
+Laya
+ ↓
+Task #123
+ ↓
+Attempt 1 → OpenCode
+ ↓
+执行中
+ ↓
+发现：
+额度不足 / quota exhausted / provider unavailable
+ ↓
+安全收尾
+ ↓
+保存：
+Prompt
+Output
+Tool Evidence
+Test Evidence
+Workspace
+Attempt
+当前进度
+剩余工作
+失败/中断原因
+ ↓
+生成 Continuation / Handoff
+ ↓
+Laya
+ ↓
+选择下一个可用 Agent
+ ↓
+Attempt 2 → WorkBuddy Intl
+ ↓
+继续 Task #123
+```
+
+最关键的是：
+
+### Task 不变
+
+```text
+Task #123
+```
+
+只是：
+
+```text
+Attempt 1 → OpenCode
+Attempt 2 → WorkBuddy Intl
+Attempt 3 → Codex / OpenCode
+```
+
+所以不会出现：
+
+```text
+OpenCode 做到一半
+↓
+创建一个新任务
+↓
+第二个 Agent 不知道前面做了什么
+```
+
+而是：
+
+```text
+同一个 Task
+↓
+连续 Attempt
+↓
+Continuation
+```
+
+---
+
+# 自动接力的触发条件
+
+第一版先固定几个，不要搞复杂：
+
+```text
+quota-exhausted
+quota-at-risk
+provider-unavailable
+agent-unavailable
+agent-session-failed
+execution-timeout
+```
+
+而：
+
+```text
+review-handoff
+human-requested
+```
+
+属于主动切换，不是自动额度接力。
+
+---
+
+# 自动接力时谁决定换谁？
+
+仍然是 **Laya**。
+
+绝对不要出现：
+
+```text
+QuotaManager
+   ↓
+自己决定
+   ↓
+WorkBuddy
+```
+
+也不要：
+
+```text
+HandoffManager
+   ↓
+自己规划
+```
+
+而是：
+
+```text
+Agent 当前状态
+       ↓
+Execution outcome
+       ↓
+Laya
+       ↓
+重新选择下一个 Agent
+```
+
+所以控制权永远只有：
+
+```text
+Laya
+```
+
+---
+
+# 这个时候 Laya 的职责就很清楚了
+
+Laya 不是一直自主干活，而是在几个关键点做决策：
+
+```text
+① 开始
+   理解任务 / 拆 DAG / 选 Agent
+
+② 执行中
+   根据观察结果决定是否继续、补上下文、推进依赖
+
+③ Agent 无法继续
+   判断是否需要 Handoff / 换 Agent
+
+④ 执行结束
+   整理这一轮结果
+
+⑤ 进入 Codex Review
+   让 Codex 独立审核
+
+⑥ 汇总给用户
+   用户决定下一轮
+```
+
+这样就不会再变成之前那种：
+
+```text
+Laya
+→ Agent
+→ Laya
+→ Agent
+→ Laya
+→ Agent
+→ 无限自动重规划
+```
+
+---
+
+# 最终我建议把一个 Task 固定成这个生命周期
+
+```text
+CREATED
+   ↓
+PLANNED
+   ↓
+ASSIGNED
+   ↓
+EXECUTING
+   │
+   ├───────────────┐
+   │               │
+   │           quota / failure
+   │               │
+   │               ▼
+   │           HANDOFF
+   │               │
+   │               ▼
+   │           REASSIGNED
+   │               │
+   │               └────→ EXECUTING
+   │
+   ▼
+ATTEMPT FINISHED
+   ↓
+EVIDENCE COLLECTED
+   ↓
+CODEX REVIEW
+   ↓
+USER RESULT
+   ↓
+HUMAN NEXT REQUEST
+   ↓
+Laya
+```
+
+这里的 `HANDOFF` 是 **Attempt 生命周期的一部分**，不是新的工作流系统。
+
+---
+
+# 还有一个重要约束
+
+**自动切换 Agent 时，不能只传一句“继续完成任务”。**
+
+至少要传：
+
+```text
+ContinuationPacket
+├─ Task ID
+├─ Original objective
+├─ Previous Agent
+├─ Previous Attempt
+├─ Why handoff happened
+├─ Current progress
+├─ Completed work
+├─ Remaining work
+├─ Changed files
+├─ Current tests
+├─ Known errors
+├─ Workspace
+├─ Relevant artifacts
+└─ Next recommended action
+```
+
+这样 WorkBuddy 接 OpenCode 的活，或者 OpenCode 接 WorkBuddy 的活，都有明确上下文。
+
+而且以后如果 Agent 原生 session 可以续，就：
+
+```text
+Native Session Resume
+        +
+ContinuationPacket
+```
+
+两者一起用，不需要我们复制整个聊天记录。
+
+---
+
+## 所以现在就把框架定死为一句话
+
+> **用户给需求 → Laya 拆任务和调度 Native Agent → Agent 执行，可并行、可接力 → 所有执行结果形成证据 → Codex 统一独立审核 → 汇总给用户 → 用户决定下一轮。**
+
+其中：
+
+```text
+Laya = 唯一决策大脑
+OpenCode / Codex / WorkBuddy CN / WorkBuddy Intl = Native Agent
+Handoff = 执行过程中的自动接力能力
+Codex Review = 统一审核环节
+用户 = 最终控制者
+```
+
+以后再出现新需求，我们先判断它**能不能塞进这个框架**；能就加能力，不能就不随便改框架。

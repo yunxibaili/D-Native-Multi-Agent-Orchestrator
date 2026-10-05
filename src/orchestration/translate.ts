@@ -33,8 +33,40 @@ export interface RunTranslation {
   reason: string;
 }
 
+/**
+ * The runtime error codes that mean "this worker could not continue", as opposed to
+ * "the work is wrong".
+ *
+ * The distinction is drawn from the REAL `RunResult.error.code` values the runtime
+ * emits, not invented here. `NONZERO_EXIT` is deliberately ABSENT: a process that ran
+ * and exited non-zero reported on the work, and handing that to another agent
+ * automatically is the "换 agent 再试" loop this project forbids.
+ */
+export const AVAILABILITY_ERROR_CODES: ReadonlySet<string> = new Set([
+  'SPAWN_FAILED',
+  'TRANSPORT_ERROR',
+]);
+
+export interface TranslateOptions {
+  /**
+   * R2-3: allow an availability-caused failure to park in `retrying` instead of going
+   * terminal.
+   *
+   * DEFAULT FALSE, so every existing caller is byte-identical. It is off by default
+   * because `failed` is the honest default reading of a failed run, and a translation
+   * that quietly reinterprets failure as "try again" would change the meaning of every
+   * round in the system.
+   *
+   * When it IS enabled, only `SPAWN_FAILED` / `TRANSPORT_ERROR` are affected: the agent
+   * could not be started, or its session died. The task lands in `retrying`, whose only
+   * exits are `queued` (another attempt) and `failed` (budget exhausted), so it cannot
+   * idle in a non-terminal state and be mistaken for progress.
+   */
+  readonly allowAvailabilityContinuation?: boolean;
+}
+
 /** Map a terminal `RunResult` state onto a task status. */
-export function translateRunResult(result: RunResult): RunTranslation {
+export function translateRunResult(result: RunResult, options: TranslateOptions = {}): RunTranslation {
   const state: TerminalState = result.state;
 
   switch (state) {
@@ -48,13 +80,29 @@ export function translateRunResult(result: RunResult): RunTranslation {
           'agent run succeeded; the work is NOT yet verified — a successful run does not imply acceptance criteria were met',
       };
 
-    case 'failed':
+    case 'failed': {
+      // R2-3: an availability failure parks rather than terminating, but ONLY when the
+      // caller opted in. It is still not a success and still not verified.
+      if (options.allowAvailabilityContinuation === true) {
+        const code = result.error?.code;
+        if (code !== undefined && AVAILABILITY_ERROR_CODES.has(code)) {
+          return {
+            to: 'retrying',
+            terminal: false,
+            awaitingVerification: false,
+            reason:
+              `${describeFailure(result)} — the worker could not continue (${code}), so the task is parked in ` +
+              'retrying rather than failed; it can move to another agent or exhaust into failed',
+          };
+        }
+      }
       return {
         to: 'failed',
         terminal: true,
         awaitingVerification: false,
         reason: describeFailure(result),
       };
+    }
 
     case 'cancelled':
       return {

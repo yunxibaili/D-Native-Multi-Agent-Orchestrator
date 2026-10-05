@@ -1,10 +1,10 @@
-﻿/**
- * src/orchestration/orchestrator.ts 鈥?Root 鈫?one level of children, and their
+/**
+ * src/orchestration/orchestrator.ts - Root - one level of children, and their
  * execution.
  *
  * 5C-1: create a root, spawn depth-1 children through the real spawn gate,
  * record lifecycle, translate results, cancel.
- * 5C-2: `executeTask()` 鈥?hand a planned child to the EXISTING runtime and write
+ * 5C-2: `executeTask()` - hand a planned child to the EXISTING runtime and write
  * the `RunResult` back to the lifecycle.
  *
  * What is NOT here, by mandate: a DAG scheduler, recursive spawning, a
@@ -17,12 +17,12 @@
  * It decides *what* runs and *by whom*; the existing runtime still decides *how*.
  *
  * Task state lives in `TaskStore` and NOWHERE ELSE. The `liveHandles` map below
- * holds run handles so a cancel can reach the runtime 鈥?it is a handle registry,
+ * holds run handles so a cancel can reach the runtime - it is a handle registry,
  * not a second copy of task state, and a task's status is only ever read from
  * the store.
  */
 
-import { translateRunResult, translateVerification, type VerificationOutcome } from './translate.ts';
+import { translateRunResult, translateVerification, type TranslateOptions, type VerificationOutcome } from './translate.ts';
 import { buildSpawnGateInput, resolveWorkspaceModeCapability, type SpawnGateSources, type SpawnGateDecision } from './spawn-gate-input.ts';
 import { unmetDependencies, type Task, type TaskSpec, type TaskStatus } from './task.ts';
 import { TaskStore } from './store.ts';
@@ -37,6 +37,21 @@ import {
 import { existsSync } from 'node:fs';
 import { WorkspaceError, defaultWorkspaceMode, type WorkspaceHandle, type WorkspaceManager, type WorkspaceMode } from './workspace.ts';
 import {
+  claimIsLeaseCurrent,
+  describeScope,
+  modeRequiresIsolation,
+  normalizeScopeForWorkspace,
+  type ResourceClaimMode,
+  type ResourceScope,
+} from './resource-claim.ts';
+import {
+  claimLeaseVersionOf,
+  mintFencingToken,
+  modelKeyOf,
+  validateWriteback,
+  type PresentedLease,
+} from './assignment-lease.ts';
+import {
   mergeTaskBranch,
   summarizeTask,
   type GitContext,
@@ -44,8 +59,14 @@ import {
   type TaskResultSummary,
 } from './task-result.ts';
 import { runGit } from './git.ts';
-import type { RunHandle, RunResult } from '../core/types.ts';
+
 import type { TaskType } from '../quota/types.ts';
+// The THREE types this file uses but which the R2-3 observation edit dropped from the
+// import list, breaking `npm run typecheck` with 6 "Cannot find name" errors:
+//   RunHandle    -> liveHandles / the local `let handle: RunHandle`
+//   RunResult    -> applyRunResult / the local `let result: RunResult`
+//   RunObservation -> lastObservations / observeExecution (R2-3 process observation)
+import type { RunHandle, RunObservation, RunResult } from '../core/types.ts';
 
 /** MVP limits. Hard caps, not preferences. */
 export const MVP_MAX_DEPTH = 1;
@@ -83,7 +104,7 @@ export interface OrchestrationOptions {
   resultTimeoutMs?: number;
   /**
    * Workspace lifecycle authority. Absent means every task runs in the cwd the
-   * caller supplied, i.e. NO isolation — which is why it is opt-in and never
+   * caller supplied, i.e. NO isolation - which is why it is opt-in and never
    * assumed. Workspace state lives HERE, not in TaskStore.
    */
   workspace?: WorkspaceManager;
@@ -92,6 +113,19 @@ export interface OrchestrationOptions {
    * tasks get an isolated worktree, review tasks share an explicit directory.
    */
   workspaceMode?: (task: Task) => WorkspaceMode | 'none';
+  /**
+   * R2-1: what a task claims to access, resolved per task.
+   *
+   * Injected rather than computed here, because "does this task write?" is a
+   * property of the WORK (a research task reads whatever it is pointed at; an
+   * implementation task writes), not of the agent. Keeping it a function of the
+   * task - never of `agentId` - is what makes this hold for the four current agents
+   * and for any agent admitted later under the same contract (section24.7).
+   *
+   * Returning `null` means "this task makes no resource claim", which is the honest
+   * answer for a task that only reads, and skips the check entirely.
+   */
+  resourceClaims?: (task: Task) => { mode: ResourceClaimMode; scope: ResourceScope } | null;
 }
 
 export interface ExecuteTaskRequest {
@@ -113,13 +147,24 @@ export interface ExecuteTaskRequest {
    * Escape hatch for the dependency check, and ONLY for that.
    *
    * `SpawnChildRequest.allowUnmetDependencies` lets a task EXIST while it waits.
-   * This flag lets it EXECUTE while it waits — which is almost never wanted, and
+   * This flag lets it EXECUTE while it waits - which is almost never wanted, and
    * exists so a caller that genuinely drives a dependency chain itself is not
    * blocked. It cannot relax the STRUCTURAL dependency rules (unknown / self /
    * duplicate / parent cycle): those are already refused at spawn time and are
    * not consulted here.
    */
   allowUnmetDependenciesAtExecute?: boolean;
+  /**
+   * R2-3: where an availability-caused failure (`SPAWN_FAILED` / `TRANSPORT_ERROR`)
+   * should land.
+   *
+   * Absent / false keeps the historical behaviour exactly: such a run makes the task
+   * `failed`. Setting `allowAvailabilityContinuation` parks it in `retrying` instead, so
+   * the task stays migratable and an operator can move it to another agent as the SAME
+   * task. It is opt-in per call because it changes what a failed run MEANS, which is a
+   * round-level policy choice rather than something this layer should assume.
+   */
+  translate?: TranslateOptions;
 }
 
 export interface SpawnChildRequest {
@@ -148,6 +193,23 @@ export type MutateOutcome =
   | { ok: true; task: Task }
   | { ok: false; code: string; reason: string };
 
+/**
+ * R2-1.1 (P1-b): is there OTHER work that could run beside this one?
+ *
+ * Read straight from the store, which is the only task-state authority - so the
+ * answer cannot disagree with what the Scheduler would admit. A task is "beside"
+ * while it is still eligible to be dispatched; a terminal one is not, because it is
+ * no longer competing for the workspace.
+ *
+ * Depth > 0 excludes the root: a root is never dispatched, so it is not a peer.
+ */
+function hasParallelWorkBeside(store: TaskStore, selfTaskId: string): boolean {
+  const live: ReadonlySet<TaskStatus> = new Set<TaskStatus>(['planned', 'queued', 'running']);
+  return store
+    .all()
+    .some((t) => t.depth > 0 && t.taskId !== selfTaskId && live.has(t.status));
+}
+
 export class Orchestrator {
   private readonly store: TaskStore;
   private readonly limits: OrchestrationLimits;
@@ -157,6 +219,8 @@ export class Orchestrator {
   private readonly resultTimeoutMs: number | undefined;
   private readonly workspace: WorkspaceManager | null;
   private readonly workspaceMode: (task: Task) => WorkspaceMode | 'none';
+  /** R2-1: per-task resource intent. `null` = no claim, and the check is skipped. */
+  private readonly resourceClaims: ((task: Task) => { mode: ResourceClaimMode; scope: ResourceScope } | null) | null;
   /**
    * Live child count = tasks in a non-terminal state. Counted from the store, not
    * from a separate counter, so it cannot drift from the authoritative state.
@@ -167,9 +231,17 @@ export class Orchestrator {
    *
    * This is a HANDLE REGISTRY, not task state. A task's status is only ever read
    * from the store, and losing this map (on restart) loses the ability to cancel
-   * an in-flight run 鈥?not the record of what the task did.
+   * an in-flight run - not the record of what the task did.
    */
   private readonly liveHandles = new Map<string, RunHandle>();
+  /**
+   * R2 observability: the LAST known machine-side execution facts per task,
+   * captured from the run handle at dispatch and again at settle. This is a
+   * read-only cache of what the execution edge itself saw — not a state
+   * authority (TaskStore owns state, AttemptStore owns evidence) and it cannot
+   * dispatch or mutate anything.
+   */
+  private readonly lastObservations = new Map<string, RunObservation>();
 
   constructor(options: OrchestrationOptions) {
     this.store = options.store ?? new TaskStore();
@@ -181,13 +253,29 @@ export class Orchestrator {
     this.resultTimeoutMs = options.resultTimeoutMs;
     this.workspace = options.workspace ?? null;
     this.workspaceMode = options.workspaceMode ?? ((task) => (this.workspace === null ? 'none' : defaultWorkspaceMode(task)));
-    this.workspace = options.workspace ?? null;
-    this.workspaceMode = options.workspaceMode ?? ((task) => (this.workspace === null ? 'none' : defaultWorkspaceMode(task)));
+    this.resourceClaims = options.resourceClaims ?? null;
   }
 
   /** The workspace manager, when one is configured. Lifecycle authority only. */
   getWorkspace(): WorkspaceManager | null {
     return this.workspace;
+  }
+
+  /**
+   * R2-1: give a task's resource claims back.
+   *
+   * Called when the run settles, and exposed so a caller driving long rounds can
+   * release on abort. Releasing is deliberately NOT tied to a task reaching a
+   * terminal state: a task in `to_verify` is no longer writing, and holding its
+   * claim until review would block an unrelated writer for the review's duration.
+   * The artifacts a reviewer needs are the workspace and the evidence, not the
+   * claim - nothing is deleted here.
+   */
+  releaseClaim(taskId: string, claimed: { mode: ResourceClaimMode; scope: ResourceScope } | null): number {
+    if (this.workspace === null || claimed === null) return 0;
+    // Scoped release (R2-1.1 P2-1): freeing the scope this run held, while any OTHER
+    // scope the same task still holds stays protected.
+    return this.workspace.releaseResourceClaimForScope(taskId, claimed.mode, claimed.scope);
   }
 
   /** The workspace mode this task would receive. Exposed for callers and tests. */
@@ -222,7 +310,7 @@ export class Orchestrator {
    *
    * Deliberately a DIFFERENT number from `getConcurrencyLimit()`. Before 5C-4 a
    * single `maxConcurrency` meant both, so a tree could never hold more children
-   * than it could run — the queue could never be longer than the concurrency
+   * than it could run - the queue could never be longer than the concurrency
    * cap, which is not a queue. Separating them lets N children wait while M run.
    */
   getChildLimit(): number {
@@ -240,14 +328,14 @@ export class Orchestrator {
    * redefine it.
    *
    * The consequence is that this number is NOT "execution slots in use" at the
-   * moment a task is being admitted 鈥?see `liveChildrenExcluding`.
+   * moment a task is being admitted - see `liveChildrenExcluding`.
    */
   liveChildren(): number {
     return this.store.all().filter((t) => t.depth > 0 && t.status !== 'succeeded' && t.status !== 'failed' && t.status !== 'cancelled').length;
   }
 
   /**
-   * Live children EXCLUDING one task 鈥?the count that execution admission uses.
+   * Live children EXCLUDING one task - the count that execution admission uses.
    *
    * The 5C-2 bug: `executeTask` gated on `liveChildren()` while the task being
    * executed was still `planned`/`queued` and therefore already counted itself.
@@ -261,7 +349,7 @@ export class Orchestrator {
    * and cannot drift if the counting rule changes. The task being admitted has
    * not started and holds no execution slot, so counting it was simply wrong.
    *
-   * The count still comes from the TaskStore 鈥?there is no second authority.
+   * The count still comes from the TaskStore - there is no second authority.
    */
   liveChildrenExcluding(taskId: string): number {
     return this.store
@@ -277,7 +365,7 @@ export class Orchestrator {
    *
    * 5C-4 change, and the reason the two caps had to be split: this used to be a
    * count of every non-terminal child (`liveChildrenExcluding`). That made a
-   * queue impossible — with 5 children waiting and a cap of 2, the first dispatch
+   * queue impossible - with 5 children waiting and a cap of 2, the first dispatch
    * saw "4 others" and denied ITSELF, so no tree larger than the concurrency cap
    * could ever contain a backlog. An execution slot is occupied by a RUNNING
    * task; `planned` and `queued` children hold none.
@@ -294,7 +382,7 @@ export class Orchestrator {
       .length;
   }
 
-  /** Create the root task. A root cannot itself be gated — it is the entry point. */
+  /** Create the root task. A root cannot itself be gated - it is the entry point. */
   createRoot(spec: { taskId: string; agentId: string; modelId?: string | null; taskType: TaskType; acceptanceCriteria: string; budgetUnits?: number }): MutateOutcome {
     const result = this.store.create(
       { ...spec, parentTaskId: null },
@@ -308,7 +396,7 @@ export class Orchestrator {
   /**
    * Spawn one child, in the mandated order:
    *
-   *   task validation 鈫?spawn gate 鈫?budget precondition 鈫?availability 鈫?create
+   *   task validation - spawn gate - budget precondition - availability - create
    *
    * There is no bypass. If the gate denies, no task exists.
    */
@@ -367,7 +455,10 @@ export class Orchestrator {
     };
     if (req.allowUnmetDependencies !== true) {
       const known = new Map(this.store.all().map((t) => [t.taskId, t]));
-      const unmet = unmetDependencies({ ...spec, status: 'planned', rootTaskId: parent.rootTaskId, depth: 1, artifacts: [], retryCount: 0, order: 0, createdAt: 0, startedAt: null, finishedAt: null, blockedReason: null } as Task, known);
+      // A synthetic task used ONLY to ask "are this candidate's dependencies met?". It is
+      // never stored, so it carries the same lease seed `createTask` would give it -
+      // derived from the same helpers rather than typed out, so the two cannot drift.
+      const unmet = unmetDependencies({ ...spec, status: 'planned', rootTaskId: parent.rootTaskId, depth: 1, artifacts: [], retryCount: 0, order: 0, createdAt: 0, startedAt: null, finishedAt: null, blockedReason: null, stale: false, staleReason: null, generation: 0, leaseVersion: 1, fencingToken: mintFencingToken({ taskId: spec.taskId, leaseVersion: 1, agentId: spec.agentId, modelKey: modelKeyOf(spec.agentId, spec.modelId ?? null) }) } as Task, known);
       if (unmet.length > 0) {
         return {
           ok: false,
@@ -380,7 +471,7 @@ export class Orchestrator {
     // ---- 5. the REAL spawn gate ------------------------------------------
     // `taskType` comes from the REQUEST, not from the stored gate sources.
     // Defaulting to the sources' taskType would let a review child be gated as
-    // an implementation task 鈥?which is how an implementation agent could end up
+    // an implementation task - which is how an implementation agent could end up
     // in a reviewer slot, and how a reviewer could be refused for lacking
     // `implementation` in its registry entry.
     const decision = buildSpawnGateInput({
@@ -395,14 +486,14 @@ export class Orchestrator {
         ...this.gate,
         taskType: req.taskType,
         // Spawn admission is measured in OUTSTANDING children, so the cap that
-        // applies is `maxChildren` — NOT the execution concurrency cap. This is
+        // applies is `maxChildren` - NOT the execution concurrency cap. This is
         // the 5C-4 split: a tree may hold more children than it may run.
         currentConcurrency: this.liveChildren(),
         maxConcurrency: this.getChildLimit(),
       },
     });
       if (!decision.result.allowed) {
-        // The gate's reason is surfaced verbatim 鈥?"no ledger exists" must not
+        // The gate's reason is surfaced verbatim -"no ledger exists" must not
         // be softened into "insufficient", which would send the operator to top
         // up a budget that does not exist. The missing-signal list is appended
         // so a data problem and a budget problem are distinguishable.
@@ -426,17 +517,17 @@ export class Orchestrator {
     return { ok: true, task: created.task, gate: decision };
   }
 
-  /** planned 鈫?queued. */
+  /** planned - queued. */
   queue(taskId: string): MutateOutcome {
     return this.mutate(taskId, 'queued');
   }
 
-  /** queued 鈫?running. */
+  /** queued - running. */
   start(taskId: string): MutateOutcome {
     return this.mutate(taskId, 'running');
   }
 
-  /** Any live state 鈫?blocked, with a recorded reason. */
+  /** Any live state - blocked, with a recorded reason. */
   block(taskId: string, reason: string): MutateOutcome {
     if (reason.trim() === '') {
       return { ok: false, code: 'blocked-reason-required', reason: 'a blocked task must say what it is blocked on' };
@@ -445,26 +536,121 @@ export class Orchestrator {
   }
 
   /**
-   * Apply a terminal `RunResult` to a task.
+   * P6-D1: `retrying -> queued` on the SAME worker assignment.
    *
-   * This is the ONLY path by which a `RunResult` changes a task, and a
-   * successful run lands in `to_verify` 鈥?never in `succeeded`.
+   * NOT a rework, and the distinction is load-bearing. A rework is a REVIEWER's
+   * verdict re-entering the task (`prepareRework`); a retry is Laya's own
+   * observation-driven decision that a failed attempt deserves another go. Both draw
+   * on the task's single `retryCount`, so neither loop can escape the other's bound
+   * by being counted separately - but they are separate paths and separate evidence
+   * rows, because merging them would make "the reviewer asked again" indistinguishable
+   * from "the brain decided to try once more".
+   *
+   * The bound is enforced HERE, not left to the caller. A decision loop that may ask
+   * again on the next tick would otherwise be an unbounded retry engine with a model
+   * at the far end of it.
+   *
+   * The status change goes through the store's own transition table (`retrying` was
+   * reserved by 5C-1 and P6-D1 un-reserves it), never a raw write.
    */
-  applyRunResult(taskId: string, result: RunResult): MutateOutcome {
+  retry(taskId: string, reason: string, maxRetries: number): MutateOutcome {
     const task = this.store.get(taskId);
     if (task === null) {
       return { ok: false, code: 'task-not-found', reason: `no task "${taskId}"` };
     }
-    if (result.agentId !== task.agentId) {
-      // A result from a different agent is not this task's result. Accepting it
-      // would let one agent's success mark another's work done.
+    if (!Number.isInteger(maxRetries) || maxRetries < 1) {
+      // A nonsensical bound would mean "retry forever", which is the one
+      // interpretation a bounded loop must never have.
       return {
-        ok: false,
-        code: 'agent-mismatch',
-        reason: `result came from agent "${result.agentId}" but task is assigned to "${task.agentId}"`,
+        ok: false, code: 'invalid-max-retries',
+        reason: `maxRetries must be an integer >= 1, got ${String(maxRetries)}`,
       };
     }
-    const translation = translateRunResult(result);
+    if (task.retryCount >= maxRetries) {
+      return {
+        ok: false,
+        code: 'retry-exhausted',
+        reason: `task "${taskId}" has already used ${task.retryCount} retry attempt(s) of a maximum of ${maxRetries}`,
+      };
+    }
+    if (task.status !== 'retrying') {
+      return {
+        ok: false,
+        code: 'retry-not-applicable',
+        reason: `task "${taskId}" is ${task.status}; only a task a run left in retrying can be retried`,
+      };
+    }
+    void reason; // recorded by the caller through AttemptStore; the store holds the count
+    // `incrementRetry` is TaskStore's own counter method (prepareRework uses it too),
+    // so the number that stops the loop lives on the task and survives a restart.
+    this.store.incrementRetry(taskId);
+    return this.mutate(taskId, 'queued');
+  }
+
+  /**
+   * P6-D1: move a STARTED task to a different worker.
+   *
+   * A thin, audited delegation to `TaskStore.migrateIdentityAfterStart` - the store
+   * stays the only identity writer and this adds no rule of its own. It exists so the
+   * decision layer reaches the authority through the same narrow interface
+   * `prepareRework` uses, instead of holding a store reference.
+   */
+  migrateIdentity(taskId: string, next: { agentId: string; modelId: string | null; reason: string }): MutateOutcome {
+    const result = this.store.migrateIdentityAfterStart(taskId, next, this.now());
+    return result.ok && result.task !== null
+      ? { ok: true, task: result.task }
+      : { ok: false, code: result.code ?? 'migration-failed', reason: result.reason ?? 'unknown' };
+  }
+
+  /**
+   * Apply a terminal `RunResult` to a task.
+   *
+   * This is the ONLY path by which a `RunResult` changes a task, and a
+   * successful run lands in `to_verify` - never in `succeeded`.
+   */
+  applyRunResult(
+    taskId: string,
+    result: RunResult,
+    presented?: PresentedLease,
+    options: TranslateOptions = {},
+  ): MutateOutcome {
+    // R2-2 final closure (P1-2): ONE lifecycle-aware validation primitive for every
+    // execution write-back.
+    //
+    // `checkFencing` alone cannot see a revocation - `revokeLease` deliberately keeps the
+    // version and the token, so a revoked lease still "matches" - which is why this used
+    // to carry a hand-written `lease-revoked` gate here while `stillHoldsLease()` did
+    // not. Two call sites with two different definitions of "may this write back" is how
+    // a `runtime.run()` throw after expiry still managed to write `failed`. Both now call
+    // `validateWriteback`, so there is exactly one definition.
+    //
+    // `applyVerification` deliberately does NOT come through here: verification is a
+    // different authority answering a different question, and §2.18 keeps it outside
+    // execution-lease enforcement.
+    const current = this.store.get(taskId);
+    if (current === null) {
+      return { ok: false, code: 'task-not-found', reason: `no task "${taskId}"` };
+    }
+    const verdict = validateWriteback(
+      {
+        lease: this.store.leaseOf(taskId),
+        agentId: current.agentId,
+        modelId: current.modelId,
+        leaseVersion: current.leaseVersion,
+        fencingToken: current.fencingToken,
+        producedBy: result.agentId,
+      },
+      presented,
+      this.now(),
+    );
+    if (verdict.accepted === false) {
+      return { ok: false, code: verdict.code, reason: verdict.reason };
+    }
+    // R2-3: `options` is threaded, not interpreted, here. Whether an availability
+    // failure parks in `retrying` instead of going terminal is a CALLER's policy
+    // decision, made once by whoever configured the round - this layer stays the single
+    // place a RunResult becomes task state and adds no rule of its own.
+    const translation = translateRunResult(result, options);
     return this.mutate(taskId, translation.to, translation.reason);
   }
 
@@ -478,7 +664,7 @@ export class Orchestrator {
   applyVerification(taskId: string, outcome: VerificationOutcome): MutateOutcome {
     const translated = translateVerification(outcome);
     // P6-D0 UN-RESERVES `rework`. The transition has been in the table since 5C-1
-    // (which reserved it deliberately), so applying it needs no new rule here —
+    // (which reserved it deliberately), so applying it needs no new rule here -
     // only the refusal goes away. The rework LOOP itself lives in
     // orchestration/review-loop.ts, which moves the task `rework -> queued` via
     // TaskStore and lets the EXISTING TaskScheduler dispatch it. That path is
@@ -516,16 +702,16 @@ export class Orchestrator {
    *
    * The mandated order:
    *
-   *   task lookup 鈫?status check 鈫?gate 鈫?planned鈫抭ueued鈫抮unning
-   *   鈫?Orchestrator.run() 鈫?RunResult 鈫?lifecycle write-back
+   *   task lookup - status check - gate - planned→queued→running
+   *   - Orchestrator.run() - RunResult - lifecycle write-back
    *
    * Every status change goes through the TaskStore, which stays the only
-   * authority. `running 鈫?succeeded` is unreachable by construction: the
+   * authority. `running - succeeded` is unreachable by construction: the
    * translation puts a successful run into `to_verify` and only an explicit
    * `applyVerification('pass')` can succeed a task.
    *
-   * A throw from `runtime.run()` 鈥?`CapabilityError`, `InvalidRequestError`, or
-   * anything else 鈥?is caught and recorded as `failed` with the real message.
+   * A throw from `runtime.run()` -`CapabilityError`, `InvalidRequestError`, or
+   * anything else - is caught and recorded as `failed` with the real message.
    * Swallowing it as success is the specific failure this refuses to allow.
    */
   async executeTask(req: ExecuteTaskRequest): Promise<ExecuteOutcome> {
@@ -535,7 +721,7 @@ export class Orchestrator {
       return {
         ok: false,
         code: 'task-not-found',
-        reason: `no task "${req.taskId}" 鈥?executeTask never creates tasks; use spawnChildTask`,
+        reason: `no task "${req.taskId}" - executeTask never creates tasks; use spawnChildTask`,
       };
     }
 
@@ -563,7 +749,7 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
       code: 'dependency-unmet',
       reason:
         `dependency not satisfied: ${unmet.join(', ')}. ` +
-        'Only a `succeeded` dependency satisfies execution — a `to_verify` dependency still needs verification.',
+        'Only a `succeeded` dependency satisfies execution - a `to_verify` dependency still needs verification.',
       status: task.status,
     };
   }
@@ -591,14 +777,14 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
 
     // ---- re-check the gate at execution time ----
     // The 5C-1 gate runs at SPAWN. Money is actually spent at EXECUTE, and the
-    // budget/quota/concurrency facts can all have changed in between 鈥?a child
+    // budget/quota/concurrency facts can all have changed in between - a child
     // queued behind two others may no longer fit under the cap. Re-running the
     // same pure gate here is what makes the gate a real precondition rather than
     // a one-time formality.
     // Re-checked at execution, so `currentConcurrency` must mean "other children
     // already live", NOT "including me": the task being admitted is still
     // planned/queued and holds no execution slot yet. Counting it made a single
-    // child unrunnable at maxConcurrency=1. Spawn time needs no such exclusion 鈥?    // the child does not exist in the store yet.
+    // child unrunnable at maxConcurrency=1. Spawn time needs no such exclusion -    // the child does not exist in the store yet.
     const decision = buildSpawnGateInput({
       taskId: task.taskId,
       agentId: task.agentId,
@@ -630,7 +816,7 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
     // Checked BEFORE the workspace is prepared, and therefore before any state
     // change. The ordering is the point: creating a worktree and only then
     // discovering the agent may not use one would mean creating a directory
-    // that has to be cleaned up again — a side effect an admission rejection
+    // that has to be cleaned up again - a side effect an admission rejection
     // should never produce.
     //
     // Mode is resolved here (a pure function of the task) so the check and the
@@ -650,7 +836,7 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
           ok: false,
           code: capability.missing.code,
           reason: `${capability.missing.reason} (refused: no workspace, no worktree, no runtime call, ` +
-            `no fallback to a shared checkout — task stays ${task.status}, nothing was spent)`,
+            `no fallback to a shared checkout - task stays ${task.status}, nothing was spent)`,
           status: task.status,
         };
       }
@@ -661,9 +847,14 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
     // running or queued. Isolation is requested explicitly and NEVER downgraded:
     // if a worktree cannot be created we refuse rather than fall back to the
     // repo root, because a silent fallback would LOOK like isolation while
-    // sharing one checkout — the exact failure this layer exists to prevent.
+    // sharing one checkout - the exact failure this layer exists to prevent.
     let resolvedCwd = cwd;
     let workspace: WorkspaceHandle | null = null;
+    // Set once this task's claim is TAKEN, so the release below can give back
+    // EXACTLY that scope - no earlier (another writer would still be blocked) and no
+    // later (a stale claim would block a finished task). Scoped, not per-task: a task
+    // may hold several claims and releasing "the task's claims" would drop the rest.
+    let claimedScope: { mode: ResourceClaimMode; scope: ResourceScope } | null = null;
     if (this.workspace !== null) {
       const mode = requiredMode;
       if (mode !== 'none') {
@@ -700,80 +891,322 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
       }
     }
 
-    // ---- planned → queued → running, through the store ----
-    // `executeTask` accepts a task that is ALREADY queued, so the queue step is
-    // conditional. Forcing `queued 鈫?queued` would be refused by the transition
-    // table, which would make a perfectly legitimate re-request fail.
-    let queuedTask = task;
-    if (task.status === 'planned') {
-      const queued = this.mutate(task.taskId, 'queued');
-      if (!queued.ok) return { ok: false, code: queued.code, reason: queued.reason, status: task.status };
-      queuedTask = queued.task;
-    }
-    const running = this.mutate(queuedTask.taskId, 'running');
-    if (!running.ok) return { ok: false, code: running.code, reason: running.reason, status: queuedTask.status };
+    // ---- R2-1: resource admission, at the SAME point as the workspace check ----
+    // section7.3 of the R2 contract puts this exactly here: after the Spawn Gate, before
+    // `runtime.run`, reusing the 5C-6 workspace admission check point rather than
+    // adding a new authority.
+    //
+    // Two properties this must NOT have, and does not:
+    //   - it does not dispatch, retry, re-plan, reassign or swap agents. A conflict
+    //     is reported and the task keeps its status, exactly like the workspace
+    //     capability refusal above, so the EXISTING Laya / Scheduler / Human Gate
+    //     semantics decide what happens next. No autonomous recovery was added.
+    //   - it does not treat a conflict as an agent failure. Nothing ran, so no worker
+    //     is at fault and the code is `resource-conflict`, not `failed`.
+    //
+    // R2-1.1 (P1-b): this runs EVEN WITH NO WORKSPACE MANAGER. The guard used to be
+    // `this.workspace !== null && ...`, so a non-git project silently skipped resource
+    // admission entirely and ran parallel WRITERS in one shared cwd - the exact
+    // failure the layer exists to prevent. Isolation being unavailable is a REASON TO
+    // BLOCK a write, never a reason to stop checking.
+    const claimIntent = this.resourceClaims?.(task) ?? null;
+    if (claimIntent !== null) {
+      const workspaceId = workspace?.workspaceId ?? `shared:${this.defaultCwd ?? ''}`;
+      // The PREPARED workspace is authoritative for the root, so a path claim is
+      // tested against the directory the agent will actually be given.
+      const scope: ResourceScope =
+        claimIntent.scope.kind === 'workspace'
+          ? normalizeScopeForWorkspace(claimIntent.scope.workspaceId, workspace?.cwd ?? this.defaultCwd ?? '')
+          : claimIntent.scope;
 
-    // ---- hand it to the EXISTING runtime ----
-    let handle: RunHandle;
-    let mapping: RunRequestMapping;
-    try {
-      const built = buildRunRequest({
-        task: running.task,
-        cwd: resolvedCwd,
-        ...(req.prompt !== undefined ? { prompt: req.prompt } : {}),
-        ...(req.threadId !== undefined ? { threadId: req.threadId } : {}),
-      });
-      mapping = built.mapping;
-      handle = this.runtime.run(built.request);
-    } catch (e) {
-      // A refused run is a real failure with a real reason, not an absent task.
-      const message = e instanceof Error ? e.message : String(e);
-      const failed = this.mutate(task.taskId, 'failed', `runtime refused the run: ${message}`);
-      return {
-        ok: false,
-        code: 'runtime-rejected-run',
-        reason: message,
-        status: failed.ok ? failed.task.status : 'failed',
-        gate: decision,
-      };
-    }
+      // R2-2 §7.3: a claim must reference a CURRENTLY VALID lease. This is checked
+      // BEFORE any claim work so an unleaseable task cannot register a claim it could
+      // never legitimately hold - and refusing here means no runtime call, no agent
+      // blamed, and the task keeps its status, exactly like the workspace refusal above.
+      const nowMs = this.now();
+      const liveLeaseVersion = claimLeaseVersionOf(this.store.leaseOf(task.taskId), nowMs);
+      if (liveLeaseVersion === null) {
+        const held = this.store.leaseOf(task.taskId);
+        const why = held === null
+          ? 'it holds no assignment lease'
+          : held.status === 'revoked'
+            ? `its lease was revoked (${held.revokedReason ?? 'no reason recorded'})`
+            : `its lease expired at ${held.expiresAt}`;
+        return {
+          ok: false,
+          code: 'lease-not-live',
+          reason:
+            `task "${task.taskId}" cannot take a resource claim because ${why}. §7.3 makes a claim void ` +
+            'without a live lease. Refused at admission: no claim registered, no runtime call, no agent blamed, ' +
+            `and the task stays ${task.status} so the existing workflow decides what next.`,
+          status: task.status,
+        };
+      }
 
-    this.liveHandles.set(task.taskId, handle);
-    if (req.onStart !== undefined) {
-      try {
-        req.onStart(handle, mapping);
-      } catch {
-        // A caller's observer must not be able to fail the execution.
+      // Void claims whose lease has moved on, so a superseded holder cannot keep
+      // blocking - or keep conferring write eligibility on - a resource (Race 4).
+      //
+      // P1-3: the currency test must go through `claimLeaseVersionOf`, which returns
+      // null for a REVOKED or EXPIRED lease - not the raw `leaseVersion`. `revokeLease`
+      // deliberately keeps the version and the token (they are evidence of what was
+      // granted), so passing the raw version made a revoked lease with the same version
+      // read as current, contradicting §7.3 and the function's own documentation.
+      if (this.workspace !== null) {
+        const nowMsForVoid = this.now();
+        this.workspace.voidStaleResourceClaims(
+          (c) => !claimIsLeaseCurrent(c, claimLeaseVersionOf(this.store.leaseOf(c.taskId), nowMsForVoid)),
+        );
+      }
+
+      if (this.workspace === null) {
+        // No workspace authority at all (a non-git project). Reading is safe in a
+        // shared directory; WRITING beside other work is not, because there is
+        // nothing to isolate it with. section8 makes isolation the default for exactly
+        // this reason, so the honest answer here is to refuse the write.
+        if (hasParallelWorkBeside(this.store, task.taskId) && modeRequiresIsolation(claimIntent.mode)) {
+          return {
+            ok: false,
+            code: 'resource-unavailable',
+            reason:
+              `task "${task.taskId}" would write while other work runs beside it, but this project has no git ` +
+              `repository, so no isolated workspace can be created and the only option would be a shared mutable ` +
+              `directory. Refused at admission: no runtime call, no agent blamed, and the task stays ${task.status} ` +
+              `so the existing workflow can decide what next.`,
+            status: task.status,
+          };
+        }
+      } else {
+        const request = { taskId: task.taskId, workspaceId, mode: claimIntent.mode, scope };
+        const held = this.workspace.resourceConflicts(request);
+        if (held.length > 0) {
+          const detail = held.map((c) => `${c.taskId} holds ${c.mode} on ${describeScope(c.scope)}`).join('; ');
+          return {
+            ok: false,
+            code: 'resource-conflict',
+            reason:
+              `task "${task.taskId}" asked for ${claimIntent.mode} on ${describeScope(scope)}, which conflicts with ` +
+              `${held.length} claim(s): ${detail}. Refused at admission: no workspace change, no runtime call, ` +
+              `no agent blamed, and the task stays ${task.status} so Laya / a human can decide.`,
+            status: task.status,
+          };
+        }
+        // TAKEN, not merely permitted. Without registering here nothing would ever be
+        // held and the check above could never refuse anything - the query would be
+        // decoration. section7.3 makes a repeat registration idempotent, so this is safe to
+        // re-enter.
+        //
+        // R2-2: bound to the lease version this claim was taken under, so §7.3's
+        // "revoked/expired => void" has something concrete to compare against later.
+        const taken = this.workspace.claimResource({ ...request, leaseVersion: liveLeaseVersion });
+        if (!taken.ok) {
+          return {
+            ok: false,
+            code: taken.code,
+            reason: `${taken.reason} (refused: nothing ran, task stays ${task.status})`,
+            status: task.status,
+          };
+        }
+        claimedScope = { mode: claimIntent.mode, scope };
       }
     }
-
-    // ---- wait for the real result ----
-    let result: RunResult;
+    // ---- from here on, a REGISTERED claim is this method's responsibility ------
+    //
+    // R2-2 final closure (P2): `claimedScope` was previously released at two hand-
+    // picked points, and every early return between registration and those points
+    // leaked the claim - most importantly the `runtime.run()` throw branch, which
+    // returns before either release and left the scope held forever, blocking an
+    // unrelated writer for the rest of the round.
+    //
+    // A `finally` makes the ownership structural: once the claim is taken, exactly one
+    // place gives it back, on every exit including a throw. Release stays tied to
+    // EXECUTION resource ownership - it happens when the run settles, not when the task
+    // is verified - so verification semantics are untouched.
     try {
-      result = await handle.result(this.resultTimeoutMs);
-    } catch (e) {
-      // A rejection here is a runtime failure, never a success.
-      const message = e instanceof Error ? e.message : String(e);
-      this.liveHandles.delete(task.taskId);
-      this.mutate(task.taskId, 'failed', `the run did not produce a result: ${message}`);
-      return { ok: false, code: 'runtime-result-failed', reason: message, status: 'failed', gate: decision };
-    }
-    this.liveHandles.delete(task.taskId);
 
-    // ---- write the result back to the lifecycle ----
-    const applied = this.applyRunResult(task.taskId, result);
-    if (!applied.ok) {
-      return { ok: false, code: applied.code, reason: applied.reason, gate: decision };
+      // ---- planned - queued - running, through the store ----
+      // `executeTask` accepts a task that is ALREADY queued, so the queue step is
+      // conditional. Forcing `queued - queued` would be refused by the transition
+      // table, which would make a perfectly legitimate re-request fail.
+      let queuedTask = task;
+      if (task.status === 'planned') {
+        const queued = this.mutate(task.taskId, 'queued');
+        if (!queued.ok) return { ok: false, code: queued.code, reason: queued.reason, status: task.status };
+        queuedTask = queued.task;
+      }
+      const running = this.mutate(queuedTask.taskId, 'running');
+      if (!running.ok) return { ok: false, code: running.code, reason: running.reason, status: queuedTask.status };
+
+      // R2-2: capture the lease THIS dispatch runs under, and present it on write-back.
+      // Captured from the task's own record at dispatch time - not read from anything the
+      // worker later says - so a reassign between here and the result makes the write-back
+      // stale rather than authoritative.
+      const dispatchedLease: PresentedLease = {
+        agentId: running.task.agentId,
+        leaseVersion: running.task.leaseVersion,
+        fencingToken: running.task.fencingToken,
+      };
+      // §6.3 `issued -> active`: the EXECUTION window starts here, not at assignment.
+      //
+      // This is the fix for the livelock in which a task that waited longer than the
+      // assignment window could never be dispatched at all (see `activateLease`). It is
+      // once-per-lease, synchronous, and cannot resurrect a revoked lease.
+      this.store.markLeaseUsed(task.taskId, this.now());
+
+      // R2-2 final closure (P1-2 / P2): the SAME primitive as `applyRunResult`.
+      //
+      // These two branches mutate too (`runtime.run()` throw and `handle.result()` throw
+      // both write `failed`), and they previously ran a version/token-only check, so a run
+      // that failed AFTER its lease expired could still write `failed` while a successful
+      // run in the identical situation was correctly refused. One primitive, one meaning.
+      const stillHoldsLease = (): boolean => {
+        const held = this.store.get(task.taskId);
+        if (held === null) return false;
+        return validateWriteback(
+          {
+            lease: this.store.leaseOf(task.taskId),
+            agentId: held.agentId,
+            modelId: held.modelId,
+            leaseVersion: held.leaseVersion,
+            fencingToken: held.fencingToken,
+          },
+          dispatchedLease,
+          this.now(),
+        ).accepted;
+      };
+
+      // ---- hand it to the EXISTING runtime ----
+      let handle: RunHandle;
+      let mapping: RunRequestMapping;
+      try {
+        const built = buildRunRequest({
+          task: running.task,
+          cwd: resolvedCwd,
+          ...(req.prompt !== undefined ? { prompt: req.prompt } : {}),
+          ...(req.threadId !== undefined ? { threadId: req.threadId } : {}),
+        });
+        mapping = built.mapping;
+        handle = this.runtime.run(built.request);
+      } catch (e) {
+        // A refused run is a real failure with a real reason, not an absent task.
+        const message = e instanceof Error ? e.message : String(e);
+        // §10 #3: this branch mutates too, so it is fenced as well. A superseded
+        // assignment must not be able to mark the CURRENT holder's task failed.
+        if (!stillHoldsLease()) {
+          return {
+            ok: false,
+            code: 'stale-lease-version',
+            reason:
+              `the assignment moved on while this run was being started, so its failure is not recorded against the ` +
+              `current holder. Task left untouched (${task.status}).`,
+            status: this.store.get(task.taskId)?.status ?? task.status,
+            gate: decision,
+          };
+        }
+        const failed = this.mutate(task.taskId, 'failed', `runtime refused the run: ${message}`);
+        return {
+          ok: false,
+          code: 'runtime-rejected-run',
+          reason: message,
+          status: failed.ok ? failed.task.status : 'failed',
+          gate: decision,
+        };
+      }
+
+      this.liveHandles.set(task.taskId, handle);
+      if (req.onStart !== undefined) {
+        try {
+          req.onStart(handle, mapping);
+        } catch {
+          // A caller's observer must not be able to fail the execution.
+        }
+      }
+
+      // ---- wait for the real result ----
+      let result: RunResult;
+      try {
+        result = await handle.result(this.resultTimeoutMs);
+      } catch (e) {
+        // A rejection here is a runtime failure, never a success.
+        const message = e instanceof Error ? e.message : String(e);
+        this.liveHandles.delete(task.taskId);
+        // The run is over either way, so the claim is released on BOTH paths: keeping a
+        // claim for a task that can no longer write would block an unrelated writer
+        // forever.
+        // §10 #2: this branch mutates, so it is fenced too. The run produced no result,
+        // so there is no execution evidence to preserve here - only the state decision.
+        if (!stillHoldsLease()) {
+          return {
+            ok: false,
+            code: 'stale-lease-version',
+            reason:
+              `the assignment moved on while this run was in flight, so its failure is not recorded against the ` +
+              `current holder. Task left untouched (${this.store.get(task.taskId)?.status ?? task.status}).`,
+            status: this.store.get(task.taskId)?.status ?? task.status,
+            gate: decision,
+          };
+        }
+        this.mutate(task.taskId, 'failed', `the run did not produce a result: ${message}`);
+        return { ok: false, code: 'runtime-result-failed', reason: message, status: 'failed', gate: decision };
+      }
+      this.liveHandles.delete(task.taskId);
+      // Final machine facts: processState is now 'exited' with the real exit code.
+      const observationAtSettle = handle.observe?.() ?? null;
+      if (observationAtSettle !== null) this.lastObservations.set(task.taskId, observationAtSettle);
+
+      // ---- write the result back to the lifecycle ----
+      const applied = this.applyRunResult(task.taskId, result, dispatchedLease, req.translate ?? {});
+      if (!applied.ok) {
+        // R2-2 / F5: STATE is refused, EVIDENCE IS NOT.
+        //
+        // A real native process ran and produced this result. Whether the write-back is
+        // accepted is a WORKFLOW question (is this still the current assignment?), while
+        // "this agent ran and produced this" is an EXECUTION fact that must survive the
+        // refusal. Dropping it here was F5: the run executed and left no trace at all.
+        //
+        // So the refusal carries the run forward, and the caller records it as evidence.
+        // This is NOT a second source of truth - AttemptStore still persists execution
+        // facts and TaskStore still owns workflow state; the run is simply not thrown away.
+        return {
+          ok: false,
+          code: applied.code,
+          reason: applied.reason,
+          // Authoritative: the task did NOT move because of this result.
+          status: this.store.get(task.taskId)?.status ?? task.status,
+          run: result,
+          runRejected: true,
+          mapping,
+          gate: decision,
+          // The version the run HELD. The task has since moved on, which is why the
+          // write-back was refused - and this is the value the evidence record must carry
+          // so the attempt stays attributed to the lease it really belonged to.
+          leaseVersion: dispatchedLease.leaseVersion,
+        };
+      }
+      return {
+        ok: true,
+        task: applied.task,
+        run: result,
+        mapping,
+        runtimeTaskId: result.taskId,
+        handle,
+        gate: decision,
+        // Dispatch-time lease, matching what the attempt actually ran under.
+        leaseVersion: dispatchedLease.leaseVersion,
+      };
+    } finally {
+      // Idempotent by construction: `releaseClaimForScope` removes what it finds, so a
+      // second call is a no-op returning 0 rather than an error.
+      this.releaseClaim(task.taskId, claimedScope);
     }
-    return {
-      ok: true,
-      task: applied.task,
-      run: result,
-      mapping,
-      runtimeTaskId: result.taskId,
-      handle,
-      gate: decision,
-    };
+  }
+
+  /**
+   * R2 observability: the last machine-side execution facts for one task, or null.
+   * Read-only passthrough of what the execution edge observed; deleting this cache
+   * would lose nothing but the dashboard's view.
+   */
+  observeExecution(taskId: string): RunObservation | null {
+    return this.lastObservations.get(taskId) ?? null;
   }
 
   /** True while a task has a live run handle. Not a status; the store is. */
@@ -782,7 +1215,7 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
   }
 
   // ---------------------------------------------------------------------
-  // 5C-9 — inspect and explicitly merge a child's work.
+  // 5C-9 - inspect and explicitly merge a child's work.
   //
   // These close the personal-tool loop:
   //   Task -> Agent -> worktree -> run -> verify -> inspect -> merge
@@ -880,7 +1313,7 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
    *
    * A `queued` task is cancelled in the store and NO agent is started. A `running`
    * task's handle is cancelled through the existing runtime, which owns process
-   * termination and the Windows process-tree cleanup 鈥?this layer kills nothing.
+   * termination and the Windows process-tree cleanup - this layer kills nothing.
    */
   async cancelTask(taskId: string, reason: string): Promise<{ ok: boolean; code: string; reason: string; delegatedToRuntime: boolean }> {
     const task = this.store.get(taskId);
@@ -898,7 +1331,7 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
       return { ok: true, code: 'cancel-delegated', reason, delegatedToRuntime: true };
     }
 
-    // Nothing is running for THIS task, but a descendant may be. Phase 5B 搂15: a
+    // Nothing is running for THIS task, but a descendant may be. Phase 5B §15: a
     // root cancel propagates to children, while one child's failure never cancels
     // the tree. So cancelling a task with descendants walks the subtree, and
     // cancelling a leaf affects only that leaf.
