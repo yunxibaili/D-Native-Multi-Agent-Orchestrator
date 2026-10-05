@@ -1,10 +1,11 @@
 > **Docs baseline: 技术文档唯一基准 = [docs/PROJECT_BASELINE.md](docs/PROJECT_BASELINE.md)**
-> 本 README 描述 Phase 1 runtime 起步状态；当前项目已是 Laya-driven Multi-Agent
-> Orchestrator（4 个 Native Agent identity / bounded Execution Round / 11-action
-> Decision Loop / Lease+Fencing / ResourceClaim / Codex Review）。架构与路线以
-> baseline 为准。
+> 本 README 描述 runtime CLI 的用法与当前架构要点；架构、角色、主流程与路线以
+> baseline 为准。本项目是 Laya-driven Multi-Agent Orchestrator（4 个 Native Agent
+> identity / bounded Execution Round / Decision Loop / Lease+Fencing /
+> ResourceClaim / Unified Codex Review / Agent Handoff L6）。**Result Aggregation
+> 与 Human Gate 尚未开始。**
 
-# Native Agent Orchestrator (Phase 1)
+# Native Agent Orchestrator
 
 A local orchestrator that drives **already-installed, already-logged-in native
 coding-agent CLIs** as subprocesses. It does **not** call provider APIs.
@@ -14,15 +15,58 @@ you -> Orchestrator -> native CLI subprocess -> unified event stream -> result
         (no model calls in the kernel)
 ```
 
-Phase 1 ships two agents:
+The kernel is a **bounded, Laya-driven Multi-Agent Task Execution Orchestrator**:
+one user task becomes one Execution Round, and the round ends at the Human Gate.
+It is deliberately **not** an always-on autonomous agent platform — no daemon, no
+agent polling for work, no unbounded rework/replan/retry loop.
 
-| Agent | Transport | Session resume | Native review | Binary |
+### The four Native Agent identities
+
+Each agent keeps using **its own** login, model config and tools. This project only
+ever passes arguments through; it never reads, copies or logs credentials. The four
+identities are independent worker identities, **not** four workflows: they all enter
+through the same admission contract (Identity → Capability → Adapter →
+Auth/Availability → Spawn Gate → Assignment → Workspace/Resource Claim →
+Collaboration compatibility).
+
+| Agent | Transport | Session resume | Native review | Availability |
 |---|---|---|---|---|
-| OpenCode 1.18.31 | `opencode run --format json` | yes (`--session`) | no (prompt-based) | `…\npm\node_modules\opencode-ai\bin\opencode.exe` |
-| Codex 0.158.0-alpha.2.1 | `codex exec --json` | yes (`exec resume`) | yes (`exec review`) | `~\.codex\plugins\.plugin-appserver\codex.exe` |
+| OpenCode 1.18.31 | `opencode run --format json` | yes (`--session <threadId>`) | no (prompt-based) | REACHABLE |
+| Codex 0.159.2 | `codex exec --json` | yes (`exec resume`) | yes (`exec review`) | REACHABLE |
+| WorkBuddy CN | `@genie/agent-cli` via `node.exe` + script | yes (`-r <sessionId>`) | no | CLI reachable, **auth not yet re-verified** |
+| WorkBuddy Intl | `@genie/agent-cli` via `node.exe` + script | yes (`-r <sessionId>`) | no | REACHABLE |
 
-Each agent keeps using **its own** login, model config and tools. This project
-only ever passes arguments through; it never reads, copies or logs credentials.
+WorkBuddy's entry point is an **extension-less** script, so it is launched as
+`node.exe <script> …` rather than as a bare binary. CN and Intl are separate
+installs (`D:\workbuddy`, `D:\workbuddy ai`) and are never treated as
+interchangeable or as a fallback for one another.
+
+> Agent reachability above is an observation recorded by a real doctor/E2E run, not a
+> claim of capability. `kills=true/false` in those records is likewise a fact about
+> what happened, not a target.
+
+### Where the round goes
+
+```
+Laya Decision -> Planner/DAG -> Assignment (Lease) -> Spawn Gate
+  -> Native Agent Execution -> to_verify -> ONE Unified Codex Review -> Human Gate -> END
+```
+
+Single-authority invariants the code actually enforces: Laya = 1, TaskStore = 1,
+Scheduler authority = 1 per run, Assignment = 1, AttemptStore = 1,
+SessionRegistry = 1, ResourceClaimBook = 1, and exactly one `runtime.run(` edge.
+
+- **Unified Review** — after every terminal outcome in a round is collected, the
+  reviewer is called **exactly once**. Its verdict is a recommendation: it never
+  writes TaskStore and never triggers rework/reassign/replan. Verification remains
+  the only completion authority.
+- **Agent Handoff (L6)** — on an availability outcome (`quota_exhausted`,
+  `agent_unavailable`, `session_failure`), the round hands the same Task off:
+  same TaskId, **new AttemptId, new Lease**. Admission refusals surface as
+  `executed=false, refused=true` rather than fabricating an attempt. Handoff is
+  bounded — it stops and reports rather than looping.
+- **Result Aggregation / Human Gate** are product-layer work and are **not started**.
+
 
 ---
 

@@ -51,7 +51,7 @@ import {
 import { buildHandoff, buildTaskBrief, type TaskHandoff } from './workbench-handoff.ts';
 import { commitPlan, replanSubtree } from './planner-wiring.ts';
 import { planTasks } from './planner.ts';
-import { planFromSpec, workKindToTaskType, type WorkbenchTaskSpec, type PlanFromSpecResult } from './workbench-plan.ts';
+import { planFromSpec, type WorkbenchTaskSpec, type PlanFromSpecResult } from './workbench-plan.ts';
 
 /**
  * Fallback agent id for a spec root that names no `preferredAgent`.
@@ -1017,15 +1017,5 @@ export class NativeWorkbench {
   /** Ready candidates this tick, read from the store (read-only helper). */
   private candidatesWithSatisfiedDeps(): Task[] {
     return this.store.all().filter((t) => t.depth > 0 && (t.status === 'planned' || t.status === 'queued') && t.dependencies.length > 0);
-  }
-
-  /** The tasks the workbench can see right now, in creation order. */
-  tasks(): readonly Task[] {
-    return this.store.all();
-  }
-
-  /** The task type a spec implies, for callers that need it before planning. */
-  impliedTaskType(spec: WorkbenchTaskSpec, classification?: TaskClassification | null): TaskType {
-    return spec.taskType ?? workKindToTaskType(classification?.work_kind);
   }
 }

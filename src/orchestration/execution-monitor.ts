@@ -539,23 +539,5 @@ export function buildExecutionSnapshot(input: ExecutionMonitorInput): ExecutionM
   }) as ExecutionMonitorSnapshot;
 }
 
-/**
- * The claims held across every live workspace, for a caller that wants the raw
- * registry rather than the per-workspace count. Read-only; returns `[]` when there
- * is no workspace manager instead of throwing.
- */
-export function liveClaims(workspace: WorkspaceManager | null | undefined): readonly ResourceClaim[] {
-  if (workspace == null) return [];
-  const out: ResourceClaim[] = [];
-  for (const h of workspace.list()) {
-    try {
-      out.push(...workspace.resourceClaimsFor(h.workspaceId));
-    } catch {
-      // Same rule as above: a claim read cannot break the caller.
-    }
-  }
-  return out;
-}
-
 /** Every mode a claim may use, re-exported so a consumer need not reach the module. */
 export type { ResourceClaimMode };

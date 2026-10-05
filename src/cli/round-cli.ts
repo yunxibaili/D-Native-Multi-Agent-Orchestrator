@@ -1005,7 +1005,6 @@ export async function runRoundCli(
           });
         },
         async runCycle(context) {
-          process.stderr.write('DBG runCycle entered\n');
           // The SAME decision cycle the round already runs, with the continuation packet
           // as its context. Laya answers in the same closed vocabulary as always; the
           // packet is OBSERVATION, never an instruction to override its judgement.
@@ -1040,7 +1039,6 @@ export async function runRoundCli(
           }
           const decision = cycle.decision;
           const application = cycle.application;
-          process.stderr.write(`DBG continuation status=${cycle.status} raw=${JSON.stringify(cycle.rawAction)} decision=${JSON.stringify(decision)}\n`);
           return {
             action: decision === null ? null : decision.action,
             applied: application.applied,
