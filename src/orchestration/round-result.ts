@@ -48,8 +48,13 @@ import {
   type AttemptOutcome,
   type AttemptRecord,
 } from './attempt-record.ts';
-import { EXECUTION_OUTCOMES, type ExecutionOutcomeKind, type UnifiedRoundReport } from './unified-review.ts';
-import { TERMINAL_STATUSES, type Task, type TaskStatus } from './task.ts';
+import {
+  EXECUTION_OUTCOMES,
+  REVIEW_STATUSES,
+  type ExecutionOutcomeKind,
+  type UnifiedRoundReport,
+} from './unified-review.ts';
+import { TASK_STATUSES, type Task, type TaskStatus } from './task.ts';
 import type { TaskType } from '../quota/types.ts';
 import { HANDOFF_REASONS, type HandoffReason } from './continuation.ts';
 
@@ -129,29 +134,107 @@ export interface TaskSummary {
 }
 
 /**
+ * How a task's lifecycle state bears on round completion.
+ *
+ *   `terminal`      the task is done; nothing further is expected this round
+ *   `in_flight`     work is genuinely pending, so the round is NOT over
+ *   `never_started` never dispatched at all (planned, e.g. admission-refused)
+ *   `blocked`       waiting on something that nothing will resolve in this round
+ *
+ * WHY A TOTAL CLASSIFICATION INSTEAD OF A NEGATIVE TEST
+ * -----------------------------------------------------
+ * This table is keyed by EVERY `TaskStatus` and is checked for completeness below, so a
+ * status added later cannot silently fall through. The previous version asked "is this
+ * status in the in-flight list?" and put everything else into `neverStartedTasks`, which
+ * had two real failure modes:
+ *
+ *   - `rework` was missing from the in-flight list. `TASK_TRANSITIONS` gives
+ *     `to_verify -> rework -> queued | failed`, and `review-loop.ts` drives that loop, so
+ *     a reworking task is unfinished executable work. Classifying it as "never started"
+ *     opened the human gate while a rework was still owed, which is exactly the
+ *     premature-open bug this replaces.
+ *   - `replanning` was missing for the same reason.
+ *
+ * An unrecognised status is treated as `in_flight` on purpose: if this code does not
+ * understand a state, the safe reading is "work may still be pending", not "nothing
+ * happened". Guessing `never_started` would let the gate open on an unknown state.
+ */
+export type TaskLifecycleClass = 'terminal' | 'in_flight' | 'never_started' | 'blocked' | 'unknown';
+
+export const TASK_LIFECYCLE_CLASS: Readonly<Record<TaskStatus, TaskLifecycleClass>> = Object.freeze({
+  // The round's root, and any child the gate refused before dispatch. Never executed.
+  planned: 'never_started',
+  queued: 'in_flight',
+  running: 'in_flight',
+  // Waiting on a dependency. Settled for THIS round, but NOT "never started" - it ran.
+  blocked: 'blocked',
+  // Executed and awaiting the only completion authority.
+  to_verify: 'in_flight',
+  succeeded: 'terminal',
+  failed: 'terminal',
+  cancelled: 'terminal',
+  // A run that failed with retry budget left; `retrying -> queued | failed`.
+  retrying: 'in_flight',
+  // P6-D0 un-reserved this and gave it a real loop: `to_verify -> rework -> queued | failed`.
+  // It is unfinished executable work, never a task that never started.
+  rework: 'in_flight',
+  replanning: 'in_flight',
+});
+
+/**
+ * Classify a task status. Unknown values are reported as `unknown`, never guessed.
+ *
+ * The caller decides what `unknown` means for the gate; `deriveHumanGate` treats it as
+ * blocking, which is the conservative direction.
+ */
+export function classifyTaskLifecycle(status: TaskStatus | string): TaskLifecycleClass {
+  const known = TASK_LIFECYCLE_CLASS[status as TaskStatus];
+  return known ?? 'unknown';
+}
+
+/**
  * Statuses that mean work is genuinely MID-LIFECYCLE, so the round is not over yet.
  *
- * Deliberately NOT "everything that is not terminal". Two real states are excluded, and
- * both exclusions are load-bearing:
- *
- *   - `planned` on the ROOT, which never executes (see `TaskSummary.depth`).
- *   - `planned` on a CHILD that the gate refused before dispatch. A refusal is a settled
- *     outcome, not pending work: it is already in the report as a refusal code, and
- *     waiting for it to become terminal would wait forever for a task nobody will run.
- *
- * `blocked` is likewise settled-for-now: the round is over, nothing will unblock it on
- * its own, and it is surfaced as a decision for the user rather than as "still running".
+ * Derived from `TASK_LIFECYCLE_CLASS` rather than hand-listed, so it cannot drift from
+ * the classification that actually drives the gate.
  */
-export const IN_FLIGHT_STATUSES: ReadonlySet<TaskStatus> = new Set<TaskStatus>([
-  'queued',
-  'running',
-  'to_verify',
-  'retrying',
-]);
+export const IN_FLIGHT_STATUSES: ReadonlySet<TaskStatus> = new Set<TaskStatus>(
+  (Object.keys(TASK_LIFECYCLE_CLASS) as TaskStatus[])
+    .filter((s) => TASK_LIFECYCLE_CLASS[s] === 'in_flight'),
+);
 
 /** True when this task is a unit of work the round actually tried to execute. */
 export function isExecutableTask(task: { depth: number }): boolean {
   return task.depth > 0;
+}
+
+/**
+ * True when a task in this state means the round has unfinished work.
+ *
+ * The single definition of "blocking", shared by `machine.unfinished`, the user-facing
+ * summary and `deriveHumanGate`, so those three can never disagree about what counts as
+ * pending. An unrecognised status blocks, matching `classifyTaskLifecycle`.
+ */
+export function isBlockingStatus(status: TaskStatus | string): boolean {
+  const c = classifyTaskLifecycle(status);
+  return c === 'in_flight' || c === 'unknown';
+}
+
+/**
+ * Every `TaskStatus` must be classified. Checked at MODULE LOAD, not in a test, because
+ * the failure this prevents — a new status silently defaulting to "settled" — is exactly
+ * the kind of bug a test written alongside the new status would not catch.
+ *
+ * The thrown message names the offending statuses so the fix is obvious.
+ */
+const UNCLASSIFIED: readonly TaskStatus[] = (TASK_STATUSES as readonly TaskStatus[])
+  .filter((s) => TASK_LIFECYCLE_CLASS[s] === undefined);
+if (UNCLASSIFIED.length > 0) {
+  throw new Error(
+    `round-result: task status(es) not classified in TASK_LIFECYCLE_CLASS: ${UNCLASSIFIED.join(', ')}. ` +
+    'Every TaskStatus needs an explicit class, or the human gate can open on a state this ' +
+    'code does not understand.',
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -298,8 +381,27 @@ export interface HumanGate {
    * never mistaken for something still in progress.
    */
   readonly neverStartedTasks: readonly { readonly taskId: string; readonly status: TaskStatus; readonly reason: string }[];
-  /** Whether a review was required and has not settled. */
+  /**
+   * Executable tasks parked in `blocked`.
+   *
+   * Kept apart from `neverStartedTasks` because a blocked task DID run. Folding the two
+   * together would claim a blocked task never executed.
+   */
+  readonly blockedTasks: readonly { readonly taskId: string; readonly status: TaskStatus; readonly reason: string }[];
+  /**
+   * Task statuses this report does not recognise.
+   *
+   * Non-empty means the gate stayed shut on purpose: an unknown state is not evidence
+   * that nothing is pending.
+   */
+  readonly unknownStatusTasks: readonly string[];
+  /** Whether a review was required and has not settled. See the REVIEW_STATUSES note. */
   readonly reviewOutstanding: boolean;
+  /**
+   * A review was requested, settled, and produced no independent judgement
+   * (`failed` / `unavailable`). Surfaced as a decision; it never blocks the gate.
+   */
+  readonly reviewWithoutVerdict: boolean;
   /** Succeeded/failed/cancelled counts, so the summary is not re-derived by the reader. */
   readonly taskTally: { readonly succeeded: number; readonly failed: number; readonly cancelled: number; readonly other: number };
   /** What the user must decide. Empty when nothing is outstanding. */
@@ -394,8 +496,23 @@ export interface RoundResult {
 // Input
 // ---------------------------------------------------------------------------
 
-/** Per-task evidence this projection cannot invent: the run's own handoff payload. */
-export interface TaskEvidenceInput {
+/**
+ * Evidence belonging to ONE attempt, projected from that attempt's own `RunResult`.
+ *
+ * Every field here is per-attempt by construction, which is the whole point:
+ *
+ *   - `changedFiles` / `testsRun` come from THAT run's `toolCalls`, so attempt A's list
+ *     can never contain files attempt B wrote.
+ *   - `transcriptPath` is THAT run's transcript.
+ *   - `errorCode` / `errorMessage` are THAT run's error.
+ *   - `artifacts` is always empty here, and that is deliberate rather than lossy.
+ *     `TaskHandoff.artifacts` is built from `Task.artifacts` — what the TASK declared,
+ *     not what a given attempt produced. Attributing a task's declared artifacts to one
+ *     specific attempt would be the same class of fabrication as copying attempt B's
+ *     files onto attempt A, so those artifacts stay on `TaskSummary.artifacts`, where
+ *     they truthfully live.
+ */
+export interface AttemptEvidenceInput {
   readonly changedFiles: readonly string[];
   readonly testsRun: readonly string[];
   readonly artifacts: readonly { readonly name: string; readonly path: string }[];
@@ -403,6 +520,13 @@ export interface TaskEvidenceInput {
   readonly errorCode: string | null;
   readonly errorMessage: string | null;
 }
+
+/**
+ * @deprecated Renamed to `AttemptEvidenceInput`. Kept as an alias so no caller has to be
+ * updated in lockstep, but it now means PER ATTEMPT — the old name invited exactly the
+ * task-keyed confusion this type is being corrected for.
+ */
+export type TaskEvidenceInput = AttemptEvidenceInput;
 
 export interface BuildRoundResultInput {
   readonly identity: RoundIdentity;
@@ -439,8 +563,19 @@ export interface BuildRoundResultInput {
     readonly stopped: { readonly code: string; readonly reason: string };
     readonly agentChain: Readonly<Record<string, readonly string[]>>;
   } | null;
-  /** Per-task run evidence, keyed by taskId. Absent = nothing ran for that task. */
-  readonly evidence?: Readonly<Record<string, TaskEvidenceInput>>;
+  /**
+   * PER-ATTEMPT evidence, keyed by `attemptId` — the id `AttemptStore` actually minted.
+   *
+   * KEYED BY ATTEMPT, NOT BY TASK. This is the correction for the attribution bug: keyed
+   * by `taskId`, a task with attempts A and B had exactly one `RunResult` to give (the
+   * latest), so every attempt in the report was handed attempt B's changedFiles,
+   * testsRun, artifacts and transcript. A→B handoff made the report claim attempt A wrote
+   * agent B's files.
+   *
+   * A missing entry means that attempt has no evidence to show, and it is reported as
+   * empty. It is NEVER filled from a sibling attempt.
+   */
+  readonly evidence?: Readonly<Record<string, AttemptEvidenceInput>>;
   /**
    * Where the append-only evidence lives. Passed in because `UnifiedRoundReport` does not
    * carry it (the review packet does), and this file must not go looking for a store.
@@ -469,7 +604,7 @@ function toExecutionOutcome(value: string): ExecutionOutcomeKind | null {
   return (EXECUTION_OUTCOMES as readonly string[]).includes(value) ? (value as ExecutionOutcomeKind) : null;
 }
 
-const NO_EVIDENCE: TaskEvidenceInput = Object.freeze({
+const NO_EVIDENCE: AttemptEvidenceInput = Object.freeze({
   changedFiles: [],
   testsRun: [],
   artifacts: [],
@@ -508,11 +643,15 @@ export function buildRoundResult(input: BuildRoundResultInput): RoundResult {
   // ---- task summary -------------------------------------------------------
   const taskSummaries: TaskSummary[] = input.tasks.map((t) => {
     const classified = outcomesByTask.get(t.taskId);
-    const own = evidence[t.taskId] ?? NO_EVIDENCE;
     const records = attemptsByTask.get(t.taskId) ?? [];
     // Review attempts are evidence ABOUT the round, not executions OF the task, so
     // counting them as attempts would overstate how much work was tried.
     const executionAttempts = records.filter((r) => r.kind === 'execution');
+    // The task's error is the error of its MOST RECENT execution attempt, which is the one
+    // that decided the task's fate. `UnifiedRoundReport.tasks` carries no error field, and
+    // picking an arbitrary attempt among several would be a guess; "latest" is the only
+    // choice that is both defined and true.
+    const latest = executionAttempts.length > 0 ? executionAttempts[executionAttempts.length - 1]! : undefined;
     return {
       taskId: t.taskId,
       objective: t.acceptanceCriteria,
@@ -524,11 +663,9 @@ export function buildRoundResult(input: BuildRoundResultInput): RoundResult {
       attemptCount: executionAttempts.length,
       outcome: classified?.outcome ?? null,
       executed: classified?.executed ?? false,
-      artifacts: t.artifacts.length > 0
-        ? t.artifacts.map((a) => ({ name: a.name, path: a.path }))
-        : own.artifacts,
-      errorCode: own.errorCode,
-      errorMessage: own.errorMessage,
+      artifacts: t.artifacts.map((a) => ({ name: a.name, path: a.path })),
+      errorCode: latest?.errorCode ?? null,
+      errorMessage: latest?.errorMessage ?? null,
     };
   });
 
@@ -536,7 +673,6 @@ export function buildRoundResult(input: BuildRoundResultInput): RoundResult {
   const attemptSummaries: AttemptSummary[] = [];
   for (const t of input.tasks) {
     const records = attemptsByTask.get(t.taskId) ?? [];
-    const own = evidence[t.taskId] ?? NO_EVIDENCE;
     const reasons = handoffReasonsByTask.get(t.taskId) ?? [];
     const chain = input.continuation?.agentChain[t.taskId] ?? [];
     for (const [index, r] of records.entries()) {
@@ -544,6 +680,12 @@ export function buildRoundResult(input: BuildRoundResultInput): RoundResult {
       const outcome = toAttemptOutcome(r.outcome);
       // An unrecognised kind/outcome is reported as null rather than dropped: the
       // attempt still happened and hiding it would be a silent gap in the evidence.
+      //
+      // KEYED BY THIS ATTEMPT'S OWN ID. The previous code looked up `evidence[t.taskId]`,
+      // which handed every attempt of a task the single latest run's evidence — so after
+      // an A->B handoff, attempt A was reported as having written agent B's files. A
+      // missing entry now yields empty evidence for THAT attempt only.
+      const own = evidence[r.attemptId] ?? NO_EVIDENCE;
       attemptSummaries.push({
         attemptId: r.attemptId,
         taskId: r.taskId,
@@ -553,16 +695,20 @@ export function buildRoundResult(input: BuildRoundResultInput): RoundResult {
         leaseVersion: r.leaseVersion ?? null,
         sessionId: leaseSessionOf(r),
         outcome: outcome ?? 'error',
+        // The attempt's own recorded error wins; the run evidence is only a fallback for a
+        // record that declined to state one.
         errorCode: r.errorCode ?? own.errorCode,
         errorMessage: r.errorMessage ?? own.errorMessage,
         startedAt: r.startedAt,
         finishedAt: r.finishedAt ?? null,
         previousAttemptId: r.previousAttemptId ?? null,
         // Run-derived evidence belongs to the execution that produced it. A review
-        // attempt did not write files, so it must not inherit the execution's list.
+        // attempt did not write files, so it must not inherit an execution's list.
         changedFiles: r.kind === 'execution' ? own.changedFiles : [],
         testsRun: r.kind === 'execution' ? own.testsRun : [],
-        artifacts: r.kind === 'execution' ? own.artifacts : [],
+        // Always empty for an attempt: artifacts are declared by the TASK, not produced by
+        // one attempt. They are reported on `TaskSummary.artifacts`.
+        artifacts: [],
         transcriptPath: r.kind === 'execution' ? own.transcriptPath : null,
         // Reasons are consumed in order, so attempt N carries the Nth handoff reason.
         handoffReason: r.kind === 'execution' ? reasons[index] ?? null : null,
@@ -615,7 +761,7 @@ export function buildRoundResult(input: BuildRoundResultInput): RoundResult {
   // unfinished work. Reporting either as "unfinished" would be a false claim that the
   // round had work left to do.
   const unfinished = taskSummaries
-    .filter((t) => isExecutableTask(t) && IN_FLIGHT_STATUSES.has(t.status))
+    .filter((t) => isExecutableTask(t) && isBlockingStatus(t.status))
     .map((t) => ({
       taskId: t.taskId,
       status: t.status,
@@ -707,22 +853,51 @@ export function deriveHumanGate(input: DeriveHumanGateInput): HumanGate {
   // Only EXECUTABLE tasks can be unfinished work. The root is the round's objective and
   // never executes; including it would make this gate permanently `not_ready`.
   const executable = input.tasks.filter(isExecutableTask);
-  const nonTerminalTasks = executable.filter((t) => IN_FLIGHT_STATUSES.has(t.status)).map((t) => t.taskId);
+  const classOf = (t: TaskSummary): TaskLifecycleClass => classifyTaskLifecycle(t.status);
 
+  // Blocking work comes from the CLASSIFICATION, never from a negative status test.
+  const blocking = executable.filter((t) => {
+    const c = classOf(t);
+    // `unknown` blocks deliberately: an unrecognised state is not evidence of safety.
+    return c === 'in_flight' || c === 'unknown';
+  });
+  const nonTerminalTasks = blocking.map((t) => t.taskId);
+  const unknownTasks = blocking.filter((t) => classOf(t) === 'unknown').map((t) => t.taskId);
+
+  // `never_started` is ONLY for a task that never executed. `blocked` is kept separate:
+  // a blocked task DID run, so calling it "never started" would be a false account of it.
   const neverStartedTasks = executable
-    .filter((t) => !TERMINAL_STATUSES.has(t.status) && !IN_FLIGHT_STATUSES.has(t.status))
+    .filter((t) => classOf(t) === 'never_started')
     .map((t) => ({
       taskId: t.taskId,
       status: t.status,
-      reason: t.status === 'blocked'
-        ? 'blocked and never resolved; nothing will unblock it automatically'
-        : 'never dispatched (refused at admission, or not selected this round)',
+      reason: 'never dispatched (refused at admission, or not selected this round)',
+    }));
+  const blockedTasks = executable
+    .filter((t) => classOf(t) === 'blocked')
+    .map((t) => ({
+      taskId: t.taskId,
+      status: t.status,
+      reason: 'blocked and never resolved; nothing in this bounded round will unblock it',
     }));
 
-  // A review that was asked for and did not complete has not settled. `not_requested`
-  // is settled (the round declined it on purpose and says so), and `failed`/`unavailable`
-  // are settled too — an honest failure is a fact, not a pending state.
-  const reviewOutstanding = input.review.requested && input.review.status !== 'completed';
+  // P2-1: "review requested" is NOT "review pending".
+  //
+  // `REVIEW_STATUSES` is a CLOSED vocabulary whose every member is a settled outcome —
+  // `completed`, `failed`, `unavailable`, `not_requested`. There is no pending/running
+  // member today, so the old test `requested && status !== 'completed'` mis-classified
+  // `failed` and `unavailable` as still-pending and held the gate shut forever.
+  //
+  // The correct question is positive: is this status one this code recognises as SETTLED?
+  // A status outside the vocabulary is treated as unsettled, so if a `pending` state is
+  // ever added it will block the gate automatically without touching this file.
+  const reviewSettled = (REVIEW_STATUSES as readonly string[]).includes(input.review.status);
+  const reviewOutstanding = input.review.requested && !reviewSettled;
+  // Settled, but no independent judgement exists. This is surfaced as a DECISION and
+  // never as a blocker: a round whose reviewer failed must still reach the user rather
+  // than deadlocking with nobody able to reach it.
+  const reviewWithoutVerdict = input.review.requested && input.review.status !== 'completed';
+
   const roundComplete = nonTerminalTasks.length === 0 && !reviewOutstanding;
 
   const tally = { succeeded: 0, failed: 0, cancelled: 0, other: 0 };
@@ -738,24 +913,46 @@ export function deriveHumanGate(input: DeriveHumanGateInput): HumanGate {
     decisions.push({
       id: 'await-finished-tasks',
       label: 'Wait for the remaining tasks',
-      detail: `${nonTerminalTasks.length} task(s) are still mid-lifecycle: ${nonTerminalTasks.join(', ')}`,
+      detail: `${nonTerminalTasks.length} task(s) are still mid-lifecycle: ${nonTerminalTasks.join(', ')}` +
+        (unknownTasks.length > 0
+          ? ` (${unknownTasks.join(', ')} are in a status this report does not recognise, so they are treated as unfinished on purpose)`
+          : ''),
     });
   }
   if (neverStartedTasks.length > 0) {
     decisions.push({
       id: 'never-started',
       label: 'Decide about the tasks that never ran',
-      detail: `${neverStartedTasks.length} task(s) never started or are blocked: ` +
+      detail: `${neverStartedTasks.length} task(s) never started: ` +
         `${neverStartedTasks.map((t) => `${t.taskId} (${t.status})`).join(', ')}. ` +
         'Nothing was retried or reassigned to cover them.',
+    });
+  }
+  if (blockedTasks.length > 0) {
+    decisions.push({
+      id: 'blocked-tasks',
+      label: 'Decide about the blocked tasks',
+      detail: `${blockedTasks.length} task(s) are blocked: ` +
+        `${blockedTasks.map((t) => `${t.taskId} (${t.status})`).join(', ')}. ` +
+        'These DID run; they are not waiting on anything this bounded round will resolve.',
     });
   }
   if (reviewOutstanding) {
     decisions.push({
       id: 'await-review',
       label: 'Decide about the missing review',
-      detail: `the review was requested and its status is "${input.review.status}": ` +
-        `${input.review.reason ?? 'no reason given'}`,
+      detail: `the review was requested and its status is "${input.review.status}", which is not a ` +
+        `settled outcome: ${input.review.reason ?? 'no reason given'}`,
+    });
+  } else if (reviewWithoutVerdict) {
+    // Settled but no judgement. A decision, never a blocker.
+    decisions.push({
+      id: 'review-unavailable',
+      label: 'Decide about the missing independent review',
+      detail: `the review was requested and settled as "${input.review.status}"` +
+        `${input.review.reason === null ? '' : ` (${input.review.reason})`}. ` +
+        'The round is finished and the execution evidence stands on its own, but no ' +
+        'independent judgement of it exists.',
     });
   }
   if (roundComplete) {
@@ -798,10 +995,12 @@ export function deriveHumanGate(input: DeriveHumanGateInput): HumanGate {
   if (!roundComplete) {
     status = 'not_ready';
     reason = reviewOutstanding
-      ? `the review was requested and has not completed (status "${input.review.status}")`
+      ? `the review was requested and has not settled (status "${input.review.status}")`
       : `${nonTerminalTasks.length} executable task(s) are still mid-lifecycle: ${nonTerminalTasks.join(', ')}`;
   } else {
     status = 'waiting_for_user';
+    // Says "settled", not "passed": a failed or unavailable review is settled, and this
+    // round still needs a human. Wording it as "verified" would overstate what happened.
     reason = `all ${executable.length} executable task(s) settled and the review has settled; ` +
       'the orchestrator has stopped and control is the user\'s';
   }
@@ -812,7 +1011,12 @@ export function deriveHumanGate(input: DeriveHumanGateInput): HumanGate {
     roundComplete,
     nonTerminalTasks,
     neverStartedTasks,
+    blockedTasks,
+    /** Task statuses this report does not recognise. Non-empty means the gate stayed shut. */
+    unknownStatusTasks: unknownTasks,
     reviewOutstanding,
+    /** Requested, settled, and produced no independent judgement. A decision, not a blocker. */
+    reviewWithoutVerdict,
     taskTally: tally,
     decisions,
     automaticPostRoundAction: 'none',
@@ -1026,7 +1230,16 @@ export function renderRoundResult(result: RoundResult): string {
   for (const n of result.gate.neverStartedTasks) {
     lines.push(`- never started: ${n.taskId} (${n.status}) — ${n.reason}`);
   }
-  if (result.gate.reviewOutstanding) lines.push('- the requested review has not completed');
+  for (const n of result.gate.blockedTasks) {
+    lines.push(`- blocked: ${n.taskId} (${n.status}) — ${n.reason}`);
+  }
+  if (result.gate.unknownStatusTasks.length > 0) {
+    lines.push(`- unrecognised status (gate held shut on purpose): ${result.gate.unknownStatusTasks.join(', ')}`);
+  }
+  if (result.gate.reviewOutstanding) lines.push('- the requested review has not settled');
+  if (result.gate.reviewWithoutVerdict) {
+    lines.push('- the review settled without a verdict; the execution evidence stands on its own');
+  }
   lines.push('- waiting for you to decide:');
   for (const d of result.gate.decisions) lines.push(`    [${d.id}] ${d.label} — ${d.detail}`);
   lines.push(`- automatic post-round action: ${result.gate.automaticPostRoundAction.toUpperCase()}`);
@@ -1080,7 +1293,7 @@ function buildUserFacingSummary(
   userFacing.push(`Codex review: ${review.status}` +
     `${review.verdict === null ? ' (no verdict — not a pass)' : ` — ${review.verdict}`}` +
     `${review.reason === null ? '' : ` (${review.reason})`}`);
-  const notFinished = tasks.filter((t) => isExecutableTask(t) && IN_FLIGHT_STATUSES.has(t.status));
+  const notFinished = tasks.filter((t) => isExecutableTask(t) && isBlockingStatus(t.status));
   if (notFinished.length > 0) {
     userFacing.push('Not finished: ' + notFinished.map((t) => `${t.taskId} (${t.status})`).join(', '));
   }

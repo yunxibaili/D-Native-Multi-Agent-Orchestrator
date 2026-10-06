@@ -261,11 +261,17 @@ export {
 // authority and no way to dispatch, decide or move a task.
 export {
   HUMAN_GATE_STATUSES,
+  IN_FLIGHT_STATUSES,
+  TASK_LIFECYCLE_CLASS,
   buildRoundResult,
+  classifyTaskLifecycle,
   deriveHumanGate,
   gateWithUserDecision,
+  isBlockingStatus,
+  isExecutableTask,
   renderRoundResult,
   sealNextRoundInput,
+  type AttemptEvidenceInput,
   type AttemptSummary,
   type BuildRoundResultInput,
   type DeriveHumanGateInput,
@@ -282,6 +288,7 @@ export {
   type RoundResult,
   type SealNextRoundInputOptions,
   type TaskEvidenceInput,
+  type TaskLifecycleClass,
   type TaskSummary,
 } from './round-result.ts';
 

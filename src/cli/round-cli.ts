@@ -1419,20 +1419,18 @@ export async function runRoundCli(
   // `return` there is no dispatch, no retry, no reassign, no replan and no second
   // decision cycle. The gate's whole job is to make that absence explicit rather than
   // incidental.
-  const taskEvidence: Record<string, TaskEvidenceInput> = {};
-  for (const t of wb.store.all()) {
-    const run = runResults.get(t.taskId);
-    if (run === undefined) continue;
-    const handoff = wb.handoffFor(t.taskId, run);
-    taskEvidence[t.taskId] = {
-      changedFiles: handoff?.changedFiles ?? [],
-      testsRun: handoff?.testsRun ?? [],
-      artifacts: (handoff?.artifacts ?? []).map((a) => ({ name: a.name, path: a.path })),
-      transcriptPath: handoff?.transcriptPath ?? null,
-      errorCode: handoff?.error?.code ?? null,
-      errorMessage: handoff?.error?.message ?? null,
-    };
-  }
+  // R4 (P1-2): evidence is keyed by ATTEMPT ID, not by task id.
+  //
+  // The previous code walked `runResults()` — which holds ONE run per task, the latest —
+  // and stored it under the task id. Every attempt of that task then received the SAME
+  // evidence, so after an A->B handoff the report claimed attempt A wrote the files, ran
+  // the tests and produced the transcript that belonged to attempt B.
+  //
+  // `wb.attemptEvidenceMap()` is populated inside `dispatch()` at the moment the real
+  // `RunResult` and the attempt id `AttemptStore` minted for it are both in hand, so each
+  // entry is that attempt's own. No re-derivation here, and no guessing which attempt a
+  // run belonged to.
+  const attemptEvidence: Record<string, TaskEvidenceInput> = wb.attemptEvidenceMap();
 
   const roundResult: RoundResult = buildRoundResult({
     identity: {
@@ -1472,7 +1470,7 @@ export async function runRoundCli(
           stopped: continuation.stopped,
           agentChain: continuation.agentChain,
         },
-    evidence: taskEvidence,
+    evidence: attemptEvidence,
     evidenceNote,
   });
 

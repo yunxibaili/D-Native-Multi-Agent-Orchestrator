@@ -49,6 +49,9 @@ import {
   type WorkbenchSession,
 } from './workbench-sessions.ts';
 import { buildHandoff, buildTaskBrief, type TaskHandoff } from './workbench-handoff.ts';
+// R4: the per-attempt evidence SHAPE only. Imported as a type so this file gains no runtime
+// dependency on the report layer, and so the direction stays one-way (report <- workbench).
+import type { AttemptEvidenceInput } from './round-result.ts';
 import { commitPlan, replanSubtree } from './planner-wiring.ts';
 import { planTasks } from './planner.ts';
 import { planFromSpec, type WorkbenchTaskSpec, type PlanFromSpecResult } from './workbench-plan.ts';
@@ -218,6 +221,26 @@ export class NativeWorkbench {
   private readonly pendingReworks = new Set<string>();
   /** Latest real RunResult per task - the raw material for handoff briefs. */
   private readonly lastResults = new Map<string, RunResult>();
+  /**
+   * R4: PER-ATTEMPT evidence, keyed by the `attemptId` `AttemptStore` actually minted.
+   *
+   * WHY THIS EXISTS ALONGSIDE `lastResults`
+   * ---------------------------------------
+   * `lastResults` keeps ONE run per task — the latest — because that is what a brief for a
+   * dependant needs. That makes it useless for reporting a task's attempt history: with
+   * attempts A and B, it holds only B, so any report keyed by taskId showed A writing B's
+   * files.
+   *
+   * This map is filled at the only moment both facts are in hand: inside `dispatch()`,
+   * pairing each tick outcome's real `RunResult` with the attempt id `recordExecutions`
+   * minted for THAT outcome. Nothing is guessed and nothing is re-derived later, so
+   * attempt A keeps attempt A's evidence even after attempt B overwrites `lastResults`.
+   *
+   * It is a per-round, in-memory projection — the same kind of view as `lastResults` — not
+   * a store, not an authority, and it is never persisted. Attempt evidence remains owned
+   * by `AttemptStore`; this only remembers which run belonged to which attempt id.
+   */
+  private readonly attemptEvidence = new Map<string, AttemptEvidenceInput>();
   /**
    * Laya's per-task intent, projected from the plan that created each task.
    *
@@ -700,6 +723,26 @@ export class NativeWorkbench {
     const attemptIdsByTask = recorded.attemptIdsByTask;
     const evidenceRecorded = [...recorded.recorded];
     const notRecorded = [...recorded.notRecorded];
+    // R4: bind each attempt id to the run that produced it, WHILE both are in hand.
+    //
+    // `recordExecutions` walks `plainTick.outcomes` in order and appends one id per
+    // recorded outcome, so the nth recorded outcome for a task corresponds to the nth id
+    // in `attemptIdsByTask[taskId]`. Ids are consumed with a cursor rather than zipped, so
+    // an outcome that was not recorded cannot shift the pairing. A scheduler tick
+    // dispatches a task at most once, so in practice the list has 0 or 1 entries; the
+    // cursor form stays correct if that ever changes.
+    {
+      const cursor = new Map<string, number>();
+      for (const entry of plainTick.outcomes) {
+        if (!entry.outcome.ok) continue;
+        const ids = attemptIdsByTask[entry.taskId];
+        if (ids === undefined) continue;
+        const at = cursor.get(entry.taskId) ?? 0;
+        if (at >= ids.length) continue;
+        cursor.set(entry.taskId, at + 1);
+        this.rememberAttemptEvidence(ids[at]!, entry.taskId, entry.outcome.run);
+      }
+    }
     for (const entry of tick.outcomes) {
       if (!reworkIds.has(entry.taskId) || !entry.outcome.ok) continue;
       const identity = identityOf(entry.taskId);
@@ -715,6 +758,9 @@ export class NativeWorkbench {
       });
       if (rec === null) notRecorded.push(entry.taskId);
       else evidenceRecorded.push(entry.taskId);
+      // The rework attempt gets the same treatment: its id and its run are in this one
+      // iteration, so the pairing is exact rather than inferred.
+      if (rec !== null) this.rememberAttemptEvidence(rec.attemptId, entry.taskId, entry.outcome.run);
       this.pendingReworks.delete(entry.taskId);
     }
     for (const entry of tick.outcomes) {
@@ -976,6 +1022,42 @@ export class NativeWorkbench {
   /** Every real run result observed so far. Read-only; the map is copied. */
   runResults(): ReadonlyMap<string, RunResult> {
     return new Map(this.lastResults);
+  }
+
+  /**
+   * R4: per-attempt evidence keyed by `attemptId`. Read-only; the map is copied.
+   *
+   * This is what a round report reads instead of `runResults()`, because `runResults()`
+   * cannot distinguish two attempts of the same task. Attempt evidence itself is still
+   * owned by `AttemptStore`; this only preserves the attempt-id-to-run association that
+   * `lastResults` collapses.
+   */
+  attemptEvidenceMap(): Readonly<Record<string, AttemptEvidenceInput>> {
+    return Object.fromEntries(this.attemptEvidence);
+  }
+
+  /**
+   * Project ONE run into the per-attempt evidence shape and remember it under `attemptId`.
+   *
+   * `buildHandoff` is the existing projection and is reused unchanged, so files, tests and
+   * the transcript are derived exactly as a dependant's brief derives them.
+   *
+   * `artifacts` is deliberately dropped: `buildHandoff` fills it from `Task.artifacts`,
+   * which is what the TASK declared rather than what this attempt produced. Filing a
+   * task's declared artifacts under a specific attempt id would attribute one attempt's
+   * output to another. Task-level artifacts are reported on the task summary instead.
+   */
+  private rememberAttemptEvidence(attemptId: string, taskId: string, run: RunResult): void {
+    const task = this.store.get(taskId);
+    const handoff = task === null ? null : buildHandoff(task, run);
+    this.attemptEvidence.set(attemptId, {
+      changedFiles: handoff?.changedFiles ?? [],
+      testsRun: handoff?.testsRun ?? [],
+      artifacts: [],
+      transcriptPath: handoff?.transcriptPath ?? null,
+      errorCode: handoff?.error?.code ?? run.error?.code ?? null,
+      errorMessage: handoff?.error?.message ?? run.error?.message ?? null,
+    });
   }
 
   // ------------------------------------------------------------------- helpers

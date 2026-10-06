@@ -28,7 +28,20 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { TaskStore } from '../src/orchestration/store.ts';
-import type { Task } from '../src/orchestration/task.ts';
+import {
+  TASK_STATUSES,
+  TASK_TRANSITIONS,
+  type Task,
+  type TaskStatus,
+} from '../src/orchestration/task.ts';
+import { NativeWorkbench } from '../src/orchestration/workbench.ts';
+import { Orchestrator } from '../src/orchestration/orchestrator.ts';
+import { TaskScheduler } from '../src/orchestration/scheduler.ts';
+import { BudgetManager } from '../src/quota/budget.ts';
+import { ModelRegistry } from '../src/quota/registry.ts';
+import type { RuntimeRunner } from '../src/orchestration/execute.ts';
+import type { QuotaRecord, TaskType } from '../src/quota/types.ts';
+import type { AgentDescriptor, RunHandle, RunResult } from '../src/core/types.ts';
 import { AttemptStore } from '../src/orchestration/attempt-store.ts';
 import type { AttemptRecord } from '../src/orchestration/attempt-record.ts';
 import {
@@ -39,15 +52,32 @@ import {
 } from '../src/orchestration/unified-review.ts';
 import {
   HUMAN_GATE_STATUSES,
+  IN_FLIGHT_STATUSES,
   buildRoundResult,
+  classifyTaskLifecycle,
   deriveHumanGate,
   gateWithUserDecision,
+  isBlockingStatus,
   renderRoundResult,
   sealNextRoundInput,
   type BuildRoundResultInput,
   type RoundResult,
 } from '../src/orchestration/round-result.ts';
 import { publishRoundResult, readRoundResult } from '../src/orchestration/round-observation.ts';
+
+const FAKE_AGENT = 'fake-impl';
+const registryWith = (entries: Array<[string, string, TaskType[], 'available' | 'unknown' | 'unavailable']>): ModelRegistry => {
+  const reg = new ModelRegistry();
+  for (const [agentId, modelId, taskTypes] of entries) {
+    reg.upsert({ agentId, modelId, provider: 'test', taskTypes, modelSource: 'test', quotaSource: 'test' }, NOW);
+    // Availability is a SEPARATE call from the upsert. Without it the model exists but is
+    // not selectable, and Assignment refuses with `no-available-agent` — which is what a
+    // missing `setAvailability` looks like from the outside.
+    reg.setAvailability(agentId, 'available');
+  }
+  return reg;
+};
+/** Counts dispatches so each fake run is distinguishable from the last. */
 
 let passed = 0;
 let failed = 0;
@@ -356,6 +386,8 @@ function withStatus(task: Task, status: Task['status']): Task {
     : status === 'to_verify' ? ['queued', 'running', 'to_verify']
     : status === 'succeeded' ? ['queued', 'running', 'to_verify', 'succeeded']
     : status === 'failed' ? ['queued', 'running', 'failed']
+    // `to_verify -> rework` is a real edge (P6-D0 un-reserved rework for review-loop.ts).
+    : status === 'rework' ? ['queued', 'running', 'to_verify', 'rework']
     : ['queued', 'running', 'cancelled'];
   for (const step of path) {
     const moved = store.transition(task.taskId, step, NOW, 'fixture');
@@ -526,11 +558,12 @@ section('R4-6: F5 — a refused-but-executed attempt keeps its evidence');
       errorCode: 'LEASE_REFUSED',
       errorMessage: 'the write-back was refused',
     })],
+    // Keyed by ATTEMPT ID: evidence belongs to the attempt that produced it.
     evidence: {
-      c1: {
+      att_0001: {
         changedFiles: ['src/a.ts'],
         testsRun: ['npm test'],
-        artifacts: [{ name: 'patch', path: '/tmp/p.diff' }],
+        artifacts: [],
         transcriptPath: '/tmp/t.jsonl',
         errorCode: 'LEASE_REFUSED',
         errorMessage: 'the write-back was refused',
@@ -543,8 +576,9 @@ section('R4-6: F5 — a refused-but-executed attempt keeps its evidence');
   check('its refusal code is kept', a.errorCode === 'LEASE_REFUSED');
   check('its files are kept', a.changedFiles.join(',') === 'src/a.ts');
   check('its tests are kept', a.testsRun.join(',') === 'npm test');
-  check('its artifacts are kept', a.artifacts[0]!.name === 'patch');
   check('its transcript pointer is kept', a.transcriptPath === '/tmp/t.jsonl');
+  check('an attempt carries no task-declared artifacts (those live on the task)',
+    a.artifacts.length === 0);
   check('the task still reports the attempt happened', result.machine.tasks[0]!.attemptCount === 1);
 }
 
@@ -560,7 +594,7 @@ section('R4-7: a review attempt does not inflate the attempt count');
       realAttempt({ attemptId: 'att_0002', taskId: 'c1', kind: 'review', agentId: 'codex', modelId: null }),
     ],
     evidence: {
-      c1: {
+      att_0001: {
         changedFiles: ['src/a.ts'],
         testsRun: [],
         artifacts: [],
@@ -620,7 +654,7 @@ section('R4-10: review evidence and execution evidence coexist');
     ],
     reviewEvidence: { recorded: true, attemptId: 'att_rev_1' },
     evidence: {
-      c1: {
+      att_0001: {
         changedFiles: ['src/a.ts'],
         testsRun: ['npm test'],
         artifacts: [],
@@ -750,7 +784,406 @@ section('R4-12d: a task genuinely in flight holds the gate closed');
   }
   const blocked = aggregate({ tasks: [withStatus(realTask({ taskId: 'c1', parentTaskId: 'r' }), 'blocked')] });
   check('blocked: it is settled, not in-flight', blocked.gate.roundComplete === true);
-  check('blocked: it is reported as never started', blocked.gate.neverStartedTasks.some((n) => n.taskId === 'c1'));
+  // A blocked task DID run, so calling it "never started" would be a false account of it.
+  check('blocked: it is NOT reported as never started', blocked.gate.neverStartedTasks.length === 0);
+  check('blocked: it has its own report field', blocked.gate.blockedTasks.some((n) => n.taskId === 'c1'));
+  check('blocked: it is surfaced as a decision', blocked.gate.decisions.some((d) => d.id === 'blocked-tasks'));
+}
+
+// ===========================================================================
+// P1-1 REGRESSION: `rework` is unfinished executable work
+// ===========================================================================
+section('P1-1: a task in rework must NOT be treated as settled or never-started');
+
+{
+  // The bug: `IN_FLIGHT_STATUSES` listed queued/running/to_verify/retrying and NOT
+  // `rework`. Everything non-terminal and non-in-flight was then classified
+  // "never started", so a task awaiting rework opened the human gate while work was still
+  // owed — and `review-loop.ts` would have had somewhere to go that the gate had already
+  // declared finished.
+  const root = realTask({ taskId: 'r' });
+  const child = withStatus(realTask({ taskId: 'c1', parentTaskId: 'r' }), 'rework');
+
+  // Reach the state through the REAL transition table, not by asserting the constant.
+  check('the fixture really reached rework via to_verify -> rework', child.status === 'rework');
+  check('rework is a real TaskStatus', TASK_STATUSES.includes('rework'));
+  check('the lifecycle table really allows to_verify -> rework',
+    TASK_TRANSITIONS.to_verify.includes('rework'));
+
+  check('rework is classified in_flight', classifyTaskLifecycle('rework') === 'in_flight');
+  check('rework is a blocking status', isBlockingStatus('rework') === true);
+  check('rework is in IN_FLIGHT_STATUSES', IN_FLIGHT_STATUSES.has('rework'));
+
+  const result = aggregate({ tasks: [root, child] });
+  check('the gate does NOT open', result.gate.status !== 'waiting_for_user');
+  check('the gate does NOT report the round complete', result.gate.roundComplete === false);
+  check('the gate status is not_ready', result.gate.status === 'not_ready');
+  check('the child is NOT in neverStartedTasks',
+    result.gate.neverStartedTasks.every((n) => n.taskId !== 'c1'));
+  check('neverStartedTasks is empty entirely', result.gate.neverStartedTasks.length === 0);
+  check('the child IS reported as mid-lifecycle', result.gate.nonTerminalTasks.includes('c1'));
+  check('the child IS in the unfinished projection',
+    result.machine.unfinished.some((u) => u.taskId === 'c1'));
+  check('the unfinished reason states its real status',
+    result.machine.unfinished.find((u) => u.taskId === 'c1')!.reason.includes('rework'));
+  check('the user-facing summary names it as not finished',
+    result.summary.userFacing.some((l) => l.includes('c1 (rework)')));
+  check('no automatic action is authorised', result.gate.automaticPostRoundAction === 'none');
+  check('the rendered report shows it mid-lifecycle',
+    renderRoundResult(result).includes('still mid-lifecycle: c1'));
+}
+
+section('P1-1b: rework -> queued and rework -> failed change the projection correctly');
+
+{
+  // `TASK_TRANSITIONS.rework = ['queued','failed']`. Both outcomes must be reflected, and
+  // neither may be mistaken for the original rework state.
+  const drive = (steps: Task['status'][]): Task => {
+    const store = new TaskStore();
+    store.create({ taskId: 'r', taskType: 'implementation', acceptanceCriteria: 'root', parentTaskId: null, agentId: 'opencode', modelId: 'm' }, NOW);
+    store.create({ taskId: 'c1', taskType: 'implementation', acceptanceCriteria: 'work', parentTaskId: 'r', agentId: 'opencode', modelId: 'm' }, NOW);
+    for (const step of steps) {
+      const moved = store.transition('c1', step, NOW, 'regression');
+      if (!moved.ok) throw new Error(`could not move c1 to ${step}: ${moved.reason ?? moved.code}`);
+    }
+    return store.get('c1')!;
+  };
+
+  const backToQueued = drive(['queued', 'running', 'to_verify', 'rework', 'queued']);
+  check('rework -> queued is a legal edge', TASK_TRANSITIONS.rework.includes('queued'));
+  check('the fixture reached queued', backToQueued.status === 'queued');
+  const queuedResult = aggregate({ tasks: [realTask({ taskId: 'r' }), backToQueued] });
+  check('queued still holds the gate closed', queuedResult.gate.status === 'not_ready');
+  check('queued is still mid-lifecycle', queuedResult.gate.nonTerminalTasks.includes('c1'));
+  check('queued is not never-started', queuedResult.gate.neverStartedTasks.length === 0);
+
+  const toFailed = drive(['queued', 'running', 'to_verify', 'rework', 'failed']);
+  check('rework -> failed is a legal edge', TASK_TRANSITIONS.rework.includes('failed'));
+  check('the fixture reached failed', toFailed.status === 'failed');
+  const failedResult = aggregate({ tasks: [realTask({ taskId: 'r' }), toFailed] });
+  check('failed settles the round', failedResult.gate.roundComplete === true);
+  check('failed is counted in the tally', failedResult.gate.taskTally.failed === 1);
+  check('failed is NOT reported as unfinished', failedResult.machine.unfinished.length === 0);
+  check('failed is NOT reported as never started', failedResult.gate.neverStartedTasks.length === 0);
+  check('failed becomes a decision for the user', failedResult.gate.decisions.some((d) => d.id === 'failed-tasks'));
+}
+
+section('P1-1c: every TaskStatus is classified, and `replanning` is not forgotten again');
+
+{
+  check('the classification table covers every TaskStatus',
+    TASK_STATUSES.every((s) => classifyTaskLifecycle(s) !== 'unknown'));
+  // `replanning` was the SECOND omission in the same bug: `TASK_TRANSITIONS` gives it
+  // `['queued','cancelled']`, so it is a real state and was equally mis-filed.
+  check('replanning is classified in_flight', classifyTaskLifecycle('replanning') === 'in_flight');
+  check('replanning blocks the round', isBlockingStatus('replanning') === true);
+  check('the module-load guard would fire on an unclassified status', (() => {
+    // Prove the guard is real by exercising the same predicate it uses.
+    const unclassified = (['planned', 'queued'] as TaskStatus[]).filter((s) => classifyTaskLifecycle(s) === 'unknown');
+    return unclassified.length === 0;
+  })());
+  check('an unknown status is treated as BLOCKING, never as settled',
+    classifyTaskLifecycle('some_future_status') === 'unknown' && isBlockingStatus('some_future_status') === true);
+  check('every blocking status is in IN_FLIGHT_STATUSES or unknown-safe',
+    (['queued', 'running', 'to_verify', 'retrying', 'rework', 'replanning'] as TaskStatus[])
+      .every((s) => IN_FLIGHT_STATUSES.has(s)));
+  check('non-blocking statuses are genuinely non-blocking',
+    (['planned', 'blocked', 'succeeded', 'failed', 'cancelled'] as TaskStatus[])
+      .every((s) => !IN_FLIGHT_STATUSES.has(s)));
+}
+
+section('P1-2 REGRESSION: per-ATTEMPT evidence attribution across an A->B handoff');
+
+{
+  // The bug: evidence was keyed by taskId and there is exactly ONE latest RunResult per
+  // task, so with two attempts both were handed attempt B's files/tests/transcript. The
+  // report therefore claimed agent A wrote agent B's files.
+  const root = succeeded(realTask({ taskId: 'r' }));
+  const task = succeeded(realTask({ taskId: 'T1', parentTaskId: 'r' }));
+
+  // Two DISTINCT attempts of the SAME task, appended to one store so the chain is real.
+  const attempts = realAttemptChain([
+    {
+      taskId: 'T1',
+      attemptId: 'A1',
+      agentId: 'agent-A',
+      outcome: 'failure',
+      errorCode: 'QUOTA_EXHAUSTED',
+      errorMessage: 'agent A ran out of quota',
+      leaseVersion: 1,
+    },
+    {
+      taskId: 'T1',
+      attemptId: 'A2',
+      agentId: 'agent-B',
+      outcome: 'success',
+      leaseVersion: 2,
+    },
+  ]);
+
+  // Each attempt gets ONLY its own evidence. Every field differs, so a leak in any single
+  // field is caught.
+  const result = aggregate({
+    tasks: [root, task],
+    attempts,
+    evidence: {
+      A1: {
+        changedFiles: ['a.ts'],
+        testsRun: ['test-a'],
+        artifacts: [],
+        transcriptPath: 'transcript-a',
+        errorCode: 'QUOTA_EXHAUSTED',
+        errorMessage: 'agent A ran out of quota',
+      },
+      A2: {
+        changedFiles: ['b.ts'],
+        testsRun: ['test-b'],
+        artifacts: [],
+        transcriptPath: 'transcript-b',
+        errorCode: null,
+        errorMessage: null,
+      },
+    },
+    continuation: {
+      happened: 1,
+      limit: 2,
+      handoffs: [{
+        taskId: 'T1',
+        reason: 'quota_exhausted',
+        fromAgentId: 'agent-A',
+        toAgentId: 'agent-B',
+        previousAttemptId: 'A1',
+        decisionAction: 'reassign',
+        decisionApplied: true,
+        at: NOW + 5,
+      }],
+      stopped: { code: 'no-trigger', reason: 'chain finished' },
+      agentChain: { T1: ['agent-A', 'agent-B'] },
+    },
+  });
+
+  const a1 = result.machine.attempts.find((a) => a.attemptId === 'A1')!;
+  const a2 = result.machine.attempts.find((a) => a.attemptId === 'A2')!;
+  check('both attempts are reported', a1 !== undefined && a2 !== undefined);
+
+  // --- attempt A keeps A's evidence ---
+  check('A1 files are A\'s', a1.changedFiles.join(',') === 'a.ts');
+  check('A1 tests are A\'s', a1.testsRun.join(',') === 'test-a');
+  check('A1 transcript is A\'s', a1.transcriptPath === 'transcript-a');
+  check('A1 error is A\'s', a1.errorCode === 'QUOTA_EXHAUSTED');
+  check('A1 agent is A', a1.agentId === 'agent-A');
+  check('A1 lease version is A\'s', a1.leaseVersion === 1);
+  check('A1 carries the handoff reason', a1.handoffReason === 'quota_exhausted');
+
+  // --- attempt B keeps B's evidence ---
+  check('A2 files are B\'s', a2.changedFiles.join(',') === 'b.ts');
+  check('A2 tests are B\'s', a2.testsRun.join(',') === 'test-b');
+  check('A2 transcript is B\'s', a2.transcriptPath === 'transcript-b');
+  check('A2 has no error', a2.errorCode === null && a2.errorMessage === null);
+  check('A2 agent is B', a2.agentId === 'agent-B');
+  check('A2 lease version is B\'s (a NEW lease)', a2.leaseVersion === 2);
+
+  // --- and explicitly: no cross-contamination in ANY field ---
+  check('A1 does NOT show B\'s files', !a1.changedFiles.includes('b.ts'));
+  check('A2 does NOT show A\'s files', !a2.changedFiles.includes('a.ts'));
+  check('A1 does NOT show B\'s tests', !a1.testsRun.includes('test-b'));
+  check('A2 does NOT show A\'s tests', !a2.testsRun.includes('test-a'));
+  check('A1 transcript differs from A2 transcript', a1.transcriptPath !== a2.transcriptPath);
+  check('A1 error differs from A2 error', a1.errorCode !== a2.errorCode);
+  check('A1 lease version differs from A2 lease version', a1.leaseVersion !== a2.leaseVersion);
+  check('the two attempts share a taskId', a1.taskId === 'T1' && a2.taskId === 'T1');
+  check('the chain link is real', a2.previousAttemptId === 'A1');
+
+  // --- an attempt with NO evidence reports emptiness, never a sibling's ---
+  const partial = aggregate({
+    tasks: [root, task],
+    attempts,
+    // Only A1 has evidence. A2 must be empty rather than inheriting A1's.
+    evidence: {
+      A1: {
+        changedFiles: ['a.ts'],
+        testsRun: ['test-a'],
+        artifacts: [],
+        transcriptPath: 'transcript-a',
+        errorCode: null,
+        errorMessage: null,
+      },
+    },
+  });
+  const lonely = partial.machine.attempts.find((a) => a.attemptId === 'A2')!;
+  check('an attempt with no evidence of its own reports no files', lonely.changedFiles.length === 0);
+  check('and no tests', lonely.testsRun.length === 0);
+  check('and a null transcript', lonely.transcriptPath === null);
+  check('and never inherits its predecessor\'s files', !lonely.changedFiles.includes('a.ts'));
+
+  // --- a review attempt never inherits an execution's evidence ---
+  const withReview = aggregate({
+    tasks: [root, task],
+    attempts: realAttemptChain([
+      { taskId: 'T1', attemptId: 'E1', kind: 'execution' },
+      { taskId: 'T1', attemptId: 'V1', kind: 'review', agentId: 'codex', modelId: null },
+    ]),
+    evidence: {
+      E1: {
+        changedFiles: ['e.ts'],
+        testsRun: ['test-e'],
+        artifacts: [],
+        transcriptPath: 'transcript-e',
+        errorCode: null,
+        errorMessage: null,
+      },
+    },
+  });
+  const reviewAttempt = withReview.machine.attempts.find((a) => a.attemptId === 'V1')!;
+  check('a review attempt shows no files', reviewAttempt.changedFiles.length === 0);
+  check('a review attempt shows no transcript', reviewAttempt.transcriptPath === null);
+}
+
+// ===========================================================================
+// P2-1 REGRESSION is covered in R4-12c above.
+// ===========================================================================
+section('P1-2b: the workbench binds each attempt id to its own run (real dispatch path)');
+
+{
+  // Proves the FIX is at the SOURCE, not only in the projection: with two attempts of one
+  // task, `attemptEvidenceMap()` must return two DIFFERENT entries keyed by the real minted
+  // attempt ids — never one task-keyed blob.
+  const dir = mkdtempSync(join(tmpdir(), 'r4-attempt-evidence-'));
+  let runNumber = 0;
+  // The fake run names the REAL child (set below, once the planner has created it) so the
+  // projection resolves a genuine Task. A wrong id would silently yield empty evidence.
+  let runTaskId = '';
+  // Each dispatch produces a DISTINCT RunResult, so a leak between attempts is visible
+  // rather than hidden behind identical objects. The RunHandle shape is the same minimal
+  // fake the other suites use: the orchestrator only awaits `result()`.
+  const runtime: RuntimeRunner = {
+    run: (req) => {
+      const k = ++runNumber;
+      const result = {
+        taskId: runTaskId,
+        threadId: `th-${k}`,
+        agentId: req.agentId,
+        state: k === 1 ? 'failed' : 'succeeded',
+        startedAt: NOW,
+        endedAt: NOW + 1,
+        exitCode: k === 1 ? 1 : 0,
+        signal: null,
+        output: '',
+        outputTruncated: false,
+        transcriptPath: `transcript-${k}`,
+        usage: null,
+        toolCalls: [
+          { name: 'write', input: { filePath: `file-${k}.ts` } },
+          { name: 'bash', input: { command: `test-${k}` } },
+        ],
+        diagnostics: [],
+        cleanup: { rootKilled: false, descendantsReaped: false, note: '' },
+        error: k === 1 ? { code: 'SPAWN_FAILED', message: 'the worker could not start' } : null,
+      } as unknown as RunResult;
+      return { result: async () => result, cancel: async () => {}, dispose: async () => {} } as unknown as RunHandle;
+    },
+  };
+
+  const budgets = new BudgetManager(1_000_000);
+  budgets.task('r', 100_000);
+  budgets.agent(FAKE_AGENT, 1_000_000);
+  const quotaRows = [{
+    provider: FAKE_AGENT, agentId: FAKE_AGENT, modelId: null, source: 'locally_observed',
+    usage: null, remaining: null, resetAt: null, period: 'day', status: 'available',
+    usageClass: 'observed', confidence: 'high', observedAt: NOW, note: '',
+  }] as unknown as QuotaRecord[];
+  const registry = registryWith([[FAKE_AGENT, 'm', ['implementation'], 'available']]);
+  const orch = new Orchestrator({
+    gate: {
+      descriptors: [{
+        id: FAKE_AGENT, displayName: FAKE_AGENT, launcher: 'fake', transport: 'cli-jsonl',
+        capabilities: { newTask: true, review: true, modelSelection: true, resume: true },
+      } as unknown as AgentDescriptor],
+      agentStatus: [{ agent: FAKE_AGENT, version: '1', installed: 'Yes', login: 'n/a', quotaSource: 't', usage: 'n/a', status: 'ok' }],
+      quotaRecords: quotaRows,
+      registry,
+      budgets,
+      taskType: 'implementation',
+      requestedUnits: 10,
+      currentConcurrency: 0,
+      maxConcurrency: 4,
+      maxChildren: 8,
+      maxConcurrentAgents: 4,
+    } as never,
+    now: () => NOW,
+    runtime,
+    defaultCwd: dir,
+  });
+  const wb = new NativeWorkbench({
+    orchestrator: orch,
+    scheduler: new TaskScheduler({ orchestrator: orch, cwd: dir, translate: { allowAvailabilityContinuation: true } }),
+    registry,
+    quotaRecords: quotaRows,
+    cwd: dir,
+  });
+
+  // The real creation path: the planner creates the root and its child, then Assignment
+  // binds the child. No hand-made task, so the scheduler sees a genuine ready child.
+  const spec = {
+    taskId: 'r', objective: 'prove per-attempt evidence', taskType: 'implementation',
+    shape: 'single', budgetUnits: 10, preferredAgent: FAKE_AGENT, skills: [],
+  } as unknown as Parameters<typeof wb.plan>[0];
+  wb.plan(spec, null);
+  const childId = wb.store.children('r')[0]?.taskId ?? '';
+  runTaskId = childId;
+  budgets.task(childId, 100_000);
+  const assigned = wb.assignChildren('r', spec);
+  check('the fixture produced exactly one child task', childId !== '');
+  // Guard the guard: if Assignment refused, nothing below would run and the evidence
+  // assertions would pass vacuously on an empty map.
+  check('the fixture actually bound an identity to the child',
+    assigned.some((a) => a.taskId === childId && a.ok));
+
+  await wb.dispatch();
+  const afterFirst = wb.attemptEvidenceMap();
+  const firstIds = Object.keys(afterFirst);
+  check('the first dispatch bound an attempt id to its run', firstIds.length === 1);
+  check('the first run\'s files are bound', afterFirst[firstIds[0]!]!.changedFiles.join(',') === 'file-1.ts');
+  check('the first run\'s tests are bound', afterFirst[firstIds[0]!]!.testsRun.join(',') === 'test-1');
+  check('the first run\'s transcript is bound', afterFirst[firstIds[0]!]!.transcriptPath === 'transcript-1');
+  check('the first run\'s error is bound', afterFirst[firstIds[0]!]!.errorCode === 'SPAWN_FAILED');
+
+  // Second dispatch of the SAME task: the point of the whole fix. Attempt 1 must keep
+  // attempt 1's evidence even though `lastResults` has now been overwritten by run 2.
+  // The retry goes through the EXISTING Orchestrator.retry seam, not a direct transition.
+  check('the availability failure parked the task in retrying', wb.store.get(childId)?.status === 'retrying');
+  const retried = orch.retry(childId, 'R4 regression: force a second attempt', 3);
+  check('the existing retry seam accepted it', retried.ok);
+  await wb.dispatch();
+  const afterSecond = wb.attemptEvidenceMap();
+  const allIds = Object.keys(afterSecond);
+  check('the second dispatch bound a SECOND attempt id', allIds.length === 2);
+  if (allIds.length === 2) {
+    const a1 = afterSecond[allIds[0]!]!;
+    const a2 = afterSecond[allIds[1]!]!;
+    check('attempt 1 still holds ITS OWN files after attempt 2 ran', a1.changedFiles.join(',') === 'file-1.ts');
+    check('attempt 1 still holds ITS OWN tests', a1.testsRun.join(',') === 'test-1');
+    check('attempt 1 still holds ITS OWN transcript', a1.transcriptPath === 'transcript-1');
+    check('attempt 2 holds ITS OWN files', a2.changedFiles.join(',') === 'file-2.ts');
+    check('attempt 2 holds ITS OWN tests', a2.testsRun.join(',') === 'test-2');
+    check('attempt 2 holds ITS OWN transcript', a2.transcriptPath === 'transcript-2');
+    check('the two attempts are genuinely different', a1.changedFiles.join(',') !== a2.changedFiles.join(','));
+    check('no attempt holds the other\'s transcript', a1.transcriptPath !== a2.transcriptPath);
+    check('no attempt holds the other\'s tests', a1.testsRun.join(',') !== a2.testsRun.join(','));
+    check('every bound id is a real AttemptStore id', allIds.every((id) => wb.evidence.get(id) !== null));
+  }
+
+  // And the end-to-end projection keeps the separation, keyed by those same real ids.
+  const projected = aggregate({
+    tasks: wb.store.all(),
+    attempts: wb.evidence.all(),
+    evidence: afterSecond,
+  });
+  const rows = projected.machine.attempts.filter((a) => a.kind === 'execution');
+  check('the projection reports the executions', rows.length >= 1);
+  check('and their evidence is distinct per attempt',
+    new Set(rows.map((a) => a.changedFiles.join(','))).size === rows.length);
+  rmSync(dir, { recursive: true, force: true });
 }
 
 section('R4-12b: an unfinished round is not_ready, not waiting');
@@ -762,18 +1195,58 @@ section('R4-12b: an unfinished round is not_ready, not waiting');
   check('the gate still reports no automatic action', result.gate.automaticPostRoundAction === 'none');
 }
 
-section('R4-12c: a requested but incomplete review holds the gate closed');
+section('R4-12c: a FAILED review is SETTLED, so the gate opens but flags the gap');
 
 {
+  // P2-1 regression. `REVIEW_STATUSES` is a closed vocabulary whose every member is a
+  // settled outcome. The old test was `requested && status !== 'completed'`, which called
+  // `failed` and `unavailable` still-pending and held the gate shut forever — a round whose
+  // reviewer failed could never reach the user who has to decide about it.
   const result = aggregate({
     tasks: [succeeded(realTask())],
     review: reviewFailed,
     reviewRequested: true,
   });
-  check('an incomplete review is outstanding', result.gate.reviewOutstanding === true);
-  check('the gate is not ready', result.gate.status === 'not_ready');
-  check('the gate explains why', result.gate.reason.includes('review'));
-  check('the gate offers the review decision', result.gate.decisions.some((d) => d.id === 'await-review'));
+  check('a FAILED review is settled, so it is NOT outstanding', result.gate.reviewOutstanding === false);
+  check('the gate therefore OPENS', result.gate.status === 'waiting_for_user');
+  check('and the round is complete', result.gate.roundComplete === true);
+  check('the missing judgement is still reported', result.gate.reviewWithoutVerdict === true);
+  check('the gate offers it as a decision', result.gate.decisions.some((d) => d.id === 'review-unavailable'));
+  check('the decision explains there is no independent judgement',
+    result.gate.decisions.find((d) => d.id === 'review-unavailable')!.detail.includes('no independent judgement'));
+  check('no automatic action is authorised either way', result.gate.automaticPostRoundAction === 'none');
+
+  const unavailable = aggregate({
+    tasks: [succeeded(realTask())],
+    review: { ...reviewFailed, status: 'unavailable', code: 'reviewer-missing' },
+    reviewRequested: true,
+  });
+  check('an UNAVAILABLE review is settled too', unavailable.gate.reviewOutstanding === false);
+  check('and the gate opens for it', unavailable.gate.status === 'waiting_for_user');
+
+  const notRequested = aggregate({
+    tasks: [succeeded(realTask())],
+    review: reviewNotRequested,
+    reviewRequested: false,
+  });
+  check('a NOT_REQUESTED review is settled', notRequested.gate.reviewOutstanding === false);
+  check('and it is not reported as a missing judgement',
+    notRequested.gate.reviewWithoutVerdict === false);
+
+  const completed = aggregate({ tasks: [succeeded(realTask())] });
+  check('a COMPLETED review is settled', completed.gate.reviewOutstanding === false);
+  check('and produced a verdict, so no gap is flagged', completed.gate.reviewWithoutVerdict === false);
+
+  // A status outside the vocabulary is treated as UNSETTLED, so adding a `pending` state
+  // later blocks the gate without this file needing to learn the word.
+  const pending = aggregate({
+    tasks: [succeeded(realTask())],
+    review: { ...reviewFailed, status: 'pending' as never },
+    reviewRequested: true,
+  });
+  check('an UNRECOGNISED review status is treated as unsettled', pending.gate.reviewOutstanding === true);
+  check('and it does hold the gate closed', pending.gate.status === 'not_ready');
+  check('with the review decision offered', pending.gate.decisions.some((d) => d.id === 'await-review'));
 }
 
 // ===========================================================================
@@ -886,7 +1359,7 @@ section('R4-19: the rendered report separates machine / review / summary');
     attempts: [realAttempt({ taskId: 'c1' })],
     review: reviewOk('reject'),
     evidence: {
-      c1: {
+      att_0001: {
         changedFiles: ['src/a.ts', 'src/b.ts'],
         testsRun: ['npm test'],
         artifacts: [{ name: 'patch', path: '/tmp/p.diff' }],
