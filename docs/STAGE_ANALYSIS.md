@@ -18,20 +18,22 @@
 Codex 本轮独立 3-round 为 139/0，补充 READ 121/0、resource-claim 192/0，typecheck/diff check 通过。
 保留真实 Agent 兼容性、full-suite 时效及现有 259 reconciliation 可用性 P2；不开放并行写。
 
-B1 只读入口审计及 Codex 复核已完成；随后 B1.1 最小切片已交付，独立审核 BLOCKED。
+B1 只读入口审计及 Codex 复核已完成；B1.1a 原两个 P1 已独立确认关闭，整体仍 BLOCKED（新增清理失败传播 P1）。
 主要缺口成立，但目录采集不得调用 setModelAvailability 或自动 upsert 调度 registry；
 这些写入会改变候选/准入，并非只读。第一片建议缩为 opt-in OpenCode 模型目录诊断，
 通过现有 doctor 展示独立快照，listed/connected/callable/free 分开。
 项目/角色/任务选择层级、付费授权、Skill/MCP 目录与执行闭环留在后续对应切片。
 详情见 [B1 审计复核](PROJECT_BASELINE.md#7-b1-只读审计独立复核)。
 
-**B1.1 已实现，独立审核 BLOCKED**：`doctor --models opencode` 通过既有 doctor 返回 OpenCode 原生
-`opencode models` 的只读目录快照（`src/runtime/model-catalog.ts`）。不写 ModelRegistry、
+**B1.1 已实现；B1.1a 原两个 P1 关闭，整体 BLOCKED**：`doctor --models opencode` 通过既有 doctor
+返回 OpenCode 原生 `opencode models` 的只读目录快照（`src/runtime/model-catalog.ts`）。不写 ModelRegistry、
 不改变 assignWorker/准入/quota/费用，listed≠connected≠callable≠free；其他 Agent 返回 `unsupported`。
 未采集/成功有模型/成功空目录/不支持/失败（非零、超时、无法解析）严格区分，部分 stdout 不认证成功。
-B1 整体仍未实现或封板；本片不含选择层级、pause、付费授权、动态额度、Skill/MCP 或 LAYA 联合决策。
-待关闭两个 P1：默认 execRunner timeout 后原生后代仍 ALIVE；注入 runner 的 suite 仍依赖真实 OpenCode discovery。
-详见 [项目基线 §8](PROJECT_BASELINE.md#8-b11-独立审核与上传说明)。
+B1.1a 收口：默认执行改为复用生产 contained `ManagedProcess`（Job 启动 + 协同停止 + tree-stop 确认），
+未确认清理即判 `failed`；测试改用受控 command/fixture，不再依赖本机安装 OpenCode。
+B1 整体仍未封板；本片不含选择层级、pause、付费授权、动态额度、Skill/MCP 或 LAYA 联合决策。
+新增 P1：observer/目录回收失败未进入最终退出码；P2：成功后的 deadline timer 未释放，
+fresh-PID OBSERVATION_ERROR 可通过冗余断言。详见 [项目基线 §8.6](PROJECT_BASELINE.md#86-b11a-独立复核原两个-p1-关闭整体-blocked)。
 
 ## 2. 需求与实现差距
 
@@ -69,7 +71,7 @@ B2–B5 仍为 PLANNED / NOT AUTHORIZED，不得因本文自行开工。
 | 阶段 | 最小目标 | 依赖与退出条件 |
 |---|---|---|
 | B0 执行证据收口 | COMPLETE：W5 SEALED WITH P2；观测/清理 P0/P1 与冗余断言 P2 已关闭 | 兼容性和证据时效限制保留；PARALLEL_WRITE=CLOSED |
-| B1 可用能力与用户规则 | 复用 registry/adapter 表，明确 Agent/Model/Skill/MCP 事实和用户约束 | 区分目录与可用；固定/禁用/费用冲突可验证。**B1.1 BLOCKED：真实 runner 清理与测试安装依赖两个 P1**，其余未实现 |
+| B1 可用能力与用户规则 | 复用 registry/adapter 表，明确 Agent/Model/Skill/MCP 事实和用户约束 | **B1.1a BLOCKED：原两个 P1 关闭，新增测试清理失败传播 P1 与两个 P2**；其余未实现 |
 | B2 费用与候选约束 | 入口/账户归属、免费依据、有效期、共享额度和预算 | 每次分配/接力均校验；未知不伪造；全部不可用安全停止 |
 | B3 LAYA 能力选择 | 联合选择 Agent/Model 与 Skill/MCP，提供必要角色能力事实 | 只选合格候选，复用原生执行，实际能力可核对 |
 | B4 异构任务闭环 | 候选内容生成 → LAYA 选择 → 调研/实现/测试/审核 | 同 Agent 多模型独立会话；工作区隔离和材料交接有实证 |
@@ -146,20 +148,26 @@ Agent Orchestrator 可参考执行/工作区协作，RouteLLM 可参考评估方
 
 ## 6. 本轮检查与限制
 
-本轮（B1.1）OpenCode 报告：`npm run typecheck` PASS；新增 `tests/model-catalog.test.ts` 42/0；
+本轮（B1.1a）OpenCode 实跑：`npm run typecheck` PASS；`tests/model-catalog.test.ts` **59/0**；
 定向回归 quota 184/0、assignment 235/0、contract 246/0（2 skipped）；`git diff --check` clean。
 默认 doctor 的目录 runner 调用为 0；opt-in 才采集；非零/null code 丢弃部分 stdout。
-测试使用注入 runner 与 fake adapter，未启动本机真实 Agent、未调用模型任务、未读凭据；
-但仍依赖本机 OpenCode discovery，不能描述为机器无关。
-新增生产 authority 为 0，`runtime.run` 生产调用边仍为 1（测试内源码守卫复核）。
+默认执行改为复用生产 contained `ManagedProcess`：受控 fixture 的 timeout（root EXITED、后代 ALIVE）
+→ `failed` 且后代经 held handle 确认为 `EXITED`；正常 fixture exit 0 → 正确收集 stdout 为 `ok`；
+「未确认清理」由 `catalogSnapshotFromRun` 纯函数分支独立覆盖。
+测试改用受控 command/fixture，不再依赖本机安装 OpenCode；保留 discovery 失败返回 `failed` 的独立断言。
+未启动本机真实 Agent、未调用模型任务、未读凭据；新增生产 authority=0，`runtime.run` 生产调用边仍为 1。
 
-Codex 本轮独立实跑：typecheck PASS；model-catalog 42/0、quota 184/0、assignment 235/0、
-contract 246/0（2 skipped）；CLI 缺值 exit=2；diff check PASS。
+Codex 上一轮独立实跑（B1.1 BLOCKED）：typecheck PASS；model-catalog 42/0、quota 184/0、
+assignment 235/0、contract 246/0（2 skipped）；CLI 缺值 exit=2；diff check PASS。
 两个独立反例：模拟无 OpenCode 安装，原 suite 首个 collector case 失败并 TypeError/exit=1；
 真实 native 默认 runner 2200ms timeout，root 原句柄 EXITED，但 child 原生等待 ALIVE。
-child 随后 held-handle EXIT_CONFIRMED，两 observer 均 reaped，owned scratch/fixture 无残留。
-复用调研的 GitHub MCP 本轮请求失败；以 Node/libuv 官方资料及本机物理 probe 为依据。
-结论 B1.1 BLOCKED；下一片仅关闭两个 P1，详见项目基线 §8。
+本轮 Codex 独立 typecheck、model-catalog 59/0、quota 184/0、assignment 235/0、contract 246/0（2 skipped）通过。
+模拟未安装 OpenCode 也为 59/0、exit=0；独立 native probe 的 root 原句柄 EXITED/child 原生 ALIVE
+在 2200ms timeout 后变为 child 原句柄 EXITED，collector failed/models=[]，确认原两个 P1 关闭。
+新增 P1 的两次独立失败注入：observer.reaped=false 报 failing 仍 exit=0；owned 删除失败留下两个目录仍 exit=0。
+审核 probe 随后回收实际资源，owned 目录/observer/fixture 无残留。注入失败不冒充 OS 物理失败。
+P2 timer probe：88ms 返回 ok、6014ms 才退出（timeout=6000ms）；另有 fresh-PID 不确定事实通过冗余断言。
+git diff --check PASS；本轮 GitHub MCP 检索有成功响应，优先复用项目代码与 Node 原生 timer。
 
 上一轮 W5 实跑：`npm run typecheck` PASS；`W51_ROUNDS=3` EXIT=0、139 passed / 0 failed，
 attempted=3/completed=3，readiness/observation/containment/surviving/cleanup 全 0；`git diff --check` clean。

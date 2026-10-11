@@ -81,14 +81,18 @@ W5 封板保留下述兼容性及证据时效 P2，不代表全部 Agent 或新�
 端到端预算以及 token 节省对比，均未完成整体验收。
 新能力不能绕过既有 Spawn Gate 或为了调度可用而放宽未知事实语义。
 
-### 5.1 B1.1 只读模型目录诊断（实现待修，独立审核 BLOCKED）
+### 5.1 B1.1 只读模型目录诊断（原两个 P1 已关闭；B1.1a 独立审核 BLOCKED）
 
-本轮实现一个**最小、只读**的切片：用户显式请求时，`doctor --models <agent>` 返回该 Agent
-原生 CLI 列出的模型目录快照。仅支持 **OpenCode**（`opencode models`，官方命令）；其他 Agent
-明确返回 `unsupported`，其输出格式不被套用。实现复用既有 discover/launcher/`CmdRunner`
-与 `execRunner`，无新依赖、无 `shell:true`、无 MCP SDK、无通用采集框架。
-但既有 `execRunner` 不等于 W2/W3 contained ManagedProcess：Codex 实测超时后后代仍存活。
-另一个 P1 为新增测试仍依赖本机安装 OpenCode。**B1.1 尚未通过独立审核**，详见 §8。
+用户显式请求时，`doctor --models <agent>` 返回该 Agent 原生 CLI 列出的模型目录快照。
+仅支持 **OpenCode**（`opencode models`，官方命令）；其他 Agent 明确返回 `unsupported`，
+其输出格式不被套用。无新依赖、无 `shell:true`、无 MCP SDK、无通用采集框架。
+
+B1.1a 收口（详见 §8.5）：默认执行路径改为复用生产 contained `ManagedProcess`
+（Job launcher + 协同停止 + tree-stop 确认），不再使用 quota `execRunner`；
+超时若无法确认进程树已停止即判 `failed`，绝不用 root exit 冒充 tree stopped。
+测试改用受控 command/fixture，不依赖本机安装 OpenCode。
+Codex 已独立确认这两个 P1 关闭；本轮新增的测试清理失败仍可 exit=0，构成新的 P1，
+另有 deadline timer 未释放、fresh-PID 不确定事实通过的 P2，详见 §8.6。B1.1a 整体尚未通过。
 
 冻结事实边界（不因本片改变）：
 
@@ -233,7 +237,8 @@ OpenAI 官方 app-server 页面已打开，但后续段落检索/特定页面请
 
 ## 8. B1.1 独立审核与上传说明
 
-日期：2026-10-11。**BLOCKED：两个 P1 未关闭**。§7 是上一轮入口审计历史，
+日期：2026-10-11。**上一轮结论 BLOCKED：当时两个 P1 未关闭**；现已在 §8.6 独立确认关闭。
+§7 是上一轮入口审计历史，
 §5.1 的实现已存在，但不能据此描述为通过审核。W5 SEALED WITH P2 不变；
 PARALLEL_WRITE=CLOSED；B1 未封板；B2–B5 未授权。
 
@@ -291,3 +296,100 @@ Codex 在独立 Node 子进程内暂时隐藏所有含 opencode 的 existsSync �
 上传 B1.1 的五个代码/测试/脚本文件及两份现有文档；保留实现快照以供修复，**不表示通过验收**。
 主分支、共享索引与 W5 已审核三文件保持原状；不上传临时 probe、二进制、日志、凭据或新报告文件。
 下一片仅建议关闭上述两个 P1，不进入 B2–B5、不开放并行写。
+
+### 8.5 B1.1a 实现方收口报告（独立裁定见 §8.6）
+
+日期：2026-10-11。实现方（OpenCode）仅关闭 §8.1/§8.2 两个 P1，不扩展 B1 功能。
+W5 SEALED WITH P2 不变；PARALLEL_WRITE=CLOSED；B1 未封板；B2–B5 未授权。
+
+**P1-1（contained runner）**：`collectModelCatalog` 默认执行改为复用生产 contained
+`ManagedProcess`（`src/runtime/spawn.ts`），经 `LauncherSpec` + sealed Job launcher 启动；
+timeout 时调用协同 `cancel()` 并要求 launcher 确认 `ActiveProcesses == 0`。
+`catalogSnapshotFromRun` 把「tree stop 未确认」判为 `failed`，绝不因 root exit 或
+部分 stdout 报告成功。未重写 quota runner、未新增 manager/authority、无 `shell:true`、
+无 PID/name 扫描清理；quota `execRunner` 不再用于目录执行。
+
+物理验证（受控 fixture，非注入 `code=null`）：一个 node root 用 `detached:true` 派生一个
+存活后代后立即退出（root EXITED、后代 ALIVE 的 P1 形态）。默认路径 timeout=3000ms
+→ 结果 `failed`、models=[]；被持有原句柄的后代在 contained 停止后为 `EXITED`，
+fresh 观测非 ALIVE。另有正常 fixture：exit 0 且 Job 确认空 → 正确收集 stdout 为 `ok`。
+「未确认清理必须保留失败」由 `catalogSnapshotFromRun` 的纯函数分支独立覆盖。
+
+**P1-2（hermetic）**：测试全部经受控 command seam —— 注入 runner 的用例传
+`command=process.execPath`；真实路径用例写受控 `.cmd`/`.cjs` 到 owned 临时目录；
+doctor 用例的 `config.agents.opencode.command` 指向受控路径并用 fake adapter 替换全部已知 adapter。
+不再依赖本机 OpenCode 是否安装；未安装机器同样通过。保留真实 discovery 失败（显式不存在
+的绝对 command）返回 `failed` 的独立断言；不 skip、不捕获 TypeError、不削弱断言。
+
+实跑证据（实现方）：`npm run typecheck` PASS；model-catalog **59/0**；quota 184/0、
+assignment 235/0、contract 246/0（2 skipped）；`git diff --check` clean。
+结束时 owned 临时目录、observer、后代进程与 fixture 均无残留。
+`runtime.run` 生产调用边仍为 1，新增 authority=0。未跑 full suite、未调用真实 Agent/模型、
+未读凭据、未改本机配置、无 Git 写操作。
+
+上述为**受控 fixture 物理验证**与**纯函数失败注入**，须与真实 Agent 兼容性证据分开；
+两个 P1 的关闭仍待独立复核。
+
+### 8.6 B1.1a 独立复核：原两个 P1 关闭，整体 BLOCKED
+
+日期：2026-10-11。**原 P1-1/P1-2 均已独立确认关闭**；不继续沿用旧 blocker。
+新的 P1 是本片 containment 测试的清理失败不进入最终退出码。W5 SEALED WITH P2 不变，
+PARALLEL_WRITE=CLOSED，B1 未封板，B2–B5 未授权。
+
+#### 原 P1 的独立证据
+
+- 本轮 typecheck PASS；model-catalog **59/0，exit=0**；quota **184/0**、assignment **235/0**、
+  contract **246/0，2 skipped**，三个回归 exit 均为 0。
+- 独立 Node 子进程隐藏 opencode filesystem candidates，再运行原 suite：**59/0，exit=0**。
+  测试使用已有 command/config seam，原机器安装依赖反例不再成立。
+- 另编译临时 native root/child fixture，走真实默认 collector，timeout=2200ms。
+  超时前 root 原句柄 **EXITED**、child 原生等待 **ALIVE**；约 **2328ms** collector 返回
+  `failed`、models=[]；随后 child 原句柄 **EXITED**。这不是注入 code=null，也不是根据 PID 消失猜死亡。
+  两 observer 均 reaped，临时 native 源码、二进制与目录已删除；未调用真实 Agent。
+- Windows 的 containmentEnabled 固定由平台决定，生产无环境 opt-out；本轮未修改该既有契约。
+  非 Windows 未测试，不将本次 Windows probe 外推为跨平台证明。
+
+#### 新 P1：清理失败可报告全绿并 exit=0
+
+`tests/model-catalog.test.ts` 的 observer.reaped=false 只 push 到 failures，
+未增加 failed；最后退出码仅看 failed。目录删除异常在内层 finally 和最终循环均被吞掉。
+
+Codex 两个独立、仅在子进程内生效的失败注入（未改磁盘源码）：
+
+1. 实际先回收 observer，再把回收返回值替换为 false：报告同时出现
+   `59 passed, 0 failed`、`observer for pid ... did not exit`，**真实进程 exit=0**。
+   这是失败传播反例，不冒充真实 OS 回收失败；实际 observer 已回收。
+2. 只对本次 suite 的 owned mc-* 临时根目录注入 rmSync 失败：报告仍 **59/0、exit=0**，
+   **两个 owned 目录仍存在**。审核 probe 随后仅按记录的本次 owned 绝对路径清理，剩余 0。
+
+修复应让检查失败、observer 回收失败、owned 目录删除失败共同决定退出码；
+保留原始失败，fallback 成功不能抹去失败。异常分支应先使用仍持有的原句柄回收 owned target，
+再关闭 observer，不增加 PID/name 扫描或新清理框架。
+
+#### P2：成功后 deadline timer 继续阻止进程退出
+
+`runContainedCatalog` 的 Promise.race 创建 sleep(timeoutMs)，正常结束后未清除 timer。
+独立正常 fixture 设置 timeout=6000ms：**88ms** 返回 `ok`，active resources 仍含 Timeout，
+Node 到 **6014ms** 才 beforeExit。默认 timeout 为 20000ms，成功查询也会留下对应 deadline。
+应按现有 session/spawn timer 清理惯例释放 timer，保持真实超时路径的停止语义。
+无需新依赖；[Node 官方 timers 文档](https://nodejs.org/api/timers.html#class-timeout) 说明默认 timer 保持事件循环活跃。
+
+#### P2：fresh-PID 不确定事实仍可通过冗余断言
+
+新增 `fresh.state !== 'ALIVE'` 会让 OBSERVATION_ERROR 满足“no live descendant remains”。
+此前同一 case 的 held-handle EXITED 强断言已通过，故该项不推翻真实 containment 证据；
+最小处理是删除冗余 fresh-PID 断言及其无用调用，不放宽原句柄强断言。
+
+#### 范围、复用与上传
+
+本轮 GitHub MCP 只读检索已返回成功响应；Node timers 源码检索有匹配。
+复用现有 ManagedProcess、observer、command/config seam 与 Node 原生 timer 即可；
+未引入新实现、依赖、manager/authority。runtime.run 生产调用边仍为 1，目录不写准入事实。
+git diff --check PASS；本轮 probe/observer/fixture 和 owned scratch 无残留。
+未运行 full suite 或真实 Agent/模型，未读凭据、改 Agent 配置或生产实现。
+
+审核分支 `codex/b11a-review-blocked`，父提交
+`1ba50c130edd7d24975acb9e71079b3d50dcfca8`。上传目录模块、目录测试及两份现有文档的增量，
+记录“原两个 P1 已关闭；新增测试清理 P1 与两个 P2 未关闭”，不表示 B1.1 验收通过。
+main、共享索引及 W5 已审核文件不变；不上传临时 probes/binaries/logs 或新增报告文件。
+下一片仅收口这三个 finding，不扩展 B1 功能、不进入 B2–B5、不开放并行写。
