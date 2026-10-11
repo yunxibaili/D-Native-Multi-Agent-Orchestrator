@@ -22,7 +22,7 @@
 
 这是运行在个人 Windows 工作站上的本机 Native Coding Agent 编排后端。
 Agent 使用自身登录、模型入口和工具；内核不直接调用模型供应商 API。
-OpenCode 主要负责开发，Codex 负责独立审核；本次上传仅同步 W5.1b 独立审核说明，不修复生产代码。
+OpenCode 主要负责开发，Codex 负责独立审核；本次上传归档 W5.1c 测试修订及独立审核说明，不修复实现代码。
 正式前端需求未确认，临时观察工具不是最终前端方案。
 
 ## 2. 当前执行链
@@ -63,14 +63,14 @@ OpenCode 主要负责开发，Codex 负责独立审核；本次上传仅同步 W
 | W5 | NOT SEALED |
 | W5.1 | 实现方曾报告完成；不能覆盖独立审核所指出的证据问题 |
 | W5.1a | 独立审核 BLOCKED；后续修订为 W5.1b |
-| W5.1b | 独立审核 BLOCKED：stress 失败传播及 fallback 进程身份仍有 P1 |
-| W5.1c | 已提供最小收口任务提示词；尚未验证完成 |
+| W5.1b | 历史独立审核 BLOCKED；原有两个 P1 已在 W5.1c 当前路径收口 |
+| W5.1c | 独立审核 BLOCKED：observer 终止命令管道的异步 EPIPE 未处理 |
 | PARALLEL_WRITE | CLOSED |
 | 新后端需求 | 已整理；差距阶段尚未授权实现 |
 | 前端 | 需求待讨论；开始前提醒用户 |
 
-W5.1b 已进行最新源码与定向分支复核，不能依据实现方的 82/82 或 child ledger=9
-宣称所有失败路径已关闭。当前 P1 及独立验证见下节；上传不等于封板或开放并行写。
+W5.1c 已进行最新源码、独立 3-round 与 observer 退出竞态复核。
+普通路径通过不等于所有故障路径已关闭。当前 P1 及独立验证见下节；上传不等于封板或开放并行写。
 
 ## 5. 当前主要差距
 
@@ -79,38 +79,45 @@ W5.1b 已进行最新源码与定向分支复核，不能依据实现方的 82/8
 端到端预算以及 token 节省对比，均未完成整体验收。
 新能力不能绕过既有 Spawn Gate 或为了调度可用而放宽未知事实语义。
 
-## 6. W5.1b 独立审核与上传说明
+## 6. W5.1c 独立审核与上传说明
 
 日期：2026-10-11。结论：BLOCKED，W5 NOT SEALED，PARALLEL_WRITE=CLOSED。
 
-W5.1b 已审核范围为 OpenCode 的三个测试文件修订：
+W5.1c 已审核范围为 OpenCode 的三个测试文件修订：
 `tests/w51-real-descendant-isolation.test.ts`、`tests/helpers/process-observer.ts`、
 `native/windows-job-launcher/src/w1fixture.c`。`src/**` 与生产 `w1joblauncher.c` 无改动。
-本次上传仅含项目基线和阶段说明，分支为 `codex/w51b-review-blocked`，不作为可封板版本。
-上传前校验发现 fixture/helper 内容继续变化，因此未把正在修改的测试代码纳入说明提交；
-这些后续修改尚未独立审核，不能据此推断 W5.1c 结论。最新代码完成复核后再单独同步。
+本次上传包括上述三个测试文件及项目基线、阶段说明，分支为 `codex/w51c-review-blocked`。
+源码内容在独立审核与提交前经 blob hash 核对；当前版本仍有下述 P1，不作为可封板版本。
 
-已确认修复：client wait 到期返回 OBSERVATION_ERROR，原生 WAIT_TIMEOUT 才提供 ALIVE；
-持有原进程句柄可以证明真实退出；root-first 已使用显式释放握手；生产链用例已有 finally。
+已确认收口：共享 cleanupRun/decideCleanup 将停止、观测及 observer 回收失败传播到实际 stress
+统计与最终结果；pid-only reap 已删除，终止命令通过原 observer 所持有的进程句柄执行。
+删除失败 child 与主流程共享 finalizeSuite；root-first 保持显式释放握手。
 
 仍需关闭：
 
-- P1：stress 最终清理丢弃 cancel/reaped 结果，最终 OBSERVATION_ERROR 不计失败，
-  cleanupFailures 未更新；一侧启动失败后的检查仍以非 ALIVE 作为无残留证明。
-- P1：fallback 在缺少原始 held handle 时仍按旧 PID 重新打开并终止进程，
-  没有证明新句柄与原身份一致；生产链 fallback 也不能把 fresh observation 冒充原身份退出证明。
-- 证据缺口：删除失败 child 使用另写的固定失败结果，未经过主流程同一 finalizer。
-- native reap 忽略 WaitForSingleObject 返回值，发起异步终止后直接报告成功；须区分确认退出、超时和错误。
+- P1：terminateAndVerify 向 child.stdin 写入 T，但只捕获同步异常，未处理 Writable 的异步 error。
+  observer 已自然超时、Node 尚未处理其 exit 通知时，写管道会触发未处理的 EPIPE，
+  Node 直接退出，无法保证 typed OBSERVER_LOST、共享 ledger 与 finalizer 正常完成。
+- 同一边界问题：close 后 holdsIdentity 为 false，terminateAndVerify 仍可能写入 T；
+  native observer 返回 WAIT_TIMEOUT 并退出后，holdsIdentity 仍为 true。须区分历史取证与当前命令通道，
+  保留有效的缓存 EXITED 证据，禁止对已关闭/丢失通道发送终止命令。
 
-Codex 本次独立执行：npm run typecheck PASS；git diff --check PASS。
-从当前源码提取实际 stress 函数并注入受控依赖，复现 cancel=false、observer.reaped=false、
-最终 OBSERVATION_ERROR 时 observationErrors/surviving/cleanupFailures 仍全零。
-另对实际 reclaim 分支确认：无原始句柄也会调用按 PID 的 fallback。
-这些是实际函数的分支验证，不是生产 Job containment 失效的物理复现。
+Codex 本次独立执行：npm run typecheck PASS；git diff --check PASS；
+W51_ROUNDS=3 EXIT=0，121 passed / 0 failed，所有打印的 stress 失败计数为 0。
+实际用例覆盖了每代 held-handle 退出、root-first、hardkill、双写者停止顺序、
+一侧启动失败回收、生产调用链以及同一 finalizer 删除失败传播与 foreign sentinel 保留。
 
-原生定向 probe 确认 client timeout/原生 WAIT_TIMEOUT/held-handle EXITED 的区分；
-使用本次创建的受控 sentinel 确认 reap 只需 PID 即可终止，未强行制造 PID 重用，未操作其他运行的进程。
-未重跑 W5 的 3/50-round、full suite 或真实 Agent/模型调用。
-实现方报告的测试数量不作为本次独立运行结果。
+最小独立 native probe：holdMs=60，ACK 后延迟 JS 退出通知处理 250ms，再调用 terminateAndVerify；
+未调用 close，子进程仍因 Unhandled 'error' / write EPIPE 以 status=1 退出。
+另复现 close 后请求终止的相同错误；bounded observer 返回 ALIVE 后 holdsIdentity 仍为 true。
+probe 的受控 target 由独立父进程在 finally 回收；未操作其他运行的进程。
+本轮已知 W5 fixture 根目录不存在，检查时 w1fixture observer 进程为 0。
+
+新边界 probe 未通过，因此没有追加 50-round 或重复完整回归；未跑 full suite 或真实 Agent/模型调用。
+实现方 50-round 与其他回归数量不作为本次独立运行结果。
+后续仅做 observer 管道错误/生命周期的最小修复及同一路径回归，不重新实现清理框架。
+
+依据：[Node Writable error 事件](https://nodejs.org/api/stream.html#event-error)
+与 [write 异步回调](https://nodejs.org/api/stream.html#writablewritechunk-encoding-callback)。
 
 历史报告已从当前树移除；备份标签和恢复说明见 [阶段分析](STAGE_ANALYSIS.md#历史备份)。

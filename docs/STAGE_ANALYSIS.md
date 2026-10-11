@@ -5,14 +5,15 @@
 
 ## 1. 当前所在阶段
 
-执行底座已有大量可复用能力；当前先完成 W5.1c/W5 的独立证据收口，
+执行底座已有大量可复用能力；当前先完成 W5.1c 后续 observer 边界/W5 的独立证据收口，
 再按用户另行授权扩展后端产品能力。PARALLEL_WRITE=CLOSED。
 不能继续把项目描述为“T2-b.1 / T3 未开始”，也不能直接宣称 W5 已通过。
 
-最新 W5.1b 独立审核结论为 BLOCKED。client/native timeout 区分、root-first 释放握手
-以及生产链 finally 已有改进；stress 失败传播和 fallback 身份边界仍有两个 P1。
-当前源码分支 probe 已复现失败输入仍产生全零 stress 统计，详见 [项目基线](PROJECT_BASELINE.md#6-w51b-独立审核与上传说明)。
-下一步仅为 W5.1c 最小收口，不进入 B1 实现，不开放并行写。
+最新 W5.1c 独立审核结论为 BLOCKED。原有 stress 失败传播及 pid-only fallback 两个 P1
+已在当前路径收口；独立 3-round 为 EXIT=0、121/0。
+新增 native observer 超时/通知延迟 probe 复现 terminateAndVerify 写管道产生未处理 EPIPE，
+详见 [项目基线](PROJECT_BASELINE.md#6-w51c-独立审核与上传说明)。
+下一步仅修复 observer 命令通道和生命周期边界，不进入 B1 实现，不开放并行写。
 
 ## 2. 需求与实现差距
 
@@ -48,7 +49,7 @@ B 编号仅用于新需求分析，不重命名或重开已封板的 T/W 阶段�
 
 | 阶段 | 最小目标 | 依赖与退出条件 |
 |---|---|---|
-| B0 执行证据收口 | 完成 W5.1c 剩余失败传播/身份收口，再独立复核 W5 范围 | 所有当前 P1 有同一实际路径的证据；开写权限另行裁定 |
+| B0 执行证据收口 | 完成 observer 管道错误/生命周期收口，再独立复核 W5 范围 | 当前 EPIPE P1 关闭；已通过路径不回退；开写权限另行裁定 |
 | B1 可用能力与用户规则 | 复用 registry/adapter 表，明确 Agent/Model/Skill/MCP 事实和用户约束 | 区分目录与可用；固定/禁用/费用冲突可验证 |
 | B2 费用与候选约束 | 入口/账户归属、免费依据、有效期、共享额度和预算 | 每次分配/接力均校验；未知不伪造；全部不可用安全停止 |
 | B3 LAYA 能力选择 | 联合选择 Agent/Model 与 Skill/MCP，提供必要角色能力事实 | 只选合格候选，复用原生执行，实际能力可核对 |
@@ -72,13 +73,12 @@ Skill/MCP 的最小调用与费用观察可在其所属阶段验证，不必等�
 - 测试适配器替换生效，不能意外调用本机真实收费 Agent。
 - 测试通过不自动开 PARALLEL_WRITE；后续是否开放需独立明确裁定。
 
-W5.1b 审核已检查最新三个文件差异，并执行 typecheck、diff check、实际函数分支 probe
-与最小原生 observer probe。结论不是沿用旧版本：当前 stress 仍丢失失败结果，
-且无原始句柄时仍调用按 PID 的 fallback。独立 child 的非零退出不能代替 stress 本身的回归。
-
-W5.1c 必须让实际 stress/清理调用者共同消费失败结果，保留或验证原进程身份，
-检查 observer 回收及 native reap wait 结果，并通过主流程同一 finalizer 验证删除失败传播。
-完成定向失败回归后才重跑 3-round 与 50-round；不得把源码分支验证或作者报告当成独立 stress 实证。
+W5.1c 独立审核已运行 typecheck、diff check、3-round 及 observer 边界 probe。
+共享清理判定、原句柄终止、同一 finalizer 已有实际路径证据；不可继续沿用 W5.1b 的两个 P1。
+当前剩余 P1 为 observer 通道失效后的异步 EPIPE 未处理，会直接中断测试进程。
+后续最小任务应处理 stdin error/写入失败，拒绝 closed/lost 通道的命令，
+区分当前可用身份与有效历史 EXITED 证据，并让错误进入 typed result、ledger 和 finalizer。
+修复后先跑真实 observer 超时/关闭回归及 3-round，再做一次 50-round；不重审整套 W5 架构。
 
 ## 5. 复用与删减
 

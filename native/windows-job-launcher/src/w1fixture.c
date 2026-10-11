@@ -20,7 +20,7 @@
  * reason that has nothing to do with what is being tested.
  *
  * Usage:
- *   w1fixture --role <root|child|grandchild|solo|probe|echo|envinfo>
+ *   w1fixture --role <root|child|grandchild|solo|probe|observe|echo|envinfo>
  *             --pidfile <path>          where I write my own PID
  *             --child-pidfile <path>    where my CHILD writes its PID
  *             --grandchild-pidfile <p>  where my GRANDCHILD writes its PID
@@ -28,8 +28,12 @@
  *             --hold-ms <n>             stay alive this long
  *             --iterations <n>          loop n times (~50ms each); 0 = forever
  *             --exitcode <n>            exit with this code
- *             --pid <n>                 (probe role) PID to test
+ *             --pid <n>                 (probe/observe role) PID to observe
  *             --name <s>                (envinfo role) env var to print
+ *
+ * `observe` additionally reads a TERMINATE command ('T') on STDIN; see the role
+ * implementation below for why termination is only possible through its HELD
+ * handle (W5.1c 2).
  */
 
 #include <windows.h>
@@ -46,6 +50,14 @@
  * handle on a process the test has finished with.
  */
 #define OBSERVE_DEFAULT_WAIT_MS 120000
+
+/*
+ * Bound for the final wait AFTER a terminate command was sent. A terminate is
+ * expected to resolve in milliseconds; this bound exists so a REFUSED or stuck
+ * kill still ends the observer (which then reports a distinct failure) instead of
+ * lingering forever holding a handle.
+ */
+#define OBSERVE_TERMINATE_WAIT_MS 10000
 
 /* ------------------------------------------------------------------------ */
 /* Output: explicit UTF-8 bytes, so Unicode survives a pipe unchanged.        */
@@ -194,7 +206,8 @@ int wmain(int argc, WCHAR** argv) {
     if (role == NULL) role = L"solo";
 
     /*
-     * ---- observe: SAME-PROCESS handle observation (W5.1a P1-4) -------------
+     * ---- observe: SAME-PROCESS handle observation + identity-bound terminate
+     *             (W5.1a P1-4, W5.1c 2) ---------------------------------
      *
      * This is a NEW, test-only observation mode. It deliberately does NOT change
      * the `probe` role above: W1-W4 rely on `probe`'s exact contract, and `probe`
@@ -204,10 +217,19 @@ int wmain(int argc, WCHAR** argv) {
      * `observe` is a LONG-LIVED observer OUTSIDE any test Job. It:
      *   1. opens the target ONCE and HOLDS that original handle for its lifetime,
      *      so a later PID reuse can never be mistaken for the original process;
-     *   2. writes an ACK file only after the handle was successfully acquired
-     *      (so a test may not trigger a stop before the handle exists);
-     *   3. then waits on THAT HANDLE and reports the wait result as a DISTINCT
-     *      exit code, so "still running" is never reported as "exited".
+     *   2. ACKs on STDOUT only after the handle was successfully acquired, so a
+     *      test may not trigger a stop before the handle exists;
+     *   3. accepts a TERMINATE command on STDIN and terminates THROUGH THE SAME
+     *      HELD HANDLE, so a kill is bound to the original process object rather
+     *      than to whatever the PID may map to later;
+     *   4. reports the FINAL WaitForSingleObject result as a DISTINCT exit code,
+     *      so "still running" is never reported as "exited".
+     *
+     * W5.1c 2: there is deliberately NO pid-only `reap` role any more. Windows
+     * documents that a HELD handle stays valid for the original process object
+     * even after it exits, whereas re-opening a PID after the handle is gone can
+     * only bind to a RECYCLED, unrelated process. Termination is therefore only
+     * possible through a handle this process actually holds.
      *
      * Exit codes (distinct on purpose):
      *   0  WAIT_OBJECT_0      -> the HELD process terminated (same-process proof)
@@ -215,18 +237,28 @@ int wmain(int argc, WCHAR** argv) {
      *   11 WAIT_FAILED        -> observation failure; NOT a death
      *   12 OpenProcess failed -> could not observe; NOT a death
      *   13 bad args / no target
+     *   14 TerminateProcess failed -> the kill was REFUSED; target NOT proven dead
      *
      * The observer itself exiting or dying can therefore never masquerade as the
      * target's exit: the caller keys on the HELD HANDLE, not on this process.
      */
     if (wcscmp(role, L"observe") == 0) {
         HANDLE h;
+        HANDLE hin;
         DWORD wr;
+        DWORD bound;
+        ULONGLONG deadline;
+        int terminate_failed = 0;
+
         if (pid_to_probe == 0) return 13;
 
-        /* SYNCHRONIZE is what makes the later wait meaningful; query rights are
-         * only for a start-time cross-check. */
-        h = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+        /*
+         * PROCESS_TERMINATE is what makes TerminateProcess(h) legal on this exact
+         * handle; SYNCHRONIZE is what makes waiting on it meaningful. Both rights
+         * are requested ONCE, on the handle that is then held for the whole
+         * observation, so every later fact and every kill stay bound to it.
+         */
+        h = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
                         FALSE, pid_to_probe);
         if (h == NULL) return 12;           /* cannot observe; explicitly NOT "exited" */
 
@@ -253,12 +285,57 @@ int wmain(int argc, WCHAR** argv) {
          * close the observer, it reports STILL_RUNNING and exits instead of
          * lingering and holding a handle.
          */
-        wr = WaitForSingleObject(h, hold_ms > 0 ? hold_ms : OBSERVE_DEFAULT_WAIT_MS);
+        bound = hold_ms > 0 ? hold_ms : OBSERVE_DEFAULT_WAIT_MS;
+        deadline = GetTickCount64() + (ULONGLONG)bound;
+        hin = GetStdHandle(STD_INPUT_HANDLE);
+
+        for (;;) {
+            DWORD avail = 0;
+            char c;
+
+            /*
+             * A terminate command, if any, is bound to THIS handle.
+             *
+             * PeekNamedPipe (not WaitForSingleObject) is the correct probe here: an
+             * anonymous pipe handle is always "signaled", so waiting on it would
+             * return instantly and the following ReadFile would BLOCK forever when no
+             * command was sent. Peeking reports how many bytes are actually pending.
+             */
+            if (hin != NULL && hin != INVALID_HANDLE_VALUE
+                && PeekNamedPipe(hin, NULL, 0, NULL, &avail, NULL) && avail > 0) {
+                if (ReadFile(hin, &c, 1, NULL, NULL) && (c == 'T' || c == 't')) {
+                    if (!TerminateProcess(h, 1)) {
+                        /* The kill was REFUSED. This is NOT a death: the exit code
+                         * below stays a distinct failure, never 0. */
+                        terminate_failed = 1;
+                        _snwprintf_s(line, MAX_PATH + 64, _TRUNCATE, L"terminate=failed pid=%lu", pid_to_probe);
+                        out_line_utf8(line);
+                    } else {
+                        _snwprintf_s(line, MAX_PATH + 64, _TRUNCATE, L"terminate=sent pid=%lu", pid_to_probe);
+                        out_line_utf8(line);
+                    }
+                    /* After a terminate the wait must resolve quickly; keep the
+                     * same bound so a refused/slow kill still terminates us. */
+                    deadline = GetTickCount64() + (ULONGLONG)OBSERVE_TERMINATE_WAIT_MS;
+                }
+            }
+
+            /* Has the bound elapsed? Then report whatever the handle says NOW. */
+            if (GetTickCount64() >= deadline) break;
+
+            wr = WaitForSingleObject(h, 25);
+            if (wr == WAIT_OBJECT_0) { CloseHandle(h); return 0; }   /* same-process proof */
+            if (wr == WAIT_FAILED) { CloseHandle(h); return 11; }   /* observation failed */
+            /* WAIT_TIMEOUT: keep polling the SAME handle. */
+        }
+
+        /* Bound elapsed: take ONE final reading rather than assuming anything. */
+        wr = WaitForSingleObject(h, 0);
+        if (wr == WAIT_OBJECT_0) { CloseHandle(h); return 0; }
+        if (wr == WAIT_FAILED) { CloseHandle(h); return 11; }
         CloseHandle(h);
-        if (wr == WAIT_OBJECT_0) return 0;      /* terminated: same-process proof */
-        if (wr == WAIT_TIMEOUT) return 10;       /* still running */
-        if (wr == WAIT_FAILED) return 11;       /* observation failed */
-        return 11;
+        if (terminate_failed) return 14;   /* terminate REFUSED: not a proven death */
+        return 10;                          /* WAIT_TIMEOUT: still running */
     }
 
     /* ---- probe: OpenProcess liveness, NOT tasklist text ------------------ */
