@@ -81,7 +81,7 @@ W5 封板保留下述兼容性及证据时效 P2，不代表全部 Agent 或新�
 端到端预算以及 token 节省对比，均未完成整体验收。
 新能力不能绕过既有 Spawn Gate 或为了调度可用而放宽未知事实语义。
 
-### 5.1 B1.1 只读模型目录诊断（原两个 P1 已关闭；B1.1a 独立审核 BLOCKED）
+### 5.1 B1.1 只读模型目录诊断（最小诊断切片 PASS）
 
 用户显式请求时，`doctor --models <agent>` 返回该 Agent 原生 CLI 列出的模型目录快照。
 仅支持 **OpenCode**（`opencode models`，官方命令）；其他 Agent 明确返回 `unsupported`，
@@ -91,8 +91,13 @@ B1.1a 收口（详见 §8.5）：默认执行路径改为复用生产 contained 
 （Job launcher + 协同停止 + tree-stop 确认），不再使用 quota `execRunner`；
 超时若无法确认进程树已停止即判 `failed`，绝不用 root exit 冒充 tree stopped。
 测试改用受控 command/fixture，不依赖本机安装 OpenCode。
-Codex 已独立确认这两个 P1 关闭；本轮新增的测试清理失败仍可 exit=0，构成新的 P1，
-另有 deadline timer 未释放、fresh-PID 不确定事实通过的 P2，详见 §8.6。B1.1a 整体尚未通过。
+Codex 已独立确认这两个 P1 关闭。
+
+B1.1b 收口（详见 §8.7）：测试清理失败（检查失败、observer 回收失败、owned 目录删除失败）
+统一进入最终退出码；deadline timer 在 `finally` 释放；删除冗余 fresh-PID 断言。
+Codex 本轮独立复核 PASS：上述一个 P1 与两个 P2 均关闭，B1.1 最小只读诊断切片通过。
+封板仅限受控 fixture 与测试链路验证的诊断切片；未提升为真实 Agent 目录兼容性验收，详见 §8.8。
+B1 整体尚未封板；本片不含选择层级、pause、付费授权、动态额度、Skill/MCP 或 LAYA 联合决策。
 
 冻结事实边界（不因本片改变）：
 
@@ -330,9 +335,10 @@ assignment 235/0、contract 246/0（2 skipped）；`git diff --check` clean。
 上述为**受控 fixture 物理验证**与**纯函数失败注入**，须与真实 Agent 兼容性证据分开；
 两个 P1 的关闭仍待独立复核。
 
-### 8.6 B1.1a 独立复核：原两个 P1 关闭，整体 BLOCKED
+### 8.6 B1.1a 历史独立复核：原两个 P1 关闭，当时整体 BLOCKED
 
 日期：2026-10-11。**原 P1-1/P1-2 均已独立确认关闭**；不继续沿用旧 blocker。
+本节新增的一个 P1 与两个 P2 已在 §8.8 确认关闭，以下保留当时证据。
 新的 P1 是本片 containment 测试的清理失败不进入最终退出码。W5 SEALED WITH P2 不变，
 PARALLEL_WRITE=CLOSED，B1 未封板，B2–B5 未授权。
 
@@ -393,3 +399,78 @@ git diff --check PASS；本轮 probe/observer/fixture 和 owned scratch 无残�
 记录“原两个 P1 已关闭；新增测试清理 P1 与两个 P2 未关闭”，不表示 B1.1 验收通过。
 main、共享索引及 W5 已审核文件不变；不上传临时 probes/binaries/logs 或新增报告文件。
 下一片仅收口这三个 finding，不扩展 B1 功能、不进入 B2–B5、不开放并行写。
+
+### 8.7 B1.1b 实现方收口报告（独立裁定见 §8.8）
+
+日期：2026-10-11。实现方（OpenCode）仅收口 §8.6 的一个 P1 与两个 P2，不重审已关闭的
+原两个 P1，不扩展 B1 功能。W5 SEALED WITH P2 不变；PARALLEL_WRITE=CLOSED；B1 未封板；B2–B5 未授权。
+
+**P1（清理失败必须非零退出）**：`tests/model-catalog.test.ts` 统一失败判定 —— 检查失败、
+observer 回收失败、owned 目录删除失败共同决定 `finalizeExitCode()` 与退出码。
+失败分支先经**仍持有的原句柄**回收 owned target，再 `reaped()` 关闭 observer；fallback 成功不抹去原始失败。
+无 PID/name 扫描、无新清理框架。
+
+受控 child 回归（父进程断言 child 的**真实退出状态**，非仅匹配文本）：
+- `MC_FAIL_CHILD=reap`：注入 observer 回收失败 → child `status=1`、`signal=null`、report 记录失败。
+- `MC_FAIL_CHILD=rm`：注入 owned 目录删除失败 → child `status=1`、`signal=null`、目录残留由父进程按名清理。
+两例的注入失败传播与 OS 物理事实分开报告。
+
+**P2（deadline timer）**：`runContainedCatalog` 在 `finally` 中 `clearTimeout` 释放 deadline，
+并 `unref()` 兜底（对齐 `spawn.ts` 的 `waitBounded` 惯例）；成功/超时/异常均释放，真实 timeout→cancel→确认语义不变。
+独立 Node child 以 `timeoutMs=30000` 查询正常 fixture，**不调用 `process.exit()`**；实测自然提前退出（<12s 阈值内），
+证明无 timer 泄漏。
+
+**P2（冗余断言）**：删除 `fresh.state !== 'ALIVE'` 及其 `livenessNative` 调用/import；
+保留 held-handle `EXITED` 强断言，未把 `OBSERVATION_ERROR` 改写为 `EXITED`。
+
+实跑证据（实现方）：`npm run typecheck` PASS；model-catalog **68/0**；quota 184/0、
+assignment 235/0、contract 246/0（2 skipped）；`git diff --check` clean。
+两组负控确认承重：移除 timer 清理 → timer child 挂起（status=null、SIGTERM@20016ms）失败；
+令退出码忽略 cleanupFailures → 两个 fail-child 得到 `status=0` 并失败。
+结束时 owned 临时目录、observer、后代进程与 fixture 均无残留。
+`runtime.run` 生产调用边仍为 1，新增 authority=0；默认 doctor 不查询；不写 registry/availability/
+assignment/quota/费用事实。未跑 full suite、未调用真实 Agent/模型、未读凭据、未改本机配置、无 Git 写操作。
+
+上述为**受控 child 物理退出状态**与**纯函数/注入失败传播**，须与真实 Agent 兼容性证据分开；
+本片关闭仍待独立复核。
+
+### 8.8 B1.1b 独立审核 PASS 与上传说明
+
+日期：2026-10-11。**PASS：§8.6 的一个 P1 与两个 P2 均已关闭**。
+B1.1 最小只读模型目录诊断切片通过；B1 整体仍未封板，真实 Agent 目录查询兼容性未验收。
+W5 SEALED WITH P2 不变；PARALLEL_WRITE=CLOSED；B2–B5 未授权。本轮不自行启动下一片实现。
+
+#### 独立验证
+
+- typecheck PASS；正常 model-catalog **68/0、exit=0**；quota **184/0**、assignment **235/0**、
+  contract **246/0、2 skipped**，全部为本轮 Codex 实跑，三个回归 exit 均为 0。
+- 正常 suite 内的两个 fail child 经过同一 cleanupObservers/removeOwnedDir 与 finalizeExitCode，
+  父进程核验真实非零退出、无 signal、ledger 有条目，并只删除本轮 named root。
+- Codex 另在独立子进程内，将实际 reaped 成功后的返回值替换为 false，不使用内置 inject 选项。
+  原 suite 的检查仍 **68/0**，但 cleanup failure 被记录，**真实进程 exit=1**。
+  实际 observer 已回收；这是失败传播验证，不冒充 OS 回收失败。
+- Codex 另对本次 owned mc-* 根目录的真实 rmSync 调用注入异常，不使用内置 inject 选项。
+  removeOwnedDir catch 将异常记录到 cleanup ledger；父级 owned-root 检查两项失败，
+  总计 **66/2、真实 exit=1**，五个 named owned 根目录仍存在。
+  审核 probe 随后仅按本次记录的绝对路径删除，最终目录剩余 **0**。
+- 独立正常 contained fixture 配置 **timeout=30000ms**：约 **249ms** 返回 `ok`，
+  active resources 无 Timeout，约 **251ms** 自然 beforeExit；未调用 process.exit()。
+  源码 finally 中 clearTimeout；Windows timeout 的 cancel/确认路径未被改写。
+- fresh-PID 不确定事实通过的冗余调用/断言已删除；原句柄 EXITED 强断言保留且本轮通过。
+- 默认 doctor 的目录调用仍为 0；目录不写 registry/availability/assignment/quota/费用事实；
+  runtime.run 生产调用边=1，新增 authority=0。共用进程底座及 W5 已审核三文件 blob 不变。
+- git diff --check PASS；本轮 owned fixture/observer/目录无残留。
+
+正常 suite、内置 fail-child、独立异常注入与正常进程自然退出是不同证据层；
+故意注入时的 exit=1 是预期失败传播，不是正常回归失败。
+上一轮无 OpenCode 安装模拟与独立 native containment probe 不在本轮重复计数。
+实现方负控报告保留在 §8.7，本轮未重复修改源码运行负控。
+
+#### 上传与限制
+
+审核分支 `codex/b11b-review-pass`，父提交
+`186f103ef8d858b07763f7dc8c4777db71e889bb`。上传目录模块、目录测试和两份现有文档的四文件增量；
+提交说明记录关闭证据、正常/注入退出码及封板范围。Codex 只修改文档，不接管实现修复。
+main、共享索引、其他生产源码及 W5 已审核文件保持原状；不上传临时脚本、二进制、日志或凭据。
+未跑 full suite、真实 Agent/模型、非 Windows 路径，未读取凭据或修改本机配置。
+本轮确认小切片闭环，不将其提升为完整模型选择、费用管理或 LAYA Skill/MCP 联合决策已完成。

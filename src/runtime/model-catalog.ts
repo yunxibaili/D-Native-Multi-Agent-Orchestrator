@@ -263,8 +263,6 @@ export function notCollectedCatalog(agentId: string): ModelCatalogSnapshot {
   };
 }
 
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
 /**
  * Run the catalogue command through the PRODUCTION containment path.
  *
@@ -273,6 +271,11 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
  * `treeStopConfirmed: false`, which `catalogSnapshotFromRun` turns into a failure.
  * Nothing here uses a bare pid/name kill, and the root's exit is never treated as
  * proof that the tree stopped.
+ *
+ * B1.1b P2: the deadline timer is EXPLICITLY cleared on every exit path (success,
+ * timeout, throw) — mirroring `waitBounded` in `spawn.ts`. Leaving it alive would
+ * keep the event loop — and therefore the whole diagnostic process — alive until
+ * the timeout elapsed even though the query had already finished.
  */
 async function runContainedCatalog(
   launcher: Parameters<typeof buildLaunchArgv>[0],
@@ -290,10 +293,19 @@ async function runContainedCatalog(
   });
 
   const contained = containmentEnabled();
-  const settled = await Promise.race([
-    proc.exited.then(() => 'exited' as const),
-    sleep(timeoutMs).then(() => 'timeout' as const),
-  ]);
+
+  let deadline: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<'timeout'>((res) => {
+    deadline = setTimeout(() => res('timeout'), timeoutMs);
+    // Unref'd as a belt-and-braces guard; `clearTimeout` below is the real release.
+    if (typeof deadline.unref === 'function') deadline.unref();
+  });
+  let settled: 'exited' | 'timeout';
+  try {
+    settled = await Promise.race([proc.exited.then(() => 'exited' as const), timedOut]);
+  } finally {
+    if (deadline !== undefined) clearTimeout(deadline);
+  }
 
   if (settled === 'timeout') {
     // Cooperative Job stop, then a bounded settle. `cancel` returns true ONLY when

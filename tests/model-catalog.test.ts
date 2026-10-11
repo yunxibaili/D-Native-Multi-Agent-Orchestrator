@@ -21,10 +21,12 @@
  * Run: node tests/model-catalog.test.ts
  */
 
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { randomUUID } from 'node:crypto';
+import { spawn, spawnSync } from 'node:child_process';
 
 import {
   CATALOG_STATUSES,
@@ -42,11 +44,18 @@ import { Orchestrator } from '../src/orchestrator/orchestrator.ts';
 import { knownAgentIds } from '../src/adapters/index.ts';
 import { containmentEnabled, resolveContainmentLauncher } from '../src/runtime/containment.ts';
 import { createFakeAdapter, sourceText } from './helpers.ts';
-import { open as openObserver, livenessNative, type Observer } from './helpers/process-observer.ts';
+import { open as openObserver, type Observer } from './helpers/process-observer.ts';
 
 let passed = 0;
 let failed = 0;
 const failures: string[] = [];
+/**
+ * B1.1b P1: cleanup failures are a SEPARATE ledger from assertion failures, and both
+ * feed the ONE final exit code. Previously an observer that would not reap, or an
+ * owned directory that would not delete, only pushed a string and left the process
+ * exiting 0 — a cleanup leak reported as success.
+ */
+const cleanupFailures: string[] = [];
 const tmpDirs: string[] = [];
 
 function check(name: string, cond: boolean, detail = ''): void {
@@ -75,6 +84,51 @@ const ownDir = (): string => {
   tmpDirs.push(d);
   return d;
 };
+
+// ---------------------------------------------------------------------------
+// B1.1b P1: ONE failure determination. Assertion failures, observer reap failures
+// and owned-directory deletion failures all reach `finalizeExitCode()`.
+// ---------------------------------------------------------------------------
+function recordCleanupFailure(detail: string): void {
+  cleanupFailures.push(detail);
+}
+function finalizeExitCode(): number {
+  return failed === 0 && cleanupFailures.length === 0 ? 0 : 1;
+}
+
+/**
+ * Reap observers as OWNED processes. A failure to reap is a cleanup failure.
+ *
+ * On the failure branch we still reclaim best-effort: FIRST through the original
+ * handle this observer holds (identity-bound terminate), THEN close/reap the
+ * observer. A successful fallback does NOT erase the recorded failure.
+ */
+async function cleanupObservers(observers: Observer[], opts?: { injectReapFailure?: boolean }): Promise<void> {
+  for (const o of observers) {
+    if (o.holdsIdentity()) {
+      await o.terminateAndVerify(10_000).catch(() => undefined);
+    }
+    const gone = await o.reaped(5_000);
+    if (!gone || opts?.injectReapFailure === true) {
+      recordCleanupFailure(`observer pid ${o.pid} did not exit within 5000ms`);
+    }
+  }
+}
+
+/** Remove an owned directory; a throw or a surviving directory is a cleanup failure. */
+function removeOwnedDir(dir: string, opts?: { injectRemovalFailure?: boolean }): void {
+  if (opts?.injectRemovalFailure === true) {
+    recordCleanupFailure(`owned dir removal failed for ${dir}: injected`);
+    return;
+  }
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch (e) {
+    recordCleanupFailure(`owned dir removal threw for ${dir}: ${(e as Error).message}`);
+    return;
+  }
+  if (existsSync(dir)) recordCleanupFailure(`owned dir ${dir} still present after removal`);
+}
 
 // ---------------------------------------------------------------------------
 // Injected runner (pure tests): records calls, returns a scripted outcome.
@@ -106,6 +160,44 @@ const MODELS_FIXTURE = [
   '',
   '   ',
 ].join('\n');
+
+// =========================================================================
+// B1.1b P1 injection child: drive the SAME failure determination in an isolated
+// process and exit with its REAL code. The parent asserts the child's actual exit
+// status (never just a text match), then cleans only the named owned root.
+// =========================================================================
+if (process.env.MC_FAIL_CHILD !== undefined) {
+  const mode = process.env.MC_FAIL_CHILD;
+  const root = process.env.MC_FAIL_ROOT ?? join(tmpdir(), `mc-failchild-${process.pid}`);
+  mkdirSync(root, { recursive: true });
+  const targets: ReturnType<typeof spawn>[] = [];
+  try {
+    if (mode === 'reap') {
+      const t = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore', windowsHide: true });
+      targets.push(t);
+      const obs = openObserver(t.pid as number);
+      if (obs !== null) {
+        await obs.acquired();
+        await cleanupObservers([obs], { injectReapFailure: true });
+      } else {
+        recordCleanupFailure('observer could not be created for the reap injection');
+      }
+    } else if (mode === 'rm') {
+      // The owned root is deliberately left for the parent; its removal is injected
+      // as a failure through the SAME path the real cleanup uses.
+      removeOwnedDir(root, { injectRemovalFailure: true });
+    } else {
+      recordCleanupFailure(`unknown MC_FAIL_CHILD mode "${mode}"`);
+    }
+  } finally {
+    for (const t of targets) {
+      try { t.kill('SIGKILL'); } catch { /* gone */ }
+    }
+  }
+  const code = finalizeExitCode();
+  writeFileSync(join(root, 'report.json'), JSON.stringify({ mode, cleanupFailures, exit: code }));
+  process.exit(code);
+}
 
 // =========================================================================
 section('pure parser: provider/model identity, ANSI, dedupe, strictness');
@@ -353,25 +445,82 @@ async function containmentRegressions(): Promise<void> {
     const v = obs !== null ? await obs.verdict(12_000) : { state: 'OBSERVATION_ERROR' as const, why: 'no observer' };
     check('contained default: the descendant is EXITED after the contained stop (held handle)',
       v.state === 'EXITED', `verdict=${v.state}${v.state === 'OBSERVATION_ERROR' ? ` (${v.why})` : ''}`);
-
-    // Belt-and-braces: a fresh observation of the same pid is not ALIVE.
-    const fresh = await livenessNative(cpid, 700);
-    check('contained default: no live descendant remains (fresh observation)', fresh.state !== 'ALIVE', `verdict=${fresh.state}`);
   } finally {
-    // Owned cleanup: observers first (they hold handles), then the temp dir.
-    for (const o of observers) {
-      const gone = await o.reaped(5_000);
-      if (!gone) failures.push(`observer for pid ${o.pid} did not exit`);
-    }
-    try {
-      rmSync(dir, { recursive: true, force: true });
-    } catch {
-      /* best effort */
-    }
+    // Owned cleanup through the shared helpers: observer reap failures and owned-dir
+    // deletion failures BOTH reach the final exit code (B1.1b P1).
+    await cleanupObservers(observers);
+    removeOwnedDir(dir);
   }
 }
 
 await containmentRegressions();
+
+// =========================================================================
+section('B1.1b P1: cleanup-failure propagation (real child exit codes)');
+
+{
+  const testFile = fileURLToPath(import.meta.url);
+  for (const mode of ['reap', 'rm']) {
+    const root = join(tmpdir(), `mc-failchild-${randomUUID().slice(0, 8)}`);
+    const res = spawnSync(process.execPath, [testFile], {
+      cwd: process.cwd(),
+      env: { ...process.env, MC_FAIL_CHILD: mode, MC_FAIL_ROOT: root },
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+    // The child's REAL status is asserted — not a matched failure string.
+    check(`fail child[${mode}]: exits NON-ZERO for the injected cleanup failure`,
+      res.status !== 0 && res.status !== null, `status=${String(res.status)}`);
+    check(`fail child[${mode}]: was not killed by a signal (an ordinary non-zero exit)`,
+      res.signal === null, `signal=${String(res.signal)}`);
+    let report: { mode?: string; cleanupFailures?: string[]; exit?: number } | null = null;
+    try { report = JSON.parse(readFileSync(join(root, 'report.json'), 'utf8')); } catch { /* unreadable */ }
+    check(`fail child[${mode}]: the shared ledger recorded the failure`,
+      report !== null && (report.cleanupFailures?.length ?? 0) >= 1, JSON.stringify(report));
+    // The parent cleans ONLY this run's recorded owned root.
+    removeOwnedDir(root);
+    check(`fail child[${mode}]: only the named owned root was cleaned`, !existsSync(root));
+  }
+}
+
+// =========================================================================
+section('B1.1b P2: the deadline timer is released on a normal completion');
+
+{
+  // An INDEPENDENT Node child runs the real default path with a LONG deadline against
+  // a fixture that exits immediately. If the deadline timer were left alive, the
+  // child's event loop would stay up until the deadline; the child deliberately does
+  // NOT call process.exit(), so a leaked timer would show as a long/hung run.
+  const dir = ownDir();
+  const normalCjs = join(dir, 'normal.cjs');
+  writeFileSync(normalCjs, "process.stdout.write('opencode/gpt-5.1-codex\\n');");
+  const normalCmd = join(dir, 'normal.cmd');
+  writeFileSync(normalCmd, `@echo off\r\n"${process.execPath}" "${normalCjs}"\r\n`);
+
+  const moduleUrl = pathToFileURL(join(process.cwd(), 'src', 'runtime', 'model-catalog.ts')).href;
+  const childTs = join(dir, 'timer-child.ts');
+  writeFileSync(childTs, [
+    `const mod = await import(${JSON.stringify(moduleUrl)});`,
+    `const snap = await mod.collectModelCatalog('opencode', { command: process.env.MC_CMD, timeoutMs: 30_000 });`,
+    `process.stdout.write('TIMER_SNAP ' + snap.status + '\\n');`,
+    '// NO process.exit(): the process must end naturally once the loop drains.',
+  ].join('\n'));
+
+  const t0 = Date.now();
+  const res = spawnSync(process.execPath, [childTs], {
+    cwd: process.cwd(),
+    env: { ...process.env, MC_CMD: normalCmd },
+    encoding: 'utf8',
+    timeout: 20_000,
+  });
+  const elapsed = Date.now() - t0;
+  check('timer child: the query succeeded before the deadline', /TIMER_SNAP ok/.test(res.stdout ?? ''),
+    JSON.stringify((res.stdout ?? '').slice(-80)));
+  check('timer child: exits naturally WELL before the 30s deadline (no leaked timer)',
+    res.status === 0 && res.signal === null && elapsed < 12_000,
+    `status=${String(res.status)} signal=${String(res.signal)} elapsedMs=${elapsed}`);
+  removeOwnedDir(dir);
+}
 
 // =========================================================================
 section('architecture: no new authority, no execution edge, no bare kill');
@@ -411,14 +560,13 @@ section('architecture: no new authority, no execution edge, no bare kill');
 // =========================================================================
 
 for (const d of tmpDirs) {
-  try {
-    rmSync(d, { recursive: true, force: true });
-  } catch {
-    /* best effort */
-  }
+  removeOwnedDir(d);
 }
 
 process.stdout.write(`\n${passed} passed, ${failed} failed\n`);
 if (failures.length) process.stdout.write(`failing:\n  ${failures.map((f) => `- ${f}`).join('\n  ')}\n`);
+if (cleanupFailures.length) {
+  process.stdout.write(`cleanup failures (must fail the test):\n  ${cleanupFailures.map((f) => `- ${f}`).join('\n  ')}\n`);
+}
 process.stdout.write('\n');
-process.exitCode = failed === 0 ? 0 : 1;
+process.exitCode = finalizeExitCode();

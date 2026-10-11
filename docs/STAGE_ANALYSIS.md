@@ -18,22 +18,23 @@
 Codex 本轮独立 3-round 为 139/0，补充 READ 121/0、resource-claim 192/0，typecheck/diff check 通过。
 保留真实 Agent 兼容性、full-suite 时效及现有 259 reconciliation 可用性 P2；不开放并行写。
 
-B1 只读入口审计及 Codex 复核已完成；B1.1a 原两个 P1 已独立确认关闭，整体仍 BLOCKED（新增清理失败传播 P1）。
+B1 只读入口审计及 Codex 复核已完成；B1.1a 原两个 P1、B1.1b 新增清理 P1 与两个 P2 均已独立确认关闭。
 主要缺口成立，但目录采集不得调用 setModelAvailability 或自动 upsert 调度 registry；
 这些写入会改变候选/准入，并非只读。第一片建议缩为 opt-in OpenCode 模型目录诊断，
 通过现有 doctor 展示独立快照，listed/connected/callable/free 分开。
 项目/角色/任务选择层级、付费授权、Skill/MCP 目录与执行闭环留在后续对应切片。
 详情见 [B1 审计复核](PROJECT_BASELINE.md#7-b1-只读审计独立复核)。
 
-**B1.1 已实现；B1.1a 原两个 P1 关闭，整体 BLOCKED**：`doctor --models opencode` 通过既有 doctor
+**B1.1 最小只读诊断切片 PASS**：`doctor --models opencode` 通过既有 doctor
 返回 OpenCode 原生 `opencode models` 的只读目录快照（`src/runtime/model-catalog.ts`）。不写 ModelRegistry、
 不改变 assignWorker/准入/quota/费用，listed≠connected≠callable≠free；其他 Agent 返回 `unsupported`。
 未采集/成功有模型/成功空目录/不支持/失败（非零、超时、无法解析）严格区分，部分 stdout 不认证成功。
 B1.1a 收口：默认执行改为复用生产 contained `ManagedProcess`（Job 启动 + 协同停止 + tree-stop 确认），
 未确认清理即判 `failed`；测试改用受控 command/fixture，不再依赖本机安装 OpenCode。
-B1 整体仍未封板；本片不含选择层级、pause、付费授权、动态额度、Skill/MCP 或 LAYA 联合决策。
-新增 P1：observer/目录回收失败未进入最终退出码；P2：成功后的 deadline timer 未释放，
-fresh-PID OBSERVATION_ERROR 可通过冗余断言。详见 [项目基线 §8.6](PROJECT_BASELINE.md#86-b11a-独立复核原两个-p1-关闭整体-blocked)。
+B1.1b 收口：检查/observer 回收/owned 目录删除失败统一进入退出码；deadline timer 在 `finally` 释放；
+删除冗余 fresh-PID 断言。B1 整体仍未封板；本片不含选择层级、pause、付费授权、动态额度、Skill/MCP 或 LAYA 联合决策。
+封板限受控 fixture 与测试链路；真实 Agent 原生目录查询兼容性未验收。
+详见 [项目基线 §8.8](PROJECT_BASELINE.md#88-b11b-独立审核-pass-与上传说明)。
 
 ## 2. 需求与实现差距
 
@@ -65,13 +66,13 @@ fresh-PID OBSERVATION_ERROR 可通过冗余断言。详见 [项目基线 §8.6](
 ## 3. 建议阶段
 
 B 编号仅用于新需求分析，不重命名或重开已封板的 T/W 阶段。
-B0 为执行证据收口标签，现已完成。B1 仅交付最小诊断切片，尚未通过审核；
+B0 为执行证据收口标签，现已完成。B1 仅最小只读诊断切片 B1.1 通过审核，其余需求尚未完成；
 B2–B5 仍为 PLANNED / NOT AUTHORIZED，不得因本文自行开工。
 
 | 阶段 | 最小目标 | 依赖与退出条件 |
 |---|---|---|
 | B0 执行证据收口 | COMPLETE：W5 SEALED WITH P2；观测/清理 P0/P1 与冗余断言 P2 已关闭 | 兼容性和证据时效限制保留；PARALLEL_WRITE=CLOSED |
-| B1 可用能力与用户规则 | 复用 registry/adapter 表，明确 Agent/Model/Skill/MCP 事实和用户约束 | **B1.1a BLOCKED：原两个 P1 关闭，新增测试清理失败传播 P1 与两个 P2**；其余未实现 |
+| B1 可用能力与用户规则 | 复用 registry/adapter 表，明确 Agent/Model/Skill/MCP 事实和用户约束 | **B1.1 最小只读诊断切片 PASS**，只支持 OpenCode 目录；真实 CLI 兼容性未验收，其余未实现 |
 | B2 费用与候选约束 | 入口/账户归属、免费依据、有效期、共享额度和预算 | 每次分配/接力均校验；未知不伪造；全部不可用安全停止 |
 | B3 LAYA 能力选择 | 联合选择 Agent/Model 与 Skill/MCP，提供必要角色能力事实 | 只选合格候选，复用原生执行，实际能力可核对 |
 | B4 异构任务闭环 | 候选内容生成 → LAYA 选择 → 调研/实现/测试/审核 | 同 Agent 多模型独立会话；工作区隔离和材料交接有实证 |
@@ -148,26 +149,28 @@ Agent Orchestrator 可参考执行/工作区协作，RouteLLM 可参考评估方
 
 ## 6. 本轮检查与限制
 
-本轮（B1.1a）OpenCode 实跑：`npm run typecheck` PASS；`tests/model-catalog.test.ts` **59/0**；
+本轮（B1.1b）OpenCode 实跑：`npm run typecheck` PASS；`tests/model-catalog.test.ts` **68/0**；
 定向回归 quota 184/0、assignment 235/0、contract 246/0（2 skipped）；`git diff --check` clean。
-默认 doctor 的目录 runner 调用为 0；opt-in 才采集；非零/null code 丢弃部分 stdout。
-默认执行改为复用生产 contained `ManagedProcess`：受控 fixture 的 timeout（root EXITED、后代 ALIVE）
-→ `failed` 且后代经 held handle 确认为 `EXITED`；正常 fixture exit 0 → 正确收集 stdout 为 `ok`；
-「未确认清理」由 `catalogSnapshotFromRun` 纯函数分支独立覆盖。
-测试改用受控 command/fixture，不再依赖本机安装 OpenCode；保留 discovery 失败返回 `failed` 的独立断言。
-未启动本机真实 Agent、未调用模型任务、未读凭据；新增生产 authority=0，`runtime.run` 生产调用边仍为 1。
+统一失败判定：检查失败、observer 回收失败、owned 目录删除失败共同决定退出码；失败分支先经仍持有的原句柄
+回收再 reaped。受控 child 回归：`MC_FAIL_CHILD=reap` 与 `=rm` 均真实 `status=1`、`signal=null`，父进程按名清理。
+deadline timer 在 `finally` 释放；独立 Node child（不 `process.exit()`）以 30s deadline 查询正常 fixture，
+自然提前退出（<12s）。删除冗余 fresh-PID 断言，保留 held-handle `EXITED` 强断言。
+两组负控确认承重：移除 timer 清理 → timer child 挂起失败；退出码忽略 cleanupFailures → 两个 fail-child `status=0` 失败。
+默认 doctor 不查询；不写 registry/availability/assignment/quota/费用；新增生产 authority=0，`runtime.run` 生产调用边仍为 1。
 
-Codex 上一轮独立实跑（B1.1 BLOCKED）：typecheck PASS；model-catalog 42/0、quota 184/0、
-assignment 235/0、contract 246/0（2 skipped）；CLI 缺值 exit=2；diff check PASS。
-两个独立反例：模拟无 OpenCode 安装，原 suite 首个 collector case 失败并 TypeError/exit=1；
-真实 native 默认 runner 2200ms timeout，root 原句柄 EXITED，但 child 原生等待 ALIVE。
-本轮 Codex 独立 typecheck、model-catalog 59/0、quota 184/0、assignment 235/0、contract 246/0（2 skipped）通过。
-模拟未安装 OpenCode 也为 59/0、exit=0；独立 native probe 的 root 原句柄 EXITED/child 原生 ALIVE
-在 2200ms timeout 后变为 child 原句柄 EXITED，collector failed/models=[]，确认原两个 P1 关闭。
-新增 P1 的两次独立失败注入：observer.reaped=false 报 failing 仍 exit=0；owned 删除失败留下两个目录仍 exit=0。
-审核 probe 随后回收实际资源，owned 目录/observer/fixture 无残留。注入失败不冒充 OS 物理失败。
-P2 timer probe：88ms 返回 ok、6014ms 才退出（timeout=6000ms）；另有 fresh-PID 不确定事实通过冗余断言。
-git diff --check PASS；本轮 GitHub MCP 检索有成功响应，优先复用项目代码与 Node 原生 timer。
+Codex 上一轮独立实跑（B1.1a：原两个 P1 关闭，整体 BLOCKED）：typecheck PASS；model-catalog 59/0、
+quota 184/0、assignment 235/0、contract 246/0（2 skipped）通过；模拟未安装 OpenCode 也 59/0、exit=0；
+独立 native probe 确认原两个 P1 关闭。新增 P1 的两次独立失败注入：observer.reaped=false 报 failing 仍 exit=0；
+owned 删除失败留下两个目录仍 exit=0。审核 probe 随后回收实际资源，owned 目录/observer/fixture 无残留。
+上述是 B1.1a 历史反例；B1.1b 已独立确认全部关闭，不继续作为当前 blocker。
+Codex 本轮独立实跑：typecheck PASS；model-catalog 68/0、quota 184/0、assignment 235/0、
+contract 246/0（2 skipped），均 exit=0；diff check PASS。
+独立 reaped=false 注入：检查 68/0，但 cleanup ledger 正确令真实 exit=1。
+独立真实 rmSync 抛错注入：66/2、cleanup ledger 有异常、真实 exit=1；五个 named owned 根目录
+由审核 probe 按本次记录的路径清理，剩余 0。异常注入不冒充 OS 物理失败，预期 exit=1 不计正常回归失败。
+独立 timer probe：timeout=30000ms，249ms 返回 ok、无活跃 Timeout，251ms 自然退出；未 process.exit()。
+冗余 fresh-PID 断言已删除，原句柄 EXITED 强断言保留且通过。当前片范围内无未关闭 P0/P1/P2。
+上一轮已完成的 GitHub MCP/官方资料复用调查仍有效；本轮只做窄收口，不新增依赖或框架。
 
 上一轮 W5 实跑：`npm run typecheck` PASS；`W51_ROUNDS=3` EXIT=0、139 passed / 0 failed，
 attempted=3/completed=3，readiness/observation/containment/surviving/cleanup 全 0；`git diff --check` clean。
@@ -179,4 +182,4 @@ Codex 上轮独立验证（W5.1d）：三个 observer 边界 probe、W51_ROUNDS=
 环境限制仍在：Codex `MODEL/SERVICE_LATENCY`、WorkBuddy `ENVIRONMENT_BLOCKED`。
 259 需按 handle 是否 signaled 判断，不能一概视为非 terminal。final reconciliation 的现有数值过滤
 属于既有 launcher 可用性限制，非环境事实；未修改或重新探测该路径，详情见项目基线 §6.3。
-最终 W5 SEALED WITH P2，PARALLEL_WRITE=CLOSED；B1.1 BLOCKED、B1 未封板，B2–B5 未授权。
+最终 W5 SEALED WITH P2，PARALLEL_WRITE=CLOSED；B1.1 最小诊断切片 PASS、B1 未封板，B2–B5 未授权。
