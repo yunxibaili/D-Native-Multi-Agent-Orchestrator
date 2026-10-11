@@ -18,6 +18,13 @@
 Codex 本轮独立 3-round 为 139/0，补充 READ 121/0、resource-claim 192/0，typecheck/diff check 通过。
 保留真实 Agent 兼容性、full-suite 时效及现有 259 reconciliation 可用性 P2；不进入 B1 实现，不开放并行写。
 
+B1 只读入口审计及 Codex 复核已完成，实现仍未授权。
+主要缺口成立，但目录采集不得调用 setModelAvailability 或自动 upsert 调度 registry；
+这些写入会改变候选/准入，并非只读。第一片建议缩为 opt-in OpenCode 模型目录诊断，
+通过现有 doctor 展示独立快照，listed/connected/callable/free 分开。
+项目/角色/任务选择层级、付费授权、Skill/MCP 目录与执行闭环留在后续对应切片。
+详情见 [B1 审计复核](PROJECT_BASELINE.md#7-b1-只读审计独立复核)。
+
 ## 2. 需求与实现差距
 
 | 需求 | 可复用实现 | 仍需确认或补齐 |

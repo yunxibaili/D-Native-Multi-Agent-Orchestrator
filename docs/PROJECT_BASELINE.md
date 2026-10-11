@@ -167,3 +167,44 @@ Codex 仅编辑文档，提交前核对三个测试/fixture 文件 blob hash。
 [Microsoft WaitForSingleObject](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject)。
 
 历史报告已从当前树移除；备份标签和恢复说明见 [阶段分析](STAGE_ANALYSIS.md#历史备份)。
+
+## 7. B1 只读审计独立复核
+
+日期：2026-10-11。审计可作为缺口依据，原实现建议须收窄；B1 尚未实现或封板。
+本轮 Codex 仅检查源码、官方接口及报告，不运行模型任务、不读取凭据、不修改实现。
+
+已核实：模型种子来自配置、CLI probe hint 和 thread store，尚无完整模型目录采集；
+`setModelAvailability` 在 src 中仅有定义；选择已有 preferred/explicit pair 机制，
+项目/角色默认层尚未实现；Skill boolean 不是目录/授权/实际调用证明；生产未默认启用免费池限制。
+bootstrap 失败有 warn 日志，并非完全静默；doctor 只遍历已注册 adapter，因此诊断行确有缺失风险。
+
+实现建议必须修正的边界（尚未发生生产变更）：
+
+- 目录列出不能调用 `setModelAvailability` 认证可调用。该 setter 写入 pairSpecific 与 availability，
+  `effectiveAvailability` 被 assignWorker/准入读取，成功或失败写入都会改变后续分配行为。
+- 目录新增项也不能自动 upsert 到调度 ModelRegistry；它会改变候选集合，且现有 family 可用性
+  会传播到未持有 pair-specific fact 的条目。只读目录快照必须与准入事实分开。
+- 缺少 `setModelAvailability` 生产调用者是事实，不是必须立即补调用的验收要求。
+  目录、连接、单次调用成功、免费/额度是不同证据；历史成功不保证现在有权限或余额。
+- SelectionMode/Scope、ConnectionState、paidAuthorized、Skill/MCP 执行授权属于后续具体切片，
+  不在第一片一次性加类型或无消费者字段；不把多层解析后未被调度采用描述为选择功能已完成。
+- OpenCode 原生 `models [provider]` 与 Codex 上游 `debug models` 均有官方源码依据，
+  但上游命令不代表本机版本支持。MCP SDK 可作未来候选，运行于 Node 不等于本机 Windows 已验证。
+
+建议第一片：opt-in OpenCode 模型目录诊断，复用现有 doctor 与进程能力，
+返回有来源/时间/结果状态的只读快照；未采集、失败、成功空目录分开。
+listed 不提升为 connected/callable/free，不写调度 registry、quota、预算或账户状态。
+默认 doctor 不触发新目录请求；不新增 manager/router/authority，不引入 MCP SDK。
+仅采用现有启动/超时/停止边界，不能为目录查询新增不受控的进程路径。
+下一片建议不是本会话已经启动实现的事实；W5 SEALED WITH P2、PARALLEL_WRITE=CLOSED 保持不变。
+
+复用调研：本会话 GitHub MCP 检索/读取成功；不据此推翻 OpenCode 当时不可用的环境报告。
+核实了 [OpenCode CLI 模型目录](https://opencode.ai/docs/cli/#models)、
+[Codex CLI debug models](https://github.com/openai/codex/blob/main/codex-rs/cli/src/main.rs) 与
+[MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)。
+OpenAI 官方 app-server 页面已打开，但后续段落检索/特定页面请求连接失败；
+本轮不据此增加 app-server 集成，也未验证本机 Codex 目录命令。
+
+本次仅上传两份现有文档的审核增量至 `codex/b1-audit-review`，父提交为 W5 最终审核提交
+`a1a499e08f27450e4ad978a4aa0fd7fb500ca361`。测试/fixture blob 与父提交相同。
+未运行测试 suite；本轮无实现变更，检查 diff 与文档链接。保留 main 与共享索引。
