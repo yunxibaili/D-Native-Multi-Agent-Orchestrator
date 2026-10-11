@@ -16,14 +16,22 @@
 本轮已删除唯一剩余的非阻断 P2：新增冗余死亡断言把 OBSERVATION_ERROR 打印为退出证明；
 同一 case 的原句柄 EXIT_CONFIRMED/EXITED 强断言保留，未新建观测或清理框架。
 Codex 本轮独立 3-round 为 139/0，补充 READ 121/0、resource-claim 192/0，typecheck/diff check 通过。
-保留真实 Agent 兼容性、full-suite 时效及现有 259 reconciliation 可用性 P2；不进入 B1 实现，不开放并行写。
+保留真实 Agent 兼容性、full-suite 时效及现有 259 reconciliation 可用性 P2；不开放并行写。
 
-B1 只读入口审计及 Codex 复核已完成，实现仍未授权。
+B1 只读入口审计及 Codex 复核已完成；随后 B1.1 最小切片已交付，独立审核 BLOCKED。
 主要缺口成立，但目录采集不得调用 setModelAvailability 或自动 upsert 调度 registry；
 这些写入会改变候选/准入，并非只读。第一片建议缩为 opt-in OpenCode 模型目录诊断，
 通过现有 doctor 展示独立快照，listed/connected/callable/free 分开。
 项目/角色/任务选择层级、付费授权、Skill/MCP 目录与执行闭环留在后续对应切片。
 详情见 [B1 审计复核](PROJECT_BASELINE.md#7-b1-只读审计独立复核)。
+
+**B1.1 已实现，独立审核 BLOCKED**：`doctor --models opencode` 通过既有 doctor 返回 OpenCode 原生
+`opencode models` 的只读目录快照（`src/runtime/model-catalog.ts`）。不写 ModelRegistry、
+不改变 assignWorker/准入/quota/费用，listed≠connected≠callable≠free；其他 Agent 返回 `unsupported`。
+未采集/成功有模型/成功空目录/不支持/失败（非零、超时、无法解析）严格区分，部分 stdout 不认证成功。
+B1 整体仍未实现或封板；本片不含选择层级、pause、付费授权、动态额度、Skill/MCP 或 LAYA 联合决策。
+待关闭两个 P1：默认 execRunner timeout 后原生后代仍 ALIVE；注入 runner 的 suite 仍依赖真实 OpenCode discovery。
+详见 [项目基线 §8](PROJECT_BASELINE.md#8-b11-独立审核与上传说明)。
 
 ## 2. 需求与实现差距
 
@@ -55,12 +63,13 @@ B1 只读入口审计及 Codex 复核已完成，实现仍未授权。
 ## 3. 建议阶段
 
 B 编号仅用于新需求分析，不重命名或重开已封板的 T/W 阶段。
-B0 为执行证据收口标签，现已完成。B1–B5 仍为 PLANNED / NOT AUTHORIZED，不得因本文自行开工。
+B0 为执行证据收口标签，现已完成。B1 仅交付最小诊断切片，尚未通过审核；
+B2–B5 仍为 PLANNED / NOT AUTHORIZED，不得因本文自行开工。
 
 | 阶段 | 最小目标 | 依赖与退出条件 |
 |---|---|---|
 | B0 执行证据收口 | COMPLETE：W5 SEALED WITH P2；观测/清理 P0/P1 与冗余断言 P2 已关闭 | 兼容性和证据时效限制保留；PARALLEL_WRITE=CLOSED |
-| B1 可用能力与用户规则 | 复用 registry/adapter 表，明确 Agent/Model/Skill/MCP 事实和用户约束 | 区分目录与可用；固定/禁用/费用冲突可验证 |
+| B1 可用能力与用户规则 | 复用 registry/adapter 表，明确 Agent/Model/Skill/MCP 事实和用户约束 | 区分目录与可用；固定/禁用/费用冲突可验证。**B1.1 BLOCKED：真实 runner 清理与测试安装依赖两个 P1**，其余未实现 |
 | B2 费用与候选约束 | 入口/账户归属、免费依据、有效期、共享额度和预算 | 每次分配/接力均校验；未知不伪造；全部不可用安全停止 |
 | B3 LAYA 能力选择 | 联合选择 Agent/Model 与 Skill/MCP，提供必要角色能力事实 | 只选合格候选，复用原生执行，实际能力可核对 |
 | B4 异构任务闭环 | 候选内容生成 → LAYA 选择 → 调研/实现/测试/审核 | 同 Agent 多模型独立会话；工作区隔离和材料交接有实证 |
@@ -137,15 +146,29 @@ Agent Orchestrator 可参考执行/工作区协作，RouteLLM 可参考评估方
 
 ## 6. 本轮检查与限制
 
-本轮 OpenCode 实跑：`npm run typecheck` PASS；`W51_ROUNDS=3` EXIT=0、139 passed / 0 failed，
+本轮（B1.1）OpenCode 报告：`npm run typecheck` PASS；新增 `tests/model-catalog.test.ts` 42/0；
+定向回归 quota 184/0、assignment 235/0、contract 246/0（2 skipped）；`git diff --check` clean。
+默认 doctor 的目录 runner 调用为 0；opt-in 才采集；非零/null code 丢弃部分 stdout。
+测试使用注入 runner 与 fake adapter，未启动本机真实 Agent、未调用模型任务、未读凭据；
+但仍依赖本机 OpenCode discovery，不能描述为机器无关。
+新增生产 authority 为 0，`runtime.run` 生产调用边仍为 1（测试内源码守卫复核）。
+
+Codex 本轮独立实跑：typecheck PASS；model-catalog 42/0、quota 184/0、assignment 235/0、
+contract 246/0（2 skipped）；CLI 缺值 exit=2；diff check PASS。
+两个独立反例：模拟无 OpenCode 安装，原 suite 首个 collector case 失败并 TypeError/exit=1；
+真实 native 默认 runner 2200ms timeout，root 原句柄 EXITED，但 child 原生等待 ALIVE。
+child 随后 held-handle EXIT_CONFIRMED，两 observer 均 reaped，owned scratch/fixture 无残留。
+复用调研的 GitHub MCP 本轮请求失败；以 Node/libuv 官方资料及本机物理 probe 为依据。
+结论 B1.1 BLOCKED；下一片仅关闭两个 P1，详见项目基线 §8。
+
+上一轮 W5 实跑：`npm run typecheck` PASS；`W51_ROUNDS=3` EXIT=0、139 passed / 0 failed，
 attempted=3/completed=3，readiness/observation/containment/surviving/cleanup 全 0；`git diff --check` clean。
-断言数由 140 降为 139 仅因删除 1 条 P2 冗余断言；本轮未重跑 50-round。
-Codex 本轮独立验证：typecheck、W51_ROUNDS=3（139/0）、READ fan-out（121/0）、resource-claim（192/0）、diff check 通过。
+断言数由 140 降为 139 仅因删除 1 条 P2 冗余断言；上一轮未重跑 50-round。
+Codex 独立验证：typecheck、W51_ROUNDS=3（139/0）、READ fan-out（121/0）、resource-claim（192/0）、diff check 通过。
 Codex 上轮独立验证（W5.1d）：三个 observer 边界 probe、W51_ROUNDS=3/50（均 140/0）通过；
 已知 owned 根目录及 observer 无残留。
-本轮仅删除冗余断言并整理文档，未修复实现代码、未改 observer helper/native fixture/生产 launcher；
 未运行 full suite、真实 Agent 或重新审核已封板阶段。
 环境限制仍在：Codex `MODEL/SERVICE_LATENCY`、WorkBuddy `ENVIRONMENT_BLOCKED`。
 259 需按 handle 是否 signaled 判断，不能一概视为非 terminal。final reconciliation 的现有数值过滤
-属于既有 launcher 可用性限制，非环境事实；本轮未修改或重新探测该路径，详情见项目基线 §6.3。
-最终 W5 SEALED WITH P2，PARALLEL_WRITE=CLOSED；不授权 B1–B5。
+属于既有 launcher 可用性限制，非环境事实；未修改或重新探测该路径，详情见项目基线 §6.3。
+最终 W5 SEALED WITH P2，PARALLEL_WRITE=CLOSED；B1.1 BLOCKED、B1 未封板，B2–B5 未授权。

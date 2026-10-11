@@ -41,6 +41,8 @@ import type {
 import { AdapterRegistry } from '../runtime/registry.ts';
 import { AgentSession, type SessionLimits } from '../runtime/session.ts';
 import { SessionStore, type TaskSummary, type ThreadRecord } from '../runtime/store.ts';
+import { collectModelCatalog, type ModelCatalogSnapshot } from '../runtime/model-catalog.ts';
+import type { CmdRunner } from '../quota/collector.ts';
 import { loadConfig, type AgentConfig, type OrchestratorConfig } from './config.ts';
 
 export interface OrchestratorOptions {
@@ -272,8 +274,16 @@ export class Orchestrator {
     return this.store.listThreads(agentId);
   }
 
-  /** Availability + capability report. Never prints credentials. */
-  async doctor(): Promise<DoctorReport> {
+  /**
+   * Availability + capability report. Never prints credentials.
+   *
+   * B1.1: an EXPLICIT, opt-in model-catalogue query. When `opts.modelCatalog` is
+   * absent the method behaves exactly as before and runs NO catalogue process.
+   * When present, a read-only snapshot of the named agent's OWN CLI listing is
+   * attached. That snapshot changes nothing: it is not written to any registry and
+   * does not affect assignment, quota, or the spawn gate.
+   */
+  async doctor(opts: { modelCatalog?: { agentId: string; runner?: CmdRunner; timeoutMs?: number } } = {}): Promise<DoctorReport> {
     const agents: DoctorAgentReport[] = [];
     for (const id of this.registry.ids()) {
       const adapter = this.registry.get(id);
@@ -303,11 +313,19 @@ export class Orchestrator {
         credentialsHint: d.credentialsHint ?? null,
       });
     }
-    return {
+    const report: DoctorReport = {
       configSource: this.configSource,
       storeDir: this.store.root,
       agents,
     };
+    if (opts.modelCatalog !== undefined) {
+      report.modelCatalog = await collectModelCatalog(opts.modelCatalog.agentId, {
+        runner: opts.modelCatalog.runner,
+        command: this.configFor(opts.modelCatalog.agentId).command,
+        timeoutMs: opts.modelCatalog.timeoutMs,
+      });
+    }
+    return report;
   }
 }
 
@@ -315,6 +333,11 @@ export interface DoctorReport {
   configSource: string | null;
   storeDir: string;
   agents: DoctorAgentReport[];
+  /**
+   * B1.1: present ONLY when a catalogue query was explicitly requested. Its
+   * absence is the "not collected" state; its presence is a read-only snapshot.
+   */
+  modelCatalog?: ModelCatalogSnapshot;
 }
 
 /** Windows paths are case-insensitive; normalise before comparing ownership. */

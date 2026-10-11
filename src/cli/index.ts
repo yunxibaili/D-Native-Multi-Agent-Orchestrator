@@ -22,7 +22,9 @@ USAGE
   orchestrator <command> [options]
 
 COMMANDS
-  doctor                          report agent availability + capabilities
+  doctor [--models <agent>]       report agent availability + capabilities
+                                  --models: opt-in, READ-ONLY native model catalogue
+                                  (OpenCode only this slice; listed != callable != free)
   run <agent> <prompt>            run a new task on a native agent
   resume <agent> <threadId> <prompt>   continue an existing thread
   review <agent> <prompt>         native review entrypoint (codex)
@@ -181,7 +183,7 @@ async function main(): Promise<number> {
 
   switch (parsed.command) {
     case 'doctor':
-      return cmdDoctor(orch);
+      return cmdDoctor(orch, parsed);
     case 'init':
       return cmdInit();
     case 'run':
@@ -328,8 +330,27 @@ function printResult(r: RunResult): void {
   w(r.output || '(empty)');
 }
 
-async function cmdDoctor(orch: Orchestrator): Promise<number> {
-  const report = await orch.doctor();
+async function cmdDoctor(orch: Orchestrator, parsed: Parsed): Promise<number> {
+  const modelsFlag = parsed.flags.models;
+  if (modelsFlag === true) {
+    process.stderr.write('Usage: orchestrator doctor [--models <agent>] [--json]\n');
+    return 2;
+  }
+  const modelsAgent = typeof modelsFlag === 'string' ? modelsFlag : undefined;
+
+  // B1.1: the catalogue query is EXPLICIT. Without `--models`, `doctor` behaves
+  // exactly as before and starts no catalogue process.
+  const report =
+    modelsAgent !== undefined
+      ? await orch.doctor({ modelCatalog: { agentId: modelsAgent } })
+      : await orch.doctor();
+
+  // `--json` with `--models` emits ONLY the read-only snapshot (data on stdout).
+  if (modelsAgent !== undefined && parsed.flags.json === true) {
+    process.stdout.write(JSON.stringify(report.modelCatalog, null, 2) + '\n');
+    return report.modelCatalog?.status === 'failed' ? 1 : 0;
+  }
+
   const w = (s = ''): void => {
     process.stdout.write(s + '\n');
   };
@@ -358,7 +379,26 @@ async function cmdDoctor(orch: Orchestrator): Promise<number> {
     if (cannot) w(`        rejects  ${cannot}`);
     w();
   }
-  return report.agents.every((a) => a.ok) ? 0 : 1;
+
+  const cat = report.modelCatalog;
+  if (cat !== undefined) {
+    w(`  MODEL CATALOGUE (${cat.agentId}) — read-only; listed != connected != callable != free`);
+    w(`        status   ${cat.status}`);
+    w(`        source   ${cat.source}`);
+    w(`        listedAt ${cat.listedAt ? new Date(cat.listedAt).toISOString() : '(not collected)'}`);
+    if (cat.note) w(`        note     ${cat.note}`);
+    if (cat.models.length > 0) {
+      w(`        models   ${cat.models.length}`);
+      for (const m of cat.models) w(`          - ${m.modelId}`);
+    }
+    w();
+  }
+
+  const agentsOk = report.agents.every((a) => a.ok);
+  // A FAILED catalogue query is a diagnostic failure (non-zero). `unsupported`,
+  // `empty` and `not_collected` are honest answers, not failures, and never disable
+  // a model or an agent.
+  return agentsOk && cat?.status !== 'failed' ? 0 : 1;
 }
 
 function cmdInit(): number {

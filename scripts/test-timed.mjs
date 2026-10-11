@@ -36,6 +36,9 @@ const SUITES = [
   'workbuddy',
   'cline',
   'quota',
+  // B1.1: the READ-ONLY native model-catalogue snapshot. Hermetic — the command
+  // boundary is an injected runner, so no real agent is ever started.
+  'model-catalog',
   'memory',
   'orchestration',
   'model-pool',
