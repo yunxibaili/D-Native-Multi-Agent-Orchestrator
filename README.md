@@ -1,503 +1,101 @@
-> **Docs baseline: 技术文档唯一基准 = [docs/PROJECT_BASELINE.md](docs/PROJECT_BASELINE.md)**
-> 本 README 描述 runtime CLI 的用法与当前架构要点；架构、角色、主流程与路线以
-> baseline 为准。本项目是 Laya-driven Multi-Agent Orchestrator（4 个 Native Agent
-> identity / bounded Execution Round / Decision Loop / Lease+Fencing /
-> ResourceClaim / Unified Codex Review / Agent Handoff L6 / Result Aggregation /
-> Human Gate）。**本轮结束于 Human Gate，自动动作为 NONE。**
+# LAYA Native Multi-Agent Orchestrator
 
-# Native Agent Orchestrator
+面向个人 Windows 工作站的本机多 Agent 编排后端。
+复用已安装、已授权的 Native Agent 及其模型、会话和工具，
+由 LAYA（laya）组织任务级决策，经现有准入与执行链完成工作。
 
-A local orchestrator that drives **already-installed, already-logged-in native
-coding-agent CLIs** as subprocesses. It does **not** call provider APIs.
+## 当前文档
 
-```
-you -> Orchestrator -> native CLI subprocess -> unified event stream -> result
-        (no model calls in the kernel)
-```
-
-The kernel is a **bounded, Laya-driven Multi-Agent Task Execution Orchestrator**:
-one user task becomes one Execution Round, and the round ends at the Human Gate.
-It is deliberately **not** an always-on autonomous agent platform — no daemon, no
-agent polling for work, no unbounded rework/replan/retry loop.
-
-### The four Native Agent identities
-
-Each agent keeps using **its own** login, model config and tools. This project only
-ever passes arguments through; it never reads, copies or logs credentials. The four
-identities are independent worker identities, **not** four workflows: they all enter
-through the same admission contract (Identity → Capability → Adapter →
-Auth/Availability → Spawn Gate → Assignment → Workspace/Resource Claim →
-Collaboration compatibility).
-
-| Agent | Transport | Session resume | Native review | Availability |
-|---|---|---|---|---|
-| OpenCode 1.18.31 | `opencode run --format json` | yes (`--session <threadId>`) | no (prompt-based) | REACHABLE |
-| Codex 0.159.2 | `codex exec --json` | yes (`exec resume`) | yes (`exec review`) | REACHABLE |
-| WorkBuddy CN | `@genie/agent-cli` via `node.exe` + script | yes (`-r <sessionId>`) | no | CLI reachable, **auth not yet re-verified** |
-| WorkBuddy Intl | `@genie/agent-cli` via `node.exe` + script | yes (`-r <sessionId>`) | no | REACHABLE |
-
-WorkBuddy's entry point is an **extension-less** script, so it is launched as
-`node.exe <script> …` rather than as a bare binary. CN and Intl are separate
-installs (`D:\workbuddy`, `D:\workbuddy ai`) and are never treated as
-interchangeable or as a fallback for one another.
-
-> Agent reachability above is an observation recorded by a real doctor/E2E run, not a
-> claim of capability. `kills=true/false` in those records is likewise a fact about
-> what happened, not a target.
-
-### Where the round goes
-
-```
-Laya Decision -> Planner/DAG -> Assignment (Lease) -> Spawn Gate
-  -> Native Agent Execution -> to_verify -> ONE Unified Codex Review -> Human Gate -> END
-```
-
-Single-authority invariants the code actually enforces: Laya = 1, TaskStore = 1,
-Scheduler authority = 1 per run, Assignment = 1, AttemptStore = 1,
-SessionRegistry = 1, ResourceClaimBook = 1, and exactly one `runtime.run(` edge.
-
-- **Unified Review** — after every terminal outcome in a round is collected, the
-  reviewer is called **exactly once**. Its verdict is a recommendation: it never
-  writes TaskStore and never triggers rework/reassign/replan. Verification remains
-  the only completion authority.
-- **Agent Handoff (L6)** — on an availability outcome (`quota_exhausted`,
-  `agent_unavailable`, `session_failure`), the round hands the same Task off:
-  same TaskId, **new AttemptId, new Lease**. Admission refusals surface as
-  `executed=false, refused=true` rather than fabricating an attempt. Handoff is
-  bounded — it stops and reports rather than looping.
-- **Result Aggregation** — a finished round is projected into one report from the
-  authorities that already exist (TaskStore, AttemptStore, `TaskHandoff`, the unified
-  review, the continuation result). It is **READ/DERIVE only**: it owns no state, and it
-  cannot dispatch, decide or move a task. Machine evidence, the review conclusion and the
-  user-facing summary stay three separate layers.
-- **Human Gate** — derived from task status and review status on every read, so it has no
-  lifecycle of its own and cannot loop. When the round settles, the orchestrator **stops**
-  and reports `automaticPostRoundAction: NONE`: no retry, reassign, replan, split,
-  parallelize, rework or handoff happens on its own. Starting the next round is the user's
-  decision, under a **new** round identity.
-- **Not built** — a full next-round planner, and any ResultStore / ReportAuthority.
-
-
----
-
-## Quick start (Windows / PowerShell)
-
-Requires **Node >= 22.6** (the code is TypeScript executed directly via native
-type stripping — **no build step**). Verified on Node 24.18.1.
-
-```powershell
-cd "D:\yunxibaili\本地多 Coding Agent 编排器"
-
-# 1. see what was found, and what each agent can do
-node src\cli\index.ts doctor
-
-# 2. run a task
-node src\cli\index.ts run opencode "add a README section" --cwd .
-node src\cli\index.ts run codex    "explain the event contract"
-
-# 3. stream the unified event stream (NDJSON on stdout)
-node src\cli\index.ts run codex "review the runtime" --json
-
-# 4. native review via Codex
-node src\cli\index.ts review codex "find any bugs" --cwd C:\path\to\repo
-
-# 5. continue an earlier conversation (same agent + same cwd, or it is refused)
-node src\cli\index.ts threads
-node src\cli\index.ts resume codex <threadId> "now write the tests"
-
-# 6. verification
-npm run verify          # typecheck + unit + contract + quick smoke
-npm run smoke           # full suite (calls real models)
-npm run test:cancel     # cancellation / process-tree leak tests
-```
-
-No global install needed. `npm link` (or `npm install -g .`) makes
-`orchestrator` available on PATH.
-
-### Configuration
-
-Config is optional — discovery works without it. Lookup order, following
-native-agent-router:
-
-```
---config flag  ->  $ORCH_CONFIG  ->  .\\orchestrator.json
-                ->  ~\\.native-agent-orchestrator\\orchestrator.json
-                ->  built-in defaults + auto-discovery
-```
-
-`node src\cli\index.ts init` writes a starter config. On this machine it is
-**required in practice** for two reasons, both verified:
-
-- `codex` is **not on PATH** (it ships with the OpenAI Codex desktop app);
-- the OpenCode config default model points at a local Ollama on `:11435` that
-  is not running, so a model must be named explicitly.
-
-```json
-{
-  "agents": {
-    "opencode": {
-      "command": "C:\\Users\\Admin\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin\\opencode.exe",
-      "model": "opencode/space-bunny-free",
-      "timeoutMs": 900000
-    },
-    "codex": {
-      "command": "C:\\Users\\Admin\\.codex\\plugins\\.plugin-appserver\\codex.exe",
-      "sandbox": "workspace-write",
-      "timeoutMs": 1200000
-    }
-  }
-}
-```
-
-### Useful flags
-
-```
---cwd <dir>        working directory for the agent
---model <id>       native model id, passed through verbatim
---role <id>        native role / agent / profile  (opencode --agent, codex -p)
---sandbox <mode>   codex: read-only | workspace-write | danger-full-access
---timeout <ms>     hard limit; cancels the task
---extra <flag>     raw flag appended to the agent argv (repeatable).
-                   Works with a leading dash: --extra --some-agent-flag
---json             NDJSON event stream on stdout
---log-level <lvl>  silent|error|warn|info|debug
-```
-
-`stdout` carries data, `stderr` carries diagnostics, on every command.
-
----
-
-## Layout
-
-```
-src/
-  core/          types.ts     contracts: capabilities, states, Transport seam
-                 event.ts     the 8 unified RuntimeEvents + JSON sanitizer
-                 event-hub.ts bounded multi-subscriber fan-out
-                 buffer.ts    byte-bounded, code-point-safe tail retention
-                 errors.ts    actionable errors
-                 log.ts       stderr-only logger
-  runtime/       spawn.ts         the ONLY child_process caller (Windows-correct)
-                 launcher.ts      native vs cmd-wrapper, argv-safe
-                 discover.ts      binary resolution
-                 session.ts       outcome machine, hub, memory bounds
-                 store.ts         thread/task records + full transcripts
-                 registry.ts      narrow adapter-selection seam
-                 transport/cli.ts the first Transport implementation
-  adapters/      opencode.ts codex.ts index.ts (factory table)
-  decision/      types.ts     the minimal DecisionProvider interface
-                 errors.ts    unavailable/timeout/transport/schema/input failures
-                 laya.ts      local laya-serve provider (validates request + response)
-                 routing.ts   measured task-classification preset on top of it
-                 check.ts     standalone dev entry point (not the orchestrator)
-  orchestrator/  orchestrator.ts config.ts
-  cli/           index.ts
-tests/           unit.test.ts  contract.test.ts  decision.test.ts  cancel.test.ts
-                 smoke.ts  helpers.ts  live-decision-check.ts
-docs/            REUSE_ANALYSIS.md  DECISION_PROVIDER.md  SKILLS_EVALUATION.md
-```
-
-### CLI `--json` drain
-
-The event stream is drained by **subscription completion**, not by a timer. The
-hub closes when the outcome is frozen, so the loop ends exactly when the last
-event has been delivered. The previous fixed 50 ms sleep raced the process and
-could truncate the stream.
-
-### Core model
-
-- **Thread** — a resumable conversation identity. Outlives executions.
-  `codex` → `thread_id`; `opencode` → `sessionID`.
-- **Task** — exactly one subprocess execution, with a terminal
-  `succeeded | failed | cancelled | timed_out`.
-- **RunRequest.agentId is always explicit.** There is no "current agent" global,
-  so no other call can silently redirect a task.
-- `run()` returns a **handle, not a result**. Await `handle.result()`.
-
-### Outcome state machine
-
-```
-running ──┬─ exit 0                    -> succeeded
-          ├─ non-zero / spawn failure   -> failed
-          ├─ cancel()                  -> cancelled
-          └─ deadline exceeded         -> timed_out
-```
-
-A terminal outcome is computed **exactly once and frozen**. `result()` is
-idempotent and concurrency-safe: every call returns the *same object*, and it
-never constructs a state, so it cannot fabricate `succeeded` for a task that
-failed. A `timeoutMs` on `result()` bounds only that call and never alters the
-outcome. Every non-succeeded outcome carries a `RunErrorInfo`.
-
-`timed_out` is deliberately distinct from `cancelled`: a deadline is not a user
-abort, and retry policy treats them differently.
-
-The decision is the **adapter's**, via `terminalPolicy`. The kernel never
-hard-codes it, so an agent with its own notion of failure can express it.
-
-### Event hub
-
-One execution's events fan out to **any number of independent subscribers**
-(policy, logger, frontend, CLI, future metrics):
-
-- subscriber A **cannot** consume subscriber B's events — each owns its own ring
-  buffer;
-- a slow subscriber **never blocks the producer** and never stalls others;
-  overflow is resolved per-subscriber (`drop-oldest` default, `drop-newest`,
-  `close-subscriber`) and it is told how many events it lost;
-- late-subscriber semantics are explicit: nothing by default, or a **snapshot**
-  of the retained recent window with `{ replay: 'replay' }`. The snapshot is a
-  copy, so two replay subscribers independently see the same history and one
-  can never consume another's;
-- every buffer is bounded, and `close()` at terminal completes all subscribers
-  and frees all buffers.
-
-`droppedCount()` means one thing under every policy: *events this subscriber
-did not receive because of overflow*. `drop-oldest` counts the evicted event,
-`drop-newest` the refused event, and `close-subscriber` the buffered remainder
-(it ends the subscription, so its accounting closes at the capacity it held).
-
-No external event bus — a hub is a single-process object, created per execution.
-
-### Memory bounds
-
-In-memory state is capped and released; files on disk are not.
-
-| Buffer | Default | On terminal |
-|---|---|---|
-| assistant output tail | 64 KB, byte-exact, code-point safe | released |
-| stderr tail | 8 KB | released |
-| per-subscriber events | 1024 | released |
-| replay window | 256 | released |
-| tool calls / diagnostics | 500 / 200 | released |
-| transcript | unbounded on disk | kept |
-
-`Orchestrator`'s live-session map drops a session when it settles, so it cannot
-grow without bound. Trimming never splits a code point or surrogate pair.
-
-`RunResult.cleanup` records what process-tree cleanup achieved; it is
-informational and never affects `state`.
-
-### Transport seam
-
-```
-Transport { start, events, wait, cancel, dispose }   -> TransportFrame { channel, text, data }
-```
-
-A transport knows how to **reach** an agent and **frame** its output. It knows
-nothing about events, sessions, retries or review policy — so `AgentSession`
-has no CLI assumptions. `CliJsonlTransport` is the first implementation.
-`acp` and `app-server` are declared transport kinds with **no implementation
-yet**: the seam is reserved, not half-built. No ACP protocol is hand-written here.
-
-**Frame resolution precedence: `data` wins over `text`.** `text` is the
-CLI-JSONL convention — the payload arrives as text and is JSON-parsed. `data` is
-the protocol convention — a natively-framing transport hands over a decoded
-object and may produce no JSON text at all. Before this rule, a data-only frame
-failed text parsing, was misreported as a diagnostic, and `mapEvent` never ran:
-no real protocol transport could have worked.
-
-### Capabilities are enforced, not decorative
-
-A capability is `true` only if the adapter honours the option end to end.
-Otherwise `validateRequest()` **throws** `UnsupportedOptionError` naming the
-offending option. Nothing is silently dropped.
-
-`steering`, `worktree`, `fork` and `stdinPrompt` are `false` for both agents
-because none is implemented. OpenCode refuses `--sandbox` and refuses native
-review. Codex accepts `--sandbox` on a fresh run but refuses `sandbox` combined
-with `resume` or `review`, because those subcommands reject `-s` (verified).
-
-`mode: 'review'` together with a `threadId` is an **`InvalidRequestError`**: a
-review is a one-shot judgement with no conversation to continue, and no agent
-can express the combination, so passing it would mean the `threadId` was
-silently ignored.
-
-### Resume ownership
-
-**Thread identity is agent-scoped.** A native threadId is only unique within
-one agent — agent A and agent B can both mint `123`, so keying storage on
-threadId alone means the second write clobbers the first. Every thread lookup
-therefore takes **both** `agentId` and `threadId`, and the on-disk filename is a
-composite (`<agentId>__<threadId>.json`). This is a lookup-scope fix, not a
-rename: a lookup physically cannot address another agent's record.
-
-Consequence worth stating plainly: a cross-agent resume is not merely refused,
-it is **not expressible** — asking agent A for `123` unambiguously means A's own
-`123`. `allowForeignThread: true` is the only way to cross namespaces, and it is
-always logged.
-
-Before any native invocation the orchestrator verifies:
-
-1. the thread exists (in this agent's namespace) → else `ThreadNotFoundError`
-2. `agentId` matches → else `ThreadOwnershipError`
-3. `cwd` matches → else `ThreadOwnershipError`
-4. the adapter supports resume → else `CapabilityError`
-
-Files written by earlier versions (`<threadId>.json`) are migrated on read: the
-owning agent is taken from the record, or recovered from the task index, and the
-file is renamed to the composite form. The old file is removed only after the
-composite copy exists, so an interrupted migration is safe to repeat.
-
-A resume also **seeds its thread id into the session before the transport
-starts**. A native CLI can die before emitting its first frame; without the
-seed such a run would report `threadId: null` and be uncorrelatable from the
-thread it was continuing.
-
-### Adapter registry
-
-Bootstrap iterates a **factory table** (`src/adapters/index.ts`), not a
-hard-coded opencode/codex pair. Adding ZCode / WorkBuddy / DSH means:
-
-1. write `adapters/<name>.ts` exporting `create<Name>Adapter`
-2. add one line to `ADAPTER_FACTORIES`
-3. add known binary locations to `agentCandidates` in `runtime/discover.ts`
-
-`core/` and `orchestrator/` do not change. Callers may also pass
-`extraAdapters` for explicit registration. No plugin marketplace.
-
-### Unified events
-
-`session.started` · `session.output` · `session.progress` · `session.tool_call`
-· `session.diagnostic` · `session.completed` · `session.failed` ·
-`session.cancelled`
-
-Every event keeps the agent's **untouched payload** in `raw`, so normalization
-is additive and never lossy. Every event is JSON-serializable (cycles, BigInt,
-NaN, Errors and over-deep nesting are all handled explicitly rather than
-crashing or silently dropping).
-
----
-
-## Windows: what actually breaks
-
-Each of these was found by running the code on this machine.
-
-1. **`opencode` on PATH is `opencode.CMD`, and Node cannot exec it.**
-   Since the CVE-2024-27980 fix, `spawn` refuses a batch file without a shell
-   and throws `EINVAL`. A `.cmd`/`.bat` now gets a `cmd-wrapper` launcher;
-   `.ps1` is explicitly refused with a pointer to the real binary.
-
-2. **`codex` is not on PATH at all** — it ships with the desktop app.
-
-3. **The three `codex exec` subcommands accept different flag sets.**
-   `exec` takes `--color`/`-C`/`-s`; `exec resume` and `exec review` **reject**
-   all three. Passing one is a clap usage error and exits 2, so the adapter
-   selects an explicit flag profile per subcommand — and refuses the impossible
-   *combinations* (e.g. `sandbox` + `resume`) up front instead of building a
-   doomed argv.
-
-4. **Cancellation hung, then leaked.** Two separate bugs:
-   - Node's `'close'` waits for *all* stdio. A grandchild inheriting the pipes
-     keeps them open, so `'close'` never fired and every cancelled Codex task
-     hung forever. Fixed by finalizing on `'exit'` with a short drain window.
-   - `child.kill()` is `TerminateProcess` on the direct child only, and
-     `taskkill /T` needs a **live** root. So "SIGINT then taskkill" cannot work:
-     the root is already gone. On Windows the tree kill is therefore issued
-     **first**, and `taskkill` is **awaited** and its result checked, not fired
-     and forgotten.
-
-Also handled: UTF-8 via `StringDecoder` (Node has no per-stream encoding
-option), cross-chunk line reassembly, CRLF/LF/CR splitting, an env
-**allowlist** so credentials do not leak into an agent's environment, and
-`windowsHide`.
-
-### Process-tree cleanup contract
-
-| Path | Guarantee |
+| 文档 | 内容 |
 |---|---|
-| cancel | `taskkill /T /F`, **awaited**, result checked — descendants are killed |
-| timeout | same as cancel |
-| failure | same, via the transport's exit path |
-| normal exit | **no kill issued**; the result is recorded |
+| [后端需求](docs/BACKEND_REQUIREMENTS.md) | Agent/模型/多会话、Skill/MCP 选择、免费优先、接力及验收 |
+| [项目基线](docs/PROJECT_BASELINE.md) | 已有能力、封板状态与当前边界 |
+| [阶段分析](docs/STAGE_ANALYSIS.md) | 源码差距、建议阶段、前端需求提醒和 Git 历史备份 |
+| [架构契约](docs/ARCHITECTURE_CONTRACTS.md) | 身份、单一权威、执行证据、停止与隔离 |
+| [LAYA 接口](docs/DECISION_PROVIDER.md) | 本地 typed decision 和错误语义 |
+| [协作契约](docs/R2_COORDINATION_CONTRACT.md) | Lease/fencing、ResourceClaim、工作区与接力 |
+| [Round 语义](docs/EXECUTION_ROUND_SEMANTICS.md) | 有界执行、quota 事实和 Human Gate |
+| [执行证据](docs/DECISION_LOOP_EXECUTION_RESULT_CONTRACT.md) | 当前 Attempt 与 RunResult 关联 |
+| [Windows launcher](native/windows-job-launcher/README.md) | 构建、control 协议与生产 containment 边界 |
 
-On a normal exit the root has already gone, so `taskkill /T` has no live root to
-walk: the call would accomplish no descendant cleanup while carrying a real risk
-of hitting an unrelated process if the OS had recycled that PID. A successful
-run must never be able to trigger a stray force-kill, so the dead-root path is
-skipped and a `CleanupResult` is reported instead
-(`{ rootKilled, descendantsReaped, note }`), surfaced on `RunResult.cleanup`.
+需求描述目标能力，不代表全部已实现。当前 W5 未封板，
+PARALLEL_WRITE=CLOSED；新增后端阶段未授权实现，前端需求留到进入前端阶段单独确认。
+OpenCode 主要开发，Codex 独立审核。
 
-That result is informational and can **never** change the outcome — the outcome
-is decided from the exit code alone, and frozen before cleanup is recorded.
+## 目标与现状
 
-True descendant reclamation after a normal exit needs a Windows **Job Object**,
-which is deliberately not introduced (no native dependency). Native review
-flagged this; the trade-off is stated rather than hidden.
+目标：LAYA 为每个任务选择具体 Agent、Model、所需 Skill 和 MCP 工具；
+同一 Agent 可通过独立会话运行多个模型；优先合格免费资源，必要时安全接力。
 
----
+现有内核已有 Agent × Model 选择、Task/DAG、Session/Worker 身份、Lease/fencing、
+工作区/资源保护、Windows containment、Attempt evidence、有界 handoff 和统一 Review。
+完整模型目录与用户固定规则、LAYA Skill/MCP 选择、动态费用额度、
+各 Agent 多模型真实并发和总 token 收益，仍需按阶段补齐/验收。
+当前生产只编排 native Agent；不直接调用供应商模型 API，不读取或搬运凭据。
 
-## What this deliberately does **not** do
+## 执行边界
 
-Phase 1 is the runtime only. Absent on purpose:
+用户目标 → LAYA → 候选 DAG → Assignment/Lease → Scheduler/executeTask
+→ Spawn Gate/Workspace/ResourceClaim → Native Runtime
+→ Attempt/Result → Verification/Codex Review → Human Gate → END。
 
-- automatic planning, task decomposition, retry or review *policy*
-- multi-agent role routing (ZCode / WorkBuddy / DSH / Claude Code)
-- ACP transport (OpenCode's `acp` and `codex app-server` both exist and work —
-  see `REUSE_ANALYSIS.md` §6 for why it was deferred, and `transport: 'cli' |
-  'acp'` is already reserved in the contract)
-- worktree isolation, parallel execution, any server/daemon/frontend
-- **installing any agent skill.** `docs/SKILLS_EVALUATION.md` recommends 5, but
-  nothing is installed: a skill that can silently reshape an agent's judgement is
-  an operator decision, not a build step.
+TaskId 在接力时稳定，真实执行产生新 Attempt。
+当前 Round 在 Human Gate 后 automaticPostRoundAction=NONE。
+停止未确认不提前释放保护；root 退出不等于整棵执行树停止。
+Observation/临时 dashboard 只读，不是新的命令或调度 authority。
 
-`src/decision/` is the exception to "absent on purpose": the Laya provider is
-implemented and tested but **not wired into `src/orchestrator/`**, so agent
-selection still requires an explicit `--agent`. The policy layer should be built
-**on top of** this runtime, not inside it.
+## 本地使用
 
----
+需要 Node >=22.6（直接执行 TypeScript）和已安装的项目依赖。
+Agent 的具体版本、安装、登录及模型可用性以本机 doctor/官方接口为准；
+不把旧环境快照写成永久可用列表。
 
-## Known limitations
+    npm ci
+    node src/cli/index.ts doctor
+    npm run typecheck
 
-- **Descendant cleanup on a normal exit is not performed** (no Job Object) —
-  see the contract table above. Cancel/timeout/failure are guaranteed.
-- **Windows cancellation is forceful** (tree-kill first), by necessity.
-- **`capabilities.costReporting` is `false` for Codex** — it reports tokens
-  only, so no cost figure is ever fabricated for it.
-- **Codex reports `in=0 out=0` for `exec review`** in 0.158.0-alpha.2.1. Tool
-  calls and the final review text still come through correctly.
-- **No steering.** Neither CLI has a usable stdin channel mid-run, so
-  `capabilities.steering` is `false` for both and `cancel` is the only way to
-  interrupt.
-- A configured `sandbox` applies to **ordinary fresh runs only**; `review` and
-  `resume` subcommands reject it. An explicit `--sandbox` there is still an
-  error, not silently absorbed.
-- `mode: 'review'` with a `threadId` is rejected, not supported.
-- ACP / app-server transports are **declared but unimplemented**.
-- The two adapters are the only registered ones; a third agent needs a new
-  adapter file plus one table line, and no change to core.
+启动本机已安装的 LAYA 服务后，可以先仅分类：
 
-## Testing
+    laya-serve
+    node src/cli/index.ts round "分析当前项目需要完成的任务" --classify-only
 
-```powershell
-npm run typecheck      # 0 errors, strict + erasableSyntaxOnly
-npm test               # unit + contract + decision; NO real agents required
-npm run smoke          # real agents, end to end
-npm run test:cancel    # real cancellation + process-tree behaviour
-```
+以下命令会实际调用 Agent，使用其账户、模型和工具，费用受其配置影响：
 
-`npm test` is **machine-independent**: adapters are constructed with a stub
-launcher and discovery is exercised with filesystem fixtures, so the suite
-passes whether or not OpenCode and Codex are installed (verified by running it
-with a scrubbed `USERPROFILE`/`APPDATA`/`LOCALAPPDATA`: 90 + 242 passed, 0 failed).
-The decision suite is hermetic too — a stub `node:http` server stands in for
-`laya-serve`, including its 200-with-no-answer responses. Only real-binary
-*availability* is allowed to skip, never to fail.
+    node src/cli/index.ts run opencode "解释项目结构" --cwd .
+    node src/cli/index.ts run opencode "解释项目结构" --model <provider/model> --cwd .
+    node src/cli/index.ts round "<目标>" --cwd <项目目录>
 
-`node tests/live-decision-check.ts` is the one test that needs the Python side
-(`laya-serve` on 127.0.0.1:8077); see `docs/DECISION_PROVIDER.md`.
+配置查询顺序：
+--config → ORCH_CONFIG → 当前目录 orchestrator.json
+→ 用户 .native-agent-orchestrator/orchestrator.json → 内置发现。
 
----
+配置中的 Agent command/model 仅作为本机入口；不要将凭据放进项目仓库。
+CLI --agent/--model 的现有 preference 行为不等于新需求中的完整“固定选择”产品。
+现有 orchestration budget units 不等于真实 token/货币预算；
+严格免费模式尚未完成端到端验收。
 
-## Next step
+## 验证
 
-Add the **policy layer** over this runtime: a `Decision` input (Phase 2: the local
-Laya provider in `src/decision/`, already implemented and verified — see
-`docs/DECISION_PROVIDER.md`), a retry/review gate, and then ACP + more agents. The
-runtime contract — `Thread`/`Task`, the capability matrix, `RunHandle`, and the 8
-events — is what that layer should consume.
+本轮文档整理已运行 npm run typecheck，并在提交前检查差异与文档链接。
+未运行 full suite、真实 Agent 或 W5 stress；备份提交不是封板结论。
 
-Note for that layer: `npm run doctor` shows **OpenCode `rejects: review`, Codex
-`can: review`**. The implement→review split is enforced by the capability matrix,
-not by convention.
+可按明确验证任务选择已有定向入口：
+
+    node tests/decision.test.ts
+    node tests/initial-assignment-decision.test.ts
+    node tests/containment-production.test.ts
+    node tests/execution-lifecycle.test.ts
+
+真实 Agent 测试和 W5 证据测试保持 opt-in，不因阅读本文自动运行。
+Windows launcher 构建与测试前提见其 [README](native/windows-job-launcher/README.md)。
+
+## 历史备份
+
+旧需求、阶段规划、审核与调研报告已从当前目录移除。
+整理前全部可入库源码与旧文档已推送标签：
+
+    archive/pre-backend-requirements-2026-10-11
+
+[查看历史快照](https://github.com/yunxibaili/D-Native-Multi-Agent-Orchestrator/tree/9f12a3bf475ac47e4e6b2b2dd407ed09811610b5)
+
+备份范围和只读查看方法见 [阶段分析](docs/STAGE_ANALYSIS.md#历史备份)。

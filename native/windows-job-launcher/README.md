@@ -1,214 +1,85 @@
-# windows-job-launcher (W1 / W1.1)
+# Windows Job Launcher
 
-A minimal, self-contained Windows launcher that places a target process into a
-**no-breakaway Job Object before it executes its first instruction**, and reports
-the tree as stopped only when the Job's `ActiveProcesses` reaches `0`.
+更新日期：2026-10-11
+状态：W1/W2/W3 已封板，W4.1 已重新封板；已有生产 Runtime containment 集成。
+W4 状态和 W5 未完成的独立验收见 [项目基线](../../docs/PROJECT_BASELINE.md)。
+本次更新是文档整理，没有重新运行 native 测试或更改 launcher。
 
-This is **W1/W1.1, a prototype**. It is deliberately **not** wired into the
-orchestrator runtime: `src/**` is untouched. See
-`docs/WINDOWS_PROCESS_CONTAINMENT_ARCHITECTURE_AUDIT.md` for why this primitive
-is the right answer and what W2-W5 still owe.
+## 作用与不变量
 
----
+launcher 创建不可 breakaway 的 Job：
+CreateProcessW(CREATE_SUSPENDED) → AssignProcessToJobObject → ResumeThread。
+KILL_ON_JOB_CLOSE 开启，BREAKAWAY_OK/SILENT_BREAKAWAY_OK 关闭。
+setup/assign 失败不 Resume target，走 fail-closed 清理。
 
-## Why this exists
+root 自然退出后，只要 Job 仍有 descendant，launcher 就继续等待。
+正常 success 要求 root termination 得到正面确认、退出码读取成功，
+且 Job ActiveProcesses==0。launcherPid 与 target rootProcessPid 是不同事实。
+取消/超时和保护释放还受生产运行时协议约束；不能只依靠 root PID 消失。
 
-`taskkill /T /F` walks a *live* process tree. Once an agent's root process has
-exited, there is no live root to walk and any descendant it left behind keeps
-running — and keeps writing the workspace. That is `rootExited != workerTreeStopped`,
-and it is why `PARALLEL_WRITE` is closed.
+## 源码与构建
 
-A Job Object closes the gap. From Microsoft's *Nested Jobs* documentation:
+- src/w1joblauncher.c：Job、启动顺序、控制通道、停止和记账。
+- src/winquote.h：Windows target argv 编码。
+- src/w1fixture.c：受控 native 测试 fixture 与进程观测。
+- build.ps1：使用已安装的 gcc/MSYS2 UCRT64 编译，输出 build/。
+- ../../src/runtime/containment.ts：生产 launcher 解析、封装和 control 校验。
+- ../../src/runtime/spawn.ts：生产 ManagedProcess 与停止/事实投影。
 
-> If the immediate job object does not allow breakaway, the child process does
-> not break away even if jobs in its parent job chain allow it.
+在仓库根目录构建：
 
-libuv (Node's process layer) already puts every non-detached child into a Job —
-but it sets `JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK`, so anything the agent spawns
-silently leaves that Job. By owning a Job that is *closer to the work* and that
-**never** permits breakaway, the entire descendant tree is retained regardless
-of libuv's permissive parent Job.
+    powershell -File native/windows-job-launcher/build.ps1
 
----
+build/ 二进制为 Git 忽略内容，备份标签保留源码而非编译产物。
+本机部署位置和覆盖变量以 containment.ts 为准；环境路径不能当通用 Windows 规律。
 
-## Layout
+## argv 边界
 
-```
-native/windows-job-launcher/
-  src/w1joblauncher.c   the launcher (Job ownership + lifecycle + control file)
-  src/w1fixture.c       test fixture: root -> child -> grandchild chain + probe
-  src/winquote.h        Windows argv quoting, adapted from libuv (MIT)
-  build.ps1             builds both binaries into ./build
-  .gitignore            keeps generated binaries out of git
-```
+    w1joblauncher.exe [--diag <control>] [--stop <marker>] [--log-argv] [--debug] -- <exe> [args...]
 
-`build/` is generated and **never tracked**.
+第一个独立 -- 前是 launcher 参数，之后所有 token 均为 opaque target argv。
+target 的 --debug/--diag/--log-argv/-- 不得改变 launcher 状态。
+生产使用受验证的 argv/raw 封装；--raw 是内部 Windows 命令行接口，
+不是新的 shell 执行入口，不应手工拼接不可信参数。
 
----
+默认 launcher 控制信息不写 Agent transport stdout/stderr；调试必须显式启用。
+control 走 --diag，stop marker 走 --stop，stdin/stdout/stderr 属于目标传输。
 
-## Build
+## control 与 PID
 
-Requires `gcc` on `PATH` (MSYS2 UCRT64 / mingw-w64).
+control 是 UTF-16LE key=value 记录，只有 complete=1 且完整校验通过才接受最终事实。
+生产包含 launcherStatus、phase、rootPid、assignedBeforeResume、resumed、
+Job flags、rootExitObserved/rootExitCode、treeStopped、activeProcessesFinal 等事实；
+准确字段和状态矩阵以生产 producer/consumer 源码为准，不复用旧版本矩阵。
 
-```powershell
-powershell -File native/windows-job-launcher/build.ps1
-# -> build/w1joblauncher.exe (~123 KB), build/w1fixture.exe (~116 KB)
-```
+rootExitObserved 与 rootExitCode 必须一致成对；INVALID/partial control 不得认证
+rootTerminalObserved、rootExitCode 或 treeStopConfirmed。
+运行中只允许从换行终止、严格十进制、正且安全整数的 rootPid 行读取早期 PID。
+launcher 退出不能替代可信 control，更不能误作 target 成功或整树已停。
 
-Flags: `-static` (self-contained PE; imports only OS-provided `api-ms-win-crt-*`),
-`-municode`, `-O2 -Wall -Wextra -std=c99`.
+GetExitCodeProcess 的 259 只有在 process handle 非 signaled 时才表达 STILL_ACTIVE。
+WaitForSingleObject==WAIT_OBJECT_0 后读到的 259 是合法实际 DWORD 退出码。
+poll 和最终 reconciliation 都需要 termination evidence；
+超时/失败或 exit unavailable 不能写 success。
 
-## Run
+launcher 自身 exit status 与 target rootExitCode 分开，
+不能使用 target 的 103/259 等具体数值识别 launcher 错误。
 
-```
-w1joblauncher.exe [--diag <file>] [--log-argv] [--debug] -- <exe> [args...]
-```
+## 停止与未确认状态
 
-- Everything after `--` is the target command line.
-- **CLI grammar is strict:** `w1joblauncher [launcher-options...] -- <exe> [target-args...]`.
-  Launcher options are parsed **only before the first standalone `--`**. From that
-  `--` onward option parsing stops permanently, so a target's own `--debug`,
-  `--diag` or `--log-argv` is passed through verbatim and never consumed by the
-  launcher. There is no argv pre-scan.
-- **`stdout`/`stderr` belong to the target** (and, in production, to the agent's
-  JSONL transport). The launcher writes **nothing** to them by default — not even
-  on failure. `--debug` is the only switch that emits human-readable text on
-  stderr, and it is off unless explicitly requested.
-- **`--diag <file>`** is the machine-readable control channel. If it is requested
-  and cannot be created/opened, the launcher **fails closed** (exit 8) rather
-  than run without diagnostics.
-- `--log-argv` additionally records the target argv. **Off by default**:
-  an agent CLI can carry credentials on its command line.
+协作停止通过现有 stop marker/Job 停止和 accounting 确认。
+hardkill 的物理清理与最终可信 control 是不同证据；
+没有被验证的最终 control，不能仅因观察到死亡就伪造 treeStopConfirmed。
+停止未确认时，生产保护按既有 retention/quarantine 处理，不提前放行下一写者。
 
-### Exit status vs target exit code (W1.1)
+## 定向测试与权限
 
-The launcher's process exit code reports **the launcher's own outcome only**. It
-is a small fixed set and it is *never* the target's exit code:
+    node tests/windows-job-launcher/containment.test.ts
+    node tests/containment-production.test.ts
+    node tests/execution-lifecycle.test.ts
+    npm run test:w51-evidence
 
-| Code | Meaning |
-|---|---|
-| `0` | **success** — containment completed, `ActiveProcesses == 0` |
-| `1` | usage error |
-| `2` | `CreateJobObjectW` failed |
-| `3` | `SetInformationJobObject` failed |
-| `4` | `CreateProcessW` failed |
-| `5` | `AssignProcessToJobObject` failed (target terminated, not resumed) |
-| `6` | `ResumeThread` failed (target terminated) |
-| `7` | Job accounting query failed |
-| `8` | the requested `--diag` control file could not be opened |
-| `9` | the target command line cannot be represented (too long / overflow) |
-| `10` | internal error (handle-list setup) |
-
-The **target's** exit code is `rootExitCode` in the control file. This removes
-the collision where a target that legitimately exited `103` was indistinguishable
-from a launcher failure that also used `103` (W1.1 P2).
-
-### Control file
-
-`key=value` lines, UTF-16LE, no BOM, terminated by `complete=1`. A reader must
-treat the file as final only when `complete=1` is present.
-
-| Key | Meaning |
-|---|---|
-| `launcherStatus` | `success` \| `job-create-failed` \| `job-configure-failed` \| `create-process-failed` \| `assign-failed` \| `resume-failed` \| `accounting-failed` \| `internal-error` \| `cmdline-too-long` \| `cmdline-overflow` \| `cmdline-oom` |
-| `phase` | last lifecycle phase reached (`create-job` … `done`) |
-| `win32Error` | the Win32 error code for a failure |
-| `launcherPid` | the launcher process id |
-| `rootPid` | the target ROOT process id |
-| `rootExitCode` | the target's own exit code (absent if the target never ran) |
-| `treeStopped` | `1` once `ActiveProcesses` reached `0` |
-| `activeProcessesFinal` | the final Job active-process count |
-| `assignedBeforeResume` | `1` proves the race-free ordering |
-| `resumed` | `1` once the target was resumed |
-| `killOnJobClose` | `1` (must be set) |
-| `breakawayOkSet` / `silentBreakawayOkSet` | `0` (must NOT be set) |
-| `cleanupTerminateFailed` / `cleanupWaitFailed` | `1` if the fail-closed cleanup of a suspended target itself failed |
-| `complete` | `1` when the record is final |
-
----
-
-## Hardening notes (W1.1)
-
-### P1: command-line allocation underflow (fixed)
-
-The W1 sizing rule was `need += 2*len + 2` per argument. That under-reserves an
-**empty** argument, which emits `""` (2 units) *and* is followed by a separator
-space (1 unit): the real requirement is `3N` for N empty arguments but only
-`2N+1` was reserved, so the encode pass ran past the buffer. This was reproduced
-as `0xC0000374` (STATUS_HEAP_CORRUPTION) at 200 and 400 empty arguments.
-
-Two independent defences now prevent a sizing mistake from ever being memory
-corruption:
-
-1. **Exact size pass** with `w1_checked_add` / `w1_checked_mul` (overflow-safe),
-   computing `2*len + 2` for the quoted content plus a separator slot per
-   argument, and a hard check against the Windows limit
-   (`W1_CMDLINE_MAX_WCHARS`, 32767, the `CreateProcessW` `lpCommandLine` maximum
-   including the NUL). A command line that cannot be represented **fails closed**
-   (exit 9); it is never truncated.
-2. **Bounded encoder** — `w1_quote_cmd_arg` refuses to write at or past the
-   buffer end and returns `NULL` instead of overrunning.
-
-### P2: control-plane / transport separation
-
-Launcher-owned status (setup/Job/CreateProcess/assign/resume/internal failures)
-goes to the **control file** and the **exit code**, never to the target's
-stdout/stderr.
-
-### W1.2: strict CLI option boundary
-
-Option parsing stops at the first standalone `--`. An earlier pre-scan of argv
-(let in by W1.1) meant a `--debug` / `--diag` / `--log-argv` appearing **after**
-the separator could be consumed by the launcher, silently changing launcher
-behaviour based on tokens that belong to the target. The pre-scan is removed:
-post-separator tokens are the target's, always.
-
-### P2: exit-code namespace collision
-
-See "Exit status vs target exit code" above.
-
-### P2: diagnostic open failure
-
-A requested `--diag` that cannot be opened is a hard failure (exit 8), never a
-silent degradation, because losing it would lose `rootPid`, `rootExitCode` and
-the containment evidence.
-
-### Assign/resume cleanup is checked
-
-On assign/resume failure the suspended target is terminated and both
-`TerminateProcess` and `WaitForSingleObject` results are inspected; a failed
-cleanup is recorded (`cleanupTerminateFailed` / `cleanupWaitFailed`), not assumed.
-
----
-
-## Test
-
-```powershell
-node tests/windows-job-launcher/containment.test.ts
-```
-
-Environment overrides: `W1_STRESS` (default 50), `W1_RACE_ROUNDS` (default 12).
-
-Covers the containment physics plus the W1.1 hardening regressions (W1H-1…17)
-and the W1.2 CLI-boundary regressions (W1P-1…7): empty-argument boundaries
-(50/200/400), high-count normal/quoted/Unicode argv, 1000 deterministic
-generated argv cases, the exit-code namespace split, stream non-contamination,
-fail-closed control-file handling, the option-vs-target separator boundary, and
-the 50-round tree stress / 12-round race with zero leaks/escapes.
-
-> **Drive note.** The suite places its scratch directory under `build/` rather
-> than the OS temp directory **on purpose**. On this workstation a process running
-> from `D:` is denied write access to `C:`, so using `%TEMP%` would make every
-> pid file and diagnostic silently unwritable and every assertion would fail for
-> a reason unrelated to containment. The launcher likewise never assumes
-> `%TEMP%` is writable; the caller chooses the control-file location.
-
----
-
-## Provenance
-
-`src/winquote.h` is adapted from libuv `src/win/process.c`
-(`quote_cmd_arg` / `make_program_args`), MIT licensed, Copyright Joyent, Inc. and
-other Node contributors. libuv is the implementation Node itself uses to build a
-Windows child command line, so reusing its rules makes a command line assembled
-here parse identically in the target.
+命令从仓库根目录执行，需满足对应 opt-in、Windows 和构建前提。
+真实 Agent 测试另行授权；本次未运行上述测试。
+W5.1a 修订待独立验收；任何一次通过都不自动打开 PARALLEL_WRITE。
+历史 W0/W1 设计及增量报告见 [Git 备份](../../docs/STAGE_ANALYSIS.md#历史备份)。
