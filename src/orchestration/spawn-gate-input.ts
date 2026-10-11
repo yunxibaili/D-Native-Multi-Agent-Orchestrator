@@ -295,7 +295,9 @@ export function resolveModelAvailability(
   }
   // `unknown` is NOT available. An unconfirmed model is exactly the case the
   // gate must refuse, because spawning would spend against a guess.
-  return ok(entry.availability === 'available');
+  // TeamRun T1-a: the effective verdict, so an unavailable agent family still refuses
+  // every pair while a single sick model does not refuse its healthy siblings.
+  return ok(sources.registry.isModelAvailable(sources.agentId, sources.modelId));
 }
 
 /** Missing codes unique to the P6-F pool, so a refusal says WHICH rule fired. */

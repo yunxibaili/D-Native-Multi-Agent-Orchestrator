@@ -427,6 +427,34 @@ function optionalRationale(raw: Record<string, unknown>): string | undefined {
  * shape, then vocabulary, then implementation, then target, then state. A caller
  * fixing a bug gets the root cause rather than a downstream symptom.
  */
+/**
+ * TeamRun T2-a.1 (§6): is this a HALF pair? Returns the reason, or null when the pair is
+ * complete.
+ *
+ * WHY THIS IS A LOCAL SHAPE CHECK AND NOT A CALL INTO ASSIGNMENT
+ * -----------------------------------------------------------
+ * `validateAgentModelIntent` in `assignment.ts` is the typed definition of a valid pair,
+ * and the *workbench* uses it on the initial path. This one cannot import it, and that
+ * restriction is the architecture working: the decision layer may validate the SHAPE of
+ * what Laya said and must never resolve it. Which pair actually exists and is available is
+ * Assignment's question, and importing Assignment here would let the validator become a
+ * second router — the exact thing `tests/state-loop.test.ts` guards against.
+ *
+ * So the two are deliberately separate: this asks "did Laya name both halves?", and
+ * Assignment asks "is that pair real, available and permitted?". Neither decides the
+ * other's question, and a pair that passes both is enforced exactly.
+ */
+function assertAtomicPair(agentId: string | undefined, modelId: string | undefined): string | null {
+  if (agentId === undefined && modelId === undefined) {
+    return 'neither Agent Family nor Model was named';
+  }
+  if (agentId === undefined) return `agentId is missing but modelId ("${modelId}") was named`;
+  if (modelId === undefined) return `agentId ("${agentId}") was named but modelId is missing`;
+  if (agentId.trim() === '') return 'agentId must be a non-empty string';
+  if (modelId.trim() === '') return `modelId must be a non-empty string, got "${modelId}"`;
+  return null;
+}
+
 export function validateDecision(raw: unknown, observation: TaskObservation): OrchestrationDecision {
   // 1. shape
   if (!isRecord(raw)) {
@@ -544,7 +572,7 @@ export function validateDecision(raw: unknown, observation: TaskObservation): Or
         ? { action: 'retry', taskId: target }
         : { action: 'retry', taskId: target, reason: why };
     }
-    // DC-1: a reassign must say WHICH MODE it is in. An unstated target used to mean
+// DC-1: a reassign must say WHICH MODE it is in. An unstated target used to mean
     // "Assignment picks by evidence score", which is a heuristic making the decision -
     // so it is now an explicit `strategy` and omitting both target and strategy is
     // refused with a message that names the two legal ways out.
@@ -557,6 +585,24 @@ export function validateDecision(raw: unknown, observation: TaskObservation): Or
           'because letting the evidence score choose would make the outcome look like Laya\'s ' +
           'judgement when it was a heuristic\'s.',
       );
+    }
+    // TeamRun T2-a.1 (§6/§14): under `explicit` — the default, and the mode that claims
+    // Laya chose this target — the pair is ATOMIC. `agentId` alone used to be accepted and
+    // Assignment filled in the model, which is a partial Laya choice silently completed by
+    // a heuristic: exactly the degradation this closes.
+    //
+    // `strategy:"assignment"` is a DIFFERENT, already-named meaning — Laya deliberately
+    // delegating the choice — so it is untouched. Switching model on the same family is
+    // still expressible, by naming BOTH halves.
+    if (strategy !== 'assignment') {
+      const half = assertAtomicPair(agentId, modelId);
+      if (half !== null) {
+        throw new DecisionValidationError(
+          'invalid-worker-reference',
+          `a Laya reassign is an ATOMIC Agent x Model pair: ${half}. ` +
+            'Name both halves, or set strategy:"assignment" to delegate the whole choice to Assignment.',
+        );
+      }
     }
     const base = {
       action: 'reassign' as const,

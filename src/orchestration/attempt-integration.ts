@@ -50,6 +50,8 @@ import type { AttemptStore } from './attempt-store.ts';
 import type { TickResult } from './scheduler.ts';
 import type { ReviewVerdict } from './review-verdict.ts';
 import type { TaskType } from '../quota/types.ts';
+import type { RunResult } from '../core/types.ts';
+import type { DispatchExecutionRef } from './dispatch-receipt.ts';
 
 export interface ExecutionEvidenceInput {
   /** Budget as the task declared it, so cost-per-budget is computable later. */
@@ -85,6 +87,12 @@ export function recordExecution(
      * defaulted to the task's current version.
      */
     leaseVersion?: number;
+    /**
+     * T1-b: the session this execution ran in, from the session authority. Optional and
+     * additive: without it the attempt is still a complete record, it just cannot be
+     * projected back to the Worker that produced it.
+     */
+    sessionId?: string;
   } & ExecutionEvidenceInput,
 ): AttemptRecord | null {
   const build = input.isRework === true ? reworkAttempt : executionAttempt;
@@ -95,6 +103,7 @@ export function recordExecution(
     ...(input.budgetUnits === undefined ? {} : { budgetUnits: input.budgetUnits }),
     ...(input.taskType === undefined ? {} : { taskType: input.taskType }),
     ...(input.leaseVersion === undefined ? {} : { leaseVersion: input.leaseVersion }),
+    ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
     result: input.result,
   }));
   return outcome.ok ? outcome.record : null;
@@ -113,15 +122,60 @@ export function recordExecutions(
   store: AttemptStore,
   tick: TickResult,
   resolve: (taskId: string) => { agentId: string; modelId: string | null; budgetUnits?: number; taskType?: TaskType } | null,
-): { recorded: string[]; notRecorded: string[]; attemptIdsByTask: Record<string, string[]> } {
+  /**
+   * T1-b: optional. Lets the caller supply the session each task's execution ran in, so
+   * the resulting attempts can be projected back to a Worker. Returning null/undefined
+   * simply leaves `sessionId` absent on the record — the attempt is still complete
+   * evidence, so this is additive and never a reason to skip recording.
+   */
+  resolveSession?: (taskId: string) => { sessionId: string } | null,
+): {
+  recorded: string[];
+  notRecorded: string[];
+  attemptIdsByTask: Record<string, string[]>;
+  /**
+   * T3-a.5: the CURRENT execution's `{attemptId, run}` pair, per task, bound AT THE APPEND
+   * SITE — the one instant where the id `AttemptStore.append` actually minted and the exact
+   * `RunResult` that was used to build that record are both in hand.
+   *
+   * WHY THIS EXISTS
+   * A `taskId` can own Attempt A, B and C. So `taskId -> RunResult` (a per-task latest-ever
+   * map such as `Workbench.lastRunResult`) CANNOT prove "the current Attempt's result": it can
+   * hand back Attempt A's result while the current Attempt is B. Worse, `RunResult` cannot
+   * carry its own `attemptId` — the runtime freezes it (`runtime/session.ts#finalize`) BEFORE
+   * `AttemptStore` mints any id, and its `taskId`/`threadId` are the runtime's own handles, not
+   * ours. So the binding has to be made here, by the caller that owns both objects, and the
+   * pair travels as ONE value.
+   *
+   * This is a CORRELATION, not a new authority: it decides nothing and is not consulted to
+   * answer any question `AttemptStore` already answers. `AttemptStore` remains the
+   * execution-identity authority; `RecordAttempt` remains the sole writer of attempt evidence.
+   *
+   * NOT POSITIONAL. The `run` is stored inside the entry that carries its own `attemptId`, so
+   * the two cannot drift apart, and each entry is appended in the same breath as the matching
+   * `attemptIdsByTask` push (see `noteAttempt`), so the arrays stay index-aligned by
+   * construction rather than by a later zip.
+   */
+  executionsByTask: Record<string, DispatchExecutionRef[]>;
+} {
   const recorded: string[] = [];
   const notRecorded: string[] = [];
+  const sessionOf = (taskId: string): { sessionId?: string } => {
+    if (resolveSession === undefined) return {};
+    const s = resolveSession(taskId);
+    return s === null || s === undefined ? {} : { sessionId: s.sessionId };
+  };
   // R2-2 §13.2: the ids `AttemptStore.append` ACTUALLY minted, so a dispatch receipt can
   // point at real attempts instead of the caller guessing or re-reading history. Taken
   // from the returned record, never predicted.
   const attemptIdsByTask: Record<string, string[]> = {};
-  const noteAttempt = (taskId: string, record: { readonly attemptId: string }): void => {
+  // T3-a.5: the correlated result, bound here where both objects exist (see the field doc).
+  const executionsByTask: Record<string, DispatchExecutionRef[]> = {};
+  const noteAttempt = (taskId: string, record: { readonly attemptId: string }, run: RunResult): void => {
     (attemptIdsByTask[taskId] ??= []).push(record.attemptId);
+    // `run` MUST be the very object handed to `recordExecution`, which is the run that
+    // produced THIS record — not a re-read by task id, which could be an older attempt.
+    (executionsByTask[taskId] ??= []).push(Object.freeze({ attemptId: record.attemptId, run }));
   };
 
   for (const entry of tick.outcomes) {
@@ -165,6 +219,7 @@ export function recordExecutions(
         ...(entry.outcome.leaseVersion === undefined ? {} : { leaseVersion: entry.outcome.leaseVersion }),
         ...(refusedMeta.budgetUnits === undefined ? {} : { budgetUnits: refusedMeta.budgetUnits }),
         ...(refusedMeta.taskType === undefined ? {} : { taskType: refusedMeta.taskType }),
+        ...sessionOf(entry.taskId),
         isRework: false,
       });
       if (refusedRecord === null) notRecorded.push(entry.taskId);
@@ -175,7 +230,7 @@ export function recordExecutions(
         // receipt could not name the attempt that actually ran - the one case where
         // naming it matters most, because the write-back was refused and the receipt is
         // the only remaining link between the decision and the execution.
-        noteAttempt(entry.taskId, refusedRecord);
+        noteAttempt(entry.taskId, refusedRecord, refusedRun);
       }
       continue;
     }
@@ -192,6 +247,7 @@ export function recordExecutions(
       ...(entry.outcome.leaseVersion === undefined ? {} : { leaseVersion: entry.outcome.leaseVersion }),
       ...(meta.budgetUnits === undefined ? {} : { budgetUnits: meta.budgetUnits }),
       ...(meta.taskType === undefined ? {} : { taskType: meta.taskType }),
+      ...sessionOf(entry.taskId),
       // `ExecuteOutcome` does not say whether it was a rework re-entry, so this
       // is left to the caller; defaulting it to false keeps ordinary executions
       // ordinary.
@@ -200,11 +256,11 @@ export function recordExecutions(
     if (record === null) notRecorded.push(entry.taskId);
     else {
       recorded.push(entry.taskId);
-      noteAttempt(entry.taskId, record);
+      noteAttempt(entry.taskId, record, entry.outcome.run);
     }
   }
 
-  return { recorded, notRecorded, attemptIdsByTask };
+  return { recorded, notRecorded, attemptIdsByTask, executionsByTask };
 }
 
 /**

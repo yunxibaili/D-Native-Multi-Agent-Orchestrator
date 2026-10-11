@@ -29,10 +29,20 @@ import type { ModelRegistry } from '../quota/registry.ts';
 import type { QuotaRecord } from '../quota/types.ts';
 import type { TaskType } from '../quota/types.ts';
 import type { RunResult } from '../core/types.ts';
+import { log } from '../core/log.ts';
 import type { TaskClassification } from '../decision/routing.ts';
+// TeamRun T2-a.1: the INITIAL Agent x Model decision. This is a preset over the existing
+// Decision Layer (exactly like routing.ts is a preset for classification) — it adds no
+// provider and no second brain.
+import {
+  decideInitialAssignment,
+  type InitialAssignmentCandidate,
+} from '../decision/initial-assignment.ts';
+import type { DecisionProvider } from '../decision/types.ts';
 import { Orchestrator, type SpawnChildRequest } from './orchestrator.ts';
 import { TaskScheduler, type TickResult } from './scheduler.ts';
-import { buildDispatchReceipt, emptyDispatchReceipt, type DispatchReceipt } from './dispatch-receipt.ts';
+import { buildDispatchReceipt, emptyDispatchReceipt, type DispatchExecutionRef, type DispatchReceipt } from './dispatch-receipt.ts';
+import type { TickScope } from './scheduler.ts';
 import type { Task } from './task.ts';
 import type { TaskStore } from './store.ts';
 import { AttemptStore } from './attempt-store.ts';
@@ -40,11 +50,13 @@ import { recordExecutions, recordExecution, recordReview } from './attempt-integ
 import { applyReviewVerdict, prepareRework, DEFAULT_REWORK_POLICY, type ReworkPolicy, type ReviewOutcome } from './review-loop.ts';
 import type { DecisionApplicationContext } from './decision.ts';
 import type { ReviewEvidence, ReviewVerdict } from './review-verdict.ts';
-import { assignWorker, type AssignmentOutcome } from './assignment.ts';
+import { assignWorker, validateAgentModelIntent, type AgentModelIntent, type AssignmentOutcome } from './assignment.ts';
 import {
   SessionRegistry,
   SessionRegistryError,
+  sessionCompatibleWith,
   toExecutionTarget,
+  DEFAULT_SESSION_INTENT,
   type SessionIntent,
   type WorkbenchSession,
 } from './workbench-sessions.ts';
@@ -55,6 +67,46 @@ import type { AttemptEvidenceInput } from './round-result.ts';
 import { commitPlan, replanSubtree } from './planner-wiring.ts';
 import { planTasks } from './planner.ts';
 import { planFromSpec, type WorkbenchTaskSpec, type PlanFromSpecResult } from './workbench-plan.ts';
+// TeamRun T3-a.1: the READ-only fan-out topology validation + grouping evidence. Pure value
+// helpers; the materialization below still goes through the SAME `commitPlan` write path.
+import {
+  validateFanoutMembers,
+  FANOUT_MEMBER_TASK_TYPE,
+  FANOUT_MAX_MEMBERS,
+  type FanoutProvenance,
+} from './fanout.ts';
+
+/**
+ * TeamRun T1-d: the frozen facts of ONE real execution, taken at the dispatch
+ * boundary.
+ *
+ *   > Once an execution is dispatched, its identity facts are no longer derived
+ *   > from the current Task, the current Assignment or the current session binding.
+ *
+ * A reassignment or a rework may move the task while a run is still in flight; the
+ * run's Attempt must still describe the worker it was DISPATCHED to. Every field
+ * here is somebody else's authoritative fact, snapshotted — never re-derived at
+ * record time:
+ *
+ *   taskId       the dispatch itself
+ *   agentId      the `RunRequestMapping` the execution edge built (dispatch-time)
+ *   modelId      the same mapping (dispatch-time)
+ *   sessionId    the SessionRegistry binding as it stood when this dispatch began
+ *   leaseVersion the lease the execution held (already on `ExecuteOutcome`)
+ *
+ * This is an immutable VALUE, not an authority: it owns no lifecycle, no dispatch,
+ * no retry, no session and no worker. Assignment stays the pair authority,
+ * SessionRegistry the session authority, AttemptStore the evidence authority,
+ * TaskStore the task authority.
+ */
+export interface DispatchExecutionFacts {
+  readonly taskId: string;
+  readonly agentId: string;
+  readonly modelId: string | null;
+  /** The dispatch-time session; absent when no compatible session was bound. */
+  readonly sessionId?: string;
+  readonly leaseVersion?: number;
+}
 
 /**
  * Fallback agent id for a spec root that names no `preferredAgent`.
@@ -76,6 +128,21 @@ export interface WorkbenchOptions {
   /** The one evidence authority. Created here when not supplied. */
   readonly evidence?: AttemptStore;
   readonly sessions?: SessionRegistry;
+  /**
+   * TeamRun T2-a.1: the Laya decision provider consulted for each task's INITIAL
+   * Agent × Model choice.
+   *
+   * When supplied, this workbench's production initial path is Laya-controlled: every
+   * child must have a real, validated decision (or an explicit refusal) before Assignment
+   * is allowed to run. When absent, this workbench keeps the legacy behaviour exactly —
+   * spec/intent pair, else preferences, else Assignment scoring — which is what a
+   * low-level or compatibility caller wants.
+   *
+   * The distinction is deliberate and load-bearing: a caller-supplied
+   * `WorkbenchTaskSpec.explicitPair` is a MANUAL entry point, not a semantic decision,
+   * and the two must never be described as the same authority.
+   */
+  readonly decisionProvider?: DecisionProvider;
   /**
    * The clock this workbench stamps lifecycle facts with: session opens, session run
    * records, receipt timestamps, and lease renewal.
@@ -116,6 +183,28 @@ export interface PlanOutcome {
   readonly children: readonly Task[];
 }
 
+/**
+ * TeamRun T2-a.1: what Laya decided (or refused) for one task's INITIAL Agent × Model.
+ *
+ * Recorded so the provenance of a pair is observable: `decided` means a real provider call
+ * produced it, `refused` means the provider could not deliver a usable pair and the task is
+ * therefore NOT assigned. Neither is ever confused with a spec-supplied pair.
+ */
+export type InitialSelectionOutcome =
+  | {
+      readonly taskId: string;
+      readonly ok: true;
+      readonly intent: AgentModelIntent;
+      /** Which provider answered, for the audit trail. */
+      readonly provider: string;
+    }
+  | {
+      readonly taskId: string;
+      readonly ok: false;
+      readonly reason: string;
+      readonly provider: string;
+    };
+
 export interface AssignOutcome {
   readonly taskId: string;
   readonly ok: boolean;
@@ -148,6 +237,14 @@ export interface TaskIntent {
   readonly sessionIntent?: SessionIntent;
   readonly preferredAgent?: string;
   readonly preferredModel?: string;
+  /**
+   * TeamRun T2-a: Laya's EXPLICIT Agent × Model choice for this task, when it made
+   * one. Presence changes Assignment's role from "rank candidates, honour the
+   * preference if it survives" to "enforce exactly this pair, accept or refuse".
+   * Absence is the legitimate legacy path. See `AgentModelIntent` for the atomicity
+   * and validation contract.
+   */
+  readonly explicitPair?: AgentModelIntent;
 }
 
 export interface DispatchOutcome {
@@ -158,6 +255,15 @@ export interface DispatchOutcome {
   readonly sessionsTouched: readonly string[];
   /** R2-2 section13.2: the attempt ids this dispatch actually produced, per task. */
   readonly attemptIdsByTask: Readonly<Record<string, readonly string[]>>;
+  /**
+   * T3-a.5: this dispatch's `{attemptId, run}` pairs, per task, bound at the AttemptStore
+   * append that minted the id from the run that built the record.
+   *
+   * This is what lets a caller answer "what was the CURRENT attempt's result" without a
+   * task-keyed latest-ever lookup, which cannot tell attempt B's result from attempt A's.
+   * It is a correlation over facts already recorded, not a result store and not an authority.
+   */
+  readonly executionsByTask: Readonly<Record<string, readonly DispatchExecutionRef[]>>;
   /**
    * R2-2 (P1-1): tasks whose still-running lease this dispatch renewed.
    *
@@ -207,6 +313,26 @@ export class NativeWorkbench {
   readonly orchestrator: Orchestrator;
   private readonly scheduler: TaskScheduler;
   private readonly registry: ModelRegistry;
+  /**
+   * TeamRun T2-a.1: the Laya provider for INITIAL Agent x Model selection, when this
+   * workbench is on the production Laya-controlled path.
+   */
+  private readonly decisionProvider: DecisionProvider | null;
+  /**
+   * TeamRun T2-a.1: one record per child that went through initial selection — including
+   * the ones that FAILED.
+   *
+   * Failures are recorded rather than dropped, because the alternative is the defect this
+   * round exists to close: a Laya decision that goes wrong would be silently forgotten and
+   * Assignment's scoring would pick instead, which would make the outcome look like Laya's
+   * judgement when it was a heuristic's.
+   */
+  private readonly initialSelections = new Map<string, InitialSelectionOutcome>();
+  /**
+   * TeamRun T3-a.1: grouping evidence for PARALLEL_READ fan-outs, keyed by the container
+   * taskId. Pure data — never consulted to admit, dispatch or decide.
+   */
+  private readonly fanoutGroups = new Map<string, FanoutProvenance>();
   private readonly quotaRecords: readonly QuotaRecord[];
   private readonly cwd: string;
   private readonly enforceFreeModelPool: boolean;
@@ -249,7 +375,8 @@ export class NativeWorkbench {
    * for finished work can never apply again.
    */
   private readonly taskIntents = new Map<string, TaskIntent>();
-  /** R2-2: the most recent tick, so unDecisionCycle can read a real TickResult. */
+  /** R2-2: the most recent tick, so
+unDecisionCycle can read a real TickResult. */
   private lastDispatchTick: TickResult | null = null;
   /** Explicit root agent id; see `WorkbenchOptions.rootAgentId`. */
   private readonly rootAgentId: string;
@@ -267,6 +394,7 @@ export class NativeWorkbench {
     this.store = this.orchestrator.getStore();
     this.evidence = options.evidence ?? new AttemptStore();
     this.sessions = options.sessions ?? new SessionRegistry();
+    this.decisionProvider = options.decisionProvider ?? null;
     this.rootAgentId = options.rootAgentId ?? DEFAULT_ROOT_AGENT_ID;
     this.nowFn = options.now ?? Date.now;
   }
@@ -337,6 +465,162 @@ export class NativeWorkbench {
    * preference. `assignIdentity` refuses anything that already started, so this
    * is safe to call repeatedly between ticks.
    */
+  /**
+   * TeamRun T2-a.1: ask Laya which Agent × Model each unassigned child should use.
+   *
+   * This is the REAL production initial-selection step, and it runs BEFORE any assignment.
+   * It is deliberately NOT `reassign`: an initial assignment has no previous worker to move
+   * from, and faking one (or manufacturing an attempt to trip the post-result loop) would
+   * both misrepresent the decision and require a fake execution to reach it.
+   *
+   * Candidates come from the SAME registry projection Assignment filters on, including
+   * T1-a effective availability, so Laya is never offered a pair the system already knows
+   * is dead. No scoring is copied in: Laya chooses, Assignment enforces.
+   *
+   * Every child gets a record — including refusals — so `assignChildren` can fail a task
+   * closed rather than quietly falling back to scoring.
+   */
+  async selectInitialAssignment(rootTaskId: string): Promise<readonly InitialSelectionOutcome[]> {
+    const provider = this.decisionProvider;
+    if (provider === null) return [];
+    const outcomes: InitialSelectionOutcome[] = [];
+    for (const child of this.store.children(rootTaskId)) {
+      if (child.status === 'succeeded' || child.status === 'failed' || child.status === 'cancelled') continue;
+      // T3-a.1: a child that ALREADY has a recorded Laya decision (a fan-out member whose
+      // pair came from the topology decision) is not asked again — re-asking would override
+      // Laya's own earlier choice. SOLO children have no record and behave exactly as before.
+      const recorded = this.initialSelections.get(child.taskId);
+      if (recorded !== undefined) { outcomes.push(recorded); continue; }
+      const candidates: InitialAssignmentCandidate[] = this.registry.list().map((e) => ({
+        agentId: e.agentId,
+        modelId: e.modelId ?? '',
+        available: this.registry.isModelAvailable(e.agentId, e.modelId ?? ''),
+        taskTypes: [...e.taskTypes],
+      })).filter((c) => c.modelId !== '' && c.taskTypes.includes(child.taskType));
+      let outcome: InitialSelectionOutcome;
+      try {
+        if (candidates.length === 0) {
+          throw new Error(`no registered ${child.taskType} pair is available to choose from`);
+        }
+        const raw = await decideInitialAssignment(provider, {
+          task: {
+            taskId: child.taskId,
+            // `Task` carries acceptance criteria, not a separate objective; that IS the
+            // task's own description of what success means, so it is what Laya reads.
+            objective: child.acceptanceCriteria,
+            taskType: child.taskType,
+            acceptanceCriteria: child.acceptanceCriteria,
+          },
+          candidates,
+        });
+        // The typed pair check is the orchestration side's, so there is exactly one
+        // definition of a valid pair. A partial or malformed pair is refused here.
+        const checked = validateAgentModelIntent(raw);
+        if (!checked.ok) throw new Error(checked.reason);
+        outcome = { taskId: child.taskId, ok: true, intent: checked.intent, provider: provider.name };
+      } catch (e) {
+        // FAIL CLOSED. The decision being unavailable is not permission to let a heuristic
+        // answer instead; `assignChildren` will refuse this task.
+        outcome = {
+          taskId: child.taskId,
+          ok: false,
+          reason: `Laya did not produce a usable initial Agent x Model pair: ${(e as Error).message}`,
+          provider: provider.name,
+        };
+      }
+      this.initialSelections.set(child.taskId, outcome);
+      outcomes.push(outcome);
+    }
+    return outcomes;
+  }
+
+  /** TeamRun T2-a.1: what Laya decided for each task, refusals included. */
+  initialSelectionRecords(): readonly InitialSelectionOutcome[] {
+    return [...this.initialSelections.values()];
+  }
+
+  /**
+   * TeamRun T3-a.1: materialize a Laya-chosen PARALLEL_READ topology.
+   *
+   * The container task executes NOTHING; this replaces its not-yet-started children with N
+   * independent READ member Tasks. Each member is a distinct taskId, so it gets its own
+   * lease, session, attempt and WorkerIdentity through the EXISTING machinery — that is why
+   * child tasks are the representation and not N executions of one taskId.
+   *
+   * The member pairs Laya named are recorded as their `initialSelections`, which
+   * `assignChildren` enforces EXACTLY (an unavailable pair is refused, never substituted).
+   *
+   * Fail-closed: a malformed or non-READ member list refuses the WHOLE topology and touches
+   * nothing. ResourceClaim would happily let read+write share, so the READ gate cannot be
+   * left to the resource layer — it is enforced here, before any task exists.
+   */
+  materializeReadFanout(
+    rootTaskId: string,
+    rawMembers: unknown,
+  ): { ok: true; provenance: FanoutProvenance } | { ok: false; code: string; reason: string } {
+    const root = this.store.get(rootTaskId);
+    if (root === null) return { ok: false, code: 'task-not-found', reason: `no task "${rootTaskId}"` };
+
+    const validated = validateFanoutMembers(rawMembers, FANOUT_MAX_MEMBERS);
+    if (!validated.ok) return { ok: false, code: validated.code, reason: validated.reason };
+
+    // Remove the container's never-admitted children (the SOLO child the planner produced).
+    // `removePlanned` refuses anything already admitted, so this cannot delete started work.
+    const { replaceable } = this.store.partitionForReplan(rootTaskId);
+    for (const child of replaceable) this.store.removePlanned(child.taskId);
+
+    const generation = this.store.latestGeneration();
+    const candidates = validated.members.map((m, index) => ({
+      taskId: `${rootTaskId}-fr${index + 1}`,
+      parentTaskId: rootTaskId,
+      taskType: FANOUT_MEMBER_TASK_TYPE,
+      // The member's bounded scope IS its acceptance criteria — what success means.
+      description: m.scope,
+      dependencies: [] as string[],
+      requiredTaskTypes: [FANOUT_MEMBER_TASK_TYPE],
+    }));
+    const committed = commitPlan(this.store, candidates, {
+      agentId: root.agentId,
+      modelId: root.modelId,
+      budgetUnits: root.budgetUnits,
+      generation,
+    });
+    if (!committed.ok) return { ok: false, code: committed.code, reason: committed.reason };
+
+    const members = committed.created.map((task, index) => {
+      const spec = validated.members[index]!;
+      // Record Laya's pair as this member's decision, so Assignment enforces it exactly and
+      // `selectInitialAssignment` does not ask a second time.
+      this.initialSelections.set(task.taskId, {
+        taskId: task.taskId,
+        ok: true,
+        intent: { agentId: spec.agentId, modelId: spec.modelId },
+        provider: 'execution-topology',
+      });
+      return {
+        taskId: task.taskId,
+        memberIndex: index,
+        agentId: spec.agentId,
+        modelId: spec.modelId,
+        scope: spec.scope,
+        accessMode: spec.accessMode,
+      };
+    });
+    const provenance: FanoutProvenance = Object.freeze({
+      sourceTaskId: rootTaskId,
+      topology: 'parallel_read',
+      members: Object.freeze(members),
+    });
+    this.fanoutGroups.set(rootTaskId, provenance);
+    return { ok: true, provenance };
+  }
+
+  /** TeamRun T3-a.1: the recorded fan-out groupings (pure evidence). */
+  fanoutProvenance(): readonly FanoutProvenance[] {
+    return [...this.fanoutGroups.values()];
+  }
+
+
   assignChildren(rootTaskId: string, spec: WorkbenchTaskSpec): readonly AssignOutcome[] {
     const outcomes: AssignOutcome[] = [];
     for (const child of this.store.children(rootTaskId)) {
@@ -346,6 +630,42 @@ export class NativeWorkbench {
       const intent = this.taskIntents.get(child.taskId);
       const preferredAgent = intent?.preferredAgent ?? spec.preferredAgent;
       const preferredModel = intent?.preferredModel ?? spec.preferredModel;
+      // TeamRun T2-a: an EXPLICIT pair (intent first, spec fallback) is enforced
+      // exactly — Assignment restricts to it and accepts or refuses, never
+      // substitutes. Absence keeps the legacy preference/scoring path byte-identical.
+      // A malformed/partial pair fails closed here (the assignment is refused with
+      // `assignment-invalid`), never demoted to legacy scoring (§18).
+      // TeamRun T2-a.1: a Laya decision for the INITIAL pair is the authority, ahead of
+      // any per-task intent and ahead of the spec. A REFUSED decision fails the task closed
+      // here — it must never fall through to preferences or scoring, because that is
+      // exactly how a heuristic's choice gets reported as Laya's judgement.
+      const layaSelection = this.initialSelections.get(child.taskId);
+      if (layaSelection !== undefined && !layaSelection.ok) {
+        outcomes.push({ taskId: child.taskId, ok: false, code: 'assignment-invalid', reason: layaSelection.reason });
+        continue;
+      }
+      // On a Laya-controlled workbench a task with NO recorded decision is a wiring fault,
+      // not a licence to guess. Refused explicitly so the cause is visible.
+      if (this.decisionProvider !== null && layaSelection === undefined) {
+        outcomes.push({
+          taskId: child.taskId,
+          ok: false,
+          code: 'assignment-invalid',
+          reason: 'this workbench is Laya-controlled but no initial Agent x Model decision was recorded ' +
+            'for this task; call selectInitialAssignment() before assignChildren() rather than falling back to scoring',
+        });
+        continue;
+      }
+      const rawExplicitPair = layaSelection !== undefined && layaSelection.ok
+        ? layaSelection.intent
+        : (intent?.explicitPair ?? spec.explicitPair);
+      const explicitPairCheck = rawExplicitPair === undefined
+        ? undefined
+        : validateAgentModelIntent(rawExplicitPair);
+      if (explicitPairCheck !== undefined && !explicitPairCheck.ok) {
+        outcomes.push({ taskId: child.taskId, ok: false, code: 'assignment-invalid', reason: explicitPairCheck.reason });
+        continue;
+      }
       const outcome = assignWorker({
         taskId: child.taskId,
         taskType: child.taskType,
@@ -354,6 +674,7 @@ export class NativeWorkbench {
         quotaRecords: this.quotaRecords,
         evidence: this.evidence,
         enforceFreeModelPool: this.enforceFreeModelPool,
+        ...(explicitPairCheck !== undefined && explicitPairCheck.ok ? { explicitPair: explicitPairCheck.intent } : {}),
         preferredAgent,
         preferredModel,
       });
@@ -393,7 +714,10 @@ export class NativeWorkbench {
         outcomes.push({ taskId: child.taskId, ok: false, code: written.code ?? 'assignment-invalid', reason: written.reason ?? 'identity write refused' });
         continue;
       }
-      this.sessions.markRunning(session.sessionId, child.taskId);
+      // T1-d: the session is deliberately NOT marked running here. It becomes
+      // `running` only when the runtime has actually accepted a run — the dispatch
+      // hook inside `dispatch()` — so an assigned task that is never dispatched can
+      // never leave a permanently "running" session behind.
       outcomes.push({
         taskId: child.taskId,
         ok: true,
@@ -538,6 +862,12 @@ export class NativeWorkbench {
         reason: 'reassignTask needs a target agent and/or model, or strategy="assignment" to delegate the choice',
       };
     }
+    // TeamRun T2-a: when Laya names a COMPLETE pair (agent AND model), that is an
+    // explicit Agent × Model choice, and Assignment enforces it exactly — the chosen
+    // pair is the named pair or the reassign is refused. Naming only one half keeps
+    // the legacy preference semantics (Assignment completes the unspecified axis by
+    // its own ranking), which is the documented legacy path, not a pair intent.
+    const reassignsExplicitPair = agentId !== undefined && modelId !== undefined;
     const outcome = assignWorker({
       taskId,
       taskType: task.taskType,
@@ -546,8 +876,9 @@ export class NativeWorkbench {
       quotaRecords: this.quotaRecords,
       evidence: this.evidence,
       enforceFreeModelPool: this.enforceFreeModelPool,
-      ...(agentId !== undefined ? { preferredAgent: agentId } : {}),
-      ...(modelId !== undefined ? { preferredModel: modelId } : {}),
+      ...(reassignsExplicitPair ? { explicitPair: { agentId: agentId!, modelId: modelId! } } : {}),
+      ...(agentId !== undefined && !reassignsExplicitPair ? { preferredAgent: agentId } : {}),
+      ...(modelId !== undefined && !reassignsExplicitPair ? { preferredModel: modelId } : {}),
     });
     if (!outcome.ok) return { ok: false, code: outcome.code, reason: outcome.reason };
     const chosen = outcome.chosen.candidate;
@@ -557,11 +888,31 @@ export class NativeWorkbench {
       reason,
     });
     if (!written.ok) return { ok: false, code: written.code, reason: written.reason };
+    // T1-c: the new pair is formally accepted, so the task's session binding MUST move
+    // with it — through the SessionRegistry's own APIs, never a Workbench-side edit.
+    // `open` with a fresh target creates a session for the NEW (agent, model) pair and
+    // `recordUse` re-points the task→session binding to it; the old session is left
+    // untouched as the old worker's history. (A same-pair "reassign" never reaches
+    // here: `migrateIdentityAfterStart` refuses `migration-not-a-migration`.) Without
+    // this rebind, the next dispatch would attribute the new attempt to the OLD
+    // session — a WorkerIdentity claiming one worker while the evidence names another.
+    // Fresh policy is the only correct intent here: a changed pair can never reuse the
+    // old session, and `SessionRegistry.open` would refuse the reuse anyway.
+    //
+    // T1-d: the new session is PREPARED here, not `running`. `markRunning` happens at
+    // the real dispatch edge (inside `dispatch()`, when the runtime accepts the run),
+    // so a reassign whose next dispatch is refused or never happens leaves a session
+    // in the ordinary `open` state rather than a permanently "running" lie.
+    const rebound = this.sessions.open(
+      toExecutionTarget(DEFAULT_SESSION_INTENT, { agentId: chosen.agentId, modelId: chosen.modelId }),
+      this.cwd, this.nowFn(), taskId,
+    );
     return {
       ok: true,
       code: 'migrated',
       reason: `task ${taskId} moved from ${task.agentId}/${task.modelId ?? 'default'} to ${chosen.agentId}/${chosen.modelId ?? 'default'} ` +
-        `(target ${delegating ? 'delegated to Assignment ranking' : 'named by the decision'}); the next run uses a fresh native session`,
+        `(target ${delegating ? 'delegated to Assignment ranking' : 'named by the decision'}); ` +
+        `prepared fresh session ${rebound.sessionId} on the new pair`,
     };
   }
 
@@ -674,7 +1025,7 @@ export class NativeWorkbench {
    * default. A task named here that has no handle is skipped (reported), never
    * fabricated.
    */
-  async dispatch(promptFor?: ReadonlyMap<string, string>, resume?: ReadonlySet<string> | ReadonlyMap<string, string>): Promise<DispatchOutcome> {
+  async dispatch(promptFor?: ReadonlyMap<string, string>, resume?: ReadonlySet<string> | ReadonlyMap<string, string>, scope?: TickScope): Promise<DispatchOutcome> {
     // Briefs: any ready task whose dependencies already produced evidence gets a
     // composed brief (objective + structured handoffs) instead of the bare prompt.
     const briefs = new Map<string, string>();
@@ -688,39 +1039,174 @@ export class NativeWorkbench {
     // auto-brief for the same task; both flow through the ONE dispatch edge.
     const merged = new Map<string, string>([...briefs.entries(), ...(promptFor?.entries() ?? [])]);
 
-    // P6-D1: resolve native handles for the tasks that ASKED to resume. Only
-    // `SessionRegistry` knows a handle, and a task without one is left out of the map
-    // so `executeTask` starts a fresh conversation instead of resuming nothing.
+    // P6-D1 (T1-e revision): resume is expressed as an INTENT here and resolved at
+    // the freeze point inside the dispatch hooks below — the native handle comes from
+    // the SAME compatible dispatch session as the attribution, never from a pre-tick
+    // binding read that a mid-flight reassign could stale.
     const wanted = resume instanceof Map
       ? [...resume.keys()]
       : [...(resume ?? [])];
-    const threads = new Map<string, string>();
-    for (const taskId of wanted) {
-      const handle = this.sessions.nativeHandleForTask(taskId);
-      if (handle !== null) threads.set(taskId, handle);
-    }
+    const wantsResume = new Set(wanted);
+
+    // T1-e: sessions settled by THIS dispatch, collected by the terminal hook.
+    // Settlement is an execution fact (it happens when the run ends), so it is
+    // observed at hook time rather than re-derived from outcomes afterwards.
+    const sessionsSettled: string[] = [];
 
     const tick = await this.scheduler.tick(
       merged.size > 0 ? merged : undefined,
-      threads.size > 0 ? threads : undefined,
+      undefined,
+      {
+        // T1-d: the session becomes `running` only when the RUNTIME has actually
+        // accepted the run (`onStart`), never at reassignment or assignment time.
+        // T1-e: the session marked here is the dispatch binding carried on the
+        // mapping — the one resolved at the freeze point for the pair that will
+        // actually run.
+        onDispatchStart: (taskId, _handle, mapping) => {
+          if (mapping.sessionId !== undefined) this.sessions.markRunning(mapping.sessionId, taskId);
+        },
+        // T1-e: the EXACTLY-ONCE symmetric half of `onDispatchStart`. Every started
+        // execution settles its session here exactly once — success, failure,
+        // timeout, cancellation, a refused write-back, or a result() rejection with
+        // no RunResult at all. Settlement deliberately does NOT depend on
+        // `outcome.ok`: a stale write-back still means the execution is over.
+        onDispatchTerminal: (_taskId, _handle, mapping, terminal) => {
+          const sessionId = mapping.sessionId;
+          if (sessionId === undefined) return;
+          if (terminal.run !== undefined) {
+            this.sessions.recordRun(sessionId, terminal.run, this.nowFn());
+          } else {
+            this.sessions.endExecution(sessionId, this.nowFn());
+          }
+          sessionsSettled.push(sessionId);
+        },
+        // T1-e: THE dispatch session resolution. Called by the execution edge at its
+        // freeze point — after the last pre-dispatch await, with the pair that will
+        // actually run — and answered strictly from the SessionRegistry: only a
+        // session COMPATIBLE with that exact pair is returned. A binding that has
+        // already moved to another generation (or never existed) yields NO session;
+        // there is deliberately no fallback to the latest incompatible binding. The
+        // native resume handle comes from the same resolved session, so the actual
+        // RunRequest and the attempt attribution share one dispatch binding (§6).
+        resolveSessionForDispatch: ({ taskId, agentId, modelId }) => {
+          const session = this.sessions.sessionForTask(taskId);
+          if (session === null || !sessionCompatibleWith(session, { agentId, modelId })) {
+            return undefined;
+          }
+          const resolved: { sessionId?: string; nativeThreadId?: string } = { sessionId: session.sessionId };
+          if (wantsResume.has(taskId)) {
+            const native = session.nativeSessionId;
+            if (native !== null) resolved.nativeThreadId = native;
+          }
+          return resolved;
+        },
+      },
+      // TeamRun T3-b.1: the optional per-invocation dispatch scope, forwarded verbatim and
+      // never remembered. Omitted by every pre-T3-b.1 caller, so their behaviour is unchanged.
+      scope,
     );
+
+    // T1-e: the dispatch-time facts of every execution that REALLY ran, frozen from
+    // the objects the execution edge already carries — the freeze-point
+    // `RunRequestMapping` (agent/model/session) and the lease version on
+    // `ExecuteOutcome`. No field is re-read from the current Task at record time.
+    const dispatchFacts = new Map<string, DispatchExecutionFacts>();
+    for (const entry of tick.outcomes) {
+      if (entry.outcome.run === undefined) continue;
+      const mapping = entry.outcome.mapping;
+      if (mapping === undefined) {
+        // PRODUCTION-UNREACHABLE (§19 guard): `executeTask` returns a mapping on
+        // every outcome that carries a run — both the accepted and the
+        // refused-with-run branch. Defensive only: attribute the AGENT from the
+        // run's own immutable fact, leave the model and session unknown, and never
+        // reconstruct identity from the current task state.
+        log.warn('execution outcome carries a run but no dispatch mapping; attributing from the run itself', {
+          taskId: entry.taskId,
+        });
+        dispatchFacts.set(entry.taskId, Object.freeze({
+          taskId: entry.taskId,
+          agentId: entry.outcome.run.agentId,
+          modelId: null,
+          ...(entry.outcome.leaseVersion !== undefined ? { leaseVersion: entry.outcome.leaseVersion } : {}),
+        }));
+        continue;
+      }
+      // §10 cross-check: the RunResult's own agent vs the pair we dispatched. A
+      // mismatch means the runtime reported for a different agent than the request
+      // named — never silently spliced; it is surfaced here and the attempt keeps the
+      // DISPATCHED pair so the three facts stay one generation.
+      if (entry.outcome.run.agentId !== mapping.agentId) {
+        log.warn('dispatch/RunResult agent mismatch; attributing the attempt to the dispatched pair', {
+          taskId: entry.taskId,
+          dispatched: mapping.agentId,
+          reported: entry.outcome.run.agentId,
+        });
+      }
+      dispatchFacts.set(entry.taskId, Object.freeze({
+        taskId: entry.taskId,
+        agentId: mapping.agentId,
+        modelId: mapping.model ?? null,
+        ...(mapping.sessionId !== undefined ? { sessionId: mapping.sessionId } : {}),
+        ...(entry.outcome.leaseVersion !== undefined ? { leaseVersion: entry.outcome.leaseVersion } : {}),
+      }));
+    }
+    // Identity for attempt recording: DISPATCH-TIME facts. For every outcome with a
+    // run the facts exist (built above), so the fallback below is
+    // production-unreachable and exists only so the recorder never crashes on a
+    // malformed outcome; it is never a license to reconstruct identity from the
+    // current task (§19).
     const identityOf = (taskId: string) => {
       const t = this.store.get(taskId);
-      return t === null
-        ? null
-        : { agentId: t.agentId, modelId: t.modelId, budgetUnits: t.budgetUnits, taskType: t.taskType };
+      if (t === null) return null;
+      const facts = dispatchFacts.get(taskId);
+      return {
+        agentId: facts?.agentId ?? t.agentId,
+        modelId: facts?.modelId ?? t.modelId,
+        budgetUnits: t.budgetUnits,
+        taskType: t.taskType,
+      };
+    };
+    // Session for attempt recording (T1-e): STRICT. Only the dispatch binding
+    // carried by the execution's frozen facts. There is deliberately NO fallback to
+    // the current session binding, the latest session, or the previous attempt: no
+    // dispatch session => the attempt records NO session (§17/§19).
+    const sessionOf = (taskId: string): { sessionId: string } | null => {
+      const facts = dispatchFacts.get(taskId);
+      return facts !== undefined && facts.sessionId !== undefined ? { sessionId: facts.sessionId } : null;
     };
     // Rework re-entries are recorded with their own kind. Splitting by the
     // pendingReworks set (this workbench called prepareRework) keeps the
     // execution/rework distinction honest without a second authority.
-    const reworkIds = new Set(tick.outcomes.filter((o) => o.outcome.ok && this.pendingReworks.has(o.taskId)).map((o) => o.taskId));
+    //
+    // R5-1.2C (§12): the lineage test is `pendingReworks` (did THIS workbench ask for a
+    // rework) AND the presence of a REAL run (did an execution actually happen) — never
+    // `ok`. Gating on `ok` meant a rework attempt whose write-back was refused
+    // (`ok:false` with a real run) was classified as an ORDINARY execution: it fell into
+    // `plainTick`, was recorded without its rework kind, and `pendingReworks` was never
+    // consumed, so the rework lineage was silently lost. That contradicts the frozen
+    // "run presence != ok" rule the rest of this projection already follows.
+    const reworkIds = new Set(tick.outcomes.filter((o) => o.outcome.run !== undefined && this.pendingReworks.has(o.taskId)).map((o) => o.taskId));
     const plainTick: TickResult = { ...tick, outcomes: tick.outcomes.filter((o) => !reworkIds.has(o.taskId)) };
     // R2-2 (P1-1): renew the leases of tasks STILL RUNNING, right here - after a tick
     // this caller already decided to run. See `renewLeasesAfterTick` for why this is a
     // bounded, tick-driven call rather than a heartbeat.
     const renewedLeases = this.renewLeasesAfterTick();
-    const recorded = recordExecutions(this.evidence, plainTick, identityOf);
+    const recorded = recordExecutions(this.evidence, plainTick, identityOf,
+      // T1-b/T1-c: hand the recorder the session each task's execution actually ran
+      // in, so an attempt can be projected back to its Worker. Read-only; the session
+      // registry remains the sole authority.
+      //
+      // T1-d: that session is the DISPATCH-TIME session carried by the execution's
+      // frozen facts — never the current binding, which a mid-flight reassign may
+      // already have moved to the next worker. An execution with no dispatch-time
+      // session records NO session (fail closed), never a newer one.
+      sessionOf);
     const attemptIdsByTask = recorded.attemptIdsByTask;
+    // T3-a.5: the `{attemptId, run}` pairs this dispatch produced, as bound at the append
+    // site. Carried out so a consumer can pair a result with the attempt it belongs to
+    // without a task-keyed latest-ever lookup, which cannot tell attempt B's result from
+    // attempt A's.
+    const executionsByTask = recorded.executionsByTask;
     const evidenceRecorded = [...recorded.recorded];
     const notRecorded = [...recorded.notRecorded];
     // R4: bind each attempt id to the run that produced it, WHILE both are in hand.
@@ -734,7 +1220,12 @@ export class NativeWorkbench {
     {
       const cursor = new Map<string, number>();
       for (const entry of plainTick.outcomes) {
-        if (!entry.outcome.ok) continue;
+        // Gate on the RUN, not `ok`: `recordExecutions` mints an id both for an
+        // accepted result and for a refused write-back that still carries a real run
+        // (attempt-integration.ts §F5), so gating on `ok` here would leave that id
+        // unbound and drop real evidence. A run-less refusal recorded nothing, so it
+        // must not advance the cursor — that keeps the nth-id pairing intact.
+        if (entry.outcome.run === undefined) continue;
         const ids = attemptIdsByTask[entry.taskId];
         if (ids === undefined) continue;
         const at = cursor.get(entry.taskId) ?? 0;
@@ -744,13 +1235,26 @@ export class NativeWorkbench {
       }
     }
     for (const entry of tick.outcomes) {
-      if (!reworkIds.has(entry.taskId) || !entry.outcome.ok) continue;
+      // Same run-presence gate as the cursor loop above: a rework execution whose
+      // write-back was refused still executed, so its result is still the evidence.
+      if (!reworkIds.has(entry.taskId) || entry.outcome.run === undefined) continue;
       const identity = identityOf(entry.taskId);
       if (identity === null) { notRecorded.push(entry.taskId); continue; }
+      // T1-b/T1-d: read the DISPATCH-TIME session the run actually used, from its
+      // frozen facts. The current binding is never consulted for an execution that
+      // already ran — a mid-flight reassign may have moved it to the next worker.
+      const reworkSession = sessionOf(entry.taskId);
+      // T1-e (§17): the rework attempt carries THIS execution's dispatch lease
+      // version — the frozen value from its dispatch facts — never the task's
+      // current or latest lease, which a mid-flight reassign may already have
+      // advanced.
+      const reworkFacts = dispatchFacts.get(entry.taskId);
       const rec = recordExecution(this.evidence, {
         taskId: entry.taskId,
         agentId: identity.agentId,
         modelId: identity.modelId,
+        ...(reworkSession === null ? {} : { sessionId: reworkSession.sessionId }),
+        ...(reworkFacts?.leaseVersion === undefined ? {} : { leaseVersion: reworkFacts.leaseVersion }),
         result: entry.outcome.run,
         budgetUnits: identity.budgetUnits,
         taskType: identity.taskType,
@@ -764,7 +1268,10 @@ export class NativeWorkbench {
       this.pendingReworks.delete(entry.taskId);
     }
     for (const entry of tick.outcomes) {
-      if (entry.outcome.ok) this.lastResults.set(entry.taskId, entry.outcome.run);
+      // `lastResults` feeds dependants' briefs, so it wants the real run whenever one
+      // exists. A refused write-back still executed; withholding it would hide the
+      // authoritative result from exactly the tasks that depend on it.
+      if (entry.outcome.run !== undefined) this.lastResults.set(entry.taskId, entry.outcome.run);
       // Intent is dropped once the task is done. A preference or a reuse key for
       // finished work can never apply again, and keeping it would grow this map for
       // the lifetime of the process.
@@ -773,34 +1280,27 @@ export class NativeWorkbench {
         this.taskIntents.delete(entry.taskId);
       }
     }
-    const touched: string[] = [];
+    // T1-e: session RECORDING moved to the exactly-once `onDispatchTerminal` hook
+    // above — settlement is an execution fact and fires for every started execution,
+    // regardless of write-back acceptance (§13). What remains here is only the
+    // R2-2 §4.1 audit linkage for ACCEPTED assignments: the chain
+    // attempt -> leaseVersion -> lease -> session, recorded with the DISPATCH-TIME
+    // session from the execution's frozen facts. The session id is COPIED from the
+    // registry, which stays the only owner of session lifecycle.
     for (const entry of tick.outcomes) {
       if (!entry.outcome.ok) continue;
-      const result: RunResult = entry.outcome.run;
-      // Find the session this task was attached to; record the native handle.
-      // `sessionForTask`, NOT a scan for `s.taskId === task`: a shared session's
-      // `taskId` field is its CURRENT owner, so the scan found the wrong session as
-      // soon as two tasks used one (P6-D1).
-      const session = this.sessions.sessionForTask(entry.taskId);
-      if (session !== null) {
-        this.sessions.recordRun(session.sessionId, result, this.nowFn());
-        touched.push(session.sessionId);
-        // R2-2 §4.1 audit linkage: record which conversation this assignment used, so
-        // the chain attempt -> leaseVersion -> lease -> session can be walked without a
-        // second session store.
-        //
-        // The session id is COPIED from the registry, which stays the only owner of
-        // session lifecycle: this creates nothing, resumes nothing and closes nothing.
-        // A task with no session (or an unknown lease) simply has nothing recorded.
-        this.store.attachLeaseSession(entry.taskId, session.sessionId);
-      }
+      const session = sessionOf(entry.taskId);
+      if (session !== null) this.store.attachLeaseSession(entry.taskId, session.sessionId);
     }
     return {
       tick,
       evidenceRecorded,
       evidenceDegraded: notRecorded.length > 0 && tick.admitted.length > 0,
-      sessionsTouched: touched,
+      // T1-e: sessions settled by the exactly-once terminal hook — every started
+      // execution, whatever its outcome, not only accepted write-backs.
+      sessionsTouched: sessionsSettled,
       attemptIdsByTask,
+      executionsByTask,
       renewedLeases: renewedLeases.renewed,
     };
   }
@@ -847,8 +1347,9 @@ export class NativeWorkbench {
   async dispatchReceipt(
     promptFor?: ReadonlyMap<string, string>,
     resume?: ReadonlySet<string> | ReadonlyMap<string, string>,
+    scope?: TickScope,
   ): Promise<DispatchReceipt> {
-    const outcome = await this.dispatch(promptFor, resume);
+    const outcome = await this.dispatch(promptFor, resume, scope);
     this.lastDispatchTick = outcome.tick;
     // F6: no tick means NO dispatch happened. The previous version substituted a
     // synthetic empty tick, which is indistinguishable from a real dispatch that
@@ -861,6 +1362,9 @@ export class NativeWorkbench {
       tick: outcome.tick,
       dispatchedAt: this.nowFn(),
       attemptIdsByTask: outcome.attemptIdsByTask,
+      // T3-a.5: hand the correlated pairs to the receipt, so "this dispatch's attempt" and
+      // "this dispatch's result" reach the consumer already matched.
+      executionsByTask: outcome.executionsByTask,
     });
   }
 

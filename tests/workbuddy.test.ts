@@ -613,7 +613,7 @@ function input(
       signal: null,
       stderrTail,
       stderrTruncated: false,
-      cleanup: { rootKilled: false, descendantsReaped: false, note: 'root already exited' },
+      cleanup: { rootKilled: false, descendantsReaped: false, note: 'root already exited', treeStopConfirmed: false, processStart: 'may-have-started' },
     },
     nativeSignals: signals,
     localAbort,

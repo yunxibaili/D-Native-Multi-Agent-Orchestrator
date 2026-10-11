@@ -29,10 +29,48 @@
  * (`succeeded`/`failed`/`cancelled`/`timed_out`). It is NOT `TaskStatus`: a run that
  * succeeded puts the task in `to_verify`, and collapsing the two is exactly the
  * distinction this contract exists to protect.
+ *
+ * TEAMRUN T3-a.5 — WHY A RECEIPT ALSO CARRIES EXECUTIONS
+ * ------------------------------------------------------
+ * This file used to say "admission facts, never execution facts", and `attemptIdsByTask`
+ * was the only link to execution: the receipt pointed at an Attempt and dropped the result.
+ * That left the caller with no way to learn WHICH `RunResult` belonged to that attempt, so it
+ * reached sideways into a per-task latest-ever map (`Workbench.lastRunResult(taskId)`) to get
+ * one back.
+ *
+ * That lookup cannot be trusted, and the reason is structural, not a bug:
+ *
+ *   - `taskId` can own Attempt A, then B, then C. `taskId -> RunResult` therefore answers
+ *     "the newest result I happen to be holding for this task", which is NOT "the current
+ *     attempt's result" — it can return A's result while the current attempt is B.
+ *   - `RunResult` cannot close the gap by carrying its own id. It is frozen by the runtime
+ *     (`runtime/session.ts#finalize`) BEFORE `AttemptStore` mints any `attemptId`, and its
+ *     `taskId`/`threadId` are the runtime's own handles, not ours. There is no field on it
+ *     that identifies an attempt.
+ *   - `AttemptRecord` stores no `RunResult` and no pointer to one.
+ *
+ * So the pair has to be born where the two objects actually meet: at the `AttemptStore.append`
+ * that mints the id from the very run used to build the record (`attempt-integration.ts`).
+ * `executionsByTask` below is that pair, carried on the receipt so "this dispatch's attempt"
+ * and "this dispatch's result" arrive already matched. It is a CORRELATION over already-known
+ * facts, not a result store and not a second authority: nothing here decides anything, and the
+ * identities still live in `AttemptStore`.
  */
 
-import type { TerminalState } from '../core/types.ts';
+import type { RunResult, TerminalState } from '../core/types.ts';
 import type { TickResult } from './scheduler.ts';
+
+/**
+ * T3-a.5: ONE execution, named by both halves.
+ *
+ * `attemptId` is the id `AttemptStore.append` actually minted for the record built from
+ * `run`. The two are produced together, so this object cannot describe a mixed pair such as
+ * "attempt B with attempt A's result".
+ */
+export interface DispatchExecutionRef {
+  readonly attemptId: string;
+  readonly run: RunResult;
+}
 
 /** One admitted task, distinguishing "allowed in" from "actually finished". */
 export interface DispatchOutcomeEntry {
@@ -78,6 +116,18 @@ export interface DispatchReceipt {
    * corresponds to without holding a `RunResult`.
    */
   readonly attemptIdsByTask: Readonly<Record<string, readonly string[]>>;
+  /**
+   * T3-a.5: taskId -> this dispatch's `{attemptId, run}` pairs, in attempt order.
+   *
+   * Index-aligned with `attemptIdsByTask` by construction (they are appended together at the
+   * append site), but each entry carries its OWN `attemptId`, so a consumer should read the
+   * pair off this field rather than zip the two maps by position.
+   *
+   * Present ONLY for executions that really produced a `RunResult` — which includes one whose
+   * write-back was refused, because that execution did happen. A task that never ran has no
+   * entry here, and therefore no result to leak from a previous attempt.
+   */
+  readonly executionsByTask: Readonly<Record<string, readonly DispatchExecutionRef[]>>;
   /** One entry per task the tick touched. */
   readonly outcomes: readonly DispatchOutcomeEntry[];
 }
@@ -91,6 +141,7 @@ export function emptyDispatchReceipt(dispatchedAt: number, reentrant = false): D
     skipped: [],
     reentrant,
     attemptIdsByTask: {},
+    executionsByTask: {},
     outcomes: [],
   };
 }
@@ -101,23 +152,33 @@ export interface BuildReceiptInput {
   readonly reentrant?: boolean;
   /** taskId -> attempt ids, as returned by the evidence recorder. */
   readonly attemptIdsByTask?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * T3-a.5: taskId -> the correlated `{attemptId, run}` pairs, as returned by the evidence
+   * recorder at the append site. Omit it only where no execution was recorded; a consumer that
+   * finds a started task with no entry here must treat its result as ABSENT rather than
+   * falling back to a task-keyed lookup.
+   */
+  readonly executionsByTask?: Readonly<Record<string, readonly DispatchExecutionRef[]>>;
 }
 
 /**
  * Project a `TickResult` into a receipt.
  *
- * `finished` is derived from the OUTCOME, never from "we tried": `ExecuteOutcome.ok`
- * is true only when a `RunResult` was obtained, so a refused admission reports
- * `finished: false` and stays distinguishable from a real execution.
+ * `finished` is derived from the RUN, never from `ExecuteOutcome.ok`: `ok` is the
+ * CONTROL-PLANE outcome, so gating on it would drop the terminal run of an
+ * execution whose write-back was refused (stale lease / fencing). That run really
+ * happened and its evidence must survive. So `finished` means "a terminal
+ * `RunResult` was observed", and a refused admission that never ran stays
+ * `finished: false` with no `terminalState`.
  */
 export function buildDispatchReceipt(input: BuildReceiptInput): DispatchReceipt {
   const admittedSet = new Set(input.tick.admitted);
   const outcomes: DispatchOutcomeEntry[] = input.tick.outcomes.map((entry) => {
-    const run = entry.outcome.ok ? entry.outcome.run : undefined;
+    const run = entry.outcome.run;
     return {
       taskId: entry.taskId,
       admitted: admittedSet.has(entry.taskId),
-      finished: entry.outcome.ok === true,
+      finished: run !== undefined,
       ...(run === undefined ? {} : { terminalState: run.state }),
     };
   });
@@ -128,6 +189,7 @@ export function buildDispatchReceipt(input: BuildReceiptInput): DispatchReceipt 
     skipped: input.tick.skipped.map((s) => ({ taskId: s.taskId, code: s.code, reason: s.reason })),
     reentrant: input.reentrant === true,
     attemptIdsByTask: input.attemptIdsByTask ?? {},
+    executionsByTask: input.executionsByTask ?? {},
     outcomes,
   };
 }

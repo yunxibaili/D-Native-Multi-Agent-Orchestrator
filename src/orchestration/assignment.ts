@@ -160,6 +160,72 @@ export interface AssignmentInput {
    */
   readonly preferredAgent?: string;
   readonly preferredModel?: string;
+  /**
+   * TeamRun T2-a: Laya's EXPLICIT Agent × Model choice — a semantic decision, not a
+   * preference.
+   *
+   * Authority contract (owner-ratified): Laya is the semantic pair-choice authority;
+   * Assignment is the admissibility/enforcement authority. With an explicit pair,
+   * Assignment restricts the candidate pool to EXACTLY that pair, runs the SAME
+   * enforcement filters every candidate runs (registration, T1 effective
+   * availability, capability, quota, free-pool policy) and either ACCEPTS it or
+   * REFUSES it. It must never silently substitute another pair — a refusal is
+   * evidence Laya acts on, not an opening for a different choice.
+   *
+   * The pair is ATOMIC: both fields must be present non-empty strings. A partial or
+   * malformed pair fails closed here (`assignment-invalid`) and is never completed by
+   * guessing the other half. Pair absence (undefined) is the legitimate legacy path:
+   * candidate filtering → scoring → selection, unchanged.
+   */
+  readonly explicitPair?: AgentModelIntent;
+}
+
+/**
+ * TeamRun T2-a: one explicit Agent Family × Model choice.
+ *
+ * Deliberately a two-string value, not a class and not a registry handle: it is
+ * Laya's WORD, validated against the registry by Assignment. `modelId` is a concrete
+ * string — `null` means "no model selected" elsewhere in the system and is never a
+ * valid explicit choice. `WorkBuddy CN` and `WorkBuddy Intl` are distinct agent ids,
+ * and `OpenCode/model-A` vs `OpenCode/model-B` are distinct choices; nothing here
+ * collapses either axis.
+ */
+export interface AgentModelIntent {
+  readonly agentId: string;
+  readonly modelId: string;
+}
+
+/**
+ * TeamRun T2-a (§3/§18): validate a raw Laya pair intent BEFORE it can influence
+ * assignment. Atomic and typed: both halves present, both non-empty strings. A
+ * partial pair or a non-string field is REFUSED — never stripped, never completed by
+ * Assignment, never silently demoted to legacy scoring. Absence (undefined input) is
+ * not an error: "no explicit pair" is the legitimate legacy path.
+ */
+export function validateAgentModelIntent(raw: unknown):
+  | { readonly ok: true; readonly intent: AgentModelIntent }
+  | { readonly ok: false; readonly reason: string } {
+  if (raw === undefined || raw === null) return { ok: false, reason: 'no explicit pair was supplied' };
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, reason: `explicit pair must be an object, got ${Array.isArray(raw) ? 'an array' : typeof raw}` };
+  }
+  const rawRecord = raw as Record<string, unknown>;
+  const hasAgent = rawRecord.agentId !== undefined;
+  const hasModel = rawRecord.modelId !== undefined;
+  if (hasAgent !== hasModel) {
+    return {
+      ok: false,
+      reason: `explicit pair is PARTIAL (agentId ${hasAgent ? 'present' : 'missing'}, modelId ${hasModel ? 'present' : 'missing'}); ` +
+        'a Laya pair choice is atomic — both Agent Family and Model, or neither',
+    };
+  }
+  if (typeof rawRecord.agentId !== 'string' || rawRecord.agentId.trim() === '') {
+    return { ok: false, reason: `explicit pair agentId must be a non-empty string, got ${JSON.stringify(rawRecord.agentId)}` };
+  }
+  if (typeof rawRecord.modelId !== 'string' || rawRecord.modelId.trim() === '') {
+    return { ok: false, reason: `explicit pair modelId must be a non-empty string, got ${JSON.stringify(rawRecord.modelId)}` };
+  }
+  return { ok: true, intent: { agentId: rawRecord.agentId, modelId: rawRecord.modelId } };
 }
 
 // ---------------------------------------------------------------------------
@@ -339,7 +405,30 @@ export function assignWorker(input: AssignmentInput): AssignmentOutcome {
 
   // Candidate discovery: the EXISTING registry's canonical list. `list()` is
   // already sorted by key, so iteration order is deterministic without sorting here.
-  const all = input.registry.list();
+  // TeamRun T2-a: with an explicit Laya pair, the pool IS the pair. Validation is
+  // atomic and fail-closed (§3/§18); an unregistered pair refuses without a single
+  // filter being relaxed and without any substitute being considered. Everything
+  // downstream (capability / availability / quota / pool / scoring) runs on the
+  // restricted pool UNCHANGED — Laya's choice gets exactly the enforcement every
+  // candidate gets, and nothing else.
+  let all = input.registry.list();
+  if (input.explicitPair !== undefined) {
+    const intentCheck = validateAgentModelIntent(input.explicitPair);
+    if (!intentCheck.ok) {
+      return { ok: false, code: 'assignment-invalid', reason: intentCheck.reason, rejected: [] };
+    }
+    const exact = all.filter((e) => e.agentId === intentCheck.intent.agentId && e.modelId === intentCheck.intent.modelId);
+    if (exact.length === 0) {
+      return {
+        ok: false,
+        code: 'no-model-available',
+        reason: `explicit pair "${intentCheck.intent.agentId}/${intentCheck.intent.modelId}" is not registered in the model registry; ` +
+          'an explicit Laya pair is never silently substituted',
+        rejected: [],
+      };
+    }
+    all = exact;
+  }
   const rejectedList: (CandidateRejection & { agentId: string; modelId: string })[] = [];
   const survived: AssignmentCandidate[] = [];
 
@@ -372,10 +461,15 @@ export function assignWorker(input: AssignmentInput): AssignmentOutcome {
     // 2. AVAILABILITY — fail-closed. `unknown` is NOT available: an unconfirmed
     //    probe is not a positive signal, and treating it as one is how a routing
     //    system proposes a model that turns out to be gone.
-    if (entry.availability !== 'available') {
+    //
+    //    TeamRun T1-a: this reads the EFFECTIVE availability, so a healthy sibling model
+    //    is no longer collateral damage from one bad model probe, while an unavailable
+    //    agent FAMILY still removes every pair under it.
+    const effective = input.registry.effectiveAvailability(entry.agentId, entry.modelId);
+    if (effective !== 'available') {
       rejectedList.push(rejected(entry.agentId, entry.modelId, {
-        code: entry.availability === 'unknown' ? 'availability-unknown' : 'availability-unavailable',
-        detail: `registry availability is "${entry.availability}"`,
+        code: effective === 'unknown' ? 'availability-unknown' : 'availability-unavailable',
+        detail: `registry availability is "${effective}"`,
       }));
       continue;
     }

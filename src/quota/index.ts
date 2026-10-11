@@ -149,7 +149,7 @@ export async function buildQuotaCenter(opts: BuildQuotaCenterOptions): Promise<Q
     generatedAt: new Date(now).toISOString(),
     classificationNote: CLASSIFICATION_NOTE,
     agentStatus: buildAgentStatus(probes, records, observed, opts),
-    modelRegistry: registry.list().map((e) => toModelRow(e)),
+    modelRegistry: registry.list().map((e) => toModelRow(e, registry)),
     quota: records.map((r) => toQuotaRow(r)),
     freeCredit: {
       // No verified promotion endpoint exists on any agent (4A audit). Free
@@ -182,7 +182,9 @@ export async function buildQuotaCenter(opts: BuildQuotaCenterOptions): Promise<Q
       capabilitySatisfied: (opts.descriptors ?? []).some((d) => d.capabilities.newTask),
       // 'Unknown' (not probed) does not count as installed.
       agentAvailable: Object.values(opts.installed ?? deriveInstalled(records)).some((v) => v === true),
-      modelAvailable: registry.list().some((e) => e.availability === 'available'),
+      // TeamRun T1-a: the EFFECTIVE verdict, so this is "is anything actually assignable?"
+      // rather than "does any raw entry claim to be available".
+      modelAvailable: registry.list().some((e) => registry.isModelAvailable(e.agentId, e.modelId)),
       // Worst real quota across every agent we accounted for.
       quota: { status: worstQuotaStatus(records) },
       // Real global headroom, and a request that cannot silently pass.
@@ -268,6 +270,16 @@ function applyPolicy(
     if (!quotaStatus.has(r.agentId) || r.status !== 'unavailable') quotaStatus.set(r.agentId, r.status);
   }
 
+  // TeamRun T1-a: the install state a QuotaProbe reports is evidence about the AGENT
+  // RUNTIME ("is this CLI installed / launchable"), not about any individual model. It
+  // used to be written through the per-agent setter from INSIDE this per-entry loop,
+  // which re-applied one family verdict once per model and, worse, let a family fact
+  // overwrite pair-specific facts. It is now recorded once per agent, before the loop.
+  for (const [agentId, available] of Object.entries(installed)) {
+    if (available === undefined) continue; // "never queried" is unknown, not a verdict
+    registry.setAgentAvailability(agentId, available ? 'available' : 'unavailable');
+  }
+
   for (const entry of registry.list()) {
     const available = installed[entry.agentId];
     const decision = evaluatePolicy(registry, {
@@ -277,9 +289,6 @@ function applyPolicy(
       quotaStatus: quotaStatus.get(entry.agentId),
     });
     registry.applyPolicy(entry.agentId, entry.modelId, decision.decision, decision.reason);
-    if (available !== undefined) {
-      registry.setAvailability(entry.agentId, available ? 'available' : 'unavailable');
-    }
   }
 }
 
@@ -371,12 +380,14 @@ function keyOf(display: string): string {
   return display;
 }
 
-function toModelRow(e: ModelEntry) {
+// TeamRun T1-a: shows the EFFECTIVE availability, so the dashboard cannot report a pair
+  // as available while the agent family it belongs to is unavailable.
+  function toModelRow(e: ModelEntry, registry: ModelRegistry) {
   return {
     agent: DISPLAY_NAMES[e.agentId] ?? e.agentId,
     model: e.modelId,
     capability: e.taskTypes.join(' · ') || 'none',
-    availability: e.availability,
+    availability: registry.effectiveAvailability(e.agentId, e.modelId),
     policy: e.policyStatus,
     quotaSource: `${e.quotaSource} · model: ${e.modelSource}`,
     reason: e.policyReason,

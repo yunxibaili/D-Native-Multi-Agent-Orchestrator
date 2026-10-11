@@ -86,6 +86,18 @@ export interface AttemptRecord {
    */
   readonly agentId: string;
   readonly modelId: string | null;
+  /**
+   * TeamRun T1-b: the workbench session this attempt ran in, when one was known.
+   *
+   * Additive and optional on purpose. With it, an attempt can be resolved to the Worker
+   * that produced it (`workerIdentityOfAttempt`); without it, the attempt is still a
+   * complete record — this is a projection input, never a new requirement. Records
+   * written before T1-b have no session and continue to load and validate unchanged.
+   *
+   * `attemptId` is NOT this: an attempt is one execution event, a worker is the
+   * participant. Absent means "no session was recorded", never "session 0".
+   */
+  readonly sessionId?: string;
   /** Carried so task-type × agent performance is computable without the store. */
   readonly taskType: TaskType;
 
@@ -260,6 +272,8 @@ export function validateAttemptRecord(raw: unknown): AttemptRecord {
     ...(typeof raw.errorCode === 'string' ? { errorCode: raw.errorCode } : {}),
     ...(typeof raw.errorMessage === 'string' ? { errorMessage: raw.errorMessage } : {}),
     ...(typeof raw.budgetUnits === 'number' ? { budgetUnits: raw.budgetUnits } : {}),
+    // T1-b: optional, so a pre-T1-b record simply has none.
+    ...(typeof raw.sessionId === 'string' ? { sessionId: raw.sessionId } : {}),
     ...(typeof raw.leaseVersion === 'number' ? { leaseVersion: raw.leaseVersion } : {}),
     ...(typeof raw.costUsd === 'number' ? { costUsd: raw.costUsd } : {}),
     previousAttemptId: (raw.previousAttemptId ?? null) as string | null,
@@ -294,6 +308,12 @@ export function executionAttempt(input: {
    * to the newest lease, which is exactly the corruption that fencing prevents.
    */
   leaseVersion?: number;
+  /**
+   * T1-b: the workbench session this execution ran in. Passed in by the caller from the
+   * session authority, never guessed from the run — a `RunResult` knows the agent's
+   * native thread id, which is a different thing entirely.
+   */
+  sessionId?: string;
 }): Omit<AttemptRecord, 'attemptId' | 'previousAttemptId'> {
   const r = input.result;
   // `aborted` is separate from `failure`: a cancelled run is not a failed one,
@@ -318,6 +338,8 @@ export function executionAttempt(input: {
     ...(r.error !== null ? { errorCode: r.error.code as string, errorMessage: r.error.message } : {}),
     ...(input.budgetUnits === undefined ? {} : { budgetUnits: input.budgetUnits }),
     ...(input.leaseVersion === undefined ? {} : { leaseVersion: input.leaseVersion }),
+    // T1-b: absent when the caller had no session, never defaulted.
+    ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
     // Absent (not zero) when the agent reported no usage at all.
     ...(r.usage?.costUsd === undefined || r.usage?.costUsd === null ? {} : { costUsd: r.usage.costUsd }),
   };
@@ -333,6 +355,7 @@ export function reworkAttempt(input: {
   budgetUnits?: number;
   startedAt?: number;
   leaseVersion?: number;
+  sessionId?: string;
 }): Omit<AttemptRecord, 'attemptId' | 'previousAttemptId'> {
   return { ...executionAttempt(input), kind: 'rework' };
 }

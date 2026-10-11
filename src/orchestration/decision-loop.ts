@@ -358,15 +358,18 @@ export async function runDecisionCycle(options: DecisionLoopOptions): Promise<De
   const application = await applyDecision(decision, context);
   const tick = collected.tick;
 
-  // 5. COLLECT - turn this tick's outcomes into evidence for the next cycle.
+// 5. COLLECT - turn this tick's outcomes into evidence for the next cycle.
   //
-  // Only SUCCESSFUL dispatches become evidence. A refused one has no `run` at
-  // all, and inventing a synthetic "failed" result for it would put a fabricated
-  // failure into the next observation.
+  // Every REAL terminal run becomes evidence, whatever the control plane did with
+  // it: `ExecuteOutcome.ok` is the control-plane outcome, so gating on it would
+  // silently drop the authoritative run of an execution whose write-back was
+  // refused (stale lease / fencing) — real evidence disappearing (F5). What must
+  // never happen is FABRICATING a "failed" run for a dispatch that never ran, so
+  // the test is the presence of a real `run`, not `ok`.
   const results = new Map<string, RunResult>();
   if (tick !== null) {
     for (const entry of tick.outcomes) {
-      if (entry.outcome.ok) results.set(entry.taskId, entry.outcome.run);
+      if (entry.outcome.run !== undefined) results.set(entry.taskId, entry.outcome.run);
     }
   }
 

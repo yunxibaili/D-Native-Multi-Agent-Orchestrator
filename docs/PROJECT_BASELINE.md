@@ -1,10 +1,11 @@
 # Personal Workstation Orchestrator — Project Baseline
 
 ```text
-Status   = CURRENT CANONICAL BASELINE · 2026-10-04
+Status   = CURRENT CANONICAL BASELINE · 2026-10-06
 Scope    = 唯一正式基准：产品定位 / 架构 / 角色 / 主流程 / 实现状态 / 非目标
 Rule     = 与本文冲突的其他文档，以本文为准；历史文档必须带 Status 标注
-Baseline = 4559 tests / 0 failed（22 套件）· typecheck clean · smoke:quick 21/21 ·
+Baseline = 4852 tests / 0 failed（23 套件）· typecheck clean ·
+           smoke:quick 17/21（4 个 Codex failure = 当前环境/CLI 问题，非 R4 回归）·
            native E2E 17/18（Case 15 = agent variance，非 lease/fencing 缺陷）
 ```
 
@@ -262,7 +263,7 @@ Handoff / Quota / ResourceClaim / Review **都不是** authority。
 | Laya Decision Layer（classifyTask，11-action typed decision loop） | Implemented / Verified | decision 397 tests + E2E |
 | Planner / DAG / Replan（generation + stale 保护） | Implemented / Verified | planner 189 + E2E Case 9 |
 | Assignment（filters/score/preference/identity writeback） | Implemented / Verified | assignment 180 |
-| Lease Lifecycle（issue/activate/renew×bounded/revoke/fencing） | Implemented / **Ready for Final Codex Seal Review** | assignment-lease 251 + E2E Case 17/18 |
+| Lease Lifecycle（issue/activate/renew×bounded/revoke/fencing） | Implemented / **SEALED（R2-2 Final Closure 全部关闭）** | assignment-lease 251 + E2E Case 17/18 |
 | ResourceClaim（scope 归一化 / 冲突矩阵 / dispatch-time admission） | Implemented / Verified | resource-claim 84 + E2E Case 16 |
 | Workspace isolation（git worktree per writing task） | Implemented / Verified | E2E Case 16（R2-1 proof） |
 | Structured Handoff（bounded，CLAIMED/OBSERVED 分离） | Implemented / 字段补全中 | E2E Case 5 |
@@ -270,7 +271,11 @@ Handoff / Quota / ResourceClaim / Review **都不是** authority。
 | Execution Monitor（round-state/events 只读观测） | Implemented / Verified | round-cli --observe |
 | Unified Codex Review wiring（所有终态自动进 review） | **Implemented / Verified** | `unified-review.test.ts` 129/0 + `handoff-production-round.test.ts` 48/0 |
 | Same-Task Continuation（L4-L6 自动 handoff） | **Implemented / Verified（生产 Round 已闭环）** | `handoff-production-round.test.ts` 48/0 · `native-handoff-e2e.test.ts` 21/0 |
-| Result Aggregation UI | **Planned / Not Implemented** | — |
+| Result Aggregation（round-result.ts 纯投影 + Human Gate） | **Implemented / Verified（R4 READY FOR USER GATE，余 2 个 P2）** | `round-result.test.ts` 293/0 · `npm test` 4852/0 ×2 · 二次独立复审 PASS WITH P2 |
+| **TeamRun T1**（WorkerIdentity / session 归属 / family availability） | **SEALED** | `TEAMRUN_AGENT_MODEL_ARCHITECTURE_AUDIT.md` |
+| **TeamRun T2**（Laya 精确 Agent × Model 选择 + Assignment exact enforcement） | **SEALED** | `TEAMRUN_AGENT_MODEL_ARCHITECTURE_AUDIT.md` |
+| **TeamRun T3-a**（READ-only Worker fan-out / requested vs actual / attempt 归因） | **SEALED** — Codex T3-a.5 Final Seal Review = **PASS WITH P2**，`P0 = 0`、`P1 = 0`；已接受 P2 = root-only fan-out、default `maxConcurrent = 2`（移入未来 scope，不再是 T3-a blocker） | `TEAMRUN_T3_READ_FANOUT_ARCHITECTURE_AUDIT.md` · `npm test` 29 suites / 0 failed |
+| **T3-M0 Model Access Architecture**（Agent / Model / ModelAccessRoute / ExecutionCandidate 术语与关系冻结） | **SEALED** — Codex T3-M0 Final Review = **PASS WITH P2**，`P0 = 0`、`P1 = 0`，建议 SEAL；6 项 P2 属 documentation / future-implementation constraint，**非 blocker**，已作为文档澄清 CLOSED（未实现任何 runtime） | `TEAMRUN_MODEL_ACCESS_ARCHITECTURE.md`（§26 closure 记录） |
 
 ## 14. Current Gaps
 
@@ -282,6 +287,14 @@ Handoff / Quota / ResourceClaim / Review **都不是** authority。
 6. Native E2E Case 15 agent variance / harness（非 lease/fencing 缺陷）。
 7. execution-monitor 尚未接 Attempt linkage / per-task process observation
    （观测增强项，非 correctness 缺陷）。
+8. **R4 P2-1（Task I）**：F5 refused-with-run attempt——AttemptStore 有完整
+   evidence（`ok=false` 但携带真实 `RunResult`），Round Result projection 当前
+   没有把该 execution evidence 展示出来（报告层为空，无错配、无伪造）。
+9. **R4 P2-2（Task J）**：handoff E2E 未显式断言 Attempt A / Attempt B 的
+   evidence 字段级互异（机制本身已由 round-result P1-2b 在真实 dispatch 路径
+   覆盖；缺的是 handoff E2E 里的一条断言）。
+10. smoke:quick 17/21：4 个 Codex failure 属当前本机 Codex CLI 环境/认证问题，
+    不是 R4 regression，不做 workaround。
 
 ## 15. Non-Goals（永久，除非用户明确重开）
 
@@ -300,15 +313,99 @@ GEV / Jev（作为决策模型；Jev-compatible envelope 仅是 laya-serve wire 
 ## 16. Next Development Order
 
 ```text
-1. Final Codex Seal for R2-2（Lease Lifecycle 封板复审）
-2. Unified Codex Review wiring（所有终态 outcome 自动进入）
-3. Agent Quota / Availability Handoff（L2→L3）
-4. Same-Task Continuation（L4→L5→L6）
-5. Result Aggregation
-6. Human Gate / Next-Round loop（产品化）
+1. Final Codex Seal for R2-2            → DONE（R2-2 SEALED）
+2. Unified Codex Review wiring          → DONE（所有终态自动进入）
+3. Agent Quota / Availability Handoff   → DONE（L2→L3）
+4. Same-Task Continuation               → DONE（L4→L5→L6，生产 Round 闭环）
+5. Result Aggregation                   → DONE（R4，READY FOR USER GATE）
+6. Human Gate / Next-Round loop         → DONE（round-cli 终点打印 HUMAN GATE 并停止；自动动作 = NONE）
 ```
 
-暂缓：§15 全部。
+R4 当前状态：**PASS WITH P2**（P0=0，P1=0，P2=2，见 §14 条目 8/9/10）。
+R4 不是"完全无问题"——两个 P2 明确保留在 backlog（Task I / Task J）。
+
+### 16.1 Architecture Guard（适用于下方全部 Paperclip-inspired 任务）
+
+> **Paperclip is reference material, not architecture baseline.**
+> 唯一基准仍是本文（Laya 唯一决策脑 + Native Agent Orchestrator + 个人 Windows 工作站）。
+
+冻结核心 authority model（每个恰好 1 个，见 §12）：
+
+```text
+Laya = 唯一决策脑
+Planner = 唯一规划权
+TaskStore = 唯一任务状态权威
+Assignment = 唯一分配权威
+Scheduler.tick = 唯一调度入口
+Orchestrator = 唯一执行边
+AttemptStore = 唯一执行证据权威
+Verification = 正式成功门
+Unified Codex Review = 独立审查
+Human Gate = 自动执行停止点
+```
+
+任何 Paperclip-inspired 任务立项前必须先回答：
+
+```text
+1. 是否新增 authority？
+2. 是否新增 execution edge？
+3. 是否改变 Laya 唯一决策脑？
+4. 是否改变 TaskStore / Assignment / Scheduler / AttemptStore ownership？
+5. 是否把 Agent 变成第二控制主体？
+6. 是否把项目推向 server / browser / enterprise 产品？
+```
+
+任意一项为 YES → **默认 BLOCK，先重新设计**。
+
+### 16.2 Backlog（全部为 BACKLOG / RESEARCH / DESIGN，不是当前执行任务）
+
+下方任务由下一阶段逐项决定是否立项；立项时逐项过 §16.1 guard。
+
+**R4 P2 收尾**
+
+| Task | 内容 | 优先级 |
+|---|---|---|
+| **I — F5 refused-with-run result projection** | 修复 AttemptStore → Round Result 投影：`ok=false` + 真实 `RunResult` 的 attempt 仍须在最终 Round Report 展示其真实存在的 execution evidence（attemptId / changedFiles / tests / transcript / errors 全部按真实 evidence 映射）。禁止伪造。 | P2 / High-value cleanup |
+| **J — Handoff E2E evidence attribution assertion** | 在真实 handoff E2E 中增加 Attempt A evidence ≠ Attempt B evidence 的字段级断言（changedFiles / tests / transcript / error / agent / attemptId）。不改运行机制，只加强回归测试。 | P2 |
+
+**Architecture Gap Audit（Paperclip-inspired improvements / architecture research —— 参考材料，非架构基准）**
+
+| Task | 内容 | 优先级 |
+|---|---|---|
+| **A — Structure / Dependency / Ownership / Execution 语义分离** | 参考 Paperclip 的 execution semantics 思路，研究并明确区分 Task Structure（parent/child/lineage）、Task Dependency（prerequisite/blocked-by）、Task Ownership（agent/assignment/lease/fencing）、Task Execution（queued/running/rework/retrying/terminal）、Attempt Execution（attemptId/session/process/evidence/outcome）。这些概念目前已分别存在；本任务不是重构、不是重新建模，只检查当前模型是否存在语义混用并形成最小改进方案。实施时间：R4 之后的 architecture gap audit。 | High |
+| **B — Native Agent Adapter Preflight / Capability Diagnostics** | 研究统一 Native Agent preflight：executable / version / auth / model / session capability / workspace capability / required environment → usable / unavailable / misconfigured。必须复用现有 Agent Adapter / Capability Contract / Assignment / SessionRegistry；**禁止创建 PreflightManager authority**。Preflight 只提供事实，最终决策仍由 Laya / Assignment 完成。 | High |
+| **C — Recovery Classification** | 参考 Paperclip 的 execution/recovery semantics。已有 outcome 词汇不增加重复项；研究增加一个 **derived recovery classification**（terminal / recoverable_execution / recoverable_infrastructure / ownership_failure / resource_failure / user_decision_required）。它只能是 projection / classification，**不能成为第二决策 authority**；是否 retry / handoff / replan 仍由 Laya 与既有 execution flow 控制。 | High |
+| **D — Liveness / Watchdog Architecture Research** | 参考 Paperclip 对 Task Watchdog / Active Run Watchdog / Liveness Recovery 的区分，研究现有 ExecutionMonitor / Observation / Attempt / Scheduler / Continuation / Human Gate 是否已能表达 alive / quiet / stalled / orphaned / process-dead / resource-blocked。硬约束：**Monitor ≠ Decision Authority**——watchdog 只检测和报告事实，不能自己 kill / retry / reassign / replan。先研究，不立即实现。 | Medium-High |
+| **E — Wakeup / Duplicate Dispatch Coalescing** | 参考 Paperclip 的 wakeup coalescing 思想，研究如何避免 scheduler tick + manual trigger + handoff callback + decision-loop callback 在极端情况下重复 dispatch 同一 Task / Attempt scope。复用 Lease / Fencing / Attempt / Scheduler，不新增 dispatch authority。 | Medium |
+| **F — Session Persistence / Resume Metadata** | 研究强化 Attempt 的 nativeSessionId / adapter / resume capability / session state / last usable checkpoint，进一步区分 same-session continuation / new-agent handoff / fresh session。复用 SessionRegistry / ContinuationPacket / AttemptRecord。 | Medium |
+| **G — Workspace Runtime Services / Jobs** | 参考 Paperclip 的 Service（长驻进程）/ Job（一次性进程）/ Agent（execution）区分，研究 dev server / backend / database / test watcher / build process 与 Agent execution 的边界。必须保持 Workspace authority / Scheduler / Orchestrator，不产生新控制面。只做设计研究，不进入当前阶段。 | Medium-Low |
+| **H — Structured Usage / Cost Telemetry** | 研究在现有 AttemptRecord 中增加结构化运行 metadata（duration / inputTokens / outputTokens / cachedTokens / estimatedCost / quotaImpact）。禁止创建 CostManager / QuotaManager authority；quota/budget 仍属现有 assignment / runtime / Laya 体系。 | Medium-Low |
+| **K — Windows Native Execution Hardening** | 研究 Windows CLI spawn、.cmd/.exe resolution、environment inheritance、process tree / child cleanup、CRLF/LF 一致性、workspace isolation、Git worktree。已知实例：git stash round-trip → LF baseline files → CRLF → source-text regex failure；研究是否以 `.gitattributes` 等方式从根源消除。这是 Windows 工程稳定性任务，**不是把项目变成跨平台企业平台**。 | High |
+
+**Future Product（DEFERRED，绝对不要现在实现）**
+
+| Task | 内容 | 优先级 |
+|---|---|---|
+| **L — Native Windows Frontend / Desktop UX** | 产品最终形态是 **Native Windows Desktop Application**，不是 Browser Dashboard。未来正式 UI 必须按高要求设计：原生 Windows 窗口体验、高质量 UI/UX、Task/DAG 可视化、Agent 状态、Attempt/Handoff、Execution progress、Review、Human Gate、错误与恢复状态、取消/暂停/继续、长任务反馈、性能、视觉完成度。不得默认 React Dashboard / Browser / 普通 Admin Panel 为最终产品。`temporary-dashboard/` 只是开发期临时观察工具（git-ignored，非 authority），与最终 UI 不能混淆。 | DEFERRED |
+
+### 16.3 NOT ADOPTED（明确不采纳）
+
+以下 Paperclip 概念**不采纳**，统一原因：
+
+> 不符合本项目"个人 Windows 工作站 + Laya 唯一决策脑 + Native Agent Orchestrator"的产品基准。
+
+```text
+Company model
+Org Chart
+Multi-tenant
+RBAC / Enterprise governance
+Board / corporate approval hierarchy
+Heartbeat-driven agent control model
+Browser-first product UI
+Paperclip entire Control Plane architecture
+```
+
+暂缓：§15 Non-Goals 全部 + Task L。
 
 ---
 
@@ -316,6 +413,6 @@ GEV / Jev（作为决策模型；Jev-compatible envelope 仅是 laya-serve wire 
 
 | 层 | 文档 |
 |---|---|
-| **Canonical（当前语义）** | 本文 · `EXECUTION_ROUND_SEMANTICS.md`（R1-1 round/identity/quota）· `R2_COORDINATION_CONTRACT.md`（coordination contract + Agent Admission §24）· `DECISION_LOOP_EXECUTION_RESULT_CONTRACT.md`（receipt/attempt 链）· `PHASE6A_FREE_MODEL_POOL.md`（模型池） |
+| **Canonical（当前语义）** | 本文 · `EXECUTION_ROUND_SEMANTICS.md`（R1-1 round/identity/quota）· `R2_COORDINATION_CONTRACT.md`（coordination contract + Agent Admission §24）· `DECISION_LOOP_EXECUTION_RESULT_CONTRACT.md`（receipt/attempt 链）· `PHASE6A_FREE_MODEL_POOL.md`（模型池）· `TEAMRUN_AGENT_MODEL_ARCHITECTURE_AUDIT.md`（T1/T2：Agent × Model + WorkerIdentity）· `TEAMRUN_T3_READ_FANOUT_ARCHITECTURE_AUDIT.md`（T3-a：READ fan-out / 归因 / evidence）· `TEAMRUN_MODEL_ACCESS_ARCHITECTURE.md`（T3-M0：ModelAccessRoute / ExecutionCandidate / free-quota 语义） |
 | **Historical（设计记录，冲突以 Canonical 为准）** | `PHASE5B_MULTI_AGENT_ARCHITECTURE.md`（顶部已有 R1-1 amendment）· `PHASE5_MULTI_AGENT_RESEARCH.md`（含旧 Phase 8 Control Center 路线——historical）· `REUSE_ANALYSIS.md`（Jev/pi-jev 为外部调研）· `DECISION_PROVIDER.md`（"未接线"表述已过时，见 §13）· `PHASE4M_*.md` · `PHASE4_QUOTA_AUDIT.md` · `MULTI_AGENT_REUSE_AUDIT.md` · `EXTERNAL_ORCHESTRATOR_REUSE_*.md` · `SKILLS_EVALUATION.md` · `WORKBENCH_ARCHITECTURE_AUDIT.md`（审计快照，末尾有 R1-1 addendum）· `CURRENT_STATE_AUDIT.md`（2026-09-30 基线快照） |
 | **Plan（路线）** | `P6_ORCHESTRATION_PLAN.md`（P6 阶段计划；R0.5/R1 状态表述为 historical） |

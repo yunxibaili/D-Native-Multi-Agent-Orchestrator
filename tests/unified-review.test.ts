@@ -21,13 +21,13 @@
  * malformed ones.
  */
 
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { Orchestrator } from '../src/orchestrator/orchestrator.ts';
-import { createFakeAdapter } from './helpers.ts';
+import { createFakeAdapter, sourceText } from './helpers.ts';
 
 import {
   EXECUTION_OUTCOMES,
@@ -488,7 +488,7 @@ section('unified review 5. one execution edge, no second control plane');
   const code = (src: string): string =>
     src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 
-  const src = code(readFileSync(new URL('../src/orchestration/unified-review.ts', import.meta.url), 'utf8'));
+  const src = code(sourceText(new URL('../src/orchestration/unified-review.ts', import.meta.url)));
 
   // The review must go through the injected seam, never build its own.
   check('unified-review.ts never calls runtime.run directly', !/\bruntime\s*\.\s*run\s*\(/.test(src));
@@ -510,7 +510,7 @@ section('unified review 5. one execution edge, no second control plane');
   check('unified-review.ts has exactly one reviewer call site', (src.match(/reviewer\.review\s*\(/g) ?? []).length === 1);
 
   // The round CLI wires the EXISTING review seam and adds no authority of its own.
-  const cliRaw = readFileSync(new URL('../src/cli/round-cli.ts', import.meta.url), 'utf8');
+  const cliRaw = sourceText(new URL('../src/cli/round-cli.ts', import.meta.url));
   const cli = code(cliRaw);
   check('round-cli reviews through the runtime it already holds', /runUnifiedReview\(\s*runtime\s*,/.test(cli));
   check('round-cli still creates exactly ONE scheduler', (cli.match(/new\s+TaskScheduler\s*\(/g) ?? []).length === 1,
@@ -533,7 +533,7 @@ section('unified review 5. one execution edge, no second control plane');
   walk(fileURLToPath(new URL('../src', import.meta.url)));
   const sites: string[] = [];
   for (const f of files) {
-    const body = code(readFileSync(f, 'utf8'));
+    const body = code(sourceText(f));
     if (/runtime\s*\.\s*run\s*\(/.test(body)) sites.push(f);
   }
   check('src/ has exactly ONE real runtime.run( call site', sites.length === 1, JSON.stringify(sites));
@@ -545,7 +545,7 @@ section('unified review 5. one execution edge, no second control plane');
   // The seam really is that one execution edge: `RuntimeOrch.review` forwards to `run`,
   // which is the method that reaches the runtime. A review is therefore an ordinary
   // native execution, not a privileged side channel.
-  const orch = readFileSync(new URL('../src/orchestrator/orchestrator.ts', import.meta.url), 'utf8');
+  const orch = sourceText(new URL('../src/orchestrator/orchestrator.ts', import.meta.url));
   check('the native review seam forwards to the single run() edge',
     /review\(req: Omit<RunRequest, 'mode'>\): RunHandle \{\s*return this\.run\(\{ \.\.\.req, mode: 'review' \}\);/.test(orch),
     'review() no longer forwards to run({mode:review})');
@@ -570,7 +570,10 @@ section('unified review 6. the real RuntimeOrch.review() seam');
       capabilities: { newTask: true, review: true, modelSelection: true, cwd: true },
       script: [{ kind: 'hang' }],
     });
-    const real = new Orchestrator({ config: { agents: {} }, storeDir: dir, extraAdapters: [stalling] });
+    // R5-1.2 (§11.2): a fake named after a REAL agent must REPLACE, not extra-add —
+//  silently no-ops when the real codex was bootstrapped, which made
+// this “hung reviewer” test drive the real installed CLI.
+    const real = new Orchestrator({ config: { agents: {} }, storeDir: dir, replaceAdapters: [stalling] });
 
     // Count the real seam's invocations, so "the review is not retried" is measured on the
     // production edge rather than on a stand-in.

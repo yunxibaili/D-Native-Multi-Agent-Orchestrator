@@ -119,7 +119,7 @@ const registryWith = (entries: Array<[string, string, string[], 'available' | 'u
       { agentId, modelId, provider: 'test', taskTypes: taskTypes as never, modelSource: 'test', quotaSource: 'test' },
       NOW,
     );
-    reg.setAvailability(agentId, availability);
+    reg.setAgentAvailability(agentId, availability);
   }
   return reg;
 };

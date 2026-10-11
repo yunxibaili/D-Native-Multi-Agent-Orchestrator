@@ -356,9 +356,22 @@ export function validateDependencies(
   return { ok: true, task: null, code: null, reason: null };
 }
 
+/**
+ * Whether ONE upstream task's status SATISFIES a downstream dependency.
+ *
+ * Canonical single definition. A dependency is satisfied ONLY when it `succeeded` —
+ * NOT when it merely reached a terminal state. A `failed`/`cancelled` upstream is terminal
+ * but must never release work that was waiting on it, and a `to_verify` upstream is not yet
+ * accepted. The scheduler's dependency gate and any projection (e.g. the fan-out aggregation)
+ * share THIS predicate so the two can never disagree.
+ */
+export function dependencySatisfied(status: TaskStatus | null | undefined): boolean {
+  return status === 'succeeded';
+}
+
 /** Dependencies that are not yet `succeeded`. Empty means runnable. */
 export function unmetDependencies(task: Task, known: ReadonlyMap<string, Task>): string[] {
-  return task.dependencies.filter((id) => known.get(id)?.status !== 'succeeded');
+  return task.dependencies.filter((id) => !dependencySatisfied(known.get(id)?.status));
 }
 
 /**

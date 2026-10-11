@@ -352,7 +352,13 @@ export function renewLease(lease: AssignmentLease, now: number, policy: RenewPol
       // new token here would invalidate the in-flight run's own write-back.
       status: 'renewed',
       renewals: lease.renewals + 1,
-      expiresAt: now + policy.ttlMs,
+      // R5-1.1 (§7): renewal is MONOTONIC — it extends the right, never shortens
+      // it. The dispatch lease may already carry a TTL sized to the execution's own
+      // deadline (see `Orchestrator.dispatchLeasePolicy`); a store-default renewal
+      // computed as `now + 15min` used to pull the expiry BACK under a long running
+      // execution. The max keeps every legitimate path (long execution, refused
+      // overlapping tick, normal renewal) from reducing existing protection.
+      expiresAt: Math.max(lease.expiresAt, now + policy.ttlMs),
     },
   };
 }

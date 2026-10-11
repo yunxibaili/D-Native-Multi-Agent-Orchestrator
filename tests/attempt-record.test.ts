@@ -42,6 +42,7 @@ import { BudgetManager } from '../src/quota/budget.ts';
 import type { QuotaRecord, TaskType } from '../src/quota/types.ts';
 import type { AgentDescriptor, RunHandle, RunRequest, RunResult } from '../src/core/types.ts';
 import type { RuntimeRunner } from '../src/orchestration/execute.ts';
+import { sourceText } from './helpers.ts';
 
 let passed = 0;
 let failed = 0;
@@ -92,7 +93,7 @@ const registryWith = (e: Array<[string, string, string[]]>): ModelRegistry => {
   const r = new ModelRegistry();
   for (const [agentId, modelId, tt] of e) {
     r.upsert({ agentId, modelId, provider: 'test', taskTypes: tt as never, modelSource: 'test', quotaSource: 'test' }, NOW);
-    r.setAvailability(agentId, 'available');
+    r.setAgentAvailability(agentId, 'available');
   }
   return r;
 };
@@ -608,7 +609,7 @@ section('P6-E 7. AttemptStore is evidence only');
   // STRUCTURAL: the source cannot reach an authority.
   const files = ['src/orchestration/attempt-store.ts', 'src/orchestration/attempt-record.ts', 'src/orchestration/attempt-integration.ts'];
   const readCode = (f: string): string =>
-    readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    sourceText(f).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   for (const f of files) {
     const raw = readFileSync(f, 'utf8');
     const code = readCode(f);
@@ -658,9 +659,9 @@ section('P6-E 7. AttemptStore is evidence only');
     occurrences(/applyVerification\(taskId: string, outcome: VerificationOutcome\): MutateOutcome \{/) === 1);
   check('AttemptStore is a new SINGLE class, not a second one', occurrences(/class AttemptStore\b/) === 1);
   check('P6-E does not depend on the free-model pool (P6-F untouched)',
-    ![...readFileSync('src/orchestration/attempt-record.ts', 'utf8').matchAll(/^import (?!type )[^;]*from '([^']+)'/gm)]
+    ![...sourceText('src/orchestration/attempt-record.ts').matchAll(/^import (?!type )[^;]*from '([^']+)'/gm)]
       .some((m) => m[1].includes('model-pool')) &&
-    ![...readFileSync('src/orchestration/attempt-store.ts', 'utf8').matchAll(/^import (?!type )[^;]*from '([^']+)'/gm)]
+    ![...sourceText('src/orchestration/attempt-store.ts').matchAll(/^import (?!type )[^;]*from '([^']+)'/gm)]
       .some((m) => m[1].includes('model-pool')));
 }
 

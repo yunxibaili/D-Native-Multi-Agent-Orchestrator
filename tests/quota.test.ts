@@ -90,7 +90,7 @@ function makeResult(taskId: string, agentId: string, patch: Partial<RunResult> =
     toolCalls: [],
     error: null,
     diagnostics: [],
-    cleanup: { rootKilled: false, descendantsReaped: false, note: '' },
+    cleanup: { rootKilled: false, treeStopConfirmed: true, processStart: 'started', descendantsReaped: false, note: '' },
     ...patch,
   };
 }
@@ -349,7 +349,7 @@ check(
   reg.get('opencode', 'opencode/m1')!.policyStatus === 'unavailable',
 );
 
-reg.setAvailability('opencode', 'available');
+reg.setAgentAvailability('opencode', 'available');
 check('availability applies agent-wide', reg.get('opencode', 'opencode/m1')!.availability === 'available');
 reg.applyPolicy('opencode', 'opencode/m1', 'allowed', 'fine');
 check('policy applied to entry', reg.get('opencode', 'opencode/m1')!.policyStatus === 'allowed');
@@ -369,13 +369,13 @@ policyReg.upsert(
   { agentId: 'a', modelId: 'review-only', provider: 'p', taskTypes: ['review'], modelSource: 'test' },
   1,
 );
-policyReg.setAvailability('a', 'unavailable');
+policyReg.setAgentAvailability('a', 'unavailable');
 
 let d = evaluatePolicy(policyReg, { agentId: 'a', modelId: 'm', agentAvailable: true });
 check('entry unavailable -> unavailable', d.decision === 'unavailable');
 check('entry unavailable -> reason names model', d.reason.includes('unavailable'));
 
-policyReg.setAvailability('a', 'available');
+policyReg.setAgentAvailability('a', 'available');
 d = evaluatePolicy(policyReg, { agentId: 'a', modelId: 'no-such-model' });
 check('unknown model -> unavailable', d.decision === 'unavailable');
 check('unknown model reason names it', d.reason.includes('no-such-model'));

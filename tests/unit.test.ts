@@ -256,19 +256,19 @@ section('opencode adapter');
   // Terminal policy is the adapter's, not the runtime's.
   {
     const p = adapter.terminalPolicy;
-    const ok = {
+    const ok: import('../src/core/types.ts').TransportExit = {
       code: 0,
       signal: null,
       stderrTail: '',
       stderrTruncated: false,
-      cleanup: { rootKilled: false, descendantsReaped: false, note: 'root already exited' },
+      cleanup: { rootKilled: false, treeStopConfirmed: true, processStart: 'started', descendantsReaped: false, note: 'root already exited' },
     };
-    const bad = {
+    const bad: import('../src/core/types.ts').TransportExit = {
       code: 2,
       signal: null,
       stderrTail: 'boom',
       stderrTruncated: false,
-      cleanup: { rootKilled: false, descendantsReaped: false, note: 'root already exited' },
+      cleanup: { rootKilled: false, treeStopConfirmed: true, processStart: 'started', descendantsReaped: false, note: 'root already exited' },
     };
     eq('exit 0 => succeeded', p({ exit: ok, nativeSignals: [], localAbort: null }), { state: 'succeeded', error: null });
     const f = p({ exit: bad, nativeSignals: [], localAbort: null });
@@ -279,7 +279,7 @@ section('opencode adapter');
     eq('error frame + exit 0 is still succeeded', w.state, 'succeeded');
     // Cleanup is informational and must never alter the outcome.
     const withCleanup = p({
-      exit: { ...ok, cleanup: { rootKilled: true, descendantsReaped: true, note: 'killed' } },
+      exit: { ...ok, cleanup: { rootKilled: true, treeStopConfirmed: true, processStart: 'started', descendantsReaped: true, note: 'killed' } },
       nativeSignals: [],
       localAbort: null,
     });

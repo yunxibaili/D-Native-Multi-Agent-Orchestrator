@@ -323,6 +323,10 @@ export interface ReviewPacketTask {
   readonly taskId: string;
   readonly taskType: TaskType;
   readonly status: TaskStatus;
+  /**
+   * ACTUAL execution identity. For a fan-out member this is null unless the member actually
+   * executed; it is never the Planner seed or a refused pair (T3-a.2).
+   */
   readonly agentId: string | null;
   readonly modelId: string | null;
   readonly outcome: ExecutionOutcomeKind;
@@ -336,6 +340,17 @@ export interface ReviewPacketTask {
   readonly leaseVersion: number | null;
   readonly errorCode: string | null;
   readonly errorMessage: string | null;
+  /**
+   * TeamRun T3-a.2: fan-out member provenance. Present only for a PARALLEL_READ member.
+   * `requestedAgentId`/`requestedModelId` are what LAYA asked for (never the Planner seed),
+   * so a refused member still shows what was requested even though `agentId`/`modelId`
+   * (actual) are null.
+   */
+  readonly requestedAgentId?: string | null;
+  readonly requestedModelId?: string | null;
+  readonly memberIndex?: number;
+  readonly assignmentStatus?: 'accepted' | 'refused';
+  readonly assignmentRefusalReason?: string | null;
 }
 
 /**
@@ -417,6 +432,15 @@ export function renderReviewPacket(packet: ReviewPacket): string {
     lines.push('');
     lines.push(`### ${t.taskId} — ${t.outcome} (status=${t.status}, type=${t.taskType}, ` +
       `agent=${t.agentId ?? '-'}, model=${t.modelId ?? '-'}, executed=${t.executed})`);
+    // TeamRun T3-a.2: for a fan-out member, state the REQUESTED pair and Assignment's verdict
+    // explicitly, so the reviewer can never read a never-executed refusal as "the agent failed".
+    if (t.requestedAgentId !== undefined) {
+      const verdict = t.assignmentStatus ?? 'accepted';
+      lines.push(`fan-out member ${t.memberIndex ?? '?'}: requested worker ${t.requestedAgentId}/` +
+        `${t.requestedModelId ?? '-'}; assignment ${verdict}` +
+        (verdict === 'refused' && t.assignmentRefusalReason ? ` (${t.assignmentRefusalReason})` : '') +
+        `; actual worker ${t.agentId === null ? 'none' : `${t.agentId}/${t.modelId ?? '-'}`}`);
+    }
     lines.push(`request given to the worker: ${t.prompt === null ? '(none recorded)' : t.prompt.text}`);
     if (t.prompt !== null && t.prompt.truncated) {
       lines.push(`[request truncated: ${t.prompt.originalLength} chars]`);
@@ -479,7 +503,22 @@ export interface NativeReviewer {
   review(req: Omit<RunRequest, 'mode'>): RunHandle;
 }
 
-export const REVIEW_STATUSES = ['completed', 'unavailable', 'failed', 'not_requested'] as const;
+/**
+ * Why a round has no review result, in four distinguishable ways — never two.
+ *
+ *   completed            the reviewer ran and expressed a verdict
+ *   unavailable          the reviewer could not be reached
+ *   failed               the reviewer ran and the attempt failed (or threw)
+ *   not_requested        the operator disabled review (`--no-review`)
+ *   execution_incomplete TeamRun T3-b.1: review was WITHHELD because the fan-out's requested
+ *                        members did not all reach an execution resolution, so the round's work
+ *                        is not finished and there is nothing complete to judge.
+ *
+ * The last one exists because it is NOT `failed` — the reviewer never ran and holds no opinion —
+ * and it is NOT `not_requested` — nobody asked for that. Folding either of those in would let an
+ * unfinished round read as reviewed.
+ */
+export const REVIEW_STATUSES = ['completed', 'unavailable', 'failed', 'not_requested', 'execution_incomplete'] as const;
 export type UnifiedReviewStatus = (typeof REVIEW_STATUSES)[number];
 
 export interface UnifiedReviewResult {

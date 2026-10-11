@@ -84,6 +84,70 @@ export interface ResourceClaim {
   readonly mode: ResourceClaimMode;
   readonly scope: ResourceScope;
   readonly createdAt: number;
+  /**
+   * W3.2: the canonical identity of the RESOURCE this claim covers.
+   *
+   * Retained as a first-class field so every resource operation matches on STRUCTURE
+   * rather than parsing `claimId`.
+   *
+   * The string matching this replaces was not merely fragile, it was wrong:
+   * `claimId.endsWith('write:<scope>')` is also satisfied by
+   * `exclusive-write:<scope>`, so retaining or releasing a `write` claim silently
+   * reached across and hit the `exclusive-write` claim on the same scope. Two distinct
+   * rights, one operation, two casualties.
+   *
+   * `claimId` is now OPAQUE: it is an identifier for logs and debugging, never a query
+   * language. See {@link matchesClaimScope}.
+   */
+  readonly scopeKey: string;
+  /**
+   * W3.1: is this claim being held for PHYSICAL reasons, not merely for want of a
+   * live lease?
+   *
+   * A claim is normally just a lease-shaped right, and §7.3 is right to void it the
+   * moment the lease dies — that is what stops a revoked task from blocking a
+   * workspace forever. But a claim marked `protectionRetained` is different: the
+   * orchestrator has established that an execution entered the edge, its tree stop
+   * could NOT be confirmed, and something may still be writing this scope.
+   *
+   * Then "lease dead", "live handle gone" and "session settled" are all LOGICAL
+   * facts that say nothing about the OS. W3 proved that precisely: a session can be
+   * settled and its handle removed while a writer keeps appending to the very files
+   * a rival writer is about to be admitted into. Deleting the claim on that basis is
+   * what let two writers into one scope.
+   *
+   * So a retained claim is exempt from automatic stale cleanup. It is released only
+   * by an EXPLICIT release backed by a positive tree-stop proof.
+   *
+   * This is NOT containment authority: this module never asks whether a Job is empty,
+   * whether a process is alive, or what a launcher reported. It stores a decision the
+   * orchestrator already made. `retentionReason` records which, so the next admission
+   * can tell "no live lease" from "a writer may still be running".
+   */
+  readonly protectionRetained: boolean;
+  readonly retentionReason: string | null;
+}
+
+/**
+ * W3.2: does this claim cover EXACTLY the requested resource right?
+ *
+ * Three structural field comparisons. No `startsWith`, no `endsWith`, no `includes`,
+ * no regular expression — every one of those is a query language over a string that
+ * was only ever meant to be an identifier, and each one has a matching failure mode:
+ * a mode that is a suffix of another mode, a scope that is a prefix or suffix of
+ * another, or a task id that happens to share a prefix.
+ *
+ * Comparing `mode` as a whole value is what makes `write` and `exclusive-write`
+ * different resources: they are different rights, and one operation on one of them
+ * must never touch the other.
+ */
+export function matchesClaimScope(
+  claim: ResourceClaim,
+  taskId: string,
+  mode: ResourceClaimMode,
+  key: string,
+): boolean {
+  return claim.taskId === taskId && claim.mode === mode && claim.scopeKey === key;
 }
 
 /**
@@ -262,6 +326,21 @@ export function claimsConflict(held: ResourceClaim, asked: ResourceClaim): boole
 
   if (!scopesOverlap(held.scope, asked.scope)) return false;
 
+  /*
+   * W3.1: a PHYSICALLY RETAINED claim outranks every mode combination below.
+   *
+   * The general matrix is about logical access rights: a `read` claim beside a `read`
+   * claim is fine because reading does not mutate. But a retained claim exists
+   * precisely because something may still be WRITING — so a rival read is not safe
+   * either. Admission must wait until the write actually stops, which is what
+   * `protectionRetained` means.
+   *
+   * Without this arm, a confirmed-unknown-stop execution could be read over by
+   * anything whose scope merely overlaps, which is the same hazard as admitting a
+   * writer, one level up.
+   */
+  if (held.protectionRetained || asked.protectionRetained) return true;
+
   // exclusive-write conflicts with everything that overlaps.
   if (held.mode === 'exclusive-write' || asked.mode === 'exclusive-write') return true;
 
@@ -350,6 +429,10 @@ export class ResourceClaimBook {
       mode: request.mode,
       scope: request.scope,
       createdAt: this.now(),
+      // Default: a plain lease-shaped right, voidable by §7.3 like any other.
+      protectionRetained: false,
+      retentionReason: null,
+      scopeKey: scopeKey(request.scope),
     };
 
     const conflicts = this.all().filter((held) => claimsConflict(held, asked));
@@ -392,13 +475,18 @@ export class ResourceClaimBook {
    * Needed because a task may hold several claims, and dropping "the task's claims"
    * to free one scope would silently drop the rest - giving back protection the
    * caller still believes it has.
+   *
+   * W3.2: matching is now EXACT and structural. This used to be
+   * `claimId.startsWith(...) && claimId.endsWith(`${mode}:${key}`)`, which also matched
+   * `exclusive-write` when asked for `write`, because `write:<key>` is a suffix of
+   * `exclusive-write:<key>`. A confirmed tree stop was therefore releasing a second,
+   * stronger claim the caller never asked about.
    */
   releaseClaimForScope(taskId: string, mode: ResourceClaimMode, scope: ResourceScope): number {
-    const wanted = `claim:${taskId}:`;
-    const key = `${mode}:${scopeKey(scope)}`;
+    const key = scopeKey(scope);
     let released = 0;
     for (const [claimId, claim] of [...this.byClaimId]) {
-      if (!claimId.startsWith(wanted) || !claimId.endsWith(key)) continue;
+      if (!matchesClaimScope(claim, taskId, mode, key)) continue;
       this.byClaimId.delete(claimId);
       this.byWorkspace.get(claim.workspaceId)?.delete(claimId);
       released++;
@@ -426,17 +514,75 @@ export class ResourceClaimBook {
    * never make a worker believe it still holds a writable resource (Race 4). Voiding
    * rather than ignoring is deliberate: an ignored stale claim would keep blocking
    * unrelated writers forever, which is the exact failure mode §7.3 exists to avoid.
+   *
+   * W3.1: a claim whose protection is PHYSICALLY RETAINED is exempt. The predicate
+   * decides logical staleness — a dead lease, a gone handle — and every one of those
+   * facts is silent about the OS. Honouring it for a retained claim deleted the
+   * protection while a writer was still appending to the scope, and the next
+   * admission walked straight in. A retained claim leaves only through an EXPLICIT
+   * release backed by a tree-stop proof.
    */
   voidClaimsWhere(isVoid: (claim: ResourceClaim) => boolean): number {
     let voided = 0;
+    let retainedSkipped = 0;
     for (const [claimId, claim] of [...this.byClaimId]) {
+      if (claim.protectionRetained) {
+        // Counted so the skip is observable, never silent.
+        if (isVoid(claim)) retainedSkipped++;
+        continue;
+      }
       if (!isVoid(claim)) continue;
       this.byClaimId.delete(claimId);
       this.byWorkspace.get(claim.workspaceId)?.delete(claimId);
       voided++;
     }
     if (voided > 0) this.pruneEmptyWorkspaces();
+    this.lastRetainedSkipped = retainedSkipped;
     return voided;
+  }
+
+  /** Claims the last `voidClaimsWhere` refused to remove for physical reasons. */
+  private lastRetainedSkipped = 0;
+
+  /** How many physically retained claims the last stale sweep declined to void. */
+  get retainedClaimsSkippedByLastVoid(): number {
+    return this.lastRetainedSkipped;
+  }
+
+  /**
+   * W3.1: mark a task's scope claim as PHYSICALLY RETAINED.
+   *
+   * Called by the orchestrator when the execution edge was entered but its tree stop
+   * could not be confirmed. From here the claim survives §7.3 stale cleanup, and it
+   * conflicts with every overlapping request.
+   *
+   * `reason` is recorded rather than discarded so an operator — or a later admission
+   * — can tell WHY a scope is still held, instead of finding a lock with no
+   * explanation.
+   *
+   * This is deliberately the ONLY way a claim becomes retained. It does not inspect
+   * processes, jobs or launchers: the orchestrator has already adjudicated the
+   * physical truth, and this method only records that adjudication durably.
+   */
+  retainProtection(taskId: string, mode: ResourceClaimMode, scope: ResourceScope, reason: string): number {
+    const key = scopeKey(scope);
+    let retained = 0;
+    for (const [claimId, claim] of [...this.byClaimId]) {
+      // W3.2: exact structural match. The old `endsWith(`${mode}:${key}`)` also matched
+      // `exclusive-write`, so retaining a `write` right silently protected a second,
+      // unrelated claim as a side effect.
+      if (!matchesClaimScope(claim, taskId, mode, key)) continue;
+      // Claims are immutable value objects, so retention replaces the entry with an
+      // updated copy rather than mutating one the caller may still hold.
+      this.byClaimId.set(claimId, { ...claim, protectionRetained: true, retentionReason: reason });
+      retained++;
+    }
+    return retained;
+  }
+
+  /** Claims currently held with physical protection. */
+  retainedProtectionClaims(): readonly ResourceClaim[] {
+    return this.all().filter((c) => c.protectionRetained);
   }
 
   /**
@@ -452,6 +598,12 @@ export class ResourceClaimBook {
       mode: request.mode,
       scope: request.scope,
       createdAt: 0,
+      // A probe is a hypothetical ASK, never a held claim, so it carries no
+      // protection of its own. The conflict arm still fires when it MEETS a
+      // retained claim in `claimsConflict`, which is the case that matters.
+      protectionRetained: false,
+      retentionReason: null,
+      scopeKey: scopeKey(request.scope),
     };
     return this.all().filter((held) => claimsConflict(held, probe));
   }

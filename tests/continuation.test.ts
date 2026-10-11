@@ -59,6 +59,7 @@ import {
 } from '../src/orchestration/continuation.ts';
 import { AVAILABILITY_ERROR_CODES, translateRunResult } from '../src/orchestration/translate.ts';
 import type { DecisionProvider } from '../src/decision/types.ts';
+import { sourceText } from './helpers.ts';
 
 let passed = 0;
 let failed = 0;
@@ -104,7 +105,7 @@ const registryWith = (agents: readonly string[]): ModelRegistry => {
   const reg = new ModelRegistry();
   for (const a of agents) {
     reg.upsert({ agentId: a, modelId: `${a}/m1`, provider: 'test', taskTypes: [impl], modelSource: 'test', quotaSource: 'test' } as never, NOW);
-    reg.setAvailability(a, 'available');
+    reg.setAgentAvailability(a, 'available');
   }
   return reg;
 };
@@ -548,7 +549,7 @@ section('R2-3 6. CASE 2 + CASE 6: agent_unavailable -> Agent B, same task / new 
 
     // Laya decides. Explicit target = the only path that names an agent.
     const { provider, asked } = laya([
-      { action: 'reassign', taskId, agentId: B, reason: `agent ${A} could not start (SPAWN_FAILED)` },
+      { action: 'reassign', taskId, agentId: B, modelId: `${B}/m1`, reason: `agent ${A} could not start (SPAWN_FAILED)` },
     ]);
     const cycle = await runDecisionCycleLocal(h, provider, taskId);
     check('the decision cycle ran', cycle.status === 'ok',
@@ -673,10 +674,10 @@ section('R2-3 9. CASE 7 + CASE 8: budget exhausted, and no oscillation');
 
     // A brain that always says "reassign to the next agent", cyclically A->B->A->B.
     const { provider } = laya([
-      { action: 'reassign', taskId, agentId: B, reason: 'A cannot start' },
-      { action: 'reassign', taskId, agentId: A, reason: 'B cannot start' },
-      { action: 'reassign', taskId, agentId: B, reason: 'A cannot start' },
-      { action: 'reassign', taskId, agentId: A, reason: 'B cannot start' },
+      { action: 'reassign', taskId, agentId: B, modelId: `${B}/m1`, reason: 'A cannot start' },
+      { action: 'reassign', taskId, agentId: A, modelId: `${A}/m1`, reason: 'B cannot start' },
+      { action: 'reassign', taskId, agentId: B, modelId: `${B}/m1`, reason: 'A cannot start' },
+      { action: 'reassign', taskId, agentId: A, modelId: `${A}/m1`, reason: 'B cannot start' },
     ]);
     const deps = driverDeps(h, null, provider);
     const result = await runHandoffContinuation(deps, { policy: DEFAULT_HANDOFF_POLICY });
@@ -715,7 +716,7 @@ section('R2-3 10. CASE 9 + CASE 10: both attempts reach the single unified revie
       beforeHandoff.map((r) => r.agentId).join(','));
     const rec1 = beforeHandoff[0]!;
 
-    const { provider } = laya([{ action: 'reassign', taskId, agentId: B, reason: 'A cannot start' }]);
+    const { provider } = laya([{ action: 'reassign', taskId, agentId: B, modelId: `${B}/m1`, reason: 'A cannot start' }]);
     const result = await runHandoffContinuation(driverDeps(h, null, provider));
     check('the handoff happened', result.handoffs.length === 1, String(result.handoffs.length));
     check('the handoff went A -> B',
@@ -773,7 +774,7 @@ section('R2-3 11. architecture topology');
   const code = (src: string): string =>
     src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 
-  const cont = code(readFileSync(fileURLToPath(new URL('../src/orchestration/continuation.ts', import.meta.url)), 'utf8'));
+  const cont = code(sourceText(new URL('../src/orchestration/continuation.ts', import.meta.url)));
   check('continuation.ts never dispatches', !/scheduler\s*\.\s*tick\s*\(/.test(cont) && !/\.tick\s*\(/.test(cont));
   check('continuation.ts has no scheduler of its own', !/new\s+TaskScheduler/.test(cont));
   check('continuation.ts has no ORCHESTRATION store', !/new\s+(AttemptStore|TaskStore)\b/.test(cont));

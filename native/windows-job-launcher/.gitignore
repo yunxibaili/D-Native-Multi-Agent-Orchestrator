@@ -1,0 +1,8 @@
+# Generated build output must never be tracked: these are machine-specific
+# binaries produced by whatever compiler happens to be installed.
+/build/
+*.exe
+*.obj
+*.o
+*.pdb
+*.ilk

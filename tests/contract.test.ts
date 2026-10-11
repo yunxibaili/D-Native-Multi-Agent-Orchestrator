@@ -601,7 +601,7 @@ class ManualFrameTransport implements Transport {
         signal: null,
         stderrTail: '',
         stderrTruncated: false,
-        cleanup: { rootKilled: false, descendantsReaped: false, note: 'manual' },
+        cleanup: { rootKilled: false, treeStopConfirmed: true, processStart: 'started', descendantsReaped: false, note: 'manual' },
       };
       for (const w of this.waiters.splice(0)) w(exit);
     });
@@ -618,7 +618,7 @@ class ManualFrameTransport implements Transport {
         signal: null,
         stderrTail: '',
         stderrTruncated: false,
-        cleanup: { rootKilled: false, descendantsReaped: false, note: 'manual' },
+        cleanup: { rootKilled: false, treeStopConfirmed: true, processStart: 'started', descendantsReaped: false, note: 'manual' },
       });
     }
     return new Promise<TransportExit>((res) => this.waiters.push(res));

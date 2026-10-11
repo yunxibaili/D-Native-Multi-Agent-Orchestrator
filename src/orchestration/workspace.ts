@@ -73,8 +73,27 @@ export type { WorkspaceMode };
 /** How the workspace is disposed of. `retain` is the only automatic behaviour. */
 export type WorkspaceCleanupPolicy = 'retain';
 
+/**
+ * R5-1.2C (§7): a workspace creation protection that is being held open because the
+ * git operation's descendant tree could not be confirmed stopped.
+ *
+ * Carries the lease that still owns the lock plus the execution identity and reason, so
+ * the retention is attributable and releasable — never an anonymous lock leak. It holds
+ * no decision authority: releasing it is the ordinary lock release, reached either by a
+ * confirmed terminal or by an explicit cleanup call.
+ */
+export interface RetainedWorkspaceProtection {
+  readonly taskId: string;
+  /** The lock key still held, so a rival asking for the same scope is refused. */
+  readonly lockKey: string;
+  /** The execution identity that was in flight when the stop went unconfirmed. */
+  readonly executionIdentity: string;
+  /** Why protection is still held, in words a caller can act on. */
+  readonly reason: string;
+  readonly since: number;
+}
+
 export interface WorkspaceHandle {
-  /** Stable per task: `task:<taskId>`. Identity does not change across calls. */
   readonly workspaceId: string;
   readonly mode: WorkspaceMode;
   readonly taskId: string;
@@ -110,6 +129,14 @@ export interface WorkspaceManagerOptions {
   now?: () => number;
   gitTimeoutMs?: number;
   env?: Readonly<Record<string, string | undefined>>;
+  /**
+   * R5-1.2 (P1-1) test seam: override the process construction for git calls.
+   * Production callers never set this; it exists so the workspace-lock-retention
+   * contract can be exercised deterministically without a real unkillable git.
+   */
+  gitProcessFactory?: Parameters<typeof runGit>[0]['processFactory'];
+  /** R5-1.2 (P1-1): passed through to runGit's finalize grace. */
+  gitFinalizeGraceMs?: number;
   /**
    * 5C-8: enable the cross-process workspace creation lock. ON by default;
    * set `false` only for a caller that is certain to be the only process.
@@ -166,12 +193,31 @@ export class WorkspaceManager {
   private readonly env: Record<string, string | undefined>;
   /** The workspace lifecycle authority. Deliberately NOT in TaskStore. */
   private readonly handles = new Map<string, WorkspaceHandle>();
+  /**
+   * R5-1.2C (§7): physical protections deliberately RETAINED because a git operation's
+   * descendant tree could not be confirmed stopped.
+   *
+   * This is not a second authority and not a decision to recover anything. It records
+   * that protection is still held, WHO holds it (the execution identity behind the
+   * lock, not an anonymous orphan) and WHY, so that a later confirmed terminal or an
+   * explicit cleanup can release it through the ordinary lock release. Retaining
+   * anonymously would make the lock permanently unreleasable, which is its own bug.
+   */
+  private readonly retainedProtections = new Map<string, RetainedWorkspaceProtection>();
+  /**
+   * R5-1.2C (§7): the still-owned leases behind {@link retainedProtections}. Kept apart
+   * from the reportable record so the public shape stays "who / why / since" while the
+   * release still goes through the ordinary owner-verified `tryRelease`.
+   */
+  private readonly retainedLeases = new Map<string, WorkspaceLockLease>();
   private gitAvailable: boolean | null = null;
   /**
    * 5C-8 cross-process creation lock. `null` disables locking entirely, which is
    * the honest default for a caller that knowingly runs single-process.
    */
   private readonly lock: WorkspaceLock | null;
+  private readonly gitProcessFactory: Parameters<typeof runGit>[0]['processFactory'] | undefined;
+  private readonly gitFinalizeGraceMs: number | undefined;
   private readonly lockEnabled: boolean;
   private readonly lockTimeoutMs: number;
   /** Branches this deployment refuses to delete, beyond the detected defaults. */
@@ -206,6 +252,8 @@ export class WorkspaceManager {
     this.lockEnabled = options.workspaceLock ?? true;
     this.lockTimeoutMs = options.workspaceLockTimeoutMs ?? 60_000;
     this.extraProtectedBranches = options.protectedBranches ?? [];
+    this.gitProcessFactory = options.gitProcessFactory;
+    this.gitFinalizeGraceMs = options.gitFinalizeGraceMs;
     this.lock = this.lockEnabled
       ? new WorkspaceLock({
           // A SIBLING of the project, for the same reason `worktreeRoot` is one:
@@ -286,6 +334,32 @@ export class WorkspaceManager {
     return this.claims.all();
   }
 
+  /**
+   * W3.1: hold this task's scope claim for PHYSICAL reasons.
+   *
+   * The orchestrator calls this when the execution edge was entered but the tree stop
+   * could not be confirmed. The claim then survives every logical staleness sweep
+   * (dead lease, missing live handle, settled session) and conflicts with any
+   * overlapping request — see `ResourceClaimBook.retainProtection` for why those
+   * logical facts are silent about the OS.
+   *
+   * The decision is the orchestrator's; this method only records it in the one place
+   * that arbitrates claims. It asks nothing about processes, jobs or launchers.
+   */
+  retainResourceProtection(
+    taskId: string,
+    mode: ResourceClaimMode,
+    scope: ResourceScope,
+    reason: string,
+  ): number {
+    return this.claims.retainProtection(taskId, mode, scope, reason);
+  }
+
+  /** Claims currently held under physical protection, for observability. */
+  retainedResourceProtections(): readonly ResourceClaim[] {
+    return this.claims.retainedProtectionClaims();
+  }
+
   get resourceClaimCount(): number {
     return this.claims.size;
   }
@@ -332,7 +406,11 @@ export class WorkspaceManager {
       // platform cannot resolve it.
       this.gitAvailable = true;
     }
-    return runGit({ gitPath: this.gitPath, args, cwd, timeoutMs: this.timeoutMs, env: this.env });
+    return runGit({
+      gitPath: this.gitPath, args, cwd, timeoutMs: this.timeoutMs, env: this.env,
+      ...(this.gitProcessFactory !== undefined ? { processFactory: this.gitProcessFactory } : {}),
+      ...(this.gitFinalizeGraceMs !== undefined ? { finalizeGraceMs: this.gitFinalizeGraceMs } : {}),
+    });
   }
 
   /** Is `dir` inside a git repository? Returns the repo root, or null. */
@@ -396,16 +474,79 @@ export class WorkspaceManager {
     // create is made by those checks, not by the git call.
     const lockKey = workspaceLockKey(this.projectRoot, taskId);
     const lease: WorkspaceLockLease | null = this.lock === null ? null : await this.lock.acquire(lockKey, `workspace:${taskId}`);
+    // R5-1.2C (§6): records that the git operation ended with an UNCONFIRMED
+    // descendant-tree stop. It is deliberately read by the `finally` below instead of
+    // being thrown past it: a `finally` that always unlocks would hand the scope to a
+    // rival writer while a leaked descendant could still be writing it.
+    //
+    // A one-element list, not a `let | null`: the value is assigned from inside a
+    // callback, and a narrowed closure-captured variable reads as permanently `null`
+    // here — which would silently restore the unconditional unlock.
+    const unconfirmedStop: string[] = [];
     try {
-      return await this.prepareIsolatedLocked(taskId);
+      return await this.prepareIsolatedLocked(taskId, (reason) => {
+        unconfirmedStop.push(reason);
+      });
     } finally {
-      // Released on EVERY exit path: success, refusal, and git failure alike.
-      if (lease !== null) this.lock?.tryRelease(lease);
+      if (lease !== null) {
+        const reason = unconfirmedStop[0];
+        if (reason !== undefined) {
+          // Protection is RETAINED, and the retention is attributable (§7): the lease
+          // is still owned, the identity and reason are recorded, and
+          // `releaseUnconfirmedProtection` can hand it back once the tree is known to be
+          // gone. Releasing here "just in case" is the exact defect being fixed.
+          this.retainedProtections.set(taskId, {
+            taskId,
+            lockKey,
+            executionIdentity: `workspace:${taskId}`,
+            reason,
+            since: this.now(),
+          });
+          this.retainedLeases.set(taskId, lease);
+        } else {
+          // Released on EVERY other exit path: success, refusal, and git failure alike.
+          this.lock?.tryRelease(lease);
+        }
+      }
     }
   }
 
+  /**
+   * R5-1.2C (§7): protections currently retained because a tree stop is unconfirmed.
+   * Observable, so an operator can see WHY a scope is still held instead of finding an
+   * unexplained lock.
+   */
+  unconfirmedProtections(): readonly RetainedWorkspaceProtection[] {
+    return [...this.retainedProtections.values()];
+  }
+
+  /**
+   * R5-1.2C (§7): release a retained protection after the caller has established the
+   * descendant tree is really gone (a confirmed terminal, or an explicit cleanup).
+   *
+   * This performs the ORDINARY lock release for the still-held key. It makes no
+   * judgement about the tree itself: the caller owns that fact, and refusing to guess
+   * is why this is explicit rather than automatic.
+   *
+   * Returns `false` when nothing was retained for `taskId`.
+   */
+  releaseUnconfirmedProtection(taskId: string): boolean {
+    const retained = this.retainedProtections.get(taskId);
+    const lease = this.retainedLeases.get(taskId);
+    if (retained === undefined || lease === undefined) return false;
+    this.retainedProtections.delete(taskId);
+    this.retainedLeases.delete(taskId);
+    // The ordinary, owner-verified release. Nothing here bypasses the lock's own
+    // "only delete a lock that is still mine" rule.
+    this.lock?.tryRelease(lease);
+    return true;
+  }
+
   /** Everything below runs while the 5C-8 creation lock is held. */
-  private async prepareIsolatedLocked(taskId: string): Promise<WorkspaceHandle> {
+  private async prepareIsolatedLocked(
+    taskId: string,
+    onUnconfirmedStop: (reason: string) => void,
+  ): Promise<WorkspaceHandle> {
     const repoRoot = await this.repoRootFor(this.projectRoot);
     if (repoRoot === null) {
       // Refused, NOT downgraded: a non-git project cannot be isolated, and
@@ -451,6 +592,21 @@ export class WorkspaceManager {
     const baseSha = await this.headSha(repoRoot);
 
     const add = await this.git(['worktree', 'add', '-b', branch, target], repoRoot);
+    // R5-1.2C (§6): the root git process is gone, but its DESCENDANT tree may not be.
+    // This is checked BEFORE any of the failure handling below, and BEFORE the worktree
+    // is treated as usable, because it changes who may hold this physical scope: an
+    // unconfirmed stop means a live writer may still exist, so the creation protection
+    // must be retained instead of released by the caller's `finally`.
+    if (!add.treeStopConfirmed) {
+      const reason =
+        `git worktree add for task "${taskId}" ended with an UNCONFIRMED descendant-tree stop ` +
+        `(stopState=${add.stopState}, cancelConfirmed=${String(add.cancelConfirmed)}, ` +
+        `cleanupConfirmed=${String(add.cleanupConfirmed)}); the root exited but no stop was ` +
+        `confirmed, so a descendant may still be writing "${target}". Physical protection is ` +
+        `retained; call releaseUnconfirmedProtection("${taskId}") only once the tree is known gone.`;
+      onUnconfirmedStop(reason);
+      throw new WorkspaceError('workspace-stop-unconfirmed', reason);
+    }
     if (add.code !== 0 || stderrIsFatal(add)) {
       const text = `${add.stderr}${add.stdout}`.trim();
       // Pre-flight the two cases we can name precisely, so the caller learns

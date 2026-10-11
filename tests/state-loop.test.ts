@@ -24,7 +24,7 @@
  * must not be required to run a unit test) and the runtime process.
  */
 
-import { mkdtempSync, rmSync, readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -62,6 +62,7 @@ import type {
 import type { QuotaRecord, TaskType } from '../src/quota/types.ts';
 import type { AgentDescriptor, RunHandle, RunRequest, RunResult } from '../src/core/types.ts';
 import type { RuntimeRunner } from '../src/orchestration/execute.ts';
+import { sourceText } from './helpers.ts';
 
 let passed = 0;
 let failed = 0;
@@ -122,7 +123,7 @@ const registryWith = (
       { agentId, modelId, provider: 'test', taskTypes: taskTypes as never, modelSource: 'test', quotaSource: 'test' },
       NOW,
     );
-    reg.setAvailability(agentId, availability);
+    reg.setAgentAvailability(agentId, availability);
   }
   return reg;
 };
@@ -836,7 +837,7 @@ section('P6-A 10. the decision brain has no path to execution');
   // Read the real files: this asserts the property from the source, not from a
   // belief about it. A future edit that hands the loop an orchestrator would fail here.
   const importOf = (file: string): string[] => {
-    const text = readFileSync(file, 'utf8');
+    const text = sourceText(file);
     return [...text.matchAll(/from '([^']+)'/g)].map((m) => m[1]);
   };
 
@@ -844,11 +845,11 @@ section('P6-A 10. the decision brain has no path to execution');
   // is how the whole project already reads core: for shapes, never for a runtime.
   // So the property under test is "imports no EXECUTOR", not "imports nothing".
   const typeOnly = (file: string, spec: string): boolean => {
-    const text = readFileSync(file, 'utf8');
+    const text = sourceText(file);
     return new RegExp(`import type [^;]*from '${spec.replace(/[/.]/g, (c) => `\\${c}`)}'`).test(text);
   };
   const importsRuntimeValue = (file: string, spec: string): boolean => {
-    const text = readFileSync(file, 'utf8');
+    const text = sourceText(file);
     // A non-`type` import of that specifier would be a value import.
     return new RegExp(`import (?!type )[^;]*from '${spec.replace(/[/.]/g, (c) => `\\${c}`)}'`).test(text);
   };
@@ -981,7 +982,7 @@ section('P6-A 12. no second store, scheduler, workspace or execution path');
     .replace(/`(?:[^`\\]|\\.)*`/g, '``')
     .replace(/'(?:[^'\\]|\\.)*'/g, "''")
     .replace(/"(?:[^"\\]|\\.)*"/g, '""');
-  const countOf = (pattern: RegExp): string[] => files.filter((f) => pattern.test(codeOf(readFileSync(f, 'utf8'))));
+  const countOf = (pattern: RegExp): string[] => files.filter((f) => pattern.test(codeOf(sourceText(f))));
 
   const stores = countOf(/new TaskStore\(/);
   check('TaskStore is instantiated in exactly one place', stores.length === 1, stores.join(', '));
@@ -1002,7 +1003,7 @@ section('P6-A 12. no second store, scheduler, workspace or execution path');
     'ResultStore', 'ExecutionResultStore', 'DispatchStore',
     'SecondScheduler', 'ExecutionController', 'ResultRegistry',
   ];
-  const allText = files.map((f) => codeOf(readFileSync(f, 'utf8'))).join('\n');
+  const allText = files.map((f) => codeOf(sourceText(f))).join('\n');
   for (const name of bannedAuthorities) {
     check(`R2-2: no ${name} exists anywhere in src/`,
       !new RegExp(`\\b(class|interface|type)\\s+${name}\\b`).test(allText) && !new RegExp(`new\\s+${name}\\b`).test(allText));
@@ -1014,7 +1015,7 @@ section('P6-A 12. no second store, scheduler, workspace or execution path');
   // P6-A must not have introduced a new path of any of these.
   const newFiles = ['src/orchestration/observation.ts', 'src/orchestration/decision.ts', 'src/orchestration/decision-loop.ts'];
   for (const f of newFiles) {
-    const text = readFileSync(f, 'utf8');
+    const text = sourceText(f);
     check(`${f} creates no store/scheduler/workspace/executor`,
       !/new TaskStore|new TaskScheduler|new WorkspaceManager|\.run\(/.test(text));
   }
@@ -1022,7 +1023,7 @@ section('P6-A 12. no second store, scheduler, workspace or execution path');
   // R2-2: the lease layer must not be reachable from the decision layer, which is not
   // allowed to hold a RunResult, a dispatch authority, or a credential of any kind.
   for (const f of newFiles) {
-    const text = readFileSync(f, 'utf8');
+    const text = sourceText(f);
     check(`${f} imports no lease / evidence internals`,
       !/assignment-lease|attempt-store|attempt-record/.test(text));
   }

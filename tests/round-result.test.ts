@@ -22,7 +22,7 @@
  * store and the execution edge are the real ones wherever a real one is available.
  */
 
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -64,6 +64,7 @@ import {
   type RoundResult,
 } from '../src/orchestration/round-result.ts';
 import { publishRoundResult, readRoundResult } from '../src/orchestration/round-observation.ts';
+import { sourceText } from './helpers.ts';
 
 const FAKE_AGENT = 'fake-impl';
 const registryWith = (entries: Array<[string, string, TaskType[], 'available' | 'unknown' | 'unavailable']>): ModelRegistry => {
@@ -72,8 +73,8 @@ const registryWith = (entries: Array<[string, string, TaskType[], 'available' | 
     reg.upsert({ agentId, modelId, provider: 'test', taskTypes, modelSource: 'test', quotaSource: 'test' }, NOW);
     // Availability is a SEPARATE call from the upsert. Without it the model exists but is
     // not selectable, and Assignment refuses with `no-available-agent` — which is what a
-    // missing `setAvailability` looks like from the outside.
-    reg.setAvailability(agentId, 'available');
+    // missing availability call looks like from the outside.
+    reg.setAgentAvailability(agentId, 'available');
   }
   return reg;
 };
@@ -1429,7 +1430,7 @@ section('R4-21: architecture guards');
 
 {
   const root = join(fileURLToPath(new URL('.', import.meta.url)), '..');
-  const read = (rel: string): string => readFileSync(join(root, rel), 'utf8');
+  const read = (rel: string): string => sourceText(join(root, rel));
 
   // Strip comments so documentation about the rule cannot satisfy the rule.
   const stripComments = (s: string): string =>

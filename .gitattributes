@@ -1,0 +1,13 @@
+# R5-1: explicit repository normalization. No renormalization performed; the
+# index keeps its current content. This only makes the policy explicit so future
+# adds/commits are deterministic and exact-LF source guards stop being fragile.
+* text=auto
+
+# Windows-only scripts keep CRLF (some Windows tools reject LF-only .cmd/.bat).
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Never normalize these.
+*.png binary
+*.jpg binary
+*.ico binary

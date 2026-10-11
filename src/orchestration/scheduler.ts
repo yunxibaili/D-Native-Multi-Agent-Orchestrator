@@ -29,12 +29,37 @@
  * or copied; the implementation is TS-native against our own TaskStore.
  */
 
+import type { RunHandle } from '../core/types.ts';
+import type { DispatchTerminal, RunRequestMapping } from './execute.ts';
 import type { Orchestrator } from './orchestrator.ts';
 import { unmetDependencies, type Task } from './task.ts';
 import type { TranslateOptions } from './translate.ts';
 
 /** Exactly what executeTask resolves to. Derived, never re-declared. */
 export type ExecuteResult = Awaited<ReturnType<Orchestrator['executeTask']>>;
+
+/**
+ * TeamRun T1-e: the dispatch seams a tick caller can observe, forwarded through
+ * `ExecuteTaskRequest.onStart` / `onDispatchTerminal` / `resolveSessionForDispatch`.
+ *
+ * `onDispatchStart` fires once the runtime has ACCEPTED the run, so "the execution
+ * really began" is the runtime's own answer, not the scheduler's guess; it may mark
+ * a session running. `onDispatchTerminal` is its exactly-once symmetric half: every
+ * started execution settles exactly once, whatever the outcome and regardless of
+ * write-back acceptance. `resolveSessionForDispatch` is consulted at the freeze
+ * point inside executeTask — after the last pre-dispatch await, with the pair that
+ * will actually run — and the scheduler never becomes a session authority: it only
+ * carries the caller's resolver.
+ */
+export interface TickDispatchHooks {
+  readonly onDispatchStart?: (taskId: string, handle: RunHandle, mapping: RunRequestMapping) => void;
+  readonly onDispatchTerminal?: (taskId: string, handle: RunHandle, mapping: RunRequestMapping, terminal: DispatchTerminal) => void;
+  readonly resolveSessionForDispatch?: (input: {
+    taskId: string;
+    agentId: string;
+    modelId: string | null;
+  }) => { sessionId?: string; nativeThreadId?: string } | undefined;
+}
 
 export interface TaskSchedulerOptions {
   /** The orchestrator whose `executeTask` we drive. We hold no runtime. */
@@ -84,14 +109,54 @@ export interface SchedulerSkip {
   reason: string;
 }
 
+/**
+ * TeamRun T3-b.1: an optional POSITIVE dispatch scope for ONE tick invocation.
+ *
+ * WHAT IT IS — the set of task ids this single `tick()` may select candidates from.
+ *
+ * WHAT IT IS NOT
+ * - Not a dispatch decision. The Scheduler still owns status filtering, dependency
+ *   satisfaction, the capacity budget, deterministic ordering, and the single
+ *   `executeTask()` call. The caller cannot override any of those by listing a task.
+ * - Not an exclusion list. Naming the allowed set is what makes an unrelated
+ *   `planned` task in the same tree unable to enter a fan-out execution phase.
+ * - NOT PERSISTED. It is a parameter of one call and is never stored on the scheduler,
+ *   the TaskStore, a Task, a Session or an Assignment. That is deliberate: a handoff
+ *   continuation legitimately re-executes the SAME taskId in a later phase, and a
+ *   remembered scope would suppress it.
+ *
+ * Omitting it is byte-compatible with the pre-T3-b.1 behaviour: no scope means "every
+ * candidate in this tree", which is what every existing caller means.
+ */
+export interface TickScope {
+  readonly taskIds: ReadonlySet<string>;
+}
+
 export interface TickResult {
-  /** Tasks dispatched this tick, in the order they were admitted. */
+  /**
+   * Tasks whose execution was really dispatched AND whose authoritative outcome was
+   * applied by the control plane, in the order they were admitted.
+   *
+   * R5-1.2 §4: `admitted` means "accepted for dispatch/execution", NOT "succeeded".
+   * It therefore also contains executions that ran and FAILED, timed out, or were
+   * cancelled — anything that genuinely executed. Execution success is read from
+   * `outcomes[].run` / the task's own status, never from membership here.
+   *
+   * A task whose write-back was REFUSED after it ran (Case C) is not listed here
+   * even though it executed: it is reported under `skipped` with its refusal code,
+   * and its real run is still preserved in `outcomes`.
+   */
   admitted: string[];
   /** Tasks that are ready but had no free slot this tick. */
   waiting: string[];
-  /** Tasks not eligible at all (unresolved dependency, wrong state, out of scope). */
+  /**
+   * Tasks the control plane did not admit: never eligible (unresolved dependency,
+   * wrong state, out of scope), or refused at admission, or executed but with the
+   * write-back refused. Membership here is NOT "never ran" — read `outcomes[].run`
+   * for whether anything executed.
+   */
   skipped: SchedulerSkip[];
-  /** One entry per admitted task, in admission order. */
+  /** One entry per settled dispatch (admitted AND refused), in dispatch order. */
   outcomes: Array<{ taskId: string; outcome: ExecuteResult }>;
   /** Free execution slots when the tick started. Derived, never stored. */
   freeSlots: number;
@@ -136,8 +201,13 @@ export class TaskScheduler {
    * scheduling 鈥?those are explicitly out of scope, and any of them would make
    * the same input produce different selections.
    */
-  private candidates(): Task[] {
+  private candidates(scope?: TickScope): Task[] {
     return this.scopedTasks()
+      // TeamRun T3-b.1: an optional POSITIVE allowlist, applied to the candidate set BEFORE any
+      // dependency check and BEFORE any capacity is consumed. Filtering later (after selecting,
+      // after decrementing `free`) would still burn the slot, which is the whole defect this
+      // exists to prevent.
+      .filter((t) => scope === undefined || scope.taskIds.has(t.taskId))
       .filter((t) => t.status === 'planned' || t.status === 'queued')
       .sort((a, b) => a.createdAt - b.createdAt || a.order - b.order || (a.taskId < b.taskId ? -1 : 1));
   }
@@ -186,7 +256,7 @@ export class TaskScheduler {
    * must never do. The guard is on dispatch, not on awaiting, so a caller that
    * fires ticks from a timer cannot stack loops.
    */
-  async tick(promptFor?: ReadonlyMap<string, string>, threadFor?: ReadonlyMap<string, string>): Promise<TickResult> {
+  async tick(promptFor?: ReadonlyMap<string, string>, threadFor?: ReadonlyMap<string, string>, hooks?: TickDispatchHooks, scope?: TickScope): Promise<TickResult> {
     if (this.ticking) {
       return {
         admitted: [],
@@ -198,7 +268,7 @@ export class TaskScheduler {
     }
     this.ticking = true;
     try {
-      return await this.runTick(promptFor, threadFor);
+      return await this.runTick(promptFor, threadFor, hooks, scope);
     } finally {
       this.ticking = false;
     }
@@ -215,7 +285,7 @@ export class TaskScheduler {
    * for no gain. Both are optional and both default to "carry nothing", which is
    * what preserves the pre-D1 behaviour exactly.
    */
-  private async runTick(promptFor?: ReadonlyMap<string, string>, threadFor?: ReadonlyMap<string, string>): Promise<TickResult> {
+  private async runTick(promptFor?: ReadonlyMap<string, string>, threadFor?: ReadonlyMap<string, string>, hooks?: TickDispatchHooks, scope?: TickScope): Promise<TickResult> {
     // Read from the gate, which is the same number `executeTask` will enforce.
     const maxConcurrency = this.orch.getConcurrencyLimit();
     let free = Math.max(0, maxConcurrency - this.occupiedSlots());
@@ -225,7 +295,7 @@ export class TaskScheduler {
     const waiting: string[] = [];
     const pending: Array<Promise<{ taskId: string; outcome: ExecuteResult }>> = [];
 
-    for (const task of this.candidates()) {
+    for (const task of this.candidates(scope)) {
       const unmet = this.unmetDependencies(task);
       if (unmet.length > 0) {
         skipped.push({ taskId: task.taskId, code: 'dependency-unmet', reason: `waiting on ${unmet.join(', ')}` });
@@ -259,6 +329,21 @@ export class TaskScheduler {
             // session's handle, because that would silently resume the wrong
             // conversation.
             ...(threadFor?.get(task.taskId) !== undefined ? { threadId: threadFor.get(task.taskId) } : {}),
+            // T1-d/T1-e: forward the caller's dispatch seams through the ONE set of
+            // hooks executeTask already provides. `onStart` fires once the runtime
+            // has accepted the run; `onDispatchTerminal` is its exactly-once
+            // symmetric half; `resolveSessionForDispatch` is consulted at the freeze
+            // point with the pair that will actually run. The scheduler adds nothing
+            // of its own here — it only names the task each hook belongs to.
+            ...(hooks?.onDispatchStart !== undefined
+              ? { onStart: (handle: RunHandle, mapping: RunRequestMapping) => hooks.onDispatchStart!(task.taskId, handle, mapping) }
+              : {}),
+            ...(hooks?.onDispatchTerminal !== undefined
+              ? { onDispatchTerminal: (handle: RunHandle, mapping: RunRequestMapping, terminal: DispatchTerminal) => hooks.onDispatchTerminal!(task.taskId, handle, mapping, terminal) }
+              : {}),
+            ...(hooks?.resolveSessionForDispatch !== undefined
+              ? { resolveSessionForDispatch: (input: { taskId: string; agentId: string; modelId: string | null }) => hooks.resolveSessionForDispatch!(input) }
+              : {}),
           });
       } catch (e) {
         skipped.push({

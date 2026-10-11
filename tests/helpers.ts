@@ -7,6 +7,7 @@
  * runtime's guarantees around it.
  */
 
+import { readFileSync } from 'node:fs';
 import { EventHub } from '../src/core/event-hub.ts';
 import { InvalidRequestError, UnsupportedOptionError } from '../src/core/errors.ts';
 import * as E from '../src/core/event.ts';
@@ -126,7 +127,7 @@ export class FakeTransport implements Transport {
       stderrTruncated: false,
       // Mirrors the real contract: cancel issues a tree kill against a LIVE
       // root, so this is the one path where rootKilled can be true.
-      cleanup: { rootKilled: true, descendantsReaped: true, note: 'cancelled: tree kill issued' },
+      cleanup: { rootKilled: true, treeStopConfirmed: true, processStart: 'started', descendantsReaped: true, note: 'cancelled: tree kill issued' },
     });
   }
 
@@ -161,7 +162,7 @@ export class FakeTransport implements Transport {
           stderrTail: step.stderrTail ?? '',
           stderrTruncated: false,
           // Normal exit: the root is already gone, so no tree kill is issued.
-          cleanup: { rootKilled: false, descendantsReaped: false, note: 'root already exited' },
+          cleanup: { rootKilled: false, treeStopConfirmed: true, processStart: 'started', descendantsReaped: false, note: 'root already exited' },
         });
         return;
       }
@@ -240,6 +241,13 @@ export function createFakeAdapter(options: FakeAdapterOptions = {}): AgentAdapte
           throw new UnsupportedOptionError(id, opt, `fake agent refuses ${opt}.`);
         }
         if (present && opt !== 'extraArgs' && !capabilitiesSupports(opt, capabilities)) {
+          // R5-1.1 (§11) fidelity fix: `mode` is only a review capability when it
+          // ASKS for the review entrypoint. The real adapters accept
+          // `mode: 'default'` from every agent — rejecting it here made fakes with
+          // `review: false` (OpenCode / WorkBuddy) stricter than the real CLIs and
+          // broke the production-shaped fixtures once the fakes truly replaced the
+          // natives.
+          if (opt === 'mode' && (req.mode ?? 'default') === 'default') continue;
           throw new UnsupportedOptionError(id, opt, `fake agent has no ${opt} support.`);
         }
       }
@@ -326,4 +334,17 @@ export function recordingSink(): RecordingSink {
       return thread;
     },
   };
+}
+
+/**
+ * R5-1 (§7): read a source file with LF/CRLF treated as SEMANTICALLY EQUIVALENT.
+ *
+ * The repo has `core.autocrlf=true` and no historical renormalization, so working
+ * trees legitimately contain LF, CRLF, or a mix for the same index content. A
+ * source-text guard that assumes exact `\n` therefore fails on line ending, not on
+ * architecture. Guards must read through this helper so the line-ending policy can
+ * never decide an architecture assertion.
+ */
+export function sourceText(path: string | URL): string {
+  return readFileSync(path, 'utf8').replace(/\r\n?/g, '\n');
 }

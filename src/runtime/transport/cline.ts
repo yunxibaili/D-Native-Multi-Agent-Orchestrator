@@ -325,7 +325,7 @@ export class ClineSidecarTransport implements Transport {
   private openStartGate: () => void = () => undefined;
 
   private cleanupDone = false;
-  private cleanup: CleanupResult = { rootKilled: false, descendantsReaped: false, note: 'not attempted' };
+  private cleanup: CleanupResult = { rootKilled: false, descendantsReaped: false, note: 'not attempted', treeStopConfirmed: false, processStart: 'may-have-started' };
 
   constructor(options: ClineTransportOptions) {
     this.opts = options;
@@ -391,7 +391,7 @@ export class ClineSidecarTransport implements Transport {
         signal: null,
         stderrTail: '',
         stderrTruncated: false,
-        cleanup: { rootKilled: false, descendantsReaped: false, note: 'process never started' },
+        cleanup: { rootKilled: false, descendantsReaped: false, note: 'process never started', treeStopConfirmed: false, processStart: 'may-have-started' },
       };
     }
     const exit = await proc.exited;
@@ -404,6 +404,8 @@ export class ClineSidecarTransport implements Transport {
         this.cleanup = {
           rootKilled: false,
           descendantsReaped: false,
+          treeStopConfirmed: false,
+          processStart: proc.processStartDisposition,
           note: `reap threw: ${(e as Error).message}`,
         };
       }
@@ -419,7 +421,10 @@ export class ClineSidecarTransport implements Transport {
   }
 
   /** Abort the turn on Cline's side, then stop the process we started. */
-  async cancel(reason: string): Promise<void> {
+  // R5-1.2C (§9): the confirmation is now RETURNED rather than discarded, matching the
+  // CLI transport. A `false` means the descendant tree's stop is NOT confirmed, which the
+  // session must be able to see so it can retain protection and allow an explicit retry.
+  async cancel(reason: string): Promise<boolean> {
     const sock = this.sock;
     if (sock && !this.finishing && this.sessionId) {
       try {
@@ -433,7 +438,13 @@ export class ClineSidecarTransport implements Transport {
     }
     this.endTurn();
     const proc = this.proc;
-    if (proc && proc.exitCode === null) await proc.cancel(reason);
+    // Nothing was ever started, so there is nothing to stop.
+    if (proc === null || proc === undefined) return true;
+    // The root is already gone: `taskkill /T` walks a LIVE tree, so the stop of any
+    // descendant it left behind cannot be confirmed from here. Report that honestly
+    // instead of letting a dead root stand in for a stopped tree.
+    if (proc.exitCode !== null) return false;
+    return proc.cancel(reason);
   }
 
   async dispose(): Promise<void> {

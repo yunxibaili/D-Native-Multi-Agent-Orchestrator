@@ -14,18 +14,19 @@
  *                         review rework - re-dispatch on the SAME worker; sessions
  *                         track every run; handoffs surface real results.
  */
-
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { ModelRegistry } from '../src/quota/registry.ts';
 import { BudgetManager } from '../src/quota/budget.ts';
 import type { TaskType, QuotaRecord } from '../src/quota/types.ts';
-import type { AgentDescriptor, RunRequest, RunResult } from '../src/core/types.ts';
+import type { AgentDescriptor, RunHandle, RunRequest, RunResult } from '../src/core/types.ts';
 import type { RuntimeRunner } from '../src/orchestration/execute.ts';
+import { workerIdentityOfAttempt, workerIdentityOfSession, sameWorker } from '../src/orchestration/worker-identity.ts';
+import type { WorkspaceManager } from '../src/orchestration/workspace.ts';
 import { Orchestrator as RuntimeOrch } from '../src/orchestrator/orchestrator.ts';
-import { createFakeAdapter } from './helpers.ts';
+import { createFakeAdapter, sourceText } from './helpers.ts';
 import { Orchestrator } from '../src/orchestration/orchestrator.ts';
 import { TaskScheduler } from '../src/orchestration/scheduler.ts';
 import { SessionRegistry } from '../src/orchestration/workbench-sessions.ts';
@@ -33,6 +34,8 @@ import { buildHandoff, buildTaskBrief } from '../src/orchestration/workbench-han
 import { shapeForComplexity, workKindToTaskType, planFromSpec } from '../src/orchestration/workbench-plan.ts';
 import { NativeWorkbench, DEFAULT_ROOT_AGENT_ID } from '../src/orchestration/workbench.ts';
 import { validateReviewVerdict } from '../src/orchestration/review-verdict.ts';
+import { prepareRework } from '../src/orchestration/review-loop.ts';
+import { sessionCompatibleWith } from '../src/orchestration/workbench-sessions.ts';
 import { planTasks } from '../src/orchestration/planner.ts';
 import { runDecisionCycle, orchestrationDecisionRequest, extractAction, ACTION_PARAMETERS, type DecisionOutcome } from '../src/orchestration/decision-loop.ts';
 import { observeTasks } from '../src/orchestration/observation.ts';
@@ -68,7 +71,7 @@ const registryWith = (entries: Array<[string, string, string[]]>): ModelRegistry
   const reg = new ModelRegistry();
   for (const [agentId, modelId, taskTypes] of entries) {
     reg.upsert({ agentId, modelId, provider: 'test', taskTypes: taskTypes as never, modelSource: 'test', quotaSource: 'test' }, NOW);
-    reg.setAvailability(agentId, 'available');
+    reg.setAgentAvailability(agentId, 'available');
   }
   return reg;
 };
@@ -86,11 +89,18 @@ const fakeRuntime = (): { runtime: RuntimeRunner; requests: RunRequest[] } => {
   return { runtime: { run: (r: RunRequest) => { requests.push(r); return rt.run(r); } }, requests };
 };
 
-function makeWorkbench(opts: { maxConcurrency?: number; preferred?: { agentId: string; modelId?: string }; rootAgentId?: string } = {}): {
+function makeWorkbench(opts: { maxConcurrency?: number; preferred?: { agentId: string; modelId?: string }; rootAgentId?: string; onRun?: (index: number) => void } = {}): {
   wb: NativeWorkbench; requests: RunRequest[]; dir: string; cleanup: () => void;
 } {
   const dir = mkdtempSync(join(tmpdir(), 'wb-'));
-  const { runtime, requests } = fakeRuntime();
+  const { runtime: innerRuntime, requests } = fakeRuntime();
+  // R5-1.2C Case 31: an optional hook fired synchronously right after a dispatch. It runs
+  // BEFORE the fake adapter's exit settles, so a test can invalidate the writer's lease
+  // while the execution is genuinely in flight and still produce a real run.
+  let runIndex = 0;
+  const runtime = opts.onRun === undefined
+    ? innerRuntime
+    : { run: (r: RunRequest) => { const h = innerRuntime.run(r); opts.onRun?.(++runIndex); return h; } };
   // The spawn gate is fail-closed on a missing task-scope budget, so EVERY id used
   // below must be allocated up front (same reason tests/native-agent-e2e.test.ts
   // calls ensureBudgets after planning).
@@ -370,7 +380,28 @@ async function section5(): Promise<void> {
     const d = await wb.dispatch();
     check('a non-zero native exit becomes a task FAILURE', wb.store.get('f1-s1')?.status === 'failed',
       String(wb.store.get('f1-s1')?.status));
-    check('the failure is reported on the tick, not swallowed', d.tick?.outcomes.some((o) => !o.outcome.ok) === true);
+    // R5-1.2 搂1 Case B / 搂7. The tick did NOT fail: the execution was really dispatched
+    // and its authoritative FAILED result was applied successfully, so `ok` is true and
+    // the failure is carried by the task status and the real run. Asserting `!ok` here
+    // would re-impose the old confusion between an execution outcome and a control-plane
+    // outcome (and would name an ordinary non-zero exit `runtime-rejected-run`, which the
+    // unified classifier maps to `agent_unavailable` 鈥?a spurious handoff).
+    const f1out = d.tick?.outcomes.find((o) => o.taskId === 'f1-s1');
+    check('execution failure is preserved as an ADMITTED failed outcome',
+      f1out?.outcome.ok === true
+      && d.tick?.admitted.includes('f1-s1') === true
+      && wb.store.get('f1-s1')?.status === 'failed'
+      && f1out.outcome.run?.state === 'failed'
+      && f1out.outcome.run?.exitCode === 3
+      && f1out.outcome.run?.error?.code === 'NONZERO_EXIT',
+      JSON.stringify({
+        ok: f1out?.outcome.ok,
+        admitted: d.tick?.admitted.includes('f1-s1') === true,
+        status: wb.store.get('f1-s1')?.status,
+        runState: f1out?.outcome.run?.state,
+        exitCode: f1out?.outcome.run?.exitCode,
+        errorCode: f1out?.outcome.run?.error?.code,
+      }));
     check('a failed task does NOT reach succeeded', wb.store.get('f1-s1')?.status !== 'succeeded');
     rmSync(dir, { recursive: true, force: true });
   }
@@ -682,6 +713,66 @@ async function section6(): Promise<void> {
     check('C: the filter still reported OTHER as rejected for that task type',
       o?.outcome?.rejected.some((r) => r.agentId === OTHER) === true,
       JSON.stringify(o?.outcome?.rejected.map((r) => r.agentId)));
+    cleanup();
+  }
+
+  // ---- Case 31: a REFUSED rework keeps its rework identity and evidence ----
+  {
+    // R5-1.2C (搂12): the rework/execution split was gated on `ok`, so a rework attempt
+    // whose WRITE-BACK was refused (`ok:false` with a real run) was classified as an
+    // ordinary execution: no rework evidence row, and `pendingReworks` never consumed 鈥?    // the rework lineage was silently lost. The lease is genuinely invalidated mid-run
+    // here through the store's own rule, so the refusal and the run are both real.
+    let migrateOnRework = false;
+    const { wb, cleanup } = makeWorkbench({
+      onRun: () => {
+        // Run #1 is the original execution; run #2 is the rework. Only the rework's
+        // write-back is refused, so the pre-refusal baseline stays measurable.
+        if (!migrateOnRework) return;
+        migrateOnRework = false;
+        wb.store.migrateIdentityAfterStart('r-s1', { agentId: OTHER, modelId: MIMO, reason: 'moved to a free worker' }, NOW + 10);
+      },
+    });
+    wb.plan({ taskId: 'r', objective: 'refused rework', taskType: impl, shape: 'single', budgetUnits: 10 } as never, null);
+    wb.assignChildren('r', { taskId: 'r', taskType: impl } as never);
+    await wb.dispatch();
+    const childId = 'r-s1';
+    check('Case 31 setup: the first execution is recorded as an ordinary execution',
+      wb.evidence.countByKind(childId, 'execution') === 1 && wb.evidence.countByKind(childId, 'rework') === 0,
+      `exec=${wb.evidence.countByKind(childId, 'execution')} rework=${wb.evidence.countByKind(childId, 'rework')}`);
+
+    const rework = validateReviewVerdict({ verdict: 'rework', reason: 'needs a test', findings: [], recommendedAction: 'none', reviewer: 'codex', reviewedAt: NOW });
+    wb.applyReview(childId, rework);
+    migrateOnRework = true;
+    const historyBefore = wb.evidence.history(childId).length;
+    const d2 = await wb.dispatch();
+    const refusedEntry = d2.tick?.outcomes.find((o) => o.taskId === childId);
+
+    check('Case 31a: the rework write-back really WAS refused, with a real run retained',
+      refusedEntry !== undefined && refusedEntry.outcome.ok === false && refusedEntry.outcome.run !== undefined,
+      refusedEntry === undefined ? 'no outcome' : `ok=${String(refusedEntry.outcome.ok)} run=${refusedEntry.outcome.run === undefined ? 'absent' : 'present'}`);
+    // The whole point: it must be a REWORK row, not an ordinary execution row.
+    check('Case 31b: the refused rework is recorded with its REWORK identity, not as an execution',
+      wb.evidence.countByKind(childId, 'rework') === 1,
+      `rework=${wb.evidence.countByKind(childId, 'rework')} exec=${wb.evidence.countByKind(childId, 'execution')}`);
+    check('Case 31c: the refused rework did NOT add a second ordinary execution row',
+      wb.evidence.countByKind(childId, 'execution') === 1, String(wb.evidence.countByKind(childId, 'execution')));
+    const historyBefore2 = historyBefore;
+    check('Case 31d: the refused rework ADDED exactly one evidence row (nothing dropped)',
+      wb.evidence.history(childId).length === historyBefore2 + 1,
+      `${historyBefore2} -> ${wb.evidence.history(childId).length}`);
+    const reworkRow = wb.evidence.history(childId).find((a) => a.kind === 'rework');
+    check('Case 31e: the refused rework row is a real attempt with its own identity',
+      reworkRow !== undefined && reworkRow.attemptId.length > 0,
+      reworkRow === undefined ? 'no rework row' : reworkRow.attemptId);
+    // The run really happened, so its evidence must be bound to the rework attempt —
+    // otherwise the refused write-back would erase the only proof the work was done.
+    const boundRun = reworkRow === undefined ? undefined : wb.attemptEvidenceMap()[reworkRow.attemptId];
+    check('Case 31f: the real run evidence is bound to the refused rework attempt',
+      boundRun !== undefined,
+      boundRun === undefined ? 'no bound evidence for the rework attempt' : 'bound');
+    check('Case 31g: the refused write-back did NOT move the task',
+      wb.store.get(childId)?.status !== 'succeeded',
+      String(wb.store.get(childId)?.status));
     cleanup();
   }
 
@@ -1170,7 +1261,7 @@ await wb.dispatch();
     cleanup();
   }
 
-  // ---- review evidence is now recorded (P6-D1 §12) ----
+  // ---- review evidence is now recorded (P6-D1 搂12) ----
   {
     const { wb, cleanup } = makeWorkbench();
     wb.plan({ taskId: 'r', objective: 'reviewed', taskType: impl, shape: 'single', budgetUnits: 10 } as never, null);
@@ -1265,17 +1356,35 @@ async function section8(): Promise<void> {
       params.reassign.includes('agentId') && params.reassign.includes('taskId'), JSON.stringify(params.reassign));
     check('DC-4: add_task declares its objective and type',
       params.add_task.includes('objective') && params.add_task.includes('taskType'), JSON.stringify(params.add_task));
-    // The real seam: a provider answer with sibling keys becomes the decision.
+// The real seam: a provider answer with sibling keys becomes the decision.
+    // TeamRun T2-a.1 (§6/§14): this used to carry `agentId` ALONE and assert the result
+    // was a "COMPLETE decision" — i.e. it encoded a half-chosen Laya pair that Assignment
+    // would silently finish. A Laya pair is atomic, so the provider now carries both
+    // halves, and the partial form is asserted to be refused just below.
     const extracted = extractAction({
       answers: { next_action: {
         type: 'choice', choice: 'reassign', criteria: {},
-        parameters: { taskId: 'r-s1', agentId: 'fake-other', reason: 'stuck worker' },
+        parameters: { taskId: 'r-s1', agentId: 'fake-other', modelId: MIMO, reason: 'stuck worker' },
       } },
     } as never);
     const validated = validateDecision(extracted, obs);
     check('DC-4: a provider-carried target reaches a COMPLETE decision',
-      validated.action === 'reassign' && validated.taskId === 'r-s1' && validated.agentId === 'fake-other' &&
-      validated.reason === 'stuck worker', JSON.stringify(validated));
+      validated.action === 'reassign' && validated.taskId === 'r-s1' && validated.agentId === 'fake-other'
+      && validated.modelId === MIMO && validated.reason === 'stuck worker', JSON.stringify(validated));
+    // And the half-pair form is now a validation failure, not a completed decision.
+    let partialRefused = '';
+    try {
+      validateDecision(extractAction({
+        answers: { next_action: {
+          type: 'choice', choice: 'reassign', criteria: {},
+          parameters: { taskId: 'r-s1', agentId: 'fake-other' },
+        } },
+      } as never), obs);
+    } catch (e) {
+      partialRefused = (e as Error).message;
+    }
+    check('DC-4/T2A1-11: a provider-carried HALF pair is refused, not completed',
+      partialRefused.includes('ATOMIC'), partialRefused.slice(0, 120));
     cleanup();
   }
 
@@ -1429,7 +1538,7 @@ const { wb, requests, cleanup } = makeWorkbench();
     check('DC-3: every action is present in the parameter contract',
       matrix.every(([a]) => a in ACTION_PARAMETERS), Object.keys(ACTION_PARAMETERS).join(','));
     // No action may declare a target the validator would then ignore.
-    const validatorSource = readFileSync('src/orchestration/decision.ts', 'utf8');
+    const validatorSource = sourceText('src/orchestration/decision.ts');
     for (const [action, , needsTarget] of matrix) {
       const declared = (ACTION_PARAMETERS as Record<string, readonly string[]>)[action] ?? [];
       const unused = declared.filter((f) => f !== 'rationale' && !new RegExp(`raw\\.${f}\\b`).test(validatorSource));
@@ -1451,16 +1560,16 @@ async function section10(): Promise<void> {
   // selection, which would make a skill name a second routing authority. Lock that.
   const adapters = ['opencode', 'codex', 'cline', 'workbuddy'];
   const declared = adapters.every((a) => {
-    const src = readFileSync(`src/adapters/${a}.ts`, 'utf8');
+    const src = sourceText(`src/adapters/${a}.ts`);
     const block = src.slice(src.indexOf('const CAPABILITIES'), src.indexOf('const CAPABILITIES') + 2600);
     return /(^|[^.\w])skills:\s*(true|false)/m.test(block);
   });
   check('10: every adapter states a skills fact explicitly (no silent omission)', declared);
 
-  const opencode = readFileSync('src/adapters/opencode.ts', 'utf8');
+  const opencode = sourceText('src/adapters/opencode.ts');
   check('10: opencode declares skills:true on the verified evidence',
     /skills:\s*true/.test(opencode.slice(opencode.indexOf('const CAPABILITIES'), opencode.indexOf('const CAPABILITIES') + 2600)));
-  const codex = readFileSync('src/adapters/codex.ts', 'utf8');
+  const codex = sourceText('src/adapters/codex.ts');
   check('10: codex declares skills:false (no skill mechanism in its CLI)',
     /skills:\s*false/.test(codex.slice(codex.indexOf('const CAPABILITIES'), codex.indexOf('const CAPABILITIES') + 2600)));
 
@@ -1468,7 +1577,7 @@ async function section10(): Promise<void> {
   // decide WHICH worker runs, so they are the ones that must stay ignorant.
   for (const f of ['src/orchestration/assignment.ts', 'src/orchestration/assignment-wiring.ts', 'src/orchestration/workbench-plan.ts', 'src/orchestration/store.ts']) {
     check(`10: ${f.split('/').pop()} never reads capabilities.skills`,
-      !/capabilities\s*\.\s*skills/.test(readFileSync(f, 'utf8')));
+      !/capabilities\s*\.\s*skills/.test(sourceText(f)));
   }
 
   // And it must not be a hard filter either: an agent that cannot do skills still
@@ -1482,4 +1591,1161 @@ async function section10(): Promise<void> {
   cleanup();
 }
 
+// ================================================================
+// TeamRun T1-c — session attribution truth + fail-closed availability
+// ================================================================
+// W8–W12 drive the REAL production handoff path: plan → assignChildren (session
+// opened by SessionRegistry) → dispatch (TRANSPORT_ERROR parks in retrying) →
+// reassignTask → dispatch again. No doubles for SessionRegistry / AttemptStore.
+{
+  const TA = 'opencode';
+  const TB = 'workbuddy-intl';
+  const MA = 'opencode/model-a';
+  const MAB = 'opencode/model-b';
+  const MBB = 'workbuddy-intl/model-b';
+  const TNOW = 1_700_000_000_000;
+
+  const t1cRun = (agentId: string, state: RunResult['state'], code?: string, call: number = 0): RunResult => ({
+    taskId: `native-${call}`, threadId: `native-th-${call}`, agentId, state,
+    error: code === undefined ? null : { code, message: 'session died' },
+    startedAt: TNOW, endedAt: TNOW + 10, exitCode: state === 'succeeded' ? 0 : 1, signal: null,
+    output: '', outputTruncated: false, transcriptPath: null, usage: null, toolCalls: [],
+    diagnostics: [], cleanup: { rootKilled: false, descendantsReaped: false, note: '' },
+  } as unknown as RunResult);
+
+  /** A workbench whose runtime fails the FIRST run with TRANSPORT_ERROR, then succeeds. */
+  function makeT1c(opts: { failFirst?: boolean } = {}): { wb: NativeWorkbench; childId: string; sessionAId: string; cleanup: () => void } {
+    const dir = mkdtempSync(join(tmpdir(), 't1c-'));
+    const reg = new ModelRegistry();
+    for (const [agentId, modelId] of [[TA, MA], [TA, MAB], [TB, MBB]] as const) {
+      reg.upsert({ agentId, modelId, provider: 'test', taskTypes: ['implementation'], modelSource: 'test', quotaSource: 'test' }, TNOW);
+      reg.setAgentAvailability(agentId, 'available');
+    }
+    const budgets = new BudgetManager(1_000_000);
+    for (const id of ['r', 'r-s1']) budgets.task(id, 100_000);
+    budgets.agent(TA, 1_000_000);
+    budgets.agent(TB, 1_000_000);
+
+    let call = 0;
+    const runtime: RuntimeRunner = {
+      run(req: RunRequest): RunHandle {
+        call++;
+        const fail = (opts.failFirst ?? true) && call === 1;
+        const result = fail
+          ? t1cRun(req.agentId, 'failed', 'TRANSPORT_ERROR', call)
+          : t1cRun(req.agentId, 'succeeded', undefined, call);
+        return { result: async () => result, cancel: async () => {}, dispose: async () => {} } as unknown as RunHandle;
+      },
+    };
+    const descriptor = (id: string): AgentDescriptor => ({
+      id, displayName: id, launcher: 'fake', transport: 'cli-jsonl',
+      capabilities: { newTask: true, review: true, modelSelection: true, resume: true },
+    } as unknown as AgentDescriptor);
+    const statusRow = (agent: string) => ({ agent, version: '1', installed: 'Yes', login: 'n/a', quotaSource: 't', usage: 'n/a', status: 'ok' });
+    const quotaRecord = (agentId: string): QuotaRecord => ({
+      provider: agentId, agentId, modelId: null, source: 'locally_observed', usage: null, remaining: null,
+      resetAt: null, period: 'day', status: 'available', usageClass: 'observed', confidence: 'high', observedAt: TNOW, note: '',
+    });
+    const orch = new Orchestrator({
+      runtime,
+      gate: {
+        descriptors: [descriptor(TA), descriptor(TB)],
+        agentStatus: [statusRow(TA), statusRow(TB)],
+        quotaRecords: [quotaRecord(TA), quotaRecord(TB)],
+        registry: reg,
+        budgets,
+        taskType: impl,
+        requestedUnits: 10,
+        currentConcurrency: 0,
+        maxConcurrency: 4,
+        maxChildren: 8,
+        maxConcurrentAgents: 4,
+      } as never,
+      now: () => TNOW,
+      defaultCwd: dir,
+    });
+    // R2-3: the production scheduler policy — an availability failure parks in
+    // `retrying` so a handoff can reach the task at all.
+    const sched = new TaskScheduler({ orchestrator: orch, cwd: dir, translate: { allowAvailabilityContinuation: true } });
+    const wb = new NativeWorkbench({
+      orchestrator: orch, scheduler: sched, registry: reg,
+      quotaRecords: [quotaRecord(TA), quotaRecord(TB)], cwd: dir, now: () => TNOW,
+    });
+    const spec = { taskId: 'r', objective: 'T1-c handoff', taskType: impl, shape: 'single', budgetUnits: 10, preferredAgent: TA, preferredModel: MA };
+    wb.plan(spec as never, null);
+    wb.assignChildren('r', spec as never);
+    const sessionA = wb.sessions.sessionForTask('r-s1');
+    if (sessionA === null) throw new Error('T1-c fixture: assignChildren did not bind a session');
+    return { wb, childId: 'r-s1', sessionAId: sessionA.sessionId, cleanup: () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* windows */ } } };
+  }
+
+  const lastExecution = (wb: NativeWorkbench, taskId: string, kind: 'execution' | 'rework' = 'execution') => {
+    const rows = wb.evidence.history(taskId).filter((r) => r.kind === kind);
+    return rows[rows.length - 1] ?? null;
+  };
+
+  await (async function sectionT1c(): Promise<void> {
+    process.stdout.write('\n== WB T1-c. Session attribution: W8–W12 ==\n');
+
+    // ---- W8: agent-change handoff ------------------------------------------
+    {
+      const { wb, childId, sessionAId, cleanup } = makeT1c();
+      await wb.dispatch();
+      const attempt1 = lastExecution(wb, childId);
+      check('W8 setup: attempt 1 failed with TRANSPORT_ERROR and parked in retrying',
+        wb.store.get(childId)?.status === 'retrying' && attempt1?.errorCode === 'TRANSPORT_ERROR',
+        String(wb.store.get(childId)?.status));
+      check('W8 setup: attempt 1 is attributed to session-A',
+        attempt1?.sessionId === sessionAId, String(attempt1?.sessionId));
+
+      const reassigned = wb.reassignTask(childId, TB, MBB, 'handoff to a free worker');
+      check('W8: the production reassign path accepts the new pair', reassigned.ok, `${reassigned.code} ${reassigned.reason}`);
+      const sessionB = wb.sessions.sessionForTask(childId);
+      check('W8: the task is REBOUND to a new session', sessionB !== null && sessionB.sessionId !== sessionAId,
+        String(sessionB?.sessionId));
+      check('W8: the new session belongs to WorkBuddy Intl / model-B in the SessionRegistry',
+        sessionB !== null && sessionB.agentId === TB && sessionB.modelId === MBB,
+        sessionB === null ? 'none' : `${sessionB.agentId}/${String(sessionB.modelId)}`);
+
+      const retried = wb.orchestrator.retry(childId, 'requeued after handoff', 2);
+      check('W8 setup: the parked task is re-queued through the production retry capability', retried.ok, retried.ok ? 'ok' : 'refused');
+      await wb.dispatch();
+
+      const attempt2 = lastExecution(wb, childId);
+      check('W8: attempt 2 ran on the NEW agent and model',
+        attempt2 !== null && attempt2.agentId === TB && attempt2.modelId === MBB,
+        attempt2 === null ? 'no attempt' : `${attempt2.agentId}/${String(attempt2.modelId)}`);
+      check('W8: attempt 2 records the NEW session, never session-A',
+        attempt2 !== null && attempt2.sessionId !== undefined && attempt2.sessionId !== sessionAId && attempt2.sessionId === sessionB?.sessionId,
+        String(attempt2?.sessionId));
+      const regSession = attempt2?.sessionId === undefined ? null : wb.sessions.get(attempt2.sessionId);
+      check('W8: SessionRegistry confirms attempt 2\u2019s session is WorkBuddy Intl / model-B',
+        regSession !== null && regSession.agentId === TB && regSession.modelId === MBB,
+        regSession === null ? 'none' : `${regSession.agentId}/${String(regSession.modelId)}`);
+      const wi2 = attempt2 === null ? null : workerIdentityOfAttempt(attempt2);
+      check('W8: workerIdentityOfAttempt(attempt 2) is a valid, consistent Worker',
+        wi2 !== null && wi2.taskId === childId && wi2.agentId === TB && wi2.modelId === MBB && wi2.sessionId === sessionB?.sessionId,
+        wi2 === null ? 'null' : JSON.stringify(wi2));
+      check('W8: attempt 1 and attempt 2 are DIFFERENT workers',
+        wi2 !== null && attempt1 !== null && sameWorker(workerIdentityOfAttempt(attempt1), wi2) === false);
+      cleanup();
+    }
+
+    // ---- W9: same-agent model change ---------------------------------------
+    {
+      const { wb, childId, sessionAId, cleanup } = makeT1c();
+      await wb.dispatch();
+      const reassigned = wb.reassignTask(childId, TA, MAB, 'switch to a better model');
+      check('W9: the same-agent model-change reassign is accepted', reassigned.ok, `${reassigned.code} ${reassigned.reason}`);
+      const sessionB = wb.sessions.sessionForTask(childId);
+      check('W9: a model change means a NEW session (never session-A)',
+        sessionB !== null && sessionB.sessionId !== sessionAId, String(sessionB?.sessionId));
+      check('W9: the new session is bound to model-B in the SessionRegistry',
+        sessionB !== null && sessionB.agentId === TA && sessionB.modelId === MAB,
+        sessionB === null ? 'none' : `${sessionB.agentId}/${String(sessionB.modelId)}`);
+      wb.orchestrator.retry(childId, 'requeued after model change', 2);
+      await wb.dispatch();
+      const attempt2 = lastExecution(wb, childId);
+      check('W9: attempt 2 is on model-B with the new session id',
+        attempt2 !== null && attempt2.modelId === MAB && attempt2.sessionId === sessionB?.sessionId,
+        attempt2 === null ? 'no attempt' : `${String(attempt2.modelId)}/${String(attempt2.sessionId)}`);
+      check('W9: workerIdentityOfAttempt(attempt 2) projects the new worker',
+        attempt2 !== null && workerIdentityOfAttempt(attempt2)?.modelId === MAB);
+      cleanup();
+    }
+
+    // ---- W10: same pair reuse — same worker, new attempt --------------------
+    {
+      const { wb, childId, sessionAId, cleanup } = makeT1c({ failFirst: false });
+      await wb.dispatch();
+      const attempt1 = lastExecution(wb, childId);
+      check('W10 setup: the first execution succeeded and is attributed to session-A',
+        attempt1?.outcome === 'success' && attempt1?.sessionId === sessionAId, String(attempt1?.sessionId));
+      const rework = validateReviewVerdict({ verdict: 'rework', reason: 'fix it', findings: [], recommendedAction: 'none', reviewer: 'codex', reviewedAt: TNOW });
+      wb.applyReview(childId, rework);
+      await wb.dispatch();
+      const attempt2 = lastExecution(wb, childId, 'rework');
+      check('W10: the rework attempt reuses the SAME session (same pair, reuse policy)',
+        attempt2 !== null && attempt2.sessionId === sessionAId, String(attempt2?.sessionId));
+      check('W10: it is a DIFFERENT attempt of the SAME worker',
+        attempt1 !== null && attempt2 !== null && attempt1.attemptId !== attempt2.attemptId &&
+        sameWorker(workerIdentityOfAttempt(attempt1), workerIdentityOfAttempt(attempt2)) === true);
+      cleanup();
+    }
+
+    // ---- W11: no compatible session fact — fail closed, never stale ---------
+    {
+      const { wb, childId, sessionAId, cleanup } = makeT1c({ failFirst: false });
+      await wb.dispatch();
+      // A path that moves the identity WITHOUT the T1-c rebind (a direct store
+      // migration, like R5-1.2C Case 31's mid-run migration). The binding still
+      // names session-A, owned by the OLD pair.
+      const migrated = wb.store.migrateIdentityAfterStart(childId, { agentId: TB, modelId: MBB, reason: 'moved without a rebind' }, TNOW + 5);
+      check('W11 setup: the identity moved with the session binding left stale',
+        migrated.ok && wb.sessions.sessionForTask(childId)?.sessionId === sessionAId);
+      const rework = validateReviewVerdict({ verdict: 'rework', reason: 'run on the new pair', findings: [], recommendedAction: 'none', reviewer: 'codex', reviewedAt: TNOW });
+      wb.applyReview(childId, rework);
+      await wb.dispatch();
+      const attempt2 = lastExecution(wb, childId, 'rework');
+      check('W11: the attempt on the new pair records NO session (absent, not stale)',
+        attempt2 !== null && attempt2.sessionId === undefined, String(attempt2?.sessionId));
+      check('W11: it never records the old session-A',
+        attempt2 !== null && attempt2.sessionId !== sessionAId);
+      check('W11: workerIdentityOfAttempt returns null rather than a forged Worker',
+        attempt2 !== null && workerIdentityOfAttempt(attempt2) === null);
+      const attempt1 = lastExecution(wb, childId, 'execution');
+      check('W11: the earlier compatible attempt still projects its true worker',
+        attempt1 !== null && workerIdentityOfAttempt(attempt1)?.sessionId === sessionAId);
+      cleanup();
+    }
+
+    // ---- W12: rework cannot change the pair ---------------------------------
+    {
+      const { wb, childId, sessionAId, cleanup } = makeT1c({ failFirst: false });
+      await wb.dispatch();
+      const before = wb.store.identityOf(childId);
+      const rework = validateReviewVerdict({ verdict: 'rework', reason: 'redo it', findings: [], recommendedAction: 'none', reviewer: 'codex', reviewedAt: TNOW });
+      wb.applyReview(childId, rework);
+      await wb.dispatch();
+      const after = wb.store.identityOf(childId);
+      check('W12: production rework has NO pair-change capability — identity is unchanged',
+        before !== null && after !== null && before.agentId === after.agentId && (before.modelId ?? null) === (after.modelId ?? null),
+        `${before?.agentId}/${String(before?.modelId)} -> ${after?.agentId}/${String(after?.modelId)}`);
+      const reworkAttempt = lastExecution(wb, childId, 'rework');
+      check('W12: the rework attempt stays on the original pair and its original session',
+        reworkAttempt !== null && reworkAttempt.sessionId === sessionAId &&
+        reworkAttempt.agentId === before?.agentId && reworkAttempt.modelId === before?.modelId);
+      const wi = reworkAttempt === null ? null : workerIdentityOfAttempt(reworkAttempt);
+      check('W12: and therefore projects the SAME worker as the first execution',
+        wi !== null && sameWorker(wi, workerIdentityOfSession(wb.sessions.get(sessionAId)!)) === true);
+      cleanup();
+    }
+  })();
+
+  // ---- A6/A7 live in tests/assignment.test.ts (registry + assignment level) ----
+
+  // ================================================================
+  // TeamRun T1-d — dispatch-time worker truth & session lifecycle
+  // ================================================================
+  // W13–W19: execution facts are IMMUTABLE after dispatch. A reassign/rework that
+  // lands while a run is still in flight must not contaminate that run's Attempt
+  // with the task's CURRENT agent/model/session. The runtime's first run is
+  // DEFERRED (its result resolves only when the test releases it), which makes the
+  // mid-flight reassign deterministic instead of timing-dependent.
+  {
+    const deferredRuntime = (deferredRun: number) => {
+      let call = 0;
+      let release: ((r: RunResult) => void) | null = null;
+      let pending: Promise<RunResult> | null = null;
+      const runtime: RuntimeRunner = {
+        run(req: RunRequest): RunHandle {
+          call++;
+          if (call === deferredRun) {
+            pending = new Promise<RunResult>((res) => { release = res; });
+            return {
+              result: () => pending!,
+              state: () => 'running',
+              cancel: async () => {}, dispose: async () => {}, observe: () => null,
+            } as unknown as RunHandle;
+          }
+          const result = t1cRun(req.agentId, 'succeeded', undefined, call);
+          return {
+            result: async () => result,
+            state: () => 'exited',
+            cancel: async () => {}, dispose: async () => {}, observe: () => null,
+          } as unknown as RunHandle;
+        },
+      };
+      return {
+        runtime,
+        runCount: () => call,
+        releaseDeferred: (result: RunResult) => { release!(result); },
+      };
+    };
+
+    /** A T1-c-style workbench whose runtime can defer the Nth run's result. */
+    function makeT1d(deferredRun: number): {
+      wb: NativeWorkbench; childId: string; sessionAId: string; runCount: () => number;
+      releaseDeferred: (r: RunResult) => void; registry: ModelRegistry; cleanup: () => void;
+    } {
+      const dir = mkdtempSync(join(tmpdir(), 't1d-'));
+      const reg = new ModelRegistry();
+      for (const [agentId, modelId] of [[TA, MA], [TA, MAB], [TB, MBB]] as const) {
+        reg.upsert({ agentId, modelId, provider: 'test', taskTypes: ['implementation'], modelSource: 'test', quotaSource: 'test' }, TNOW);
+        reg.setAgentAvailability(agentId, 'available');
+      }
+      const budgets = new BudgetManager(1_000_000);
+      for (const id of ['r', 'r-s1']) budgets.task(id, 100_000);
+      budgets.agent(TA, 1_000_000);
+      budgets.agent(TB, 1_000_000);
+      const { runtime, runCount, releaseDeferred } = deferredRuntime(deferredRun);
+      const descriptor = (id: string): AgentDescriptor => ({
+        id, displayName: id, launcher: 'fake', transport: 'cli-jsonl',
+        capabilities: { newTask: true, review: true, modelSelection: true, resume: true },
+      } as unknown as AgentDescriptor);
+      const statusRow = (agent: string) => ({ agent, version: '1', installed: 'Yes', login: 'n/a', quotaSource: 't', usage: 'n/a', status: 'ok' });
+      const quotaRecords: QuotaRecord[] = [TA, TB].map((agentId) => ({
+        provider: agentId, agentId, modelId: null, source: 'locally_observed', usage: null, remaining: null,
+        resetAt: null, period: 'day', status: 'available' as const, usageClass: 'observed', confidence: 'high', observedAt: TNOW, note: '',
+      }));
+      const orch = new Orchestrator({
+        runtime,
+        gate: {
+          descriptors: [descriptor(TA), descriptor(TB)],
+          agentStatus: [statusRow(TA), statusRow(TB)],
+          quotaRecords,
+          registry: reg,
+          budgets,
+          taskType: impl,
+          requestedUnits: 10,
+          currentConcurrency: 0,
+          maxConcurrency: 4,
+          maxChildren: 8,
+          maxConcurrentAgents: 4,
+        } as never,
+        now: () => TNOW,
+        defaultCwd: dir,
+      });
+      const sched = new TaskScheduler({ orchestrator: orch, cwd: dir, translate: { allowAvailabilityContinuation: true } });
+      const wb = new NativeWorkbench({
+        orchestrator: orch, scheduler: sched, registry: reg,
+        quotaRecords, cwd: dir, now: () => TNOW,
+      });
+      const spec = { taskId: 'r', objective: 'T1-d dispatch truth', taskType: impl, shape: 'single', budgetUnits: 10, preferredAgent: TA, preferredModel: MA };
+      wb.plan(spec as never, null);
+      wb.assignChildren('r', spec as never);
+      const sessionA = wb.sessions.sessionForTask('r-s1');
+      if (sessionA === null) throw new Error('T1-d fixture: assignChildren did not bind a session');
+      return { wb, childId: 'r-s1', sessionAId: sessionA.sessionId, runCount, releaseDeferred, registry: reg, cleanup: () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* windows */ } } };
+    }
+
+    await (async function sectionT1d(): Promise<void> {
+      process.stdout.write('\n== WB T1-d. Dispatch-time worker truth: W13–W19 ==\n');
+
+      // ---- W13: deferred result + agent reassign ----------------------------
+      {
+        const { wb, childId, sessionAId, releaseDeferred, cleanup } = makeT1d(1);
+        const started = wb.dispatch();
+        check('W13: the run really began (dispatch-time session-A marked running)',
+          wb.sessions.get(sessionAId)?.status === 'running', String(wb.sessions.get(sessionAId)?.status));
+        const reassigned = wb.reassignTask(childId, TB, MBB, 'handoff mid-flight');
+        check('W13: the task moved to WorkBuddy Intl/model-B while run A is still in flight', reassigned.ok, `${reassigned.code} ${reassigned.reason}`);
+        const sessionB = wb.sessions.sessionForTask(childId);
+        check('W13: the new generation is bound to a NEW, prepared (non-running) session',
+          sessionB !== undefined && sessionB !== null && sessionB.sessionId !== sessionAId && sessionB.status === 'open',
+          sessionB === null ? 'none' : sessionB.status);
+        releaseDeferred(t1cRun(TA, 'failed', 'TRANSPORT_ERROR', 1));
+        const outcome = await started;
+        const attemptA = lastExecution(wb, childId);
+        check('W13: attempt A keeps its DISPATCH agent (OpenCode), never the current holder',
+          attemptA !== null && attemptA.agentId === TA, attemptA === null ? 'none' : attemptA.agentId);
+        check('W13: attempt A keeps its DISPATCH model (model-A), never the current model',
+          attemptA !== null && attemptA.modelId === MA, String(attemptA?.modelId));
+        check('W13: attempt A keeps its DISPATCH session (session-A), never the new binding',
+          attemptA !== null && attemptA.sessionId === sessionAId, String(attemptA?.sessionId));
+        check('W13: attempt A projects the worker it was DISPATCHED to',
+          attemptA !== null && workerIdentityOfAttempt(attemptA)?.agentId === TA &&
+          workerIdentityOfAttempt(attemptA)?.modelId === MA &&
+          workerIdentityOfAttempt(attemptA)?.sessionId === sessionAId);
+        check('W13: one Attempt carries NO fact from the B generation',
+          attemptA !== null && attemptA.sessionId !== sessionB?.sessionId && attemptA.modelId !== MBB && attemptA.agentId !== TB);
+        check('W13: the task itself did move (current facts vs execution facts are distinct)',
+          wb.store.get(childId)?.agentId === TB);
+        void outcome;
+        cleanup();
+      }
+
+      // ---- W14: deferred result + same-agent model reassign ------------------
+      {
+        const { wb, childId, sessionAId, releaseDeferred, cleanup } = makeT1d(1);
+        const started = wb.dispatch();
+        wb.reassignTask(childId, TA, MAB, 'switch model mid-flight');
+        releaseDeferred(t1cRun(TA, 'succeeded', undefined, 1));
+        await started;
+        const attemptA = lastExecution(wb, childId);
+        check('W14: attempt A still reports model-A and session-A after the model reassign',
+          attemptA !== null && attemptA.modelId === MA && attemptA.sessionId === sessionAId,
+          attemptA === null ? 'none' : `${String(attemptA.modelId)}/${String(attemptA.sessionId)}`);
+        check('W14: the new generation holds model-B on a new session',
+          wb.store.get(childId)?.modelId === MAB &&
+          wb.sessions.sessionForTask(childId)?.modelId === MAB &&
+          wb.sessions.sessionForTask(childId)?.sessionId !== sessionAId);
+        check('W14: attempt A projects its own worker (no current-task leakage)',
+          attemptA !== null && workerIdentityOfAttempt(attemptA)?.modelId === MA &&
+          workerIdentityOfAttempt(attemptA)?.sessionId === sessionAId);
+        cleanup();
+      }
+
+      // ---- W15: F5 refused-with-run under a stale lease ----------------------
+      {
+        const { wb, childId, sessionAId, releaseDeferred, cleanup } = makeT1d(1);
+        const started = wb.dispatch();
+        wb.reassignTask(childId, TB, MBB, 'handoff before the result returns');
+        releaseDeferred(t1cRun(TA, 'succeeded', undefined, 1));
+        const outcome = await started;
+        const entry = (outcome.tick?.outcomes ?? []).find((o) => o.taskId === childId);
+        check('W15: write-back REFUSED (stale lease) while the run is fully preserved',
+          entry !== undefined && entry.outcome.ok === false && entry.outcome.run !== undefined && entry.outcome.runRejected === true,
+          entry === undefined ? 'no entry' : `ok=${String(entry.outcome.ok)} run=${entry.outcome.run === undefined ? 'absent' : 'present'}`);
+        check('W15: the attempt is recorded (evidence preserved through the refusal)',
+          lastExecution(wb, childId) !== null);
+        const attemptA = lastExecution(wb, childId);
+        check('W15: attempt identity = A dispatch facts (agent/model/session)',
+          attemptA !== null && attemptA.agentId === TA && attemptA.modelId === MA && attemptA.sessionId === sessionAId,
+          attemptA === null ? 'none' : `${attemptA.agentId}/${String(attemptA.modelId)}/${String(attemptA.sessionId)}`);
+        check('W15: the attempt carries the STALE dispatch lease version, not the current one',
+          attemptA?.leaseVersion === 1 && (wb.store.get(childId)?.leaseVersion ?? 0) === 2,
+          `attempt=${String(attemptA?.leaseVersion)} task=${String(wb.store.get(childId)?.leaseVersion)}`);
+        cleanup();
+      }
+
+      // ---- W16: rework overlap — reassign while a REWORK run is in flight ----
+      {
+        const { wb, childId, sessionAId, releaseDeferred, cleanup } = makeT1d(2);
+        await wb.dispatch();
+        const rework = validateReviewVerdict({ verdict: 'rework', reason: 'redo', findings: [], recommendedAction: 'none', reviewer: 'codex', reviewedAt: TNOW });
+        wb.applyReview(childId, rework);
+        const started = wb.dispatch(); // the REWORK run is the deferred one
+        const reassigned = wb.reassignTask(childId, TB, MBB, 'handoff during rework');
+        check('W16 setup: the task moved while the rework run is still in flight', reassigned.ok, reassigned.reason);
+        releaseDeferred(t1cRun(TA, 'succeeded', undefined, 2));
+        await started;
+        const reworkAttempt = lastExecution(wb, childId, 'rework');
+        check('W16: the rework attempt keeps ITS OWN dispatch facts (A pair, session-A)',
+          reworkAttempt !== null && reworkAttempt.agentId === TA && reworkAttempt.modelId === MA && reworkAttempt.sessionId === sessionAId,
+          reworkAttempt === null ? 'none' : `${reworkAttempt.agentId}/${String(reworkAttempt.modelId)}/${String(reworkAttempt.sessionId)}`);
+        check('W16: the rework attempt does NOT absorb the B generation',
+          reworkAttempt !== null && reworkAttempt.agentId !== TB && reworkAttempt.sessionId !== wb.sessions.sessionForTask(childId)?.sessionId);
+        check('W16: pendingReworks did not overwrite the in-flight execution identity',
+          reworkAttempt !== null && workerIdentityOfAttempt(reworkAttempt)?.sessionId === sessionAId);
+        cleanup();
+      }
+
+      // ---- W17: reassign prepares a session; nothing is running --------------
+      {
+        const { wb, childId, sessionAId, runCount, cleanup } = makeT1d(99);
+        check('W17 setup: no runtime.run has happened at all', runCount() === 0, String(runCount()));
+        const reassigned = wb.reassignTask(childId, TB, MBB, 'handoff before any dispatch');
+        check('W17 setup: the reassign is accepted', reassigned.ok, reassigned.reason);
+        const sessionB = wb.sessions.sessionForTask(childId);
+        check('W17: the new session exists, is REBOUND, and is NOT running',
+          sessionB !== null && sessionB.sessionId !== sessionAId && sessionB.status !== 'running',
+          sessionB === null ? 'none' : sessionB.status);
+        check('W17: still zero runtime.run calls after the reassign', runCount() === 0, String(runCount()));
+        cleanup();
+      }
+
+      // ---- W18: pre-dispatch refusal leaves the prepared session alone -------
+      {
+        const { wb, childId, sessionAId, registry, runCount, cleanup } = makeT1d(99);
+        wb.reassignTask(childId, TB, MBB, 'handoff');
+        const sessionB = wb.sessions.sessionForTask(childId)!;
+        // Refuse the next dispatch BEFORE runtime.run through the real gate:
+        // the WorkBuddy Intl runtime itself becomes unavailable, so executeTask's
+        // execution-time admission refuses with no runtime call.
+        registry.setAgentAvailability(TB, 'unavailable');
+        const outcome = await wb.dispatch();
+        const entry = (outcome.tick?.outcomes ?? []).find((o) => o.taskId === childId);
+        check('W18: the dispatch was refused before the runtime (no run recorded)',
+          runCount() === 0 && (entry === undefined || entry.outcome.run === undefined),
+          `runs=${runCount()} entry=${entry === undefined ? 'none' : String(entry.outcome.run !== undefined)}`);
+        check('W18: the prepared session does NOT remain running',
+          wb.sessions.get(sessionB.sessionId)?.status !== 'running' && sessionB.sessionId !== sessionAId,
+          String(wb.sessions.get(sessionB.sessionId)?.status));
+        cleanup();
+      }
+
+      // ---- W19: an actual dispatch marks the session running -----------------
+      {
+        const { wb, childId, sessionAId, releaseDeferred, cleanup } = makeT1d(2);
+        await wb.dispatch(); // first run on A succeeds -> to_verify
+        const reassigned = wb.reassignTask(childId, TB, MBB, 'handoff');
+        const sessionB = wb.sessions.sessionForTask(childId)!;
+        check('W19 setup: after reassign the new session is prepared, not running',
+          reassigned.ok && sessionB.sessionId !== sessionAId && sessionB.status !== 'running', sessionB.status);
+        const rework = validateReviewVerdict({ verdict: 'rework', reason: 'run on B', findings: [], recommendedAction: 'none', reviewer: 'codex', reviewedAt: TNOW });
+        wb.applyReview(childId, rework);
+        const started = wb.dispatch(); // the rework run on B is deferred
+        check('W19: once the runtime accepts the run, the session IS running',
+          wb.sessions.get(sessionB.sessionId)?.status === 'running', String(wb.sessions.get(sessionB.sessionId)?.status));
+        releaseDeferred(t1cRun(TB, 'succeeded', undefined, 2));
+        await started;
+        check('W19: after the run settles the session follows the existing lifecycle (open)',
+          wb.sessions.get(sessionB.sessionId)?.status === 'open', String(wb.sessions.get(sessionB.sessionId)?.status));
+        cleanup();
+      }
+    })();
+
+  // ================================================================
+  // TeamRun T1-e — atomic dispatch binding & session finalization
+  // ================================================================
+  // W20–W28: ONE immutable dispatch truth per execution, frozen at the freeze
+  // point (after the last pre-dispatch await), and a session lifecycle where every
+  // STARTED execution settles exactly once. The workspace.prepare await is
+  // DEFERRED via a scripted WorkspaceManager, which makes the freeze-point races
+  // deterministic instead of timing-dependent.
+  {
+    const TC = 'codex';
+    const MC = 'codex/model-c';
+
+    function makeT1e(opts: { deferPrepare?: boolean; deferRun?: number; rejectRun?: boolean; maxConcurrentAgents?: number } = {}): {
+      wb: NativeWorkbench; childId: string; sessionAId: string; sched: TaskScheduler;
+      runCount: () => number; requests: RunRequest[]; registry: ModelRegistry;
+      releaseDeferred: (r: RunResult) => void; rejectDeferred: (reason: string) => void;
+      resolvePrepare: () => void; cleanup: () => void;
+    } {
+      const dir = mkdtempSync(join(tmpdir(), 't1e-'));
+      const reg = new ModelRegistry();
+      for (const [agentId, modelId] of [[TA, MA], [TA, MAB], [TB, MBB], [TC, MC]] as const) {
+        reg.upsert({ agentId, modelId, provider: 'test', taskTypes: ['implementation'], modelSource: 'test', quotaSource: 'test' }, TNOW);
+        reg.setAgentAvailability(agentId, 'available');
+      }
+      const budgets = new BudgetManager(1_000_000);
+      for (const id of ['r', 'r-s1']) budgets.task(id, 100_000);
+      for (const a of [TA, TB, TC]) budgets.agent(a, 1_000_000);
+
+      const requests: RunRequest[] = [];
+      let call = 0;
+      let release: ((r: RunResult) => void) | null = null;
+      let reject: ((reason: string) => void) | null = null;
+      let pendingResult: Promise<RunResult> | null = null;
+      let resolvePrepare: (() => void) | null = null;
+      const prepareGate = opts.deferPrepare === true
+        ? new Promise<void>((res) => { resolvePrepare = res; })
+        : null;
+      const runtime: RuntimeRunner = {
+        run(req: RunRequest): RunHandle {
+          requests.push(req);
+          call++;
+          if (call === (opts.deferRun ?? -1)) {
+            pendingResult = opts.rejectRun === true
+              ? new Promise<RunResult>((_res, rej) => { reject = rej; })
+              : new Promise<RunResult>((res) => { release = res; });
+            return {
+              result: () => pendingResult!,
+              // A terminal TaskState, so a result() rejection ends the execution
+              // rather than being treated as a wait gap ('exited' is not a state).
+              state: () => (opts.rejectRun === true ? 'failed' : 'running'),
+              cancel: async () => {}, dispose: async () => {}, observe: () => null,
+            } as unknown as RunHandle;
+          }
+          const result = t1cRun(req.agentId, 'succeeded', undefined, call);
+          return {
+            result: async () => result,
+            state: () => 'exited',
+            cancel: async () => {}, dispose: async () => {}, observe: () => null,
+          } as unknown as RunHandle;
+        },
+      };
+      // Scripted WorkspaceManager: only `prepare` is reachable on the pre-dispatch
+      // path of this fixture (no resource claims configured), and it can be parked
+      // until the test releases it — the await window where a reassign can race.
+      const fakeWorkspace = {
+        prepare: async (input: { taskId: string }) => {
+          if (prepareGate !== null) await prepareGate;
+          return {
+            workspaceId: `ws:${input.taskId}`, mode: 'shared' as const, taskId: input.taskId,
+            cwd: dir, branch: null, baseSha: null, repoRoot: null, createdAt: TNOW, released: false,
+          };
+        },
+      } as unknown as WorkspaceManager;
+      const descriptor = (id: string): AgentDescriptor => ({
+        id, displayName: id, launcher: 'fake', transport: 'cli-jsonl',
+        capabilities: { newTask: true, review: true, modelSelection: true, resume: true },
+      } as unknown as AgentDescriptor);
+      const statusRow = (agent: string) => ({ agent, version: '1', installed: 'Yes', login: 'n/a', quotaSource: 't', usage: 'n/a', status: 'ok' });
+      const quotaRecord = (agentId: string): QuotaRecord => ({
+        provider: agentId, agentId, modelId: null, source: 'locally_observed', usage: null, remaining: null,
+        resetAt: null, period: 'day', status: 'available', usageClass: 'observed', confidence: 'high', observedAt: TNOW, note: '',
+      });
+      const orch = new Orchestrator({
+        runtime,
+        // T1-e: force the pre-dispatch await that exists in production — workspace
+        // preparation — so the freeze-point races are exercisable deterministically.
+        workspace: fakeWorkspace,
+        workspaceMode: () => 'shared' as never,
+        gate: {
+          descriptors: [descriptor(TA), descriptor(TB), descriptor(TC)],
+          agentStatus: [statusRow(TA), statusRow(TB), statusRow(TC)],
+          quotaRecords: [quotaRecord(TA), quotaRecord(TB), quotaRecord(TC)],
+          registry: reg,
+          budgets,
+          taskType: impl,
+          requestedUnits: 10,
+          currentConcurrency: 0,
+          maxConcurrency: 4,
+          maxChildren: 8,
+          maxConcurrentAgents: opts.maxConcurrentAgents ?? 4,
+        } as never,
+        now: () => TNOW,
+        defaultCwd: dir,
+      });
+      const sched = new TaskScheduler({ orchestrator: orch, cwd: dir, translate: { allowAvailabilityContinuation: true } });
+      const wb = new NativeWorkbench({
+        orchestrator: orch, scheduler: sched, registry: reg,
+        quotaRecords: [quotaRecord(TA), quotaRecord(TB), quotaRecord(TC)], cwd: dir, now: () => TNOW,
+      });
+      const spec = { taskId: 'r', objective: 'T1-e atomic dispatch', taskType: impl, shape: 'single', budgetUnits: 10, preferredAgent: TA, preferredModel: MA };
+      wb.plan(spec as never, null);
+      wb.assignChildren('r', spec as never);
+      const sessionA = wb.sessions.sessionForTask('r-s1');
+      if (sessionA === null) throw new Error('T1-e fixture: assignChildren did not bind a session');
+      return {
+        wb, childId: 'r-s1', sessionAId: sessionA.sessionId, sched,
+        runCount: () => call, requests, registry: reg,
+        releaseDeferred: (result: RunResult) => { release!(result); },
+        rejectDeferred: (reason: string) => { reject!(reason); },
+        resolvePrepare: () => { resolvePrepare!(); },
+        cleanup: () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* windows */ } },
+      };
+    }
+
+    await (async function sectionT1e(): Promise<void> {
+      process.stdout.write('\n== WB T1-e. Atomic dispatch binding & session finalization: W20–W28 ==\n');
+
+      // ---- W20: reassign DURING workspace.prepare ------------------------------
+      {
+        const { wb, childId, sessionAId, requests, resolvePrepare, cleanup } = makeT1e({ deferPrepare: true });
+        const started = wb.dispatch(); // parked inside workspace.prepare
+        const reassigned = wb.reassignTask(childId, TB, MBB, 'handoff during prepare');
+        check('W20 setup: the reassign landed while prepare was still pending', reassigned.ok, reassigned.reason);
+        resolvePrepare();
+        await started;
+        check('W20: the ACTUAL runtime request ran on the new pair (B)',
+          requests[0] !== undefined && requests[0].agentId === TB && requests[0].model === MBB,
+          requests[0] === undefined ? 'no request' : `${requests[0].agentId}/${String(requests[0].model)}`);
+        const attempt = lastExecution(wb, childId);
+        check('W20: the attempt is PURE B generation (agent/model + B-compatible session)',
+          attempt !== null && attempt.agentId === TB && attempt.modelId === MBB &&
+          attempt.sessionId === wb.sessions.sessionForTask(childId)?.sessionId,
+          attempt === null ? 'none' : `${attempt.agentId}/${String(attempt.modelId)}/${String(attempt.sessionId)}`);
+        check('W20: the pre-prepare session-A is NOT attributed to the B execution',
+          attempt !== null && attempt.sessionId !== sessionAId, String(attempt?.sessionId));
+        check('W20: write-back accepted (the dispatch lease IS the current lease)',
+          wb.store.get(childId)?.agentId === TB && lastExecution(wb, childId) !== null);
+        cleanup();
+      }
+
+      // ---- W21 / W28: A before prepare, B actual dispatch, C current task ------
+      {
+        const { wb, childId, sessionAId, requests, resolvePrepare, releaseDeferred, cleanup } =
+          makeT1e({ deferPrepare: true, deferRun: 1 });
+        const started = wb.dispatch(); // parked in prepare
+        wb.reassignTask(childId, TB, MBB, 'A -> B during prepare');
+        resolvePrepare(); // B freezes and starts (deferred result)
+        // Let the executeTask continuation run to its freeze point / runtime.run
+        // before moving the task again (the reassign below must be POST-freeze).
+        await new Promise((r) => setTimeout(r, 0));
+        const sessionB = wb.sessions.sessionForTask(childId)!;
+        wb.reassignTask(childId, TC, MC, 'B -> C after B dispatched'); // task now C, mid-run
+        releaseDeferred(t1cRun(TB, 'succeeded', undefined, 1));
+        const outcome = await started;
+        check('W21 setup: B really started (runtime request on B)',
+          requests[0]?.agentId === TB && requests[0]?.model === MBB,
+          requests[0] === undefined ? 'no request' : `${requests[0].agentId}/${String(requests[0].model)}`);
+        const attempt = lastExecution(wb, childId);
+        check('W21: the attempt is PURE B facts while the task is already C',
+          attempt !== null && attempt.agentId === TB && attempt.modelId === MBB && attempt.sessionId === sessionB.sessionId,
+          attempt === null ? 'none' : `${attempt.agentId}/${String(attempt.modelId)}/${String(attempt.sessionId)}`);
+        check('W21: current task = C (three generations observable, none mixed)',
+          wb.store.get(childId)?.agentId === TC && wb.store.get(childId)?.modelId === MC);
+        check('W21: the B write-back was refused (stale lease) with the run preserved',
+          (outcome.tick?.outcomes ?? []).some((o) => o.taskId === childId && o.outcome.ok === false && o.outcome.run !== undefined));
+        check('W28: NO fact of generation A in the attempt (agent/model/session)',
+          attempt !== null && attempt.agentId !== TA && attempt.modelId !== MA && attempt.sessionId !== sessionAId);
+        check('W28: NO fact of generation C in the attempt (agent/model/session)',
+          attempt !== null && attempt.agentId !== TC && attempt.modelId !== MC &&
+          attempt.sessionId !== wb.sessions.sessionForTask(childId)?.sessionId);
+        check('W28: the attempt projects exactly the B worker',
+          attempt !== null && workerIdentityOfAttempt(attempt)?.sessionId === sessionB.sessionId);
+        cleanup();
+      }
+
+      // ---- W22: F5 refused write-back settles the A session --------------------
+      {
+        const { wb, childId, sessionAId, releaseDeferred, cleanup } = makeT1e({ deferRun: 1 });
+        const started = wb.dispatch(); // A starts (deferred), session-A running
+        await new Promise((r) => setTimeout(r, 0)); // let the fixture's prepare await settle
+        check('W22 setup: session-A is running', wb.sessions.get(sessionAId)?.status === 'running');
+        wb.reassignTask(childId, TB, MBB, 'handoff before result');
+        const sessionB = wb.sessions.sessionForTask(childId)!;
+        releaseDeferred(t1cRun(TA, 'succeeded', undefined, 1)); // A returns, write-back stale
+        await started;
+        check('W22: session-A is NO LONGER running after the refused write-back',
+          wb.sessions.get(sessionAId)?.status !== 'running', String(wb.sessions.get(sessionAId)?.status));
+        check('W22: session-A settled via recordRun (native handle recorded)',
+          wb.sessions.get(sessionAId)?.status === 'open' && wb.sessions.get(sessionAId)?.nativeSessionId === 'native-th-1');
+        check('W22: the B/current session was NOT touched by A\u2019s settlement',
+          sessionB.sessionId !== sessionAId && sessionB.nativeSessionId === null && sessionB.status !== 'running');
+        cleanup();
+      }
+
+      // ---- W23: handle.result rejection settles the session --------------------
+      {
+        const { wb, childId, sessionAId, rejectDeferred, cleanup } = makeT1e({ deferRun: 1, rejectRun: true });
+        const started = wb.dispatch(); // started; session-A running
+        await new Promise((r) => setTimeout(r, 0)); // let the fixture's prepare await settle
+        check('W23 setup: the execution started (session-A running)',
+          wb.sessions.get(sessionAId)?.status === 'running');
+        rejectDeferred('the run died without producing a result');
+        const outcome = await started;
+        const entry = (outcome.tick?.outcomes ?? []).find((o) => o.taskId === childId);
+        check('W23: the outcome keeps its error semantics (no run, refused)',
+          entry !== undefined && entry.outcome.ok === false && entry.outcome.run === undefined,
+          entry === undefined ? 'no entry' : String((entry.outcome as { code?: string }).code));
+        check('W23: the session did NOT remain running',
+          wb.sessions.get(sessionAId)?.status !== 'running', String(wb.sessions.get(sessionAId)?.status));
+        cleanup();
+      }
+
+      // ---- W24: pre-dispatch refusal — no start, no settlement, no running -----
+      {
+        const { wb, childId, sessionAId, runCount, registry, cleanup } = makeT1e({});
+        registry.setAgentAvailability(TB, 'unavailable');
+        // Route the dispatch away from A without ever starting it: make the task's
+        // current pair (A) unrunnable through the real gate.
+        registry.setAgentAvailability(TA, 'unavailable');
+        const outcome = await wb.dispatch();
+        const entry = (outcome.tick?.outcomes ?? []).find((o) => o.taskId === childId);
+        check('W24: zero runtime.run calls; the gate refused the dispatch',
+          runCount() === 0 && (entry === undefined || entry.outcome.run === undefined),
+          `runs=${runCount()}`);
+        check('W24: the session was never marked running and never settled',
+          wb.sessions.get(sessionAId)?.status === 'open' && wb.sessions.get(sessionAId)?.nativeSessionId === null);
+        cleanup();
+      }
+
+      // ---- W25: normal success terminal ----------------------------------------
+      {
+        const { wb, childId, sessionAId, cleanup } = makeT1e({});
+        await wb.dispatch();
+        check('W25: a normal success settles the session via recordRun (open + handle)',
+          wb.sessions.get(sessionAId)?.status === 'open' && wb.sessions.get(sessionAId)?.nativeSessionId === 'native-th-1',
+          String(wb.sessions.get(sessionAId)?.status));
+        check('W25: the task moved to to_verify', wb.store.get(childId)?.status === 'to_verify');
+        cleanup();
+      }
+
+      // ---- W26: every started execution settles its session, per terminal state ----
+      {
+        const terminals: Array<RunResult['state']> = ['succeeded', 'failed', 'cancelled', 'timed_out'];
+        for (const state of terminals) {
+          const { wb, childId, sessionAId, releaseDeferred, cleanup } = makeT1e({ deferRun: 1 });
+          const started = wb.dispatch();
+          await new Promise((r) => setTimeout(r, 0)); // let prepare settle and runtime.run begin
+          const code = state === 'succeeded' ? undefined
+            : state === 'cancelled' ? 'CANCELLED'
+              : state === 'timed_out' ? 'TIMED_OUT' : 'NONZERO_EXIT';
+          releaseDeferred(t1cRun(TA, state, code, 1));
+          await started;
+          const s = wb.sessions.get(sessionAId);
+          check(`W26[${state}]: the started execution settled its session exactly (not running, resting state)`,
+            s?.status === 'open', String(s?.status));
+          check(`W26[${state}]: an attempt was recorded for the real run`,
+            lastExecution(wb, childId) !== null);
+          cleanup();
+        }
+      }
+
+      // ---- W27: rework attempt carries its dispatch leaseVersion ---------------
+      {
+        const { wb, childId, sessionAId, releaseDeferred, cleanup } = makeT1e({ deferRun: 2 });
+        await wb.dispatch(); // A succeeds; attempt 1 under lease 1
+        wb.reassignTask(childId, TB, MBB, 'handoff'); // lease advances to 2, session-B prepared
+        const rework = validateReviewVerdict({ verdict: 'rework', reason: 'redo on B', findings: [], recommendedAction: 'none', reviewer: 'codex', reviewedAt: TNOW });
+        wb.applyReview(childId, rework);
+        const started = wb.dispatch(); // the rework run on B is deferred
+        await new Promise((r) => setTimeout(r, 0)); // let prepare settle and runtime.run begin
+        releaseDeferred(t1cRun(TB, 'succeeded', undefined, 2));
+        const outcome = await started;
+        const entry = (outcome.tick?.outcomes ?? []).find((o) => o.taskId === childId);
+        const dispatchLease = entry?.outcome.ok === true ? entry.outcome.leaseVersion : entry?.outcome.leaseVersion;
+        const reworkAttempt = lastExecution(wb, childId, 'rework');
+        check('W27 setup: the rework really ran and was recorded',
+          reworkAttempt !== null && reworkAttempt.sessionId === wb.sessions.sessionForTask(childId)?.sessionId);
+        check('W27: rework Attempt.leaseVersion === the dispatch leaseVersion of its execution',
+          reworkAttempt !== null && reworkAttempt.leaseVersion !== undefined &&
+          reworkAttempt.leaseVersion === dispatchLease && dispatchLease === 2,
+          `attempt=${String(reworkAttempt?.leaseVersion)} outcome=${String(dispatchLease)}`);
+        check('W27: the first attempt keeps lease 1 — both describe their OWN dispatch',
+          lastExecution(wb, childId, 'execution')?.leaseVersion === 1);
+        void sessionAId;
+        cleanup();
+      }
+
+      // ---- W29–W34: explicit thread / session consistency closure --------------
+      // Driven through the production execution edge (`executeTask`) — the only
+      // place an explicit `req.threadId` can enter (the Workbench itself passes
+      // none; its resume intent flows through the resolver). The resolver used here
+      // mirrors the Workbench's own: SessionRegistry facts only.
+      {
+        const reworkVerdict = () => validateReviewVerdict({ verdict: 'rework', reason: 'requeue for the explicit-thread dispatch', findings: [], recommendedAction: 'none', reviewer: 'codex', reviewedAt: TNOW });
+        const resolverFor = (wb: NativeWorkbench) =>
+          ({ taskId, agentId, modelId }: { taskId: string; agentId: string; modelId: string | null }) => {
+            const s = wb.sessions.sessionForTask(taskId);
+            if (s === null || !sessionCompatibleWith(s, { agentId, modelId })) return undefined;
+            return { sessionId: s.sessionId, ...(s.nativeSessionId !== null ? { nativeThreadId: s.nativeSessionId } : {}) };
+          };
+
+        // ---- W29: explicit thread MATCHES the resolved session ----------------
+        {
+          const { wb, childId, sessionAId, requests, cleanup } = makeT1e({});
+          await wb.dispatch(); // A succeeds -> session-A native handle 'native-th-1'
+          check('W29 setup: the resolved session has a provable native thread',
+            wb.sessions.get(sessionAId)?.nativeSessionId === 'native-th-1');
+          wb.applyReview(childId, reworkVerdict());
+          prepareRework(wb.orchestrator, childId, 'requeue');
+          const hooks = { start: 0, terminal: 0 };
+          let startMappingSessionId: string | undefined;
+          const outcome = await wb.orchestrator.executeTask({
+            taskId: childId,
+            threadId: 'native-th-1',
+            resolveSessionForDispatch: resolverFor(wb),
+            onStart: (_h, mapping) => { hooks.start++; startMappingSessionId = mapping.sessionId; },
+            onDispatchTerminal: () => { hooks.terminal++; },
+          });
+          check('W29: matching explicit thread dispatches', outcome.ok === true, outcome.ok ? 'ok' : outcome.reason);
+          check('W29: the runtime request used the SAME thread',
+            requests.at(-1)?.threadId === 'native-th-1', String(requests.at(-1)?.threadId));
+          check('W29: the mapping names the SAME session (one context, two truths)',
+            startMappingSessionId === sessionAId, String(startMappingSessionId));
+          check('W29: start fired, terminal settled exactly once',
+            hooks.start === 1 && hooks.terminal === 1, `start=${hooks.start} terminal=${hooks.terminal}`);
+          cleanup();
+        }
+
+        // ---- W30: explicit thread CONFLICTS with the resolved session ---------
+        {
+          const { wb, childId, sessionAId, requests, cleanup } = makeT1e({});
+          await wb.dispatch();
+          wb.applyReview(childId, reworkVerdict());
+          prepareRework(wb.orchestrator, childId, 'requeue');
+          const hooks = { start: 0, terminal: 0 };
+          const runsBefore = requests.length;
+          const outcome = await wb.orchestrator.executeTask({
+            taskId: childId,
+            threadId: 'thread-foreign',
+            resolveSessionForDispatch: resolverFor(wb),
+            onStart: () => { hooks.start++; },
+            onDispatchTerminal: () => { hooks.terminal++; },
+          });
+          check('W30: the conflicting dispatch is REFUSED before the runtime',
+            outcome.ok === false && (outcome as { code?: string }).code === 'thread-session-conflict',
+            outcome.ok ? 'ran' : String((outcome as { code?: string }).code));
+          check('W30: zero runtime.run calls', requests.length === runsBefore, `${runsBefore} -> ${requests.length}`);
+          check('W30: no onStart, no terminal settlement', hooks.start === 0 && hooks.terminal === 0);
+          check('W30: the session was never marked running and holds no foreign handle',
+            wb.sessions.get(sessionAId)?.status === 'open' && wb.sessions.get(sessionAId)?.nativeSessionId === 'native-th-1');
+          check('W30: no attempt was recorded for the never-executed dispatch',
+            wb.evidence.history(childId).every((a) => a.kind === 'execution' || a.kind === 'review'));
+          cleanup();
+        }
+
+        // ---- W31: resolved session has NO provable native thread ---------------
+        {
+          const { wb, childId, sessionAId, requests, cleanup } = makeT1e({});
+          check('W31 setup: a fresh session has no native handle',
+            wb.sessions.get(sessionAId)?.nativeSessionId === null);
+          const runsBefore = requests.length;
+          const outcome = await wb.orchestrator.executeTask({
+            taskId: childId,
+            threadId: 'thread-A',
+            resolveSessionForDispatch: resolverFor(wb),
+          });
+          check('W31: fail closed — an unprovable explicit thread is refused',
+            outcome.ok === false && (outcome as { code?: string }).code === 'thread-session-conflict',
+            outcome.ok ? 'ran' : String((outcome as { code?: string }).code));
+          check('W31: zero runtime.run calls', requests.length === runsBefore);
+          check('W31: the session keeps its honest no-handle state',
+            wb.sessions.get(sessionAId)?.status === 'open' && wb.sessions.get(sessionAId)?.nativeSessionId === null);
+          cleanup();
+        }
+
+        // ---- W32: explicit thread with NO attributable session -----------------
+        {
+          const { wb, childId, requests, sessionAId, cleanup } = makeT1e({});
+          const hooks = { start: 0, terminal: 0 };
+          let startMappingSessionId: string | undefined;
+          const outcome = await wb.orchestrator.executeTask({
+            taskId: childId,
+            threadId: 'thread-explicit',
+            // No attributable session: the resolver answers "no session" for this
+            // dispatch (the existing sessionless-explicit-thread contract).
+            resolveSessionForDispatch: () => undefined,
+            onStart: (_h, mapping) => { hooks.start++; startMappingSessionId = mapping.sessionId; },
+            onDispatchTerminal: () => { hooks.terminal++; },
+          });
+          check('W32: the sessionless explicit-thread execution proceeds (existing contract)',
+            outcome.ok === true, outcome.ok ? 'ok' : outcome.reason);
+          check('W32: the runtime ran the explicit thread',
+            requests.at(-1)?.threadId === 'thread-explicit', String(requests.at(-1)?.threadId));
+          check('W32: NO session is claimed — never a guessed binding',
+            startMappingSessionId === undefined &&
+            workerIdentityOfAttempt({ taskId: childId, agentId: TA, modelId: MA, sessionId: undefined }) === null);
+          check('W32: the untouched session was never involved',
+            wb.sessions.get(sessionAId)?.status === 'open' && wb.sessions.get(sessionAId)?.nativeSessionId === null);
+          check('W32: start/terminal still paired (the execution itself happened)',
+            hooks.start === 1 && hooks.terminal === 1);
+          cleanup();
+        }
+
+        // ---- W33: standard Workbench path (no explicit thread) -----------------
+        {
+          const { wb, childId, sessionAId, requests, cleanup } = makeT1e({});
+          await wb.dispatch(); // fresh: resolver session/thread only
+          check('W33: a fresh Workbench dispatch runs the session\u2019s (absent) thread and names the session',
+            requests[0]?.threadId === undefined);
+          wb.applyReview(childId, reworkVerdict());
+          const outcome = await wb.dispatch(undefined, new Set([childId])); // resume intent -> resolver thread
+          check('W33: the resumed dispatch\u2019s runtime thread comes from the resolver session',
+            requests.at(-1)?.threadId === 'native-th-1', String(requests.at(-1)?.threadId));
+          const reworkAttempt = wb.evidence.history(childId).at(-1);
+          check('W33: the Attempt names the SAME session the runtime thread belongs to',
+            reworkAttempt !== undefined && reworkAttempt.sessionId === sessionAId &&
+            workerIdentityOfAttempt(reworkAttempt)?.sessionId === sessionAId);
+          check('W33: the dispatch was accepted end-to-end',
+            (outcome.tick?.outcomes ?? []).some((o) => o.taskId === childId && o.outcome.ok === true));
+          cleanup();
+        }
+
+        // ---- W34: conflict leaves the session lifecycle untouched --------------
+        {
+          const { wb, childId, requests, releaseDeferred, cleanup } = makeT1e({ deferRun: 2 });
+          await wb.dispatch(); // A succeeds (run 1 immediate)
+          wb.reassignTask(childId, TB, MBB, 'handoff'); // session-B prepared, open
+          const sessionB = wb.sessions.sessionForTask(childId)!;
+          wb.applyReview(childId, reworkVerdict());
+          prepareRework(wb.orchestrator, childId, 'requeue');
+          const hooks = { start: 0, terminal: 0 };
+          const runsBefore = requests.length;
+          const outcome = await wb.orchestrator.executeTask({
+            taskId: childId,
+            // session-B has no native handle yet -> the explicit thread cannot be
+            // proven to belong to it (T4) -> refusal.
+            threadId: 'thread-foreign',
+            resolveSessionForDispatch: resolverFor(wb),
+            onStart: () => { hooks.start++; },
+            onDispatchTerminal: () => { hooks.terminal++; },
+          });
+          check('W34 setup: the conflict was refused', outcome.ok === false);
+          // The deferred run 2 was never started, so release is a no-op; drain the
+          // dispatch promise nothing — nothing is in flight. Assert directly.
+          void releaseDeferred;
+          check('W34: zero runtime.run calls from the refused dispatch',
+            requests.length === runsBefore, `${runsBefore} -> ${requests.length}`);
+          check('W34: session-B remains exactly as prepared (open, no handle, not running)',
+            wb.sessions.get(sessionB.sessionId)?.status === 'open' &&
+            wb.sessions.get(sessionB.sessionId)?.nativeSessionId === null);
+          check('W34: no start hook, no terminal settlement fired',
+            hooks.start === 0 && hooks.terminal === 0);
+          cleanup();
+        }
+
+        // ---- W35–W39: pre-runtime refusal state closure (TeamRun T1-g) ----------
+        // The explicit thread enters through the REAL scheduler tick (`threadFor`),
+        // so the refusal is exercised on the production control plane, not a
+        // hand-called edge.
+        {
+          // ---- W35: conflict refusal restores Task truth ------------------------
+          const { wb, childId, sessionAId, requests, sched, cleanup } = makeT1e({});
+          await wb.dispatch(); // A succeeds; session-A native 'native-th-1'; task to_verify
+          wb.applyReview(childId, reworkVerdict());
+          prepareRework(wb.orchestrator, childId, 'requeue'); // task queued (schedulable)
+          const attemptsBefore = wb.evidence.history(childId).length;
+          const runsBefore = requests.length;
+          const tick = await sched.tick(
+            undefined,
+            new Map([[childId, 'thread-foreign']]), // explicit conflicting thread
+            { resolveSessionForDispatch: resolverFor(wb) },
+          );
+          const entry = tick.outcomes.find((o) => o.taskId === childId);
+          const refusedStatus = (entry?.outcome as { status?: string }).status;
+          check('W35: the dispatch was refused with thread-session-conflict',
+            entry !== undefined && entry.outcome.ok === false &&
+            (entry.outcome as { code?: string }).code === 'thread-session-conflict',
+            entry === undefined ? 'no entry' : String((entry.outcome as { code?: string }).code));
+          check('W35: runtime.run was never called', requests.length === runsBefore);
+          check('W35: TaskStore is NOT running and EQUALS the returned status',
+            wb.store.get(childId)?.status === 'queued' && refusedStatus === 'queued',
+            `store=${String(wb.store.get(childId)?.status)} returned=${String(refusedStatus)}`);
+          check('W35: the session was untouched (open, own handle, not running)',
+            wb.sessions.get(sessionAId)?.status === 'open' &&
+            wb.sessions.get(sessionAId)?.nativeSessionId === 'native-th-1');
+          check('W35: no execution Attempt was fabricated for the refused dispatch',
+            wb.evidence.history(childId).length === attemptsBefore);
+          cleanup();
+
+          // ---- W36: a corrected retry can dispatch (task not poisoned) ----------
+          const h36 = makeT1e({});
+          await h36.wb.dispatch();
+          h36.wb.applyReview(childId, reworkVerdict());
+          prepareRework(h36.wb.orchestrator, childId, 'requeue');
+          await h36.sched.tick(
+            undefined,
+            new Map([[childId, 'thread-foreign']]),
+            { resolveSessionForDispatch: resolverFor(h36.wb) },
+          );
+          check('W36 setup: the task is still schedulable after the conflict',
+            h36.wb.store.get(childId)?.status === 'queued');
+          const corrected = await h36.wb.dispatch(undefined, new Set([childId])); // corrected request: resolver-supplied matching thread
+          const okEntry = (corrected.tick?.outcomes ?? []).find((o) => o.taskId === childId);
+          check('W36: the corrected request IS admitted and runs',
+            okEntry?.outcome.ok === true && h36.requests.length === 2,
+            `ok=${String(okEntry?.outcome.ok)} runs=${h36.requests.length}`);
+          check('W36: the runtime thread is the session\u2019s own thread',
+            h36.requests.at(-1)?.threadId === 'native-th-1', String(h36.requests.at(-1)?.threadId));
+          const reworkAttempt = h36.wb.evidence.history(childId).at(-1);
+          check('W36: the Attempt records the resolved session (session-B of its dispatch)',
+            reworkAttempt !== undefined && reworkAttempt.sessionId === h36.wb.sessions.sessionForTask(childId)?.sessionId);
+          h36.cleanup();
+
+          // ---- W37: capacity is released (real scheduler, cap 1) ----------------
+          const h37 = makeT1e({ maxConcurrentAgents: 1 });
+          await h37.wb.dispatch();
+          h37.wb.applyReview(childId, reworkVerdict());
+          prepareRework(h37.wb.orchestrator, childId, 'requeue');
+          await h37.sched.tick(
+            undefined,
+            new Map([[childId, 'thread-foreign']]),
+            { resolveSessionForDispatch: resolverFor(h37.wb) },
+          );
+          check('W37 setup: after the conflict the task is queued, not running (cap 1)',
+            h37.wb.store.get(childId)?.status === 'queued');
+          const retried = await h37.wb.dispatch();
+          check('W37: with maxConcurrentAgents=1 the next dispatch runs IMMEDIATELY — the refusal consumed no slot',
+            (retried.tick?.outcomes ?? []).some((o) => o.taskId === childId && o.outcome.ok === true),
+            'the task would be waiting forever if the slot were leaked');
+          h37.cleanup();
+
+          // ---- W38: the lease is not stranded ------------------------------------
+          const h38 = makeT1e({});
+          await h38.wb.dispatch();
+          h38.wb.applyReview(childId, reworkVerdict());
+          prepareRework(h38.wb.orchestrator, childId, 'requeue');
+          const leaseBefore = h38.wb.store.leaseOf(childId);
+          await h38.sched.tick(
+            undefined,
+            new Map([[childId, 'thread-foreign']]),
+            { resolveSessionForDispatch: resolverFor(h38.wb) },
+          );
+          const leaseAfter = h38.wb.store.leaseOf(childId);
+          check('W38: the conflict activated/changed NOTHING about the lease (no new live-execution protection)',
+            leaseBefore?.status === leaseAfter?.status && leaseBefore?.leaseVersion === leaseAfter?.leaseVersion &&
+            leaseAfter?.status !== 'revoked',
+            `before=${String(leaseBefore?.status)}/${String(leaseBefore?.leaseVersion)} after=${String(leaseAfter?.status)}/${String(leaseAfter?.leaseVersion)}`);
+          const attemptsBefore38 = h38.wb.evidence.history(childId).length;
+          const valid = await h38.wb.dispatch();
+          check('W38: a valid retry obtains/uses the lease and its write-back is accepted',
+            (valid.tick?.outcomes ?? []).some((o) => o.taskId === childId && o.outcome.ok === true) &&
+            h38.wb.store.get(childId)?.status === 'to_verify');
+          check('W38: the conflict generation gained no execution evidence',
+            h38.wb.evidence.history(childId).length === attemptsBefore38 + 1);
+          h38.cleanup();
+
+          // ---- W39: parity with an existing pre-runtime refusal ------------------
+          const h39 = makeT1e({});
+          h39.registry.setAgentAvailability(TA, 'unavailable'); // spawn-gate refusal
+          const gateRefused = await h39.wb.dispatch();
+          const gateEntry = (gateRefused.tick?.outcomes ?? []).find((o) => o.taskId === childId);
+          const gateStatus = (gateEntry?.outcome as { status?: string }).status;
+          check('W39: spawn-gate refusal (existing contract): task stays planned, lease stays issued, session open',
+            h39.wb.store.get(childId)?.status === 'planned' && gateStatus === 'planned' &&
+            h39.wb.store.leaseOf(childId)?.status === 'issued' &&
+            h39.wb.sessions.sessionForTask(childId)?.status === 'open',
+            `store=${String(h39.wb.store.get(childId)?.status)} lease=${String(h39.wb.store.leaseOf(childId)?.status)}`);
+          h39.registry.setAgentAvailability(TA, 'available');
+          const recovered = await h39.wb.dispatch();
+          check('W39: the SAME invariants hold for thread-session-conflict (W35) as for the gate refusal',
+            (recovered.tick?.outcomes ?? []).some((o) => o.taskId === childId && o.outcome.ok === true) &&
+            h39.wb.store.get(childId)?.status === 'to_verify');
+          h39.cleanup();
+        }
+      }
+    })();
+
+// ================================================================
+// TeamRun T2-a — Laya explicit Agent × Model selection (production wiring)
+// ================================================================
+// Driven through the REAL decision contract: a fake Laya decision →
+// validateDecision (the same validator the loop uses) → applyDecision →
+// decisionCapabilities.reassign → Assignment exact-pair enforcement → the
+// T1 session path. No direct assignWorker-with-pair shortcut.
+{
+  await (async function sectionT2a(): Promise<void> {
+    process.stdout.write('\n== WB T2-a. Laya explicit Agent × Model: T2A-11..13 ==\n');
+
+    // ---- T2A-11: Laya reassign to OpenCode/model-B is enforced exactly -------
+    {
+      const { wb, childId, sessionAId, cleanup } = makeT1e({});
+      await wb.dispatch(); // running on TA/model-A; session-A bound
+      check('T2A-11 setup: the task runs on model-A',
+        wb.store.get(childId)?.agentId === TA && wb.store.get(childId)?.modelId === MA);
+      const observation = observeTasks(wb.store, { now: TNOW });
+      const decision = validateDecision(
+        { action: 'reassign', taskId: childId, agentId: TA, modelId: MAB, reason: 'Laya explicitly chooses OpenCode/model-B' },
+        observation,
+      );
+      const caps = wb.decisionCapabilities();
+      const applied = await applyDecision(decision, { observation, ...caps });
+      check('T2A-11: the Laya reassign decision applied through the production wiring',
+        applied.applied === true, JSON.stringify(applied).slice(0, 160));
+      check('T2A-11: the EXACT pair landed — OpenCode/model-B, no substitution',
+        wb.store.get(childId)?.agentId === TA && wb.store.get(childId)?.modelId === MAB,
+        `${String(wb.store.get(childId)?.agentId)}/${String(wb.store.get(childId)?.modelId)}`);
+      const rebound = wb.sessions.sessionForTask(childId);
+      check('T2A-11: the T1 session path did its job — a NEW compatible session for model-B',
+        rebound !== null && rebound.sessionId !== sessionAId && rebound.modelId === MAB && rebound.status !== 'running',
+        rebound === null ? 'none' : `${rebound.sessionId}/${String(rebound.modelId)}`);
+      cleanup();
+    }
+
+    // ---- T2A-12: Laya reassign to an ILLEGAL pair is refused, no fallback ----
+    {
+      const { wb, childId, sessionAId, registry, cleanup } = makeT1e({});
+      await wb.dispatch();
+      registry.setAgentAvailability(TB, 'unavailable'); // Laya's target is down
+      const observation = observeTasks(wb.store, { now: TNOW });
+      const decision = validateDecision(
+        { action: 'reassign', taskId: childId, agentId: TB, modelId: MBB, reason: 'Laya explicitly chooses WorkBuddy Intl/model-b' },
+        observation,
+      );
+      const caps = wb.decisionCapabilities();
+      const applied = await applyDecision(decision, { observation, ...caps });
+      check('T2A-12: the explicit illegal pair is NOT migrated (reassign refused)',
+        applied.applied === false,
+        JSON.stringify(applied).slice(0, 160));
+      check('T2A-12: the task keeps its CURRENT pair — Assignment never picked a fallback',
+        wb.store.get(childId)?.agentId === TA && wb.store.get(childId)?.modelId === MA);
+      check('T2A-12: the session binding is untouched',
+        wb.sessions.sessionForTask(childId)?.sessionId === sessionAId);
+      cleanup();
+    }
+
+    // ---- T2A-13: Unified Codex Review path is unaffected ---------------------
+    {
+      const { wb, childId, cleanup } = makeT1e({});
+      await wb.dispatch(); // success -> to_verify
+      const pass = validateReviewVerdict({ verdict: 'pass', reason: 'accepted', findings: [], recommendedAction: 'none', reviewer: 'codex', reviewedAt: TNOW });
+      const review = wb.applyReview(childId, pass);
+      check('T2A-13: the Unified Review path still applies its verdict',
+        review.status === 'ok', JSON.stringify(review).slice(0, 120));
+      check('T2A-13: a review attempt was recorded by the SAME review authority as before',
+        wb.evidence.history(childId).some((a) => a.kind === 'review' && a.agentId === 'codex'));
+      check('T2A-13: the acceptance path is unchanged (a pass review completes the lifecycle)',
+        wb.store.get(childId)?.status === 'succeeded', String(wb.store.get(childId)?.status));
+      cleanup();
+    }
+  })();
+}
+
 process.stdout.write(`\n${passed} passed, ${failed} failed\n`);
+// This suite was the ONLY one of the 24 that never set an exit code, at HEAD as well as
+// in the working tree. It printed its failure count and then exited 0, so a failing
+// workbench assertion was invisible to the `npm test` chain and to the timing runner 鈥?// which is how the R5-1.2 tick-outcome regression hid behind a green full run.
+//
+// Every sibling suite ends with `process.exitCode = failed === 0 ? 0 : 1`; this one now
+// does too. A suite that can fail without failing is worse than no suite at all.
+process.exitCode = failed === 0 ? 0 : 1;
+  }
+  }
+}

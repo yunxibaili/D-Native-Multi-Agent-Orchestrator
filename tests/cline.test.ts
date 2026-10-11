@@ -93,7 +93,7 @@ const EXIT_NONE = {
   signal: 'SIGTERM',
   stderrTail: '',
   stderrTruncated: false,
-  cleanup: { rootKilled: false, descendantsReaped: false, note: 'tree kill after turn' },
+  cleanup: { rootKilled: false, treeStopConfirmed: true, processStart: 'started', descendantsReaped: false, note: 'tree kill after turn' },
 } as const;
 
 function tin(over: Partial<TerminalInput>): TerminalInput {

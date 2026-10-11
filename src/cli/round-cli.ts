@@ -93,6 +93,11 @@ import {
   type QuotaProbe,
 } from '../quota/index.ts';
 import type { QuotaRecord } from '../quota/types.ts';
+// TeamRun T2-a.3: the observation seam's snapshot type. Imported here only so the seam is
+// typed against the DETACHED projection; `NativeWorkbench` itself must never appear in
+// that signature again.
+import type { RoundWorkbenchObservation } from './round-observation.ts';
+import { observeRoundWorkbench } from './round-observation.ts';
 import {
   NativeWorkbench,
   Orchestrator as MultiTaskOrchestrator,
@@ -100,9 +105,18 @@ import {
   WorkspaceManager,
   normalizeScopeForWorkspace,
   runDecisionCycle,
+  // TeamRun T3-a.1: READ-only fan-out vocabulary.
+  FANOUT_MEMBER_TASK_TYPE,
+  FANOUT_MAX_MEMBERS,
+  projectFanoutAggregation,
   type ResourceClaimMode,
   type WorkbenchTaskSpec,
 } from '../orchestration/index.ts';
+// TeamRun T3-a.1: Laya's execution-topology decision preset.
+import {
+  decideExecutionTopology,
+  type RawExecutionTopology,
+} from '../decision/execution-topology.ts';
 import type { TaskStatus } from '../orchestration/task.ts';
 import type { TaskStore } from '../orchestration/store.ts';
 import {
@@ -127,6 +141,8 @@ import {
   type ContinuationResult,
 } from '../orchestration/continuation.ts';
 import { buildHandoff } from '../orchestration/workbench-handoff.ts';
+import { buildDispatchReceipt } from '../orchestration/dispatch-receipt.ts';
+import { projectDispatchTaskEvidence } from '../orchestration/dispatch-evidence.ts';
 import { buildExecutionSnapshot } from '../orchestration/execution-monitor.ts';
 import {
   createRoundObserver,
@@ -141,11 +157,22 @@ import {
   type RoundResult,
   type TaskEvidenceInput,
 } from '../orchestration/round-result.ts';
+// R5-1.2C (§14): the floor and ceiling quoted in `--execution-timeout` help now come
+// from the ONE validator's own constants, so the documented range can never drift from
+// the enforced range again (it said 1000 while the real minimum is 50).
+import {
+  validateExecutionTimeoutMs,
+  MIN_EXECUTION_TIMEOUT_MS,
+  NODE_TIMER_MAX_MS,
+} from '../orchestration/execute.ts';
 import { createLayaDecisionProvider } from '../decision/laya.ts';
 import type { DecisionProvider } from '../decision/types.ts';
 import { classifyTask } from '../decision/routing.ts';
 import type { TaskClassification } from '../decision/routing.ts';
 import type { TaskType } from '../quota/types.ts';
+// TeamRun T3-a.5: the current execution bundle names the result correlated to the current
+// Attempt, so `RunResult` is part of the projection's own vocabulary here.
+import type { RunResult } from '../core/types.ts';
 
 const USAGE = `orchestrator round - ONE execution round: decide - execute - observe - report
 
@@ -161,6 +188,13 @@ OPTIONS
   --model <id>           prefer this model for the preferred agent
   --laya-url <url>       laya-serve base URL (default: http://127.0.0.1:8077)
   --laya-timeout <ms>    decision timeout (default: 60000)
+  --execution-timeout <ms>
+                         NATIVE AGENT execution deadline in MILLISECONDS, enforced
+                         inside the runtime by the agent session itself (default:
+                         1800000 = 30 minutes; allowed range ${MIN_EXECUTION_TIMEOUT_MS}..${NODE_TIMER_MAX_MS}).
+                         This is NOT the decision timeout and NOT a result-wait
+                         bound. 0 / negative / non-finite / oversized values are
+                         rejected; unlimited execution is not supported.
   --allow-remote-laya    permit a non-loopback laya-serve (default: refuse)
   --max-children <n>     how many children may EXIST (default: 3)
   --max-concurrent <n>   how many children may RUN at once (default: 2)
@@ -216,6 +250,8 @@ interface RoundOptions {
   model?: string;
   layaUrl: string;
   layaTimeoutMs: number;
+  /** R5-1 (P1-A): native EXECUTION deadline (RunRequest.timeoutMs), not a wait bound. */
+  executionTimeoutMs: number;
   allowRemoteLaya: boolean;
   maxChildren: number;
   maxConcurrent: number;
@@ -299,6 +335,11 @@ function parse(argv: readonly string[]): RoundOptions | { error: string } {
   const cwd = resolve(cwdRaw ?? process.cwd());
   if (!existsSync(cwd)) return { error: `Working directory does not exist: ${cwd}` };
 
+  // R5-1.1 (§6): validate the execution deadline BEFORE building the options, so a
+  // bad value fails the parse with a readable message (never reaches `setTimeout`).
+  const execTimeoutCheck = validateExecutionTimeoutMs(num('execution-timeout', 30 * 60_000));
+  if (!execTimeoutCheck.ok) return { error: `--execution-timeout: ${execTimeoutCheck.reason}` };
+
   try {
     return {
       objective,
@@ -307,6 +348,10 @@ function parse(argv: readonly string[]): RoundOptions | { error: string } {
       ...(s('model') !== undefined ? { model: s('model') } : {}),
       layaUrl: s('laya-url') ?? 'http://127.0.0.1:8077',
       layaTimeoutMs: num('laya-timeout', 60_000),
+      // R5-1.1 (§6/P1-A): the NATIVE EXECUTION deadline — a different thing from the
+      // Laya decision timeout above. Enforced INSIDE the runtime by the agent session
+      // (real `timed_out` terminal), validated above at the CLI boundary.
+      executionTimeoutMs: execTimeoutCheck.value,
       allowRemoteLaya: flags['allow-remote-laya'] === true,
       maxChildren: num('max-children', 3),
       maxConcurrent: num('max-concurrent', 2),
@@ -371,6 +416,24 @@ export interface RoundCliOverrides {
    * the probe source. `index.ts` passes nothing.
    */
   readonly probes?: QuotaProbe[];
+  /**
+   * TeamRun T2-a.3: a READ-ONLY observation seam, and an OBSERVATION seam only.
+   *
+   * T2-a.2 originally typed this `(wb: NativeWorkbench) => void`, which handed the
+   * callback the live workbench: through it a test could call `assignChildren`,
+   * `reassignTask`, `store.assignIdentity`, `sessions.open` or `spawnChild`, and so
+   * change the pair the round actually dispatched on. Inspecting and controlling are
+   * different capabilities, and only one of them is safe to expose to a test.
+   *
+   * The parameter is now a detached, frozen SNAPSHOT of plain values — never the
+   * workbench, a store, a registry, an assignment or a runtime. There is therefore
+   * nothing on it to call. Note this is not `Readonly<NativeWorkbench>`: that would
+   * still leave every mutation method intact.
+   *
+   * The return value is ignored by contract (§6), and the call is failure-isolated (§1),
+   * so an observer can neither steer the round nor break it by throwing.
+   */
+  readonly onWorkbenchSnapshot?: (snapshot: RoundWorkbenchObservation) => void;
 }
 
 export async function runRoundCli(
@@ -544,7 +607,11 @@ export async function runRoundCli(
     // (`RuntimeRunner.run is called in exactly one place`) exists to prevent.
     runtime,
     defaultCwd: o.cwd,
-    resultTimeoutMs: o.layaTimeoutMs,
+    // R5-1 (P1-A): the execution deadline (enforced INSIDE the runtime by
+    // `AgentSession` via `RunRequest.timeoutMs`), not a result-wait bound. Passing
+    // the Laya decision timeout here used to make a long agent run get marked
+    // failed with `runtime-result-failed` while the native process was still alive.
+    executionTimeoutMs: o.executionTimeoutMs,
     // ---- R2-1: workspace admission --------------------------------------
     // Present only when the project really is a git repository; see the probe above.
     ...(workspace !== null ? { workspace } : {}),
@@ -587,7 +654,30 @@ export async function runRoundCli(
     registry,
     quotaRecords,
     cwd: o.cwd,
+    // TeamRun T2-a.1: the PRODUCTION initial path is Laya-controlled. The workbench
+    // reuses the provider this command already builds for classification — no second
+    // provider, no second planner. A round whose Laya selection cannot be obtained now
+    // REFUSES its tasks explicitly instead of letting Assignment's scoring answer for
+    // Laya and the output looking like a semantic judgement.
+    decisionProvider: provider,
   });
+  // TeamRun T2-a.3: the observation seam is a FAILURE-ISOLATED notifier over a detached,
+  // frozen snapshot. It is deliberately NOT called here: at this point the workbench has
+  // no root task and nothing has been planned or assigned, so a snapshot taken now would
+  // be empty and could not show the Assignment-established binding the regressions need.
+  //
+  // It fires at the round's EXITS instead (the assignment-failure path and the final
+  // return), where the authoritative state is complete. Being that late is also what makes
+  // it safe: by then every dispatch is done, so an observer is not merely unable to steer
+  // the round — there is nothing left to steer.
+  const notifyWorkbenchSnapshot = (): void => {
+    if (overrides.onWorkbenchSnapshot === undefined) return;
+    try {
+      overrides.onWorkbenchSnapshot(observeRoundWorkbench(wb));
+    } catch {
+      // An observer must never be able to fail a round it is only watching (§1/§8).
+    }
+  };
 
   const rootId = `round-${now.toString(36)}`;
 
@@ -700,8 +790,56 @@ export async function runRoundCli(
   let assigned;
   try {
     planned = wb.plan(spec, classification);
-    // Every id the planner produced needs a scope before it can be assigned.
-    for (const child of planned.children) budgets.task(child.taskId, o.budgetUnits);
+    // TeamRun T3-a.1: Laya decides the execution TOPOLOGY. SOLO is the existing path and
+    // the default; PARALLEL_READ materializes N independent READ member Tasks. A transport
+    // failure returns null (no topology opinion -> SOLO); a MALFORMED PARALLEL_READ throws
+    // a schema error and refuses the round — it must never silently become SOLO.
+    let topology: RawExecutionTopology | null = null;
+    if (provider !== null) {
+      const readCandidates = registry.list()
+        .filter((e) => e.modelId !== null && e.modelId !== '' && e.taskTypes.includes(FANOUT_MEMBER_TASK_TYPE))
+        .map((e) => ({
+          agentId: e.agentId,
+          modelId: e.modelId as string,
+          taskTypes: [...e.taskTypes],
+          available: registry.isModelAvailable(e.agentId, e.modelId as string),
+        }));
+      try {
+        topology = await decideExecutionTopology(provider, {
+          task: { taskId: rootId, objective: o.objective, acceptanceCriteria: o.objective },
+          candidates: readCandidates,
+          maxMembers: FANOUT_MAX_MEMBERS,
+        });
+      } catch (e) {
+        const msg = `${(e as Error).name}: ${(e as Error).message}`;
+        report.stage = 'plan';
+        report.error = `execution topology refused: ${msg}`;
+        if (o.json) w(JSON.stringify(report, null, 2));
+        else note(`execution topology refused: ${msg}`);
+        notifyWorkbenchSnapshot();
+        return 1;
+      }
+    }
+    if (topology !== null && topology.kind === 'parallel_read') {
+      const materialized = wb.materializeReadFanout(rootId, topology.membersRaw);
+      if (!materialized.ok) {
+        report.stage = 'plan';
+        report.error = `fan-out topology refused: ${materialized.code}: ${materialized.reason}`;
+        if (o.json) w(JSON.stringify(report, null, 2));
+        else note(`fan-out topology refused: ${materialized.code}: ${materialized.reason}`);
+        notifyWorkbenchSnapshot();
+        return 1;
+      }
+    }
+    // Every id that now exists under the root needs a task budget scope before it can be
+    // assigned. Read from the STORE (not `planned.children`) so fan-out members are funded
+    // too — `materializeReadFanout` replaced the planner's not-yet-started children.
+    for (const child of wb.store.children(rootId)) budgets.task(child.taskId, o.budgetUnits);
+    // TeamRun T2-a.1: Laya picks the INITIAL Agent x Model pair BEFORE Assignment runs.
+    // Planner still only planned task decomposition and dependencies — it is not asked
+    // for an agent, a model or a session. This call never dispatches, so the first
+    // execution still happens only after Assignment has enforced the pair.
+    await wb.selectInitialAssignment(rootId);
     assigned = wb.assignChildren(rootId, spec);
     // The gate needs THREE scopes to exist - global, task:<id> AND agent:<id> - and
     // `resolveBudgetHeadroom` deliberately refuses to auto-create a missing one
@@ -709,27 +847,39 @@ export async function runRoundCli(
     // turning "unknown" into a real-but-empty ledger). So the agent scope for each
     // worker this round actually bound must be funded before dispatch, or every
     // execute is refused with `budget-scope-unavailable`.
-    for (const child of planned.children) {
-      if (assigned.find((a) => a.taskId === child.taskId)?.ok !== true) continue;
-      budgets.agent(child.agentId, o.budgetUnits);
-    }
-    // Assignment is the only thing that may bind a session to a task.
-    for (const child of planned.children) {
+    // TeamRun T2-a.2 (§1/§5): `agentId`/`modelId` are EXECUTION facts and are now read from
+    // the AUTHORITATIVE post-assignment state, never from the planner-era snapshot. Reading
+    // `planned.children` here funded the agent the Planner had named, so a round whose
+    // Laya decision moved the task to another agent ended up with no budget scope for the
+    // agent that would actually run it — and every execute was refused
+    // `budget-scope-unavailable` for a ledger that was simply configured for the wrong
+    // worker. `planned.children` keeps its planning uses (task ids, dependencies,
+    // classification, shape); execution identity comes from TaskStore from here on.
+    for (const child of wb.store.children(rootId)) {
       const outcome = assigned.find((a) => a.taskId === child.taskId);
       if (outcome?.ok !== true) continue;
-      wb.sessions.open(
-        { agentId: child.agentId, modelId: child.modelId, sessionPolicy: 'fresh' },
-        o.cwd,
-        now,
-        child.taskId,
-      );
+      budgets.agent(child.agentId, o.budgetUnits);
     }
+    // TeamRun T2-a.2 (§7/§8): there is deliberately NO session open here any more.
+    // `assignChildren` already opened the authoritative session, bound to the ENFORCED
+    // pair, and the line above this block already said so. Re-opening from the planning
+    // snapshot created a SECOND session carrying the STALE agent/model — so a task could
+    // hold a Worker identity and evidence for `agent-b/m1` while its session binding said
+    // `agent-a/null`. The CLI owns no session decision (policy, model and agent all
+    // belong to Assignment and SessionRegistry), so it now only CONSUMES the binding
+    // instead of replacing it. The comment this block contradicts is preserved below.
+    //
+    // Assignment is the only thing that may bind a session to a task.
   } catch (e) {
     const msg = `${(e as Error).name}: ${(e as Error).message}`;
     report.stage = 'plan';
     report.error = msg;
     if (o.json) w(JSON.stringify(report, null, 2));
     else note(`planning/assignment failed: ${msg}`);
+    // T2-a.3: the failure path is a legitimate observation point — a refused initial
+    // selection is exactly the state T2A2-5/T2A3-6 need to inspect, and it must show NO
+    // resurrected pair rather than the Planner's.
+    notifyWorkbenchSnapshot();
     return 1;
   }
 
@@ -772,6 +922,70 @@ export async function runRoundCli(
    */
   const handoffDispatches: Array<{ taskId: string; admitted: string[]; attempts: number }> = [];
 
+  // TeamRun T3-a.3: the round's CURRENT execution evidence, captured from each dispatch.
+  // A member's actual identity may ONLY come from here + AttemptStore — never from
+  // `lastRunResult`/attempt HISTORY, which can describe a PREVIOUS execution. Each dispatch
+  // OVERWRITES a task's entry, so a later refusal clears an earlier run.
+  //
+  // TeamRun T3-a.5: `attemptId` and `run` are ONE correlated pair, both read off the same
+  // entry of `receipt.executionsByTask` — bound at the AttemptStore append that minted the id
+  // from the very run that built the record. `wb.lastRunResult(taskId)` is GONE from this path
+  // on purpose: a `taskId` can own Attempt A, B and C, so "newest result held for this task"
+  // is a different question from "the current attempt's result" and can hand back A's result
+  // while the current attempt is B.
+  type CurrentExecution = {
+    outcome: 'started' | 'dispatch-refused' | 'pending';
+    attemptIds: string[];
+    attemptId: string | null;
+    refusalCode: string | null;
+    refusalReason: string | null;
+    /** THE result of `attemptId`. `null` when this attempt has no result yet — never an older
+     * attempt's result. See `projectDispatchTaskEvidence` for why null is a real answer. */
+    run: RunResult | null;
+    writeBackAccepted: boolean;
+  };
+  const currentExecutions = new Map<string, CurrentExecution>();
+  const captureDispatchFacts = (receipt: ReturnType<typeof buildDispatchReceipt>): void => {
+    // The per-task resolution is a PURE projection (dispatch-evidence.ts), including the
+    // correlated attempt/result pair; this only merges it (last dispatch wins per task).
+    const projected = projectDispatchTaskEvidence({
+      outcomes: receipt.outcomes.map((e) => ({ taskId: e.taskId, admitted: e.admitted })),
+      waiting: receipt.waiting,
+      skipped: receipt.skipped.map((sk) => ({ taskId: sk.taskId, code: sk.code, reason: sk.reason })),
+      attemptIdsByTask: receipt.attemptIdsByTask,
+      executionsByTask: receipt.executionsByTask,
+    });
+    for (const [taskId, evidence] of projected) {
+      currentExecutions.set(taskId, {
+        ...evidence,
+        attemptIds: [...evidence.attemptIds],
+      });
+    }
+  };
+
+  // The ATOMIC actual execution bundle for the current dispatch: ONE AttemptRecord for the
+  // identity, and the run correlated to that very attempt. T3-a.5 keeps them in one value so
+  // no consumer can pair attempt B's identity with attempt A's result.
+  const currentActualOf = (taskId: string): {
+    attemptId: string;
+    agentId: string;
+    modelId: string | null;
+    sessionId: string | null;
+    run: RunResult | null;
+  } | null => {
+    const ce = currentExecutions.get(taskId);
+    if (ce?.outcome !== 'started' || ce.attemptId === null) return null;
+    const rec = wb.evidence.get(ce.attemptId);
+    if (rec == null) return null;
+    return {
+      attemptId: rec.attemptId,
+      agentId: rec.agentId,
+      modelId: rec.modelId,
+      sessionId: rec.sessionId ?? null,
+      run: ce.run,
+    };
+  };
+
   const decisionCapabilities =
     o.retryMax > 0
       ? wb.decisionCapabilities({
@@ -802,6 +1016,13 @@ export async function runRoundCli(
   // target the budget has already spent.
   const handoffCapabilities = {
     ...decisionCapabilities,
+    // T3-a.3: capture the receipt the Decision Loop uses, so the round knows exactly which
+    // members started an execution THIS round (and which were refused/pending).
+    dispatch: async () => {
+      const receipt = await decisionCapabilities.dispatch();
+      captureDispatchFacts(receipt);
+      return receipt;
+    },
     reassign: async (req: { taskId: string; agentId?: string; modelId?: string; strategy?: 'explicit' | 'assignment'; reason?: string }) => {
       if (req.agentId !== undefined) {
         const used = handoffAgentChain.get(req.taskId) ?? [];
@@ -913,6 +1134,125 @@ export async function runRoundCli(
     return found;
   };
 
+  // -------------------------------------------------------------------- T3-b.1
+  // The fan-out EXECUTION PHASE: a bounded drain of the requested READ members that
+  // Scheduler capacity could not admit yet.
+  //
+  // WHY THIS EXISTS
+  // A width > capacity fan-out parks the surplus members in `TickResult.waiting`. That is a
+  // CAPACITY fact (the scheduler emits `waiting` from exactly one place: `free <= 0`), it is
+  // not a refusal, and nothing in the round ever came back for those members. Worse, a member
+  // that IS refused later keeps its `planned` status on purpose (the refusal deliberately does
+  // not touch Task state), so a naive re-tick re-selects it forever and a healthy sibling
+  // starves. Both defects are closed here by SCOPE, not by detection.
+  //
+  // WHY IT LIVES HERE AND NOT IN THE SCHEDULER
+  // `Scheduler.tick` stays the sole Dispatch Authority and stays a single decision primitive.
+  // The coordinator contributes exactly one thing: which task ids this bounded fan-out
+  // execution phase may consider. It does no ordering, no capacity arithmetic, no gating and
+  // never calls the orchestrator directly.
+  //
+  // THE SCOPE IS PER-ITERATION AND NEVER PERSISTED
+  // A handoff continuation legitimately re-executes the SAME taskId in a LATER phase
+  // (continuation.ts:15-16 - "the same taskId, with a second AttemptRecord appended"). A
+  // remembered scope would suppress it, so the allowlist dies with the loop below.
+  const fanoutGroups = wb.fanoutProvenance();
+  const fanoutMemberByTask = new Map<string, {
+    readonly agentId: string; readonly modelId: string; readonly scope: string;
+    readonly accessMode: string; readonly memberIndex: number;
+  }>();
+  for (const group of fanoutGroups) for (const m of group.members) fanoutMemberByTask.set(m.taskId, m);
+  const assignedByTask = new Map(assigned.map((a) => [a.taskId, a]));
+  const fanoutFactsOf = (taskId: string) => {
+    const live = wb.store.get(taskId);
+    const assn = assignedByTask.get(taskId);
+    const assignmentRefused = assn !== undefined && !assn.ok;
+    const ce = currentExecutions.get(taskId);
+    const actual = currentActualOf(taskId);
+    let execution: 'started' | 'assignment-refused' | 'dispatch-refused' | 'pending';
+    if (actual !== null) execution = 'started';
+    else if (assignmentRefused) execution = 'assignment-refused';
+    else if (ce?.outcome === 'dispatch-refused') execution = 'dispatch-refused';
+    else execution = 'pending';
+    return {
+      taskStatus: live?.status ?? 'missing',
+      execution,
+      assignment: (assignmentRefused ? 'refused' : 'accepted') as 'accepted' | 'refused',
+      assignmentRefusalReason: assignmentRefused ? (assn?.reason ?? null) : null,
+      dispatchRefusalCode: execution === 'dispatch-refused' ? (ce?.refusalCode ?? null) : null,
+      actual,
+    };
+  };
+  /**
+   * The requested members that have NOT yet reached an execution resolution.
+   *
+   * Derived from the SAME facts the report and the review packet consume
+   * (`projectFanoutAggregation` -> `executionSettled`), never from a status heuristic, an
+   * attempt count, or a Task.status guess. `executionSettled === true` covers assignment
+   * refusal, pre-runtime dispatch refusal, post-runtime write-back refusal and any finished
+   * run, which is exactly the T3-a settlement contract.
+   */
+  const unresolvedFanoutMemberIds = (): string[] => fanoutGroups
+    .flatMap((p) => projectFanoutAggregation(p, fanoutFactsOf).members)
+    .filter((m) => !m.executionSettled)
+    .map((m) => m.taskId);
+
+  const fanoutDrain = {
+    iterations: 0,
+    progressIterations: 0,
+    complete: false,
+    fixpoint: false,
+    /** The members still unresolved when the loop stopped, for the report. */
+    unresolvedAtStop: [] as string[],
+  };
+  if (fanoutGroups.length > 0) {
+    // Defence in depth only: the loop is bounded by strict set shrink, so at most
+    // `requestedWidth` iterations can make progress and one more observes the fixpoint.
+    const safetyBound = fanoutGroups
+      .reduce((n, g) => n + g.members.length, 0) + 1;
+    for (;;) {
+      const before = unresolvedFanoutMemberIds();
+      if (before.length === 0) {
+        fanoutDrain.complete = true;
+        break;
+      }
+      if (fanoutDrain.iterations >= safetyBound) {
+        // A safety bound must never be the correctness mechanism. Reaching it with unresolved
+        // work left is an internal defect, reported as incomplete rather than looped on.
+        fanoutDrain.unresolvedAtStop = before;
+        break;
+      }
+      fanoutDrain.iterations += 1;
+      // The ONE dispatch edge, scoped to the unresolved members. No scope is remembered.
+      const dispatched = await wb.dispatch(undefined, undefined, { taskIds: new Set(before) });
+      if (dispatched.tick !== null) {
+        captureDispatchFacts(buildDispatchReceipt({
+          tick: dispatched.tick,
+          dispatchedAt: Date.now(),
+          attemptIdsByTask: dispatched.attemptIdsByTask,
+          executionsByTask: dispatched.executionsByTask,
+        }));
+      }
+      const after = unresolvedFanoutMemberIds();
+      if (after.length === 0) {
+        fanoutDrain.complete = true;
+        break;
+      }
+      if (after.length < before.length) {
+        // The ONLY correctness progress signal: the requested set strictly shrank.
+        // Never `tick.outcomes.length` — a repeated refusal of an unresolved-looking member
+        // produces outcomes every tick while nothing progresses, and starved a healthy sibling.
+        fanoutDrain.progressIterations += 1;
+        continue;
+      }
+      // No member newly settled: bounded-round fixpoint. Stop the execution phase and let the
+      // round report itself incomplete. Do NOT retry, hand off, reassign or replan here.
+      fanoutDrain.fixpoint = true;
+      fanoutDrain.unresolvedAtStop = after;
+      break;
+    }
+  }
+
   let continuation: ContinuationResult | null = null;
   if (o.handoff) {
     try {
@@ -992,6 +1332,17 @@ export async function runRoundCli(
             brief === null ? '' : brief,
           ].join('\n').trim();
           const dispatched = await wb.dispatch(new Map([[record.taskId, continuationBrief]]));
+          // T3-a.3: the continuation is CURRENT-round execution evidence too.
+          if (dispatched.tick !== null) {
+            captureDispatchFacts(buildDispatchReceipt({
+              tick: dispatched.tick,
+              dispatchedAt: Date.now(),
+              attemptIdsByTask: dispatched.attemptIdsByTask,
+              // T3-a.5: carry the correlated attempt/result pairs, so a continuation that
+              // restarted a task still reports the NEW attempt's result, not the old one.
+              executionsByTask: dispatched.executionsByTask,
+            }));
+          }
           handoffDispatches.push({
             taskId: record.taskId,
             admitted: [...(dispatched.tick?.admitted ?? [])],
@@ -1157,9 +1508,46 @@ export async function runRoundCli(
       });
 
   report.stage = 'complete';
-  report.ok = outcome.status === 'ok' && unassigned.length === 0;
   report.decision = decisionPart;
   report.tasks = tasks;
+  // TeamRun T3-a.2: requested-vs-actual fan-out provenance. Three facts, three sources:
+  //   REQUESTED  <- Laya's topology record (FanoutProvenance) — never the Planner seed
+  //   ASSIGNMENT <- the real assignment outcomes (accepted / refused + reason)
+  //   ACTUAL     <- only an execution that actually happened (run/Attempt)
+  // TeamRun T3-b.1: `fanoutGroups` / `fanoutFactsOf` are declared with the fan-out EXECUTION
+  // PHASE above, because the bounded drain loop needs the same facts. This aggregation is
+  // therefore computed AFTER the drain, so `report.fanout` and the Round Completion Guard read
+  // the same post-drain reality rather than a pre-drain snapshot.
+  if (fanoutGroups.length > 0) {
+    report.fanout = fanoutGroups.map((p) => projectFanoutAggregation(p, fanoutFactsOf));
+  }
+
+  // ---- TeamRun T3-b.1: Round Completion Guard inputs -----------------------
+  // Computed from the SAME post-drain aggregation the report carries, so the report, the review
+  // gate and the Human Gate cannot read three different points in time.
+  //
+  // `allSettled` is the fan-out completion contract: every REQUESTED member reached an execution
+  // resolution (a run, or an assignment/dispatch/write-back refusal). It is deliberately NOT
+  // `allSucceeded`, `allTerminal` or `dependencySatisfied` — a member that ran and failed is
+  // settled and is reviewable.
+  const finalFanout = (report.fanout ?? []) as ReadonlyArray<{ allSettled: boolean }>;
+  const fanoutAllSettled = fanoutGroups.length === 0 || finalFanout.every((g) => g.allSettled);
+  const executionIncomplete = fanoutGroups.length > 0 && !fanoutAllSettled;
+
+  report.fanoutDrain = {
+    iterations: fanoutDrain.iterations,
+    progressIterations: fanoutDrain.progressIterations,
+    complete: fanoutDrain.complete,
+    fixpoint: fanoutDrain.fixpoint,
+    unresolvedAtStop: [...fanoutDrain.unresolvedAtStop],
+  };
+
+  // `report.ok` must not contradict the Human Gate. An incomplete execution set is not a failure
+  // of anything that ran, but it is NOT a complete round, so it cannot be reported as ok. The
+  // two facts are reported separately: `executionIncomplete` says the execution set is
+  // unfinished, and `ok` says the round is not complete.
+  report.ok = outcome.status === 'ok' && unassigned.length === 0 && !executionIncomplete;
+  report.executionIncomplete = executionIncomplete;
   report.evidence = evidence;
   report.unassigned = unassigned.map((a) => ({ taskId: a.taskId, code: a.code, reason: a.reason }));
   report.summary = {
@@ -1210,20 +1598,47 @@ export async function runRoundCli(
   for (const t of tasks) {
     const live = wb.store.get(t.taskId);
     if (live === null) continue;
-    const run = runResults.get(t.taskId) ?? null;
-    const history = wb.evidence.history(t.taskId);
+    // T3-a.3 (§1/§2): a fan-out member's execution facts come ONLY from the CURRENT-round
+    // dispatch receipt + AttemptStore. `runResults`/`history` are cumulative and can
+    // describe a PREVIOUS execution, so they are NOT consulted for a member that did not
+    // start THIS round. Non-fan-out tasks keep their existing derivation (§21).
+    const fanMember = fanoutMemberByTask.get(t.taskId);
+    const ce = currentExecutions.get(t.taskId);
+    // T3-a.4: fan-out execution facts come from the SAME atomic projection the aggregation
+    // uses — the current dispatch's AttemptRecord — never the Task binding or a latest-ever
+    // run. A Task whose binding moved to a new worker still reports the worker that RAN.
+    const fanActual = fanMember === undefined ? null : currentActualOf(t.taskId);
+    const fanStarted = fanActual !== null;
+    const currentAttemptIds = fanStarted ? ce!.attemptIds : [];
+    // T3-a.5: for a fan-out member the result comes from the SAME bundle as the identity —
+    // `fanActual.run`, which is the run correlated to `fanActual.attemptId` at the append site.
+    // Never `wb.lastRunResult(taskId)`: that is newest-per-task and can return a PREVIOUS
+    // attempt's result. Non-fan-out tasks keep their existing derivation (§21).
+    const run = fanMember !== undefined
+      ? (fanStarted ? fanActual.run : null)
+      : (runResults.get(t.taskId) ?? null);
+    const history = fanMember !== undefined
+      ? currentAttemptIds.map((id) => wb.evidence.get(id)).filter((r): r is NonNullable<typeof r> => r !== null && r !== undefined)
+      : wb.evidence.history(t.taskId);
     const lastAttempt = history.length > 0 ? history[history.length - 1]! : undefined;
     const refused = unassigned.find((a) => a.taskId === t.taskId);
+
+    const identityAgentId = fanMember !== undefined
+      ? (fanActual?.agentId ?? null)
+      : (live.agentId ?? t.agentId ?? null);
+    const identityModelId = fanMember !== undefined
+      ? (fanActual?.modelId ?? null)
+      : (live.modelId ?? t.modelId ?? null);
 
     const outcome = classifyExecutionOutcome({
       taskId: t.taskId,
       taskStatus: live.status,
-      agentId: live.agentId ?? t.agentId ?? null,
-      modelId: live.modelId ?? t.modelId ?? null,
+      agentId: identityAgentId,
+      modelId: identityModelId,
       run,
       // A task the gate refused before dispatch: the refusal CODE is the real reason.
-      refusalCode: refused?.code ?? null,
-      refusalReason: refused?.reason ?? null,
+      refusalCode: refused?.code ?? ce?.refusalCode ?? null,
+      refusalReason: refused?.reason ?? ce?.refusalReason ?? null,
       attemptIds: history.map((a) => a.attemptId),
     });
     executionOutcomes.push(outcome);
@@ -1245,6 +1660,16 @@ export async function runRoundCli(
       leaseVersion: lastAttempt?.leaseVersion ?? null,
       errorCode: outcome.code,
       errorMessage: outcome.reason,
+      // T3-a.2: the REQUESTED pair (Laya's) and Assignment's verdict, present only for fan-out
+      // members. This is what lets the reviewer distinguish "never executed (refused)" from
+      // "executed and failed", and see WHAT was asked for even when nothing ran.
+      ...(fanMember === undefined ? {} : {
+        requestedAgentId: fanMember.agentId,
+        requestedModelId: fanMember.modelId,
+        memberIndex: fanMember.memberIndex,
+        assignmentStatus: refused === undefined ? 'accepted' as const : 'refused' as const,
+        assignmentRefusalReason: refused?.reason ?? null,
+      }),
     });
   }
 
@@ -1292,7 +1717,32 @@ export async function runRoundCli(
   });
 
   let unifiedReview: UnifiedReviewResult;
-  if (!o.review) {
+  if (executionIncomplete) {
+    // TeamRun T3-b.1 — Round Completion Guard. The review is WITHHELD, not failed.
+    //
+    // The Unified Reviewer is the component that decides whether the round's work is acceptable.
+    // Running it over a fan-out whose requested members never all reached an execution resolution
+    // would hand the reviewer a packet describing work that does not exist yet, and would let a
+    // verdict be recorded for a round that is not finished. Before T3-b.1 the review ran
+    // unconditionally (gated only by `--no-review`), so an incomplete round could be reported as
+    // reviewed AND as ok at the same time.
+    //
+    // This is deliberately a DISTINCT status, not `failed` and not `not_requested`:
+    //   - `failed`     would be a lie. The reviewer never ran, so it expressed no opinion.
+    //   - `not_requested` would be indistinguishable from `--no-review`, hiding a real gap.
+    // No verdict, no findings and no packet-derived opinion is synthesised for a skipped review.
+    unifiedReview = {
+      status: 'execution_incomplete',
+      reviewer: o.reviewAgent,
+      verdict: null,
+      reason: `the fan-out execution set is incomplete (${fanoutDrain.unresolvedAtStop.length} requested member(s) never reached an execution resolution), so no review was run; the round is unfinished rather than reviewed`,
+      findings: [],
+      recommendations: [],
+      outputTail: null,
+      code: 'execution-incomplete',
+      reviewedAt: null,
+    };
+  } else if (!o.review) {
     // Said as "not requested", never as a pass. An offline round that skipped its review
     // must not be readable as one that passed review.
     unifiedReview = {
@@ -1472,6 +1922,11 @@ export async function runRoundCli(
         },
     evidence: attemptEvidence,
     evidenceNote,
+    // TeamRun T3-b.1a: the SAME final execution-completeness fact that set `report.ok` and
+    // withheld the Unified Review, so the Human Gate cannot report a round complete that the
+    // report and the review already called incomplete. Consumed as a fact — the gate derives
+    // nothing and gains no execution authority.
+    executionIncomplete,
   });
 
   // Published for the dashboard to READ. It is a report artifact: a missing or failed
@@ -1579,6 +2034,9 @@ export async function runRoundCli(
   // R4: from here the round is over. There is intentionally no code path between the
   // human gate and this return that dispatches, retries, reassigns, replans, splits,
   // parallelizes, reworks or hands off.
+  //
+  // T2-a.3: observe last, so the snapshot describes the finished, authoritative state.
+  notifyWorkbenchSnapshot();
   return report.ok ? 0 : 1;
 }
 

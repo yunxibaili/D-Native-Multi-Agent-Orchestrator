@@ -29,6 +29,7 @@ import type { TaskClassification } from '../decision/routing.ts';
 import type { PlannerError } from './planner.ts';
 import { planTasks, type PlannerOutput } from './planner.ts';
 import type { SessionIntent } from './workbench-sessions.ts';
+import type { AgentModelIntent } from './assignment.ts';
 
 /** The structured task a user (or Laya's replan) hands to the Workbench. */
 export interface WorkbenchTaskSpec {
@@ -56,6 +57,23 @@ export interface WorkbenchTaskSpec {
   /** Laya/planner preference. Assignment honours it only if the filters pass. */
   readonly preferredAgent?: string;
   readonly preferredModel?: string;
+  /**
+   * A caller/manual/spec-provided EXACT Agent × Model pair, for compatibility or for a
+   * deterministic invocation the caller wants to pin.
+   *
+   * Assignment still ENFORCES it (restrict to the exact pair, accept or refuse, never
+   * substitute), and it is atomic — see `AgentModelIntent` in assignment.ts. Absent on
+   * every legacy path, which falls back to preferences and then to Assignment scoring.
+   *
+   * PROVENANCE (T2-a.2 §19): this field is INPUT, not a decision. It is not Laya's choice
+   * and never was — a caller writing it here is stating a constraint, not asking a
+   * question. The production Laya authority for an INITIAL Agent × Model comes from the
+   * initial-assignment decision flow (`selectInitialAssignment` ->
+   * `decision/initial-assignment.ts` -> Assignment), which runs BEFORE
+   * `assignChildren` and takes precedence over this field. Treat the two as different
+   * authorities: one is a decision, the other is a compatibility entry point.
+   */
+  readonly explicitPair?: AgentModelIntent;
   /**
    * Laya's SKILL INTENT — "this work needs these skills", as a request.
    *
@@ -120,6 +138,15 @@ export function planFromSpec(spec: WorkbenchTaskSpec, options: PlanFromSpecOptio
     rootTaskId: spec.taskId,
     shape,
     generation: 0,
+    // The task type must be applied to the CANDIDATES, not just returned. It was computed
+    // just above and returned on the result, but never passed to the planner, so every
+    // committed child silently fell back to the planner's `'implementation'` default
+    // (planner.ts: `input.taskType ?? 'implementation'`) — which meant the classification's
+    // task type reached the root only and never an executed child. Passing it here is what
+    // makes `spec.taskType` mean what round-cli already assumes it means
+    // (`taskType: taskTypeFor(classification)`), and it is the ONLY way a review- or
+    // research-semantic Task can be dispatched through the real execution chain.
+    taskType,
     // Skill intent is per SPEC here, not per candidate: the planner expands one
     // objective into siblings that all serve it. A DAG that needs genuinely
     // different skills per branch expresses that through the per-candidate

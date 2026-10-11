@@ -28,12 +28,17 @@ import { unmetDependencies, type Task, type TaskSpec, type TaskStatus } from './
 import { TaskStore } from './store.ts';
 import {
   buildRunRequest,
+  resolveDispatchContext,
+  validateExecutionTimeoutMs,
   isExecutable,
   EXECUTABLE_STATUSES,
   type ExecuteOutcome,
   type RunRequestMapping,
   type RuntimeRunner,
+  type DispatchTerminal,
+  type ProcessStartDisposition,
 } from './execute.ts';
+import { isProvenNotStarted } from '../runtime/start-proof.ts';
 import { existsSync } from 'node:fs';
 import { WorkspaceError, defaultWorkspaceMode, type WorkspaceHandle, type WorkspaceManager, type WorkspaceMode } from './workspace.ts';
 import {
@@ -50,6 +55,7 @@ import {
   modelKeyOf,
   validateWriteback,
   type PresentedLease,
+  type RenewPolicy,
 } from './assignment-lease.ts';
 import {
   mergeTaskBranch,
@@ -67,11 +73,26 @@ import type { TaskType } from '../quota/types.ts';
 //   RunResult    -> applyRunResult / the local `let result: RunResult`
 //   RunObservation -> lastObservations / observeExecution (R2-3 process observation)
 import type { RunHandle, RunObservation, RunResult } from '../core/types.ts';
+import { isTerminal } from '../core/types.ts';
+import { log } from '../core/log.ts';
 
 /** MVP limits. Hard caps, not preferences. */
 export const MVP_MAX_DEPTH = 1;
 export const MVP_MAX_CHILDREN = 3;
 export const MVP_MAX_CONCURRENT_CHILDREN = 2;
+
+/**
+ * R5-1 (§5): extra lease TTL on top of the execution deadline, covering the time
+ * between the run's last write and the write-back itself. Not a heartbeat interval —
+ * nothing polls on it.
+ */
+const CANCEL_CONFIRM_WAIT_MS = 10_000;
+/**
+ * R5-1.1 (§9): pause between defensive result re-waits, so a handle that rejects
+ * while non-terminal cannot busy-spin the event loop. Pure event-loop hygiene.
+ */
+const RESULT_GAP_BACKOFF_MS = 50;
+const LEASE_WRITEBACK_MARGIN_MS = 60_000;
 
 export interface OrchestrationLimits {
   maxDepth: number;
@@ -101,7 +122,34 @@ export interface OrchestrationOptions {
   /** Default working directory for `executeTask` when the caller omits one. */
   defaultCwd?: string;
 
-  resultTimeoutMs?: number;
+  /**
+   * R5-1 (P1-A): the NATIVE EXECUTION DEADLINE, in ms.
+   *
+   * This is the only execution timeout the orchestrator owns, and it is NOT a
+   * result-wait bound. When set, it flows into `RunRequest.timeoutMs`, so the
+   * existing `AgentSession` enforces it INSIDE the execution boundary: on expiry
+   * the session cancels its transport through its own path, freezes a REAL
+   * terminal `timed_out` result, and `executeTask` observes that terminal exactly
+   * like any other — live handle, lease, claim and evidence all flow through the
+   * normal settle path. Nothing is fabricated and no process is touched from
+   * outside the runtime.
+   *
+   * The three timeout meanings are deliberately separate:
+   *   - Laya decision timeout — round-cli's `--laya-timeout`, the DECISION loop only.
+   *   - result wait — `handle.result()` is now awaited WITHOUT a wait bound. A wait
+   *     that has not yet produced a terminal result is not a failure; the previous
+   *     behaviour (wait expired -> mark failed -> delete the live handle -> release
+   *     the claim while the agent was still running) is removed.
+   *   - native execution deadline — this option. The only timeout that may end an
+   *     execution, and it does so through the runtime's own boundary.
+   */
+  executionTimeoutMs?: number;
+  /**
+   * R5-1.1 (§4): how long `cancelTask()` waits for the runtime's own frozen
+   * terminal after a cancellation request, before reporting
+   * `cancellation-not-confirmed`. Production default: 10 s. Tests shrink it.
+   */
+  cancelConfirmWaitMs?: number;
   /**
    * Workspace lifecycle authority. Absent means every task runs in the cwd the
    * caller supplied, i.e. NO isolation - which is why it is opt-in and never
@@ -143,6 +191,36 @@ export interface ExecuteTaskRequest {
    * the outcome is returned as normal.
    */
   onStart?: (handle: RunHandle, mapping: RunRequestMapping) => void;
+  /**
+   * TeamRun T1-e: called EXACTLY ONCE for every execution that STARTED (after
+   * `onStart` fired), when it reaches its terminal — success, failure, timeout,
+   * cancellation, a refused write-back, or a `handle.result()` rejection that ends
+   * without a RunResult. The symmetric half of `onStart`: whatever was marked running
+   * at start is guaranteed one settlement here, independent of whether the TaskStore
+   * accepted the result.
+   *
+   * Throwing from the callback aborts nothing (same contract as `onStart`).
+   */
+  onDispatchTerminal?: (handle: RunHandle, mapping: RunRequestMapping, terminal: DispatchTerminal) => void;
+  /**
+   * TeamRun T1-e: resolve the SESSION for THIS dispatch. Called once at the freeze
+   * point — after the last pre-dispatch await (workspace preparation), when
+   * `running.task` is the pair that will actually run and the dispatch lease is
+   * captured. The resolution itself is owned by the caller (Workbench →
+   * SessionRegistry); this layer only forwards it, uses the native handle for the
+   * actual `RunRequest` (explicit `req.threadId` keeps priority) and echoes
+   * `sessionId` on the `RunRequestMapping`, so the runtime request, the start
+   * marking and the attempt attribution all stem from ONE dispatch binding.
+   *
+   * Returning undefined / no sessionId means "no compatible session for this pair" —
+   * the execution proceeds sessionless. There is deliberately no "latest binding"
+   * fallback inside this layer.
+   */
+  resolveSessionForDispatch?: (input: {
+    taskId: string;
+    agentId: string;
+    modelId: string | null;
+  }) => { sessionId?: string; nativeThreadId?: string } | undefined;
   /**
    * Escape hatch for the dependency check, and ONLY for that.
    *
@@ -216,7 +294,10 @@ export class Orchestrator {
   private readonly now: () => number;
   private readonly runtime: RuntimeRunner | null;
   private readonly defaultCwd: string | null;
-  private readonly resultTimeoutMs: number | undefined;
+  /** R5-1 (P1-A): the native execution deadline, enforced by the runtime itself. */
+  private readonly executionTimeoutMs: number | undefined;
+  /** R5-1.1 (§4): bounded window for awaiting a terminal after a cancel request. */
+  private readonly cancelConfirmWaitMs: number;
   private readonly workspace: WorkspaceManager | null;
   private readonly workspaceMode: (task: Task) => WorkspaceMode | 'none';
   /** R2-1: per-task resource intent. `null` = no claim, and the check is skipped. */
@@ -250,7 +331,16 @@ export class Orchestrator {
     this.gate = options.gate;
     this.runtime = options.runtime ?? null;
     this.defaultCwd = options.defaultCwd ?? null;
-    this.resultTimeoutMs = options.resultTimeoutMs;
+    // R5-1.1 (§6): fail fast at the boundary. An invalid deadline must never
+    // reach `setTimeout`, where Node would clamp an overflow down to ~1 ms.
+    if (options.executionTimeoutMs !== undefined) {
+      const check = validateExecutionTimeoutMs(options.executionTimeoutMs);
+      if (!check.ok) throw new Error(`Orchestrator: ${check.reason}`);
+      this.executionTimeoutMs = check.value;
+    } else {
+      this.executionTimeoutMs = undefined;
+    }
+    this.cancelConfirmWaitMs = options.cancelConfirmWaitMs ?? CANCEL_CONFIRM_WAIT_MS;
     this.workspace = options.workspace ?? null;
     this.workspaceMode = options.workspaceMode ?? ((task) => (this.workspace === null ? 'none' : defaultWorkspaceMode(task)));
     this.resourceClaims = options.resourceClaims ?? null;
@@ -855,6 +945,58 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
     // later (a stale claim would block a finished task). Scoped, not per-task: a task
     // may hold several claims and releasing "the task's claims" would drop the rest.
     let claimedScope: { mode: ResourceClaimMode; scope: ResourceScope } | null = null;
+    /*
+     * W3: the physical tree-stop verdict for THIS dispatch.
+     *
+     * A one-element holder rather than a `boolean`: the value is written deep
+     * inside the post-start region, and a narrowed closure-captured `let` reads as
+     * permanently `false` at the `finally` below — which would silently restore
+     * the unconditional release this gate exists to prevent.
+     *
+     * It starts as "no evidence", which is the fail-closed default: an execution
+     * that produced no run result at all cannot have released its files, so its
+     * claim is retained.
+     */
+    const stopConfirmed: boolean[] = [];
+    const stopOutcome: (string | null)[] = [];
+    /*
+     * W3.1: does THIS execution require positive proof that its tree stopped before
+     * the write scope may be released?
+     *
+     * This REPLACES the previous `executionStarted` flag, which was wrong twice over.
+     * It was set only AFTER `runtime.run()` returned, so a throw that happened after a
+     * real writer had already spawned read as "never started" and released the claim
+     * while that writer kept writing (P1-A). And it conflated two different questions
+     * — "did a process start?" and "is it safe to release without proof?" — which do
+     * not have the same answer.
+     *
+     * The frozen rule:
+     *
+     *   known pre-start              -> no proof required, claim may release
+     *   execution edge entered       -> proof required
+     *   treeStopConfirmed === true   -> claim may release
+     *   anything else / unknown      -> claim MUST remain
+     *
+* The holder is SEEDED with `false` — "the edge has not been entered, so there is
+     * no possible writer and no proof is owed". It is an array rather than a `boolean`
+     * because the value is written deep inside the post-start region, and a narrowed
+     * closure-captured `let` would read as permanently `false` at the `finally` below
+     * — silently restoring an unconditional release.
+     *
+     * Seeding matters, and it is the subtle part. An EMPTY holder would have to fail
+     * closed (requiring proof), which would then also treat "the edge was never
+     * reached" as "we owe proof" — retaining a claim for an execution that never
+     * ran, and locking the workspace for a risk that does not exist. The two states
+     * are genuinely different, so they are represented by different values:
+     * `false` = never entered, `true` = entered and proof is owed.
+     */
+    const requiresTreeStopProof: boolean[] = [false];
+    /**
+     * Typed evidence, produced ONLY by the runtime seam. Only a proven
+     * `not-started` may downgrade the requirement; a generic throw leaves it
+     * untouched and the requirement stands.
+     */
+    const startDisposition: (ProcessStartDisposition | null)[] = [];
     if (this.workspace !== null) {
       const mode = requiredMode;
       if (mode !== 'none') {
@@ -953,8 +1095,18 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
       // read as current, contradicting §7.3 and the function's own documentation.
       if (this.workspace !== null) {
         const nowMsForVoid = this.now();
+        // R5-1.2 (P1-3): LOGICAL fencing validity and PHYSICAL exclusion are two
+        // different questions. A stale lease voids the claim's WRITE-BACK authority
+        // (fencing keeps refusing the stale result), but while an execution is
+        // STILL LIVE it may still be writing the same physical scope, so the claim
+        // must keep excluding rival writers. Voiding a live writer's claim used to
+        // admit a second writer into the very workspace the first was still
+        // mutating. The physical claim is released by the execution's own settle
+        // path (`releaseClaim` in executeTask), i.e. exactly when the stop is real.
         this.workspace.voidStaleResourceClaims(
-          (c) => !claimIsLeaseCurrent(c, claimLeaseVersionOf(this.store.leaseOf(c.taskId), nowMsForVoid)),
+          (c) =>
+            !claimIsLeaseCurrent(c, claimLeaseVersionOf(this.store.leaseOf(c.taskId), nowMsForVoid)) &&
+            !this.liveHandles.has(c.taskId),
         );
       }
 
@@ -1023,6 +1175,55 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
     // is verified - so verification semantics are untouched.
     try {
 
+      // ---- TeamRun T1-e/T1-g freeze point: pre-runtime context validation -------
+      //
+      // Still strictly AFTER the last pre-dispatch await (workspace preparation
+      // above) and still SYNCHRONOUS through `runtime.run` — so the T1-e atomic
+      // freeze and the Race A/B/C semantics are untouched. The fresh store read is
+      // the pair this dispatch will actually run (a reassign during prepare is
+      // already visible); nothing can change it between here and the mutations
+      // below, because no await intervenes.
+      //
+      // T1-g: this validation runs BEFORE any state commit — before `queued`/
+      // `running`, before lease activation, before the scheduler slot could be
+      // observed as consumed. A thread/session conflict is therefore an ordinary
+      // pre-runtime refusal: the task keeps its schedulable status, the lease stays
+      // `issued` (never pretending to protect a live writer that does not exist),
+      // and no unwind is needed. Previously the check ran after the running commit
+      // and left the task stranded `running` with an activated lease — a refusal
+      // that occupied a live-execution state for an execution that never began.
+      const preRunTask = this.store.get(task.taskId);
+      if (preRunTask === null) {
+        return {
+          ok: false,
+          code: 'task-not-found',
+          reason: `no task "${task.taskId}" at dispatch time; refusing before any state change`,
+          status: task.status,
+          gate: decision,
+        };
+      }
+      const dispatchSession = req.resolveSessionForDispatch?.({
+        taskId: task.taskId,
+        agentId: preRunTask.agentId,
+        modelId: preRunTask.modelId,
+      });
+      // T1-f: the ONE thread/session compatibility decision (pure value, no awaits).
+      const dispatchContext = resolveDispatchContext({
+        ...(req.threadId !== undefined ? { explicitThreadId: req.threadId } : {}),
+        ...(dispatchSession !== undefined ? { resolvedSession: dispatchSession } : {}),
+      });
+      if (!dispatchContext.ok) {
+        return {
+          ok: false,
+          code: dispatchContext.code,
+          reason: dispatchContext.reason,
+          // Authoritative: the task was NEVER moved; returned status and TaskStore
+          // agree, and the task can be re-dispatched with a corrected request.
+          status: preRunTask.status,
+          gate: decision,
+        };
+      }
+
       // ---- planned - queued - running, through the store ----
       // `executeTask` accepts a task that is ALREADY queued, so the queue step is
       // conditional. Forcing `queued - queued` would be refused by the transition
@@ -1050,7 +1251,15 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
       // This is the fix for the livelock in which a task that waited longer than the
       // assignment window could never be dispatched at all (see `activateLease`). It is
       // once-per-lease, synchronous, and cannot resurrect a revoked lease.
-      this.store.markLeaseUsed(task.taskId, this.now());
+      //
+      // R5-1 (§5): the activation TTL must cover the run's OWN execution deadline.
+      // With the store default (15 min) and a native budget of 20+ min, a normal long
+      // run used to go stale mid-execution purely because no tick (and therefore no
+      // renew) could happen while `tick()` was awaiting the run. The dispatch lease is
+      // therefore activated with a TTL of at least deadline + write-back margin, using
+      // the SAME Lease primitives — no heartbeat, no new authority. Renewal stays
+      // tick-driven for multi-tick loops.
+      this.store.markLeaseUsed(task.taskId, this.now(), this.dispatchLeasePolicy());
 
       // R2-2 final closure (P1-2 / P2): the SAME primitive as `applyRunResult`.
       //
@@ -1075,18 +1284,69 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
       };
 
       // ---- hand it to the EXISTING runtime ----
+      // (T1-e/T1-g: the session resolution and the thread/session compatibility
+      // decision now happen BEFORE the state commit above — same synchronous freeze
+      // region, same `preRunTask` pair the mutations commit — so a refusal can never
+      // strand a `running` task or an activated lease.)
       let handle: RunHandle;
       let mapping: RunRequestMapping;
+      /*
+       * W3.1 (P1-A): the requirement is raised BEFORE the `try`, not inside it.
+       *
+       * This is the whole closure. The previous code set its flag on the line AFTER
+       * `runtime.run()` returned, so any throw skipped it — and a throw can happen long
+       * after a real `ManagedProcess` has already spawned a writer. That writer kept
+       * writing while the `finally` below released the exclusive WRITE claim and
+       * admitted a second writer into the same scope.
+       *
+       * From here the execution edge is ENTERED: the runtime may create an OS process
+       * at any moment, so no generic failure may be read as "nothing started". The
+       * requirement is only lowered by explicit typed proof from the runtime seam.
+       */
+      requiresTreeStopProof[0] = true;
       try {
         const built = buildRunRequest({
           task: running.task,
           cwd: resolvedCwd,
           ...(req.prompt !== undefined ? { prompt: req.prompt } : {}),
-          ...(req.threadId !== undefined ? { threadId: req.threadId } : {}),
+          // T1-e/T1-f: the thread comes from the ONE context decision above — the
+          // resolver's native handle for the resolved session, or an explicit thread
+          // that either matches that session or runs sessionless. Never both sources
+          // silently stitched.
+          ...(dispatchContext.threadId !== undefined ? { threadId: dispatchContext.threadId } : {}),
+          // R5-1 (P1-A): the execution deadline rides on the RunRequest, so the
+          // runtime's own AgentSession enforces it (real `timed_out` terminal through
+          // its transport-cancel path). The orchestrator never kills anything.
+          ...(this.executionTimeoutMs !== undefined ? { timeoutMs: this.executionTimeoutMs } : {}),
         });
-        mapping = built.mapping;
+        // T1-e/T1-f: the dispatch-time session rides on the mapping, so BOTH the
+        // accepted and the refused-with-run outcome carry the same one dispatch
+        // binding — the same context the thread above was chosen from.
+        mapping = dispatchContext.sessionId !== undefined
+          ? { ...built.mapping, sessionId: dispatchContext.sessionId }
+: built.mapping;
         handle = this.runtime.run(built.request);
+        startDisposition[0] = 'started';
       } catch (e) {
+        /*
+         * W3.1 (§5): the ONLY thing that may downgrade the requirement is explicit
+         * typed evidence from the runtime seam that it PROVED no process was created.
+         *
+         * No message matching, no error-class-name guessing, no "it threw early so it
+         * probably did not start". A generic throw keeps `requiresTreeStopProof = true`
+         * and the claim is retained at the `finally`: being too conservative costs
+         * availability, while releasing early costs a corrupted workspace.
+         */
+        if (isProvenNotStarted(e)) {
+          requiresTreeStopProof[0] = false;
+          startDisposition[0] = 'not-started';
+        } else {
+          startDisposition[0] = 'may-have-started';
+          log.warn('runtime.run threw without proven pre-start evidence; retaining physical protection', {
+            taskId: task.taskId,
+            error: (e as Error).message,
+          });
+        }
         // A refused run is a real failure with a real reason, not an absent task.
         const message = e instanceof Error ? e.message : String(e);
         // §10 #3: this branch mutates too, so it is fenced as well. A superseded
@@ -1121,34 +1381,103 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
         }
       }
 
-      // ---- wait for the real result ----
-      let result: RunResult;
+      // T1-e: EXACTLY-ONCE terminal settlement. This try/finally belongs to ONE
+      // dispatch: whatever exit the post-start region takes — a frozen RunResult
+      // (accepted OR refused write-back), a result() rejection with a terminal
+      // state, or an unexpected throw — `onDispatchTerminal` fires exactly once,
+      // with the run when one exists and `withoutResult` when one does not. It
+      // never fires for pre-start returns (refusals above), matching the start
+      // contract: no onStart => no settlement obligation.
+      // (The existing lines below are wrapped as-is; only the wrapping is new.)
+      let terminal: DispatchTerminal | undefined;
       try {
-        result = await handle.result(this.resultTimeoutMs);
-      } catch (e) {
-        // A rejection here is a runtime failure, never a success.
-        const message = e instanceof Error ? e.message : String(e);
-        this.liveHandles.delete(task.taskId);
-        // The run is over either way, so the claim is released on BOTH paths: keeping a
-        // claim for a task that can no longer write would block an unrelated writer
-        // forever.
-        // §10 #2: this branch mutates, so it is fenced too. The run produced no result,
-        // so there is no execution evidence to preserve here - only the state decision.
-        if (!stillHoldsLease()) {
-          return {
-            ok: false,
-            code: 'stale-lease-version',
-            reason:
-              `the assignment moved on while this run was in flight, so its failure is not recorded against the ` +
-              `current holder. Task left untouched (${this.store.get(task.taskId)?.status ?? task.status}).`,
-            status: this.store.get(task.taskId)?.status ?? task.status,
-            gate: decision,
-          };
+      // ---- wait for the real result ----
+      //
+      // R5-1 (P1-A): NO wait bound here. The previous code passed a wait timeout
+      // (the Laya decision timeout, no less) to `handle.result(timeoutMs)`, whose
+      // contract is "bounds THIS call only and does not alter the outcome". On
+      // expiry the rejection was treated as an execution failure: the live handle
+      // was deleted, the task marked failed, and the claim released — all while the
+      // native agent was still running. That was a fabricated terminal.
+      //
+      // Now the wait ends only when the execution is REALLY terminal: either the
+      // run settles on its own, or the configured `RunRequest.timeoutMs` deadline
+      // makes the session terminate itself through its own boundary and freeze a
+      // real `timed_out` result. If `result()` ever rejects while the handle's own
+      // state says the execution is NOT terminal, we keep the handle, the lease and
+      // the claim intact and simply keep waiting — a wait gap is never a verdict.
+      let result: RunResult;
+      for (;;) {
+        try {
+          result = await handle.result();
+          break;
+        } catch (e) {
+          const stillLive = !isTerminal(handle.state());
+          if (!stillLive) {
+            // A genuine runtime failure: the execution is over and produced no
+            // frozen result. Existing failure path applies (fenced, evidence-honest).
+            const message = e instanceof Error ? e.message : String(e);
+this.liveHandles.delete(task.taskId);
+            if (!stillHoldsLease()) {
+              return {
+                ok: false,
+                code: 'stale-lease-version',
+                reason:
+                  `the assignment moved on while this run was in flight, so its failure is not recorded against the ` +
+                  `current holder. Task left untouched (${this.store.get(task.taskId)?.status ?? task.status}).`,
+                status: this.store.get(task.taskId)?.status ?? task.status,
+                gate: decision,
+              };
+            }
+            this.mutate(task.taskId, 'failed', `the run did not produce a result: ${message}`);
+            return { ok: false, code: 'runtime-result-failed', reason: message, status: 'failed', gate: decision };
+          }
+          // Execution still running. Keep every protection in place and continue
+          // waiting for the real terminal; the deadline (if configured) belongs to
+          // the session inside the execution boundary, not to this wait.
+          //
+          // R5-1.1 (§9): yield to the event loop between re-waits. A normal
+          // AgentSession never rejects here, but a pathological adapter/stub whose
+          // `result()` rejects immediately while `state()` stays non-terminal would
+          // otherwise spin the microtask queue and starve the process. The backoff
+          // bounds nothing semantically — it only stops the defensive path from
+          // busy-spinning while it keeps waiting for the real terminal.
+          const message = e instanceof Error ? e.message : String(e);
+          log.warn('result wait returned before a terminal result; still live, continuing to wait', {
+            taskId: task.taskId,
+            reason: message,
+          });
+          await new Promise((r) => setTimeout(r, RESULT_GAP_BACKOFF_MS));
         }
-        this.mutate(task.taskId, 'failed', `the run did not produce a result: ${message}`);
-        return { ok: false, code: 'runtime-result-failed', reason: message, status: 'failed', gate: decision };
       }
-      this.liveHandles.delete(task.taskId);
+this.liveHandles.delete(task.taskId);
+      // W3: record the PHYSICAL verdict alongside the logical one, BEFORE the
+      // write-back. It is read from the frozen result's cleanup report, which the
+      // runtime populated from the containment producer, so this layer never
+      // re-derives or guesses it.
+      //
+      // A `succeeded` run therefore normally records `true` (the Job emptied on its
+      // own), and a cooperatively stopped run can record `true` as well — a
+      // cancellation and a confirmed physical stop are a NORMAL combination. What
+      // never yields `true` is an execution with no evidence at all.
+      // Read defensively: `cleanup` is part of the RunResult contract, but a test double
+      // or an adapter that omits it must NOT crash the dispatch. An absent cleanup
+      // report carries no stop evidence, and no evidence means the claim is retained.
+      stopConfirmed.push(result.cleanup?.treeStopConfirmed === true);
+      stopOutcome.push(result.state);
+      /*
+       * W3.2: the runtime may also PROVE, in the frozen result, that nothing was ever
+       * created. That is the launcher-missing case: the image was proven absent before
+       * `spawn`, so the run ends `SPAWN_FAILED` with no process behind it.
+       *
+       * Recording it here — next to the tree-stop verdict — keeps the `finally` gate
+       * reading two holders rather than reaching for a `RunResult` that is out of scope.
+       */
+      if (result.cleanup?.processStart === 'not-started') startDisposition[0] = 'not-started';
+      // T1-e: the execution froze a RunResult — this is the settlement payload,
+      // carried whether the write-back below is accepted or refused (§13: session
+      // settlement is an execution fact, not a workflow fact).
+      terminal = { run: result };
       // Final machine facts: processState is now 'exited' with the real exit code.
       const observationAtSettle = handle.observe?.() ?? null;
       if (observationAtSettle !== null) this.lastObservations.set(task.taskId, observationAtSettle);
@@ -1193,11 +1522,92 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
         // Dispatch-time lease, matching what the attempt actually ran under.
         leaseVersion: dispatchedLease.leaseVersion,
       };
-    } finally {
-      // Idempotent by construction: `releaseClaimForScope` removes what it finds, so a
-      // second call is a no-op returning 0 rather than an error.
-      this.releaseClaim(task.taskId, claimedScope);
-    }
+      } finally {
+        // T1-e: the settlement obligation created by `onStart` is discharged here,
+        // exactly once, on every post-start exit path (see the comment above).
+        if (req.onDispatchTerminal !== undefined) {
+          try {
+            req.onDispatchTerminal(handle, mapping, terminal ?? {
+              withoutResult: true,
+              reason: 'the execution ended without producing a frozen RunResult',
+            });
+          } catch {
+            // A caller's observer must not be able to fail the execution.
+          }
+        }
+      }
+} finally {
+        /*
+         * W3.1: WRITE protection is released ONLY on positive physical evidence, and
+         * RETAINED DURABLY otherwise.
+         *
+         * An EXCLUSIVE WRITE claim is physical protection, not bookkeeping. Releasing
+         * it because "the execution settled" is the defect: a cancelled or timed-out
+         * run whose launcher was hard-killed settles its session while a descendant is
+         * still writing that very scope, and the next writer is admitted on top of a
+         * live one.
+         *
+         * W3.1 closes two holes in the W3 version of this gate:
+         *
+         *   P1-A  The old flag was set AFTER `runtime.run` returned, so a throw that
+         *         happened after a real writer had spawned read as "never started" and
+         *         released the claim under a live writer. The requirement is now raised
+         *         BEFORE the edge, and only typed proven pre-start evidence lowers it.
+         *
+         *   P1-B  "Not calling release" was not retention. The claim lived in an
+         *         orchestrator local, while the claim that actually excludes writers
+         *         lives in `ResourceClaimBook` — so the next admission's stale cleanup
+         *         deleted it on "lease dead, handle gone" and B walked in. Retention is
+         *         now recorded IN the book, where every sweep must respect it.
+         *
+         * The asymmetry is deliberate and stays: an over-held scope blocks one rival
+         * writer, while an under-held one corrupts a workspace.
+         */
+        if (claimedScope !== null) {
+          const confirmed = stopConfirmed[0] === true;
+          // Seeded false, so this is false for a genuine pre-start exit and true once
+          // the edge was entered. `undefined` is impossible by construction.
+          const proofRequired = requiresTreeStopProof[0];
+          /*
+           * W3.2: a run that RETURNS a handle can still prove nothing was created.
+           *
+           * The launcher-missing path is exactly this: `ManagedProcess` records
+           * `processStart: 'not-started'` from its own knowledge (the image was proven
+           * absent before `spawn`), the session freezes that into the `RunResult`, and
+           * the claim can be released once the operator builds the launcher. Without
+           * this, a missing binary left every WRITE scope in the project permanently
+           * blocked — the availability half of the P1-A finding.
+           *
+           * Only the value `'not-started'` releases. Anything else — including a value
+           * that a caller forgot to set — is "no proof", and no proof retains.
+           */
+          const provenNotStarted = startDisposition[0] === 'not-started';
+          if (!proofRequired || confirmed || provenNotStarted) {
+            // Idempotent by construction: `releaseClaimForScope` removes what it finds,
+            // so a second call is a no-op returning 0 rather than an error.
+            this.releaseClaim(task.taskId, claimedScope);
+          } else {
+            /*
+             * Record the retention where it is durable. A bool in this closure would
+             * die with this stack frame; the claim in the book is what the next
+             * admission consults.
+             */
+            const reason =
+              `task "${task.taskId}" entered the execution edge (processStartDisposition=` +
+              `${startDisposition[0] ?? 'unknown'}) but its tree stop was NOT confirmed ` +
+              `(outcome=${stopOutcome[0] ?? '<no run result>'}); a writer may still hold this scope`;
+            const held = this.workspace?.retainResourceProtection(
+              task.taskId, claimedScope.mode, claimedScope.scope, reason,
+            ) ?? 0;
+            log.warn('retaining the exclusive write claim: no confirmed tree stop', {
+              taskId: task.taskId,
+              outcome: stopOutcome[0] ?? '<no run result>',
+              disposition: startDisposition[0] ?? 'unknown',
+              claimsRetained: held,
+            });
+          }
+        }
+      }
   }
 
   /**
@@ -1212,6 +1622,24 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
   /** True while a task has a live run handle. Not a status; the store is. */
   hasLiveRun(taskId: string): boolean {
     return this.liveHandles.has(taskId);
+  }
+
+  /**
+   * R5-1 (§5): the RenewPolicy a dispatch activates its lease under.
+   *
+   * The TTL must cover the execution the dispatch is about to start, plus a small
+   * write-back margin — otherwise a legitimately long run goes stale mid-execution
+   * and its write-back is refused. Same Lease primitives, same renewals, no new
+   * authority; when no deadline is configured, the store's own policy applies
+   * unchanged.
+   */
+  private dispatchLeasePolicy(): RenewPolicy {
+    const storePolicy = this.store.leasePolicy;
+    if (this.executionTimeoutMs === undefined) return storePolicy;
+    return {
+      ...storePolicy,
+      ttlMs: Math.max(storePolicy.ttlMs, this.executionTimeoutMs + LEASE_WRITEBACK_MARGIN_MS),
+    };
   }
 
   // ---------------------------------------------------------------------
@@ -1315,6 +1743,81 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
    * task's handle is cancelled through the existing runtime, which owns process
    * termination and the Windows process-tree cleanup - this layer kills nothing.
    */
+  /**
+   * R5-1.1 (§4): request cancellation and CONFIRM the terminal before treating the
+   * task as stopped.
+   *
+   * A cancellation REQUEST is not a terminal CONFIRMATION. The confirmation fact is
+   * the handle's own frozen terminal — awaited through `result()` with a bounded
+   * confirmation window (the runtime is mid-`cancel()`, so this resolves as soon as
+   * the runtime finishes its own finalize, never a sleep-and-guess). While the
+   * execution is not confirmed terminal, EVERYTHING stays in place: the live handle,
+   * the concurrency slot, the resource claim and the lease/fencing protection. Only
+   * after confirmation is the handle released and the store transition legitimate.
+   *
+   * Returns `confirmed: false` when the cancellation could not be confirmed inside
+   * the window — the caller must surface that fact, never fabricate a `cancelled`
+   * terminal over a live execution.
+   */
+  private async requestConfirmedCancel(
+    handle: RunHandle,
+    taskId: string,
+    reason: string,
+  ): Promise<{ confirmed: boolean; detail: string }> {
+    // R5-1.2 (§7): the cancel REQUEST and the terminal CONFIRMATION get separate
+    // bounded waits — one timeout must never silently mean both. A request that
+    // neither settles nor fails within its window leaves the end state unknown,
+    // which is exactly the not-confirmed case; the request may still land later,
+    // which is safe (it only ever stops the same execution).
+    let requestSettled = false;
+    try {
+      let requestTimer: NodeJS.Timeout | null = null;
+      const verdict = await Promise.race([
+        handle.cancel(reason).then(
+          () => 'settled' as const,
+          () => 'failed' as const,
+        ),
+        new Promise<'hung'>((r) => {
+          requestTimer = setTimeout(() => r('hung'), this.cancelConfirmWaitMs);
+        }),
+      ]).finally(() => {
+        if (requestTimer !== null) clearTimeout(requestTimer);
+      });
+      if (verdict === 'failed') {
+        // The cancel REQUEST itself failed. The execution's end state is unknown,
+        // so nothing may be torn down; check whether it is somehow already
+        // terminal anyway before reporting the refusal.
+        const terminalAnyway = isTerminal(handle.state());
+        if (!terminalAnyway) {
+          return { confirmed: false, detail: 'cancel request failed; end state unknown' };
+        }
+      } else if (verdict === 'hung') {
+        return {
+          confirmed: false,
+          detail: `cancel request did not settle within ${this.cancelConfirmWaitMs}ms; end state unknown`,
+        };
+      }
+      requestSettled = true;
+    } catch (e) {
+      return { confirmed: false, detail: `cancel request failed: ${e instanceof Error ? e.message : String(e)}` };
+    }
+    void requestSettled;
+    try {
+      await handle.result(this.cancelConfirmWaitMs);
+    } catch {
+      // A rejecting wait is not a verdict (R5-1 P1-A); fall through to the state check.
+    }
+    if (!isTerminal(handle.state())) {
+      return {
+        confirmed: false,
+        detail: `cancellation not confirmed: task "${taskId}" is still ${handle.state()} after the cancel request`,
+      };
+    }
+    // Confirmed terminal: now — and only now — the handle registry entry can go.
+    this.liveHandles.delete(taskId);
+    return { confirmed: true, detail: 'execution confirmed terminal after cancellation' };
+  }
+
   async cancelTask(taskId: string, reason: string): Promise<{ ok: boolean; code: string; reason: string; delegatedToRuntime: boolean }> {
     const task = this.store.get(taskId);
     if (task === null) return { ok: false, code: 'task-not-found', reason: `no task "${taskId}"`, delegatedToRuntime: false };
@@ -1323,10 +1826,18 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
     if (handle !== undefined) {
       // Delegate. The runtime's own cancellation does everything that touches a
       // process; duplicating it here would be the bug, not the feature.
-      try {
-        await handle.cancel(reason);
-      } finally {
-        this.liveHandles.delete(taskId);
+      const confirmation = await this.requestConfirmedCancel(handle, taskId, reason);
+      if (!confirmation.confirmed) {
+        // R5-1.1 (§4): the execution may STILL BE RUNNING. Deleting the handle here
+        // used to drop the concurrency slot and the resource protection while the
+        // native process lived on, and the store transition below fabricated a
+        // `cancelled` terminal over it. Now: report the fact, tear down nothing.
+        return {
+          ok: false,
+          code: 'cancellation-not-confirmed',
+          reason: `${confirmation.detail}; the live handle, lease and resource protection are retained`,
+          delegatedToRuntime: true,
+        };
       }
       return { ok: true, code: 'cancel-delegated', reason, delegatedToRuntime: true };
     }
@@ -1340,15 +1851,51 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
 
     // Any live descendant is cancelled through the runtime, before the store
     // walk, so a running process is asked to stop rather than being marked
-    // cancelled underneath itself.
+    // cancelled underneath itself. Same confirmation rule as above.
     for (const t of liveBelow) {
       const h = this.liveHandles.get(t.taskId);
       if (h === undefined) continue;
-      try {
-        await h.cancel(reason);
-      } finally {
-        this.liveHandles.delete(t.taskId);
+      const confirmation = await this.requestConfirmedCancel(h, t.taskId, reason);
+      if (!confirmation.confirmed) {
+        return {
+          ok: false,
+          code: 'cancellation-not-confirmed',
+          reason: `${confirmation.detail}; the live handle, lease and resource protection are retained`,
+          delegatedToRuntime: true,
+        };
       }
+    }
+
+    // R5-1.2 (P1-2): the descendant snapshot above went stale the moment the first
+    // `await` completed — a NEW descendant can become live during the cancellation
+    // window. RE-READ the live set after every await and reconcile; the state-level
+    // cancel below must never overtake execution reality.
+    for (let pass = 0; pass < 3; pass++) {
+      const newlyLive = this.store.descendants(taskId).filter((t) => this.liveHandles.has(t.taskId));
+      if (newlyLive.length === 0) break;
+      for (const t of newlyLive) {
+        const h = this.liveHandles.get(t.taskId);
+        if (h === undefined) continue;
+        const confirmation = await this.requestConfirmedCancel(h, t.taskId, reason);
+        if (!confirmation.confirmed) {
+          return {
+            ok: false,
+            code: 'cancellation-not-confirmed',
+            reason: `${confirmation.detail}; the live handle, lease and resource protection are retained`,
+            delegatedToRuntime: true,
+          };
+        }
+      }
+    }
+    // Final gate immediately before the logical cancel: every live execution in the
+    // subtree must be terminal/confirmed, or the state layer refuses to move.
+    if (this.store.descendants(taskId).some((t) => this.liveHandles.has(t.taskId))) {
+      return {
+        ok: false,
+        code: 'cancellation-not-confirmed',
+        reason: `a live execution appeared in the subtree of "${taskId}" during cancellation and is not confirmed stopped; nothing was marked cancelled`,
+        delegatedToRuntime: true,
+      };
     }
 
     const result = this.cancel(taskId, reason);

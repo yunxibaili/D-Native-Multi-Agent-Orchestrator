@@ -36,6 +36,7 @@ import {
   scoreCandidate,
   isAssignable,
   requestModelSwitch,
+  validateAgentModelIntent,
   ASSIGNMENT_FAILURE_CODES,
   ASSIGNABLE_STATUSES,
   type AssignmentInput,
@@ -44,6 +45,7 @@ import {
 import { applyAssignment, recordDispatchedExecutions } from '../src/orchestration/assignment-wiring.ts';
 import type { QuotaRecord, TaskType } from '../src/quota/types.ts';
 import type { AgentDescriptor, RunHandle, RunRequest, RunResult } from '../src/core/types.ts';
+import { sourceText } from './helpers.ts';
 
 let passed = 0;
 let failed = 0;
@@ -86,8 +88,9 @@ function registryWith(seeds: readonly Seed[], policies: Record<string, 'allowed'
   const reg = new ModelRegistry();
   for (const [agentId, modelId, taskTypes, availability] of seeds) {
     reg.upsert({ agentId, modelId, provider: 'test', taskTypes, modelSource: 'test', quotaSource: 'test' }, NOW);
-    // `setAvailability` is per-AGENT in the real API, so apply it per unique agent.
-    reg.setAvailability(agentId, availability ?? 'available');
+    // The seed declares a whole agent installed/unavailable, so it is a FAMILY fact.
+    // A per-model exception would use `setModelAvailability` for that single pair.
+    reg.setAgentAvailability(agentId, availability ?? 'available');
   }
   for (const key of Object.keys(policies)) {
     const [agentId, modelId] = key.split('::');
@@ -394,7 +397,7 @@ section('P6-B 2b. quota filtering is identical to the sealed spawn gate');
 
   // --- Test D: no second definition of "quota blocks" exists -------------------
   {
-    const src = readFileSync('src/orchestration/assignment.ts', 'utf8');
+    const src = sourceText('src/orchestration/assignment.ts');
     const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     check('D1: assignment holds no local list of blocking quota statuses',
       !/QUOTA_BLOCKING_STATUSES/.test(code), (code.match(/.{0,30}QUOTA_BLOCKING_STATUSES.{0,20}/) ?? [])[0] ?? '');
@@ -541,7 +544,7 @@ section('P6-B 4. determinism and stable tie-break');
 
   // No forbidden sources of nondeterminism.
   const src = ['src/orchestration/assignment.ts', 'src/orchestration/assignment-wiring.ts']
-    .map((f) => readFileSync(f, 'utf8'))
+    .map((f) => sourceText(f))
     .join('\n')
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/^\s*\/\/.*$/gm, '');
@@ -578,7 +581,7 @@ section('P6-B 5. canonical identity, no second registry');
         else if (e.name.endsWith('.ts')) files.push(p);
       }
     })('src');
-    const all = files.map((f) => readFileSync(f, 'utf8')).join('\n');
+    const all = files.map((f) => sourceText(f)).join('\n');
     return !/class (WorkerRegistry|AssignmentRegistry|AgentIdentityRegistry)\b/.test(all);
   })());
 
@@ -708,7 +711,7 @@ section('P6-B 7. identity writeback goes through TaskStore; execution is untouch
 
   // Assignment cannot touch an authority.
   const src = ['src/orchestration/assignment.ts', 'src/orchestration/assignment-wiring.ts']
-    .map((f) => readFileSync(f, 'utf8'))
+    .map((f) => sourceText(f))
     .join('\n');
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   check('assignment never calls runtime.run()', !/\.run\(/.test(code), (code.match(/.{0,20}\.run\([^)]*\)/) ?? [])[0] ?? '');
@@ -783,17 +786,17 @@ section('P6-B 8. reassignment boundary (running tasks are P6-D1)');
     // Comments stripped for the same reason: this module's header explains that it has
     // "no reference to TaskStore", so a raw grep would match its own explanation.
     // `store` in the code means `AttemptStore` - read-only evidence, P6-B's design.
-    const src = readFileSync('src/orchestration/assignment.ts', 'utf8')
+    const src = sourceText('src/orchestration/assignment.ts')
       .replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
     return !/migrateIdentityAfterStart|assignIdentity|TaskStore|\.transition\(/.test(src);
   })());
   check('assignIdentity still refuses a STARTED task (P6-B boundary intact)', (() => {
-    const src = readFileSync('src/orchestration/store.ts', 'utf8');
+    const src = sourceText('src/orchestration/store.ts');
     const body = src.split('assignIdentity(')[1]?.split('  /**')[0] ?? '';
     return body.includes('assignment-after-start') && body.includes('startedAt !== null');
   })());
   check('the post-start migration is a SEPARATE method, not a relaxed assignIdentity',
-    readFileSync('src/orchestration/store.ts', 'utf8').includes('migrateIdentityAfterStart('));
+    sourceText('src/orchestration/store.ts').includes('migrateIdentityAfterStart('));
   check('the implemented action set is the expected one (P6-D1 completed it)', (() => {
     // Compared against the exported value, not a re-typed string: a source grep
     // here would pass or fail on formatting rather than on behaviour.
@@ -927,7 +930,7 @@ section('P6-B 9. assignment -> TaskStore -> scheduler -> executeTask, with evide
 section('P6-B 10. scope guard - nothing from P6-C or P6-D1');
 {
   const src = ['src/orchestration/assignment.ts', 'src/orchestration/assignment-wiring.ts']
-    .map((f) => readFileSync(f, 'utf8')).join('\n');
+    .map((f) => sourceText(f)).join('\n');
   // These names appear in PROSE - in comments explaining why P6-B does NOT do
   // them, and in `requestModelSwitch()`'s refusal message. So a bare substring
   // grep would flag the very text that documents the boundary. What matters is
@@ -954,7 +957,7 @@ section('P6-B 10. scope guard - nothing from P6-C or P6-D1');
         else if (e.name.endsWith('.ts')) files.push(p);
       }
     })('src');
-    const all = files.map((f) => readFileSync(f, 'utf8')).join('\n');
+    const all = files.map((f) => sourceText(f)).join('\n');
     return !/from '(redis|ioredis|sqlite3|better-sqlite3|amqplib|kafkajs|nats|amqp|knex|sequelize|typeorm|pg|mysql2|mongodb)/.test(all);
   })());
   check('P6-B added no RUNTIME dependency', (() => {
@@ -981,7 +984,7 @@ section('P6-B 11. authority scan - still exactly one of each');
     }
   })('src');
   const strip = (t: string): string => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  const code = files.map((f) => strip(readFileSync(f, 'utf8')));
+  const code = files.map((f) => strip(sourceText(f)));
   const occ = (r: RegExp): number => code.reduce((n, t) => n + [...t.matchAll(new RegExp(r.source, r.flags.includes('g') ? r.flags : `${r.flags}g`))].length, 0);
 
   check('new TaskStore(          === 1', occ(/new TaskStore\(/) === 1, String(occ(/new TaskStore\(/)));
@@ -994,9 +997,307 @@ section('P6-B 11. authority scan - still exactly one of each');
   check('P6-B added NO second identity registry',
     occ(/class (WorkerRegistry|AssignmentRegistry|AgentIdentityRegistry)\b/) === 0);
   check('assignment itself constructs no budget ledger (quota stays untouched)',
-    !/new BudgetManager\(/.test(readFileSync('src/orchestration/assignment.ts', 'utf8') +
-      readFileSync('src/orchestration/assignment-wiring.ts', 'utf8')));
+    !/new BudgetManager\(/.test(sourceText('src/orchestration/assignment.ts') +
+      sourceText('src/orchestration/assignment-wiring.ts')));
   check('quota/ files unchanged in shape: one modelKey definition', occ(/export function modelKey\(/) === 1);
+}
+
+// =========================================================================
+// TeamRun T1-a — availability granularity: agent FAMILY vs (agent, model) PAIR
+// =========================================================================
+section('T1-a: a failed model probe must not disable its healthy siblings');
+{
+  /** Both models live on the SAME agent, and the agent family is healthy. */
+  const twoModelsOnOneAgent = (): ModelRegistry => {
+    const reg = new ModelRegistry();
+    for (const modelId of [SB, MIMO]) {
+      reg.upsert({ agentId: 'opencode', modelId, provider: 'test', taskTypes: ['implementation'], modelSource: 'test', quotaSource: 'test' }, NOW);
+    }
+    reg.setAgentAvailability('opencode', 'available');
+    return reg;
+  };
+
+  // --- Case A: sibling model survives --------------------------------------
+  {
+    const reg = twoModelsOnOneAgent();
+    check('Case A: both models start available',
+      reg.isModelAvailable('opencode', SB) && reg.isModelAvailable('opencode', MIMO));
+
+    reg.setModelAvailability('opencode', SB, 'unavailable');
+
+    check('Case A: the sick pair is unavailable', reg.isModelAvailable('opencode', SB) === false);
+    check('Case A: its SIBLING is untouched', reg.isModelAvailable('opencode', MIMO) === true);
+
+    const r = assignWorker(input({ registry: reg, taskType: 'implementation' }));
+    check('Case A: assignment still selects the healthy sibling',
+      chosenOf(r)?.modelId === MIMO, `${chosenOf(r)?.modelId ?? codeOf(r)}`);
+    check('Case A: the sick pair is rejected for availability, not capability',
+      r.ok && r.rejected.some((x) => x.agentId === 'opencode' && x.modelId === SB && x.code === 'availability-unavailable'),
+      JSON.stringify(r.rejected.map((x) => `${x.agentId}/${x.modelId}:${x.code}`)));
+  }
+
+  // --- Case B: agent family unavailable blocks the whole family ------------
+  {
+    const reg = twoModelsOnOneAgent();
+    // Model-specific evidence for SB only.
+    reg.setModelAvailability('opencode', SB, 'available');
+    reg.setModelAvailability('opencode', MIMO, 'available');
+    // Now the whole RUNTIME goes away (binary missing).
+    reg.setAgentAvailability('opencode', 'unavailable');
+
+    check('Case B: a family block overrides both healthy pairs',
+      reg.isModelAvailable('opencode', SB) === false && reg.isModelAvailable('opencode', MIMO) === false);
+    const r = assignWorker(input({ registry: reg, taskType: 'implementation' }));
+    check('Case B: assignment finds nothing', r.ok === false, r.ok ? `assigned ${chosenOf(r)?.modelId}` : r.code);
+    check('Case B: every rejection names availability',
+      !r.ok && r.rejected.every((x) => x.code === 'availability-unavailable'),
+      JSON.stringify(r.rejected.map((x) => `${x.modelId}:${x.code}`)));
+  }
+
+  // --- Case C: model recovery touches only that pair ----------------------
+  {
+    const reg = twoModelsOnOneAgent();
+    reg.setModelAvailability('opencode', SB, 'unavailable');
+    reg.setModelAvailability('opencode', MIMO, 'available');
+    reg.setModelAvailability('opencode', SB, 'available');
+
+    check('Case C: the recovered pair is available again', reg.isModelAvailable('opencode', SB) === true);
+    check('Case C: the sibling state is unchanged', reg.isModelAvailable('opencode', MIMO) === true);
+  }
+
+  // --- Case D: family recovery preserves pair-level overrides --------------
+  {
+    const reg = twoModelsOnOneAgent();
+    reg.setModelAvailability('opencode', SB, 'unavailable');   // pair-specific evidence
+    reg.setModelAvailability('opencode', MIMO, 'available');    // pair-specific evidence
+    reg.setAgentAvailability('opencode', 'unavailable');
+    check('Case D: family down blocks both', !reg.isModelAvailable('opencode', SB) && !reg.isModelAvailable('opencode', MIMO));
+
+    reg.setAgentAvailability('opencode', 'available');
+    check('Case D: family back does NOT revive the still-broken pair',
+      reg.isModelAvailable('opencode', SB) === false);
+    check('Case D: the healthy pair is usable again',
+      reg.isModelAvailable('opencode', MIMO) === true);
+    const r = assignWorker(input({ registry: reg, taskType: 'implementation' }));
+    check('Case D: assignment picks the recovered-healthy model',
+      chosenOf(r)?.modelId === MIMO, `${chosenOf(r)?.modelId ?? codeOf(r)}`);
+  }
+
+  // --- Case E: independent agent families ----------------------------------
+  {
+    const reg = new ModelRegistry();
+    // Two DISTINCT identities of the same product, plus a third agent.
+    for (const [agentId, modelId] of [
+      ['workbuddy-cn', HY3],
+      ['workbuddy-intl', HY3],
+      ['opencode', SB],
+    ] as const) {
+      reg.upsert({ agentId, modelId, provider: 'test', taskTypes: ['implementation'], modelSource: 'test', quotaSource: 'test' }, NOW);
+    }
+    reg.setAgentAvailability('workbuddy-cn', 'available');
+    reg.setAgentAvailability('workbuddy-intl', 'available');
+    reg.setAgentAvailability('opencode', 'available');
+    reg.setModelAvailability('workbuddy-cn', HY3, 'unavailable');
+
+    check('Case E: the CN failure does not touch Intl',
+      reg.isModelAvailable('workbuddy-cn', HY3) === false && reg.isModelAvailable('workbuddy-intl', HY3) === true);
+    check('Case E: nor does it touch an unrelated agent',
+      reg.isModelAvailable('opencode', SB) === true);
+
+    // Intl going away must not move CN.
+    reg.setAgentAvailability('workbuddy-intl', 'unavailable');
+    check('Case E: Intl down leaves CN exactly where it was',
+      reg.isModelAvailable('workbuddy-cn', HY3) === false && reg.isModelAvailable('workbuddy-intl', HY3) === false);
+    reg.setAgentAvailability('workbuddy-intl', 'available');
+    check('Case E: Intl back does NOT inherit CNs pair-level rejection',
+      reg.isModelAvailable('workbuddy-intl', HY3) === true && reg.isModelAvailable('workbuddy-cn', HY3) === false);
+  }
+
+  // --- unknown model must not escalate to the family ----------------------
+  {
+    const reg = twoModelsOnOneAgent();
+    // §15: a model we have never heard of is not evidence about the agent.
+    reg.setModelAvailability('opencode', 'model-that-does-not-exist', 'unavailable');
+    check('an unknown model is ignored rather than escalated to the family',
+      reg.isModelAvailable('opencode', SB) === true && reg.isModelAvailable('opencode', MIMO) === true);
+    check('and the unknown model itself reads unknown (fail-closed)',
+      reg.effectiveAvailability('opencode', 'model-that-does-not-exist') === 'unknown');
+  }
+
+  // --- candidate set: two healthy models are BOTH candidates ---------------
+  {
+    const reg = twoModelsOnOneAgent();
+    const both = assignWorker(input({ registry: reg, taskType: 'implementation' }));
+    check('both healthy models survive filtering', both.ok === true && both.rejected.length === 0,
+      JSON.stringify(both.rejected.map((x) => `${x.modelId}:${x.code}`)));
+    reg.setModelAvailability('opencode', SB, 'unavailable');
+    const after = assignWorker(input({ registry: reg, taskType: 'implementation' }));
+    check('losing ONE model leaves the candidate set non-empty',
+      after.ok === true && after.rejected.length === 1, JSON.stringify(after.rejected.map((x) => x.modelId)));
+  }
+}
+
+// =========================================================================
+// TeamRun T1-c — a MISSING family availability fact fails closed (A6/A7)
+// =========================================================================
+section('T1-c: family availability missing => unknown => fail closed');
+{
+  // A6: the pair is probed available, but the FAMILY was never probed at all.
+  const regMissing = new ModelRegistry();
+  regMissing.upsert({ agentId: 'opencode', modelId: SB, provider: 'test', taskTypes: ['implementation'], modelSource: 'test', quotaSource: 'test' }, NOW);
+  regMissing.setModelAvailability('opencode', SB, 'available');
+
+  check('A6: the family fact is absent (undefined, not unknown-on-record)',
+    regMissing.agentAvailability('opencode') === undefined);
+  check('A6: effective availability is unknown — a missing family fact is unknown, not an abstention',
+    regMissing.effectiveAvailability('opencode', SB) === 'unknown');
+  check('A6: isModelAvailable fails closed', regMissing.isModelAvailable('opencode', SB) === false);
+  const r6 = assignWorker(input({ registry: regMissing, taskType: 'implementation' }));
+  check('A6: assignWorker refuses', r6.ok === false, r6.ok ? 'assigned' : r6.code);
+  check('A6: the rejection names availability-unknown',
+    !r6.ok && r6.rejected.some((x) => x.agentId === 'opencode' && x.modelId === SB && x.code === 'availability-unknown'),
+    JSON.stringify(r6.ok ? [] : r6.rejected.map((x) => `${x.modelId}:${x.code}`)));
+
+  // A7: an explicit family fact unlocks the pair.
+  regMissing.setAgentAvailability('opencode', 'available');
+  check('A7: with the family fact recorded, effective availability is available',
+    regMissing.effectiveAvailability('opencode', SB) === 'available');
+  check('A7: isModelAvailable now answers yes', regMissing.isModelAvailable('opencode', SB) === true);
+  const r7 = assignWorker(input({ registry: regMissing, taskType: 'implementation' }));
+  check('A7: assignWorker can select the pair', r7.ok === true && chosenOf(r7)?.modelId === SB,
+    r7.ok ? 'assigned' : r7.code);
+}
+
+// =========================================================================
+// TeamRun T2-a — Laya explicit Agent × Model selection
+// =========================================================================
+section('T2-a: explicit pair is ENFORCED, never substituted');
+{
+  const explicit = (agentId: string, modelId: string) => ({ agentId, modelId });
+  const t2aRegistry = (): ModelRegistry => registryWith([
+    ['opencode', SB, ['implementation']],
+    ['opencode', MIMO, ['implementation']],
+    ['workbuddy-cn', HY3, ['implementation']],
+    ['workbuddy-intl', HY3, ['implementation']],
+  ]);
+
+  // T2A-1 — exact pair accepted
+  {
+    const r = assignWorker(input({ registry: t2aRegistry(), taskType: 'implementation', explicitPair: explicit('opencode', SB) } as never));
+    check('T2A-1: the exact Laya pair is accepted', r.ok === true && chosenOf(r)?.agentId === 'opencode' && chosenOf(r)?.modelId === SB,
+      r.ok ? '' : r.code);
+  }
+
+  // T2A-2 — explicit pair beats scoring
+  {
+    const reg = t2aRegistry();
+    const evidence = new AttemptStore();
+    // Give model-B (MIMO) the stronger record: legacy scoring prefers it.
+    for (let i = 0; i < 3; i++) addExecution(evidence, 'opencode', MIMO, true);
+    const legacy = assignWorker(input({ registry: reg, taskType: 'implementation', evidence } as never));
+    check('T2A-2 setup: legacy scoring actually prefers model-B', legacy.ok && chosenOf(legacy)?.modelId === MIMO,
+      legacy.ok ? String(chosenOf(legacy)?.modelId) : legacy.code);
+    const enforced = assignWorker(input({ registry: reg, taskType: 'implementation', evidence, explicitPair: explicit('opencode', SB) } as never));
+    check('T2A-2: with an explicit pair, Assignment does NOT out-rank Laya — model-A is chosen',
+      enforced.ok && chosenOf(enforced)?.modelId === SB, enforced.ok ? String(chosenOf(enforced)?.modelId) : enforced.code);
+  }
+
+  // T2A-3 — unavailable explicit model is refused, never substituted
+  {
+    const reg = t2aRegistry();
+    reg.setModelAvailability('opencode', SB, 'unavailable');
+    const r = assignWorker(input({ registry: reg, taskType: 'implementation', explicitPair: explicit('opencode', SB) } as never));
+    check('T2A-3: the unavailable explicit pair is REFUSED', r.ok === false, r.ok ? 'assigned' : r.code);
+    check('T2A-3: the refusal names availability for the exact pair — no substitute chosen',
+      !r.ok && r.rejected.some((x) => x.agentId === 'opencode' && x.modelId === SB && x.code === 'availability-unavailable'),
+      JSON.stringify(r.ok ? [] : r.rejected));
+    check('T2A-3: nothing was chosen at all', !r.ok && codeOf(r) !== '<assigned>');
+  }
+
+  // T2A-4 — family unavailable blocks the explicit pair, no cross-family swap
+  {
+    const reg = t2aRegistry();
+    reg.setAgentAvailability('opencode', 'unavailable');
+    const r = assignWorker(input({ registry: reg, taskType: 'implementation', explicitPair: explicit('opencode', SB) } as never));
+    check('T2A-4: a family-down explicit pair is refused (never moved to WorkBuddy)',
+      r.ok === false && !r.ok && r.rejected.some((x) => x.agentId === 'opencode' && x.code === 'availability-unavailable'),
+      r.ok ? 'assigned' : JSON.stringify(r.rejected));
+  }
+
+  // T2A-5 — unknown model fails closed
+  {
+    const r = assignWorker(input({ registry: t2aRegistry(), taskType: 'implementation', explicitPair: explicit('opencode', 'opencode/does-not-exist') } as never));
+    check('T2A-5: an unregistered explicit model refuses without fallback',
+      r.ok === false && r.code === 'no-model-available' && r.reason.includes('not registered'),
+      r.ok ? 'assigned' : `${r.code}: ${r.reason}`);
+  }
+
+  // T2A-6 — partial/malformed pair fails closed at validation
+  {
+    const partial = validateAgentModelIntent({ agentId: 'opencode' });
+    if (!partial.ok) {
+      check('T2A-6: agent-only pair is rejected as PARTIAL', partial.reason.includes('PARTIAL'), partial.reason);
+    } else {
+      check('T2A-6: agent-only pair is rejected as PARTIAL', false, 'accepted');
+    }
+    const partialModel = validateAgentModelIntent({ modelId: SB });
+    check('T2A-6: model-only pair is rejected as PARTIAL', !partialModel.ok);
+    const badType = validateAgentModelIntent({ agentId: 'opencode', modelId: 42 });
+    if (!badType.ok) {
+      check('T2A-6: a non-string modelId is rejected, not stripped', true, badType.reason);
+    } else {
+      check('T2A-6: a non-string modelId is rejected, not stripped', false, 'accepted');
+    }
+    const r = assignWorker(input({ registry: t2aRegistry(), taskType: 'implementation', explicitPair: { agentId: 'opencode' } as never } as never));
+    check('T2A-6: Assignment refuses a malformed pair instead of falling back to legacy scoring',
+      r.ok === false && r.code === 'assignment-invalid', r.ok ? 'assigned' : r.code);
+    const absent = validateAgentModelIntent(undefined);
+    check('T2A-6: ABSENT intent is not an error — the legacy path is legitimate (§18 distinction)', !absent.ok);
+  }
+
+  // T2A-7 — no intent: legacy scoring unchanged
+  {
+    const r = assignWorker(input({ registry: t2aRegistry(), taskType: 'implementation' }));
+    check('T2A-7: no explicit pair keeps the legacy filter/score/select path working', r.ok === true, r.ok ? '' : r.code);
+  }
+
+  // T2A-8 — same agent, two different models: two distinct enforceable choices
+  {
+    const reg = t2aRegistry();
+    const a = assignWorker(input({ registry: reg, taskType: 'implementation', explicitPair: explicit('opencode', SB) } as never));
+    const b = assignWorker(input({ registry: reg, taskType: 'implementation', explicitPair: explicit('opencode', MIMO) } as never));
+    check('T2A-8: OpenCode/model-A and OpenCode/model-B are BOTH exactly enforceable',
+      a.ok && chosenOf(a)?.modelId === SB && b.ok && chosenOf(b)?.modelId === MIMO,
+      `${a.ok ? String(chosenOf(a)?.modelId) : a.code} / ${b.ok ? String(chosenOf(b)?.modelId) : b.code}`);
+  }
+
+  // T2A-9 — WorkBuddy CN and WorkBuddy Intl stay distinct pairs
+  {
+    const reg = t2aRegistry();
+    const cnQuota = [quotaRow('opencode', 'available'), quotaRow('workbuddy-intl', 'available'), quotaRow('workbuddy-cn', 'available')];
+    const cn = assignWorker(input({ registry: reg, taskType: 'implementation', quotaRecords: cnQuota, explicitPair: explicit('workbuddy-cn', HY3) } as never));
+    const intl = assignWorker(input({ registry: reg, taskType: 'implementation', explicitPair: explicit('workbuddy-intl', HY3) } as never));
+    check('T2A-9: CN and Intl are two independent explicit choices, never one blurred family',
+      cn.ok && chosenOf(cn)?.agentId === 'workbuddy-cn' && intl.ok && chosenOf(intl)?.agentId === 'workbuddy-intl',
+      `cn=${cn.ok ? String(chosenOf(cn)?.agentId) : cn.code} intl=${intl.ok ? String(chosenOf(intl)?.agentId) : intl.code}`);
+    reg.setAgentAvailability('workbuddy-intl', 'unavailable');
+    const intlDown = assignWorker(input({ registry: reg, taskType: 'implementation', quotaRecords: cnQuota, explicitPair: explicit('workbuddy-intl', HY3) } as never));
+    const cnStill = assignWorker(input({ registry: reg, taskType: 'implementation', quotaRecords: cnQuota, explicitPair: explicit('workbuddy-cn', HY3) } as never));
+    check('T2A-9: Intl down refuses Intl only — CN unaffected',
+      !intlDown.ok && cnStill.ok && chosenOf(cnStill)?.agentId === 'workbuddy-cn');
+  }
+
+  // T2A-10 — T1-a per-model availability is really consumed by the T2 consumer
+  {
+    const reg = t2aRegistry();
+    reg.setModelAvailability('opencode', SB, 'unavailable'); // A sick
+    const b = assignWorker(input({ registry: reg, taskType: 'implementation', explicitPair: explicit('opencode', MIMO) } as never));
+    check('T2A-10: the healthy sibling (model-B) is accepted as an explicit choice',
+      b.ok && chosenOf(b)?.modelId === MIMO, b.ok ? '' : b.code);
+    const a = assignWorker(input({ registry: reg, taskType: 'implementation', explicitPair: explicit('opencode', SB) } as never));
+    check('T2A-10: the sick sibling is still refused as an explicit choice',
+      a.ok === false && a.rejected.some((x) => x.modelId === SB && x.code === 'availability-unavailable'));
+  }
 }
 
 process.stdout.write(`\n${passed} passed, ${failed} failed\n`);

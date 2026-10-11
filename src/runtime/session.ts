@@ -49,7 +49,8 @@ import type {
   TransportFrame,
   Usage,
 } from '../core/types.ts';
-import { isTerminal } from '../core/types.ts';
+import { isTerminal, validateExecutionTimeout } from '../core/types.ts';
+import { InvalidRequestError } from '../core/errors.ts';
 import type { SessionStore, ThreadRecord, TranscriptWriter } from './store.ts';
 
 export interface SessionLimits {
@@ -148,6 +149,15 @@ export class AgentSession implements RunHandle, NativeSink {
       recentCapacity: this.limits.recentEvents,
       overflow: 'drop-oldest',
     });
+    // R5-1.2 (§8): the ONE validator, applied at the lowest boundary too. A direct
+    // AgentSession construction cannot smuggle a 0 / negative / oversized deadline
+    // past `setTimeout`'s Node clamp.
+    if (req.timeoutMs !== undefined) {
+      const deadlineCheck = validateExecutionTimeout(req.timeoutMs);
+      if (!deadlineCheck.ok) {
+        throw new InvalidRequestError(req.agentId, 'timeoutMs', deadlineCheck.reason);
+      }
+    }
     this.onSettled = limits.onSettled ?? null;
     // Seed a resume thread BEFORE anything can fail.
     //
@@ -210,15 +220,49 @@ export class AgentSession implements RunHandle, NativeSink {
     });
   }
 
+  /**
+   * R5-1.1 (§5): SINGLE-FLIGHT terminal request. A user cancel and the execution
+   * deadline can race; whichever asks FIRST owns the terminal reason, and the
+   * second request is a no-op. Without this, both `cancel()` and `onDeadline()`
+   * passed their "still running" checks in the same window, called
+   * `transport.cancel` twice (double tree kill) and the later `timed_out`
+   * overwrote the user's `cancelled`. The first confirmed terminal reason is
+   * never overwritten by a second; `finalize()` stays the single place an
+   * outcome is frozen.
+   */
+  private terminalRequest: 'cancelled' | 'timed_out' | null = null;
+  /**
+   * R5-1.2 (§6): a FAILED cancellation must not permanently occupy the
+   * single-flight slot. The slot only means "a request is IN FLIGHT or has
+   * SUCCEEDED"; a failed request clears it so a later explicit cancel or the
+   * deadline can try again to stop the SAME execution. This authorises nothing
+   * beyond stopping: no retry of the work, no reassign, no handoff.
+   */
+
   /** I3: a user abort yields `cancelled`, a deadline yields `timed_out`. */
   async cancel(reason = 'requested'): Promise<void> {
     if (this.frozen || this.currentState !== 'running') return;
+    if (this.terminalRequest !== null) return; // single-flight: in flight or already won
+    this.terminalRequest = 'cancelled';
     this.localAbort = 'cancelled';
     this.abortReason = reason;
     try {
-      await this.transport?.cancel(reason);
+      // R5-1.2C (§9): the result must NOT be discarded. A CLI transport whose
+      // `ManagedProcess.cancel()` resolved `false` was reporting "the tree stop is not
+      // confirmed" — and reading that as success produced a `cancelled` terminal for an
+      // execution that was still running. A falsy result is now handled exactly like a
+      // thrown stop: the slot is released so the SAME execution can be cancelled again.
+      const confirmed = await this.transport?.cancel(reason);
+      if (confirmed === false) {
+        throw new Error('transport reported the cancellation was NOT confirmed');
+      }
     } catch (e) {
+      // The stop FAILED (end state unknown). Release the single-flight slot so a
+      // later explicit attempt can be made; keep the session running.
       log.warn('transport cancel failed', { taskId: this.taskId, error: (e as Error).message });
+      this.terminalRequest = null;
+      this.localAbort = null;
+      this.abortReason = '';
     }
   }
 
@@ -361,13 +405,31 @@ export class AgentSession implements RunHandle, NativeSink {
 
   private async onDeadline(): Promise<void> {
     if (this.frozen || this.currentState !== 'running') return;
+    // single-flight: the cancel is in flight or won the race (a FAILED cancel has
+    // already released the slot, so the deadline is allowed to stop the run).
+    if (this.terminalRequest !== null) return;
+    this.terminalRequest = 'timed_out';
     this.localAbort = 'timed_out';
     this.abortReason = `deadline of ${this.req.timeoutMs}ms exceeded`;
     log.warn('task deadline exceeded', { taskId: this.taskId, timeoutMs: this.req.timeoutMs });
     try {
-      await this.transport?.cancel(this.abortReason);
+      // R5-1.2C (§9): same rule as the explicit cancel — a `false` result means the stop
+      // was NOT confirmed and must not be read as success.
+      const confirmed = await this.transport?.cancel(this.abortReason);
+      if (confirmed === false) {
+        throw new Error('transport reported the deadline cancellation was NOT confirmed');
+      }
     } catch (e) {
+      // R5-1.2C (§10): the deadline path used to swallow the failure and KEEP
+      // `terminalRequest`, which permanently occupied the single-flight slot: every
+      // later explicit `cancel()` returned early, so an execution the deadline could not
+      // stop could never be stopped at all. A failed deadline cancel now releases the
+      // slot exactly like a failed explicit cancel, so a retry is possible — and the
+      // session stays `running`, so protection is retained meanwhile.
       log.warn('deadline cancel failed', { taskId: this.taskId, error: (e as Error).message });
+      this.terminalRequest = null;
+      this.localAbort = null;
+      this.abortReason = '';
     }
   }
 
@@ -464,9 +526,17 @@ export class AgentSession implements RunHandle, NativeSink {
       error,
       diagnostics: this.diagnosticsList.slice(),
       cleanup: exit?.cleanup ?? {
+        // W3: a session that settled WITHOUT a transport exit cannot have any
+        // physical stop evidence. Fail closed: the write-scope holder must read
+        // this as "not confirmed" and keep protection.
         rootKilled: false,
         descendantsReaped: false,
         note: 'transport reported no exit',
+        treeStopConfirmed: false,
+        // Same reasoning for the W3.2 verdict: a session that settled with no
+        // transport exit has observed no process lifecycle at all, so it can prove
+        // nothing either way and must not claim "not started".
+        processStart: 'may-have-started',
       },
     };
 
@@ -545,7 +615,7 @@ export class AgentSession implements RunHandle, NativeSink {
       signal: null,
       stderrTail: this.stderrTail.toString(),
       stderrTruncated: this.stderrTail.truncated,
-      cleanup: { rootKilled: false, descendantsReaped: false, note: 'transport reported no exit' },
+      cleanup: { rootKilled: false, descendantsReaped: false, note: 'transport reported no exit', treeStopConfirmed: false, processStart: 'may-have-started' },
     };
   }
 

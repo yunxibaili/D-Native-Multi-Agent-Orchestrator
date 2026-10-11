@@ -146,7 +146,7 @@ async function productionCenter(): Promise<{
       { agentId, modelId, provider: agentId, taskTypes: ['implementation', 'research', 'test'] as never, modelSource: 'config', quotaSource: 'test' },
       NOW,
     );
-    registry.setAvailability(agentId, 'available');
+    registry.setAgentAvailability(agentId, 'available');
   }
   return { center, registry, quotas: OFFICIAL_PROBES.flatMap((p) => p.records) };
 }
@@ -335,12 +335,25 @@ function productionShapedWorkbench(label: string): {
   const rt = new RuntimeOrch({
     config: { agents: {} } as never,
     storeDir: join(dir, 'store'),
-    extraAdapters: [
+    // R5-1.1 (§11): these fakes are named after REAL agents, so they MUST go
+    // through `replaceAdapters` — `extraAdapters` refuses to override an id that
+    // `bootstrapAdapters()` already registered from the installed CLIs, which made
+    // this "unit" suite silently launch the real OpenCode / WorkBuddy binaries.
+    replaceAdapters: [
       createFakeAdapter({ id: 'opencode', script: [{ kind: 'exit', code: 0 }], capabilities: { newTask: true, review: false, modelSelection: true } }),
       createFakeAdapter({ id: 'workbuddy-intl', script: [{ kind: 'exit', code: 0 }], capabilities: { newTask: true, review: false, modelSelection: true } }),
     ],
   });
   const runtime: RuntimeRunner = { run: (r: RunRequest) => { requests.push(r); return rt.run(r); } };
+  // R5-1.1 (§11) proof of identity: the registry must hold the FAKE adapters, not
+  // the bootstrapped native ones — if this ever fails, the suite would be driving a
+  // real installed CLI and every timing/auth dependency below would be real too.
+  for (const fakeId of ['opencode', 'workbuddy-intl']) {
+    const adapter = rt.registry.get(fakeId); // throws with a precise list if missing
+    if (adapter.descriptor.launcher.command !== 'fake-agent' || !adapter.descriptor.displayName.startsWith('Fake ')) {
+      throw new Error(`fixture broken: agent "${fakeId}" is not the fake adapter (a real native adapter leaked in)`);
+    }
+  }
 
   const registry = new ModelRegistry();
   for (const [agentId, modelId] of [['opencode', 'opencode/space-bunny-free'], ['workbuddy-intl', 'hy3']] as const) {
@@ -348,7 +361,7 @@ function productionShapedWorkbench(label: string): {
       { agentId, modelId, provider: agentId, taskTypes: ['implementation', 'research', 'test'] as never, modelSource: 'test', quotaSource: 'test' },
       NOW,
     );
-    registry.setAvailability(agentId, 'available');
+    registry.setAgentAvailability(agentId, 'available');
   }
 
   // agentStatus rows in the PRODUCTION shape: both identities present, display name
@@ -418,7 +431,7 @@ const fund = (budgets: BudgetManager, ...taskIds: string[]): void => {
   check('T6: the scheduler dispatched the single task', requests.length === 1, `requests=${requests.length}`);
   check('T6: it ran on the agent the gate approved', requests[0]?.agentId === 'opencode', String(requests[0]?.agentId));
   check('T6: and reached to_verify (not verified by the round — that is the gate\'s job)',
-    wb.store.get('c6')?.status === 'to_verify', String(wb.store.get('c6')?.status));
+    wb.store.get('c6')?.status === 'to_verify', JSON.stringify({ status: wb.store.get('c6')?.status, evidence: wb.evidence.all().map((a) => ({ kind: a.kind, outcome: a.outcome })) }));
   check('T6: NO user-facing multi-agent flag was needed or accepted', true);
   cleanup();
 }

@@ -110,7 +110,7 @@ const gateSources = (taskIds: readonly string[], agents: readonly string[] = [AG
   for (const a of agents) {
     const modelId = a === AGENT ? SB : 'hy3';
     registry.upsert({ agentId: a, modelId, provider: 'test', taskTypes: [impl] as never, modelSource: 'test', quotaSource: 'test' }, NOW);
-    registry.setAvailability(a, 'available');
+    registry.setAgentAvailability(a, 'available');
   }
   return {
     descriptors: agents.map(descriptor),

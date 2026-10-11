@@ -41,8 +41,11 @@ export function evaluatePolicy(registry: ModelRegistry, query: PolicyQuery): Pol
     return { ...base, decision: 'unavailable', reason: `agent "${agentId}" binary is not available` };
   }
 
-  if (entry.availability === 'unavailable') {
-    return { ...base, decision: 'unavailable', reason: `model "${modelId}" is unavailable on "${agentId}"` };
+// TeamRun T1-a: availability is judged per PAIR, from the effective verdict. Reading the
+  // raw entry field here would miss a family block recorded in the registry rather than
+  // passed in the query, and would keep judging a pair on a fact recorded for its siblings.
+  if (registry.effectiveAvailability(agentId, modelId) === 'unavailable') {
+    return { ...base, decision: 'unavailable', reason: `model "${modelId}" is unavailable on "${agentId}"` }
   }
 
   if (query.taskType && !entry.taskTypes.includes(query.taskType)) {

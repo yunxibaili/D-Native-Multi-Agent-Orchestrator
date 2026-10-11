@@ -48,6 +48,8 @@ export class CliJsonlTransport implements Transport {
   private cleanup: CleanupResult = {
     rootKilled: false,
     descendantsReaped: false,
+    treeStopConfirmed: false,
+    processStart: 'may-have-started',
     note: 'not attempted',
   };
   /** Resolves once the process exists, so `wait()` is safe to call first. */
@@ -104,7 +106,7 @@ export class CliJsonlTransport implements Transport {
         signal: null,
         stderrTail: '',
         stderrTruncated: false,
-        cleanup: { rootKilled: false, descendantsReaped: false, note: 'process never started' },
+        cleanup: { rootKilled: false, descendantsReaped: false, note: 'process never started', treeStopConfirmed: false, processStart: 'may-have-started' },
       };
     }
     const exit = await proc.exited;
@@ -126,6 +128,8 @@ export class CliJsonlTransport implements Transport {
         this.cleanup = {
           rootKilled: false,
           descendantsReaped: false,
+          treeStopConfirmed: false,
+          processStart: proc.processStartDisposition,
           note: `reap threw: ${(e as Error).message}`,
         };
       }
@@ -142,9 +146,14 @@ export class CliJsonlTransport implements Transport {
     };
   }
 
-  async cancel(reason: string): Promise<void> {
-    if (!this.proc) return;
-    await this.proc.cancel(reason);
+  // R5-1.2C (§9): the confirmation was DISCARDED here. `ManagedProcess.cancel()`
+  // resolves `false` when the descendant tree's stop could not be confirmed, and
+  // swallowing that made an unconfirmed stop indistinguishable from a successful one,
+  // so the session could freeze a `cancelled` terminal over a still-live process. The
+  // boolean is now passed through to the caller.
+  async cancel(reason: string): Promise<boolean> {
+    if (!this.proc) return true;
+    return this.proc.cancel(reason);
   }
 
   async dispose(): Promise<void> {

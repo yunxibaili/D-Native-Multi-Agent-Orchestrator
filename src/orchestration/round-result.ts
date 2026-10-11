@@ -398,6 +398,13 @@ export interface HumanGate {
   /** Whether a review was required and has not settled. See the REVIEW_STATUSES note. */
   readonly reviewOutstanding: boolean;
   /**
+   * TeamRun T3-b.1a: the execution set is incomplete — a requested member never reached an
+   * execution resolution this bounded round. It forces `roundComplete: false` and it is NOT the
+   * same fact as `reviewOutstanding`: a settled review (`execution_incomplete`) is exactly the
+   * case where the review vocabulary looks fine and the round is still unfinished.
+   */
+  readonly executionIncomplete: boolean;
+  /**
    * A review was requested, settled, and produced no independent judgement
    * (`failed` / `unavailable`). Surfaced as a decision; it never blocks the gate.
    */
@@ -581,6 +588,20 @@ export interface BuildRoundResultInput {
    * carry it (the review packet does), and this file must not go looking for a store.
    */
   readonly evidenceNote: string;
+  /**
+   * TeamRun T3-b.1a: the round's FINAL execution-completeness truth.
+   *
+   * `true` means the execution set is incomplete — a requested fan-out member never reached an
+   * execution resolution this bounded round. It is produced ONCE by the round coordinator from the
+   * same post-drain `allSettled` aggregation that guards the Unified Review and sets `report.ok`,
+   * and it is passed in rather than re-derived here, so the report, the review gate and this gate
+   * cannot disagree about whether the round's work finished.
+   *
+   * Optional, defaulting to `false`, so every existing caller keeps its exact behaviour. This file
+   * deliberately does NOT re-scan Task status to work it out: a capacity-pending member is `queued`,
+   * which classifies as `never_started`, so a status scan here would report the round as finished.
+   */
+  readonly executionIncomplete?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -806,6 +827,8 @@ export function buildRoundResult(input: BuildRoundResultInput): RoundResult {
     tasks: taskSummaries,
     review: reviewSummary,
     handoffs: handoffSummaries,
+    // T3-b.1a: the SAME final completeness fact the review guard and `report.ok` consumed.
+    executionIncomplete: input.executionIncomplete === true,
   });
 
   return {
@@ -834,6 +857,17 @@ export interface DeriveHumanGateInput {
   readonly tasks: readonly TaskSummary[];
   readonly review: ReviewSummary;
   readonly handoffs: readonly HandoffSummary[];
+  /**
+   * TeamRun T3-b.1a: the round's final execution-completeness truth, passed in rather than
+   * re-derived. See `BuildRoundResultInput.executionIncomplete`.
+   *
+   * It exists because REVIEW completion is not EXECUTION completion. A round can have a fully
+   * settled review and still be unfinished: `execution_incomplete` IS a member of
+   * `REVIEW_STATUSES`, so the settled-review test passes, and a capacity-pending member is
+   * `queued`, which classifies as `never_started` rather than mid-lifecycle — so neither existing
+   * term of `roundComplete` could see it. The gate therefore consumes the fact directly.
+   */
+  readonly executionIncomplete?: boolean;
 }
 
 /**
@@ -893,12 +927,15 @@ export function deriveHumanGate(input: DeriveHumanGateInput): HumanGate {
   // ever added it will block the gate automatically without touching this file.
   const reviewSettled = (REVIEW_STATUSES as readonly string[]).includes(input.review.status);
   const reviewOutstanding = input.review.requested && !reviewSettled;
+  // TeamRun T3-b.1a: the final execution-completeness truth, consumed as a FACT. This gate stays
+  // a terminus / user-decision surface; it gains no authority over execution and derives nothing.
+  const executionIncomplete = input.executionIncomplete === true;
   // Settled, but no independent judgement exists. This is surfaced as a DECISION and
   // never as a blocker: a round whose reviewer failed must still reach the user rather
   // than deadlocking with nobody able to reach it.
   const reviewWithoutVerdict = input.review.requested && input.review.status !== 'completed';
 
-  const roundComplete = nonTerminalTasks.length === 0 && !reviewOutstanding;
+  const roundComplete = !executionIncomplete && nonTerminalTasks.length === 0 && !reviewOutstanding;
 
   const tally = { succeeded: 0, failed: 0, cancelled: 0, other: 0 };
   for (const t of executable) {
@@ -944,8 +981,13 @@ export function deriveHumanGate(input: DeriveHumanGateInput): HumanGate {
       detail: `the review was requested and its status is "${input.review.status}", which is not a ` +
         `settled outcome: ${input.review.reason ?? 'no reason given'}`,
     });
-  } else if (reviewWithoutVerdict) {
+  } else if (reviewWithoutVerdict && !executionIncomplete) {
     // Settled but no judgement. A decision, never a blocker.
+    //
+    // T3-b.1a: deliberately NOT offered when the execution set is incomplete. That status means
+    // the reviewer never ran, so there is no independent judgement to have missed, and this
+    // decision's own wording — "The round is finished and the execution evidence stands on its
+    // own" — would be false. The execution-incomplete decision below is the honest one.
     decisions.push({
       id: 'review-unavailable',
       label: 'Decide about the missing independent review',
@@ -990,13 +1032,39 @@ export function deriveHumanGate(input: DeriveHumanGateInput): HumanGate {
     });
   }
 
+  if (executionIncomplete) {
+    decisions.push({
+      id: 'execution-incomplete',
+      label: 'Decide about the requested work that never got an execution',
+      detail: 'the execution set is incomplete: at least one requested member never reached an ' +
+        'execution resolution this bounded round, so the orchestrator stopped without finishing ' +
+        'the work it was given. No review was run, because there is nothing complete to judge' +
+        (input.review.reason === null ? '' : ` (${input.review.reason})`) +
+        '. Nothing was retried, reassigned or replanned to cover it.',
+    });
+  }
+
   let status: HumanGateStatus;
   let reason: string;
   if (!roundComplete) {
-    status = 'not_ready';
-    reason = reviewOutstanding
-      ? `the review was requested and has not settled (status "${input.review.status}")`
-      : `${nonTerminalTasks.length} executable task(s) are still mid-lifecycle: ${nonTerminalTasks.join(', ')}`;
+    if (executionIncomplete && nonTerminalTasks.length === 0) {
+      // The orchestrator really did STOP — nothing is mid-flight, the execution set is just
+      // unfinished — so this is the terminus, not a gate awaiting work that is still running.
+      // `waiting_for_user` is the honest existing value; no new status is introduced. Crucially
+      // it must NOT say the round finished: it did not.
+      status = 'waiting_for_user';
+      reason = 'the round stopped with an INCOMPLETE execution set: at least one requested task ' +
+        'never reached an execution resolution, so no review was run and no verdict exists. ' +
+        'The orchestrator has stopped and control is the user\'s; the work it was given is not done.';
+    } else {
+      status = 'not_ready';
+      reason = executionIncomplete
+        ? 'the execution set is incomplete and ' +
+          `${nonTerminalTasks.length} executable task(s) are still mid-lifecycle: ${nonTerminalTasks.join(', ')}`
+        : reviewOutstanding
+          ? `the review was requested and has not settled (status "${input.review.status}")`
+          : `${nonTerminalTasks.length} executable task(s) are still mid-lifecycle: ${nonTerminalTasks.join(', ')}`;
+    }
   } else {
     status = 'waiting_for_user';
     // Says "settled", not "passed": a failed or unavailable review is settled, and this
@@ -1015,6 +1083,7 @@ export function deriveHumanGate(input: DeriveHumanGateInput): HumanGate {
     /** Task statuses this report does not recognise. Non-empty means the gate stayed shut. */
     unknownStatusTasks: unknownTasks,
     reviewOutstanding,
+    executionIncomplete,
     /** Requested, settled, and produced no independent judgement. A decision, not a blocker. */
     reviewWithoutVerdict,
     taskTally: tally,

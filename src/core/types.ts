@@ -34,6 +34,48 @@ export function isTerminal(state: TaskState): state is TerminalState {
   return TERMINAL.has(state);
 }
 
+// ---------------------------------------------------------------------------
+// R5-1.2 (§8): THE one execution-timeout validator.
+//
+// Every execution timeout eventually reaches `setTimeout`, and Node silently
+// clamps delays above 2^31-1 ms down to 1 ms — an "infinite" timeout that
+// becomes an instant kill. Validation therefore lives HERE, in the lowest
+// layer, so every entry point (round CLI, task Orchestrator, runtime merged
+// config, direct AgentSession construction) shares ONE function and none can
+// bypass it. Fail-closed at the boundary:
+//
+//   - NaN / negative / non-finite  -> refused
+//   - 0                            -> refused (unlimited execution is not
+//                                     silently supported; making it legal is a
+//                                     design decision, not a default)
+//   - > NODE_TIMER_MAX_MS          -> refused instead of silently becoming ~1 ms
+//   - below MIN_EXECUTION_TIMEOUT_MS -> refused (a deadline of 0 or a sub-tick
+//                                     instant is not a deadline, it is a malfunction;
+//                                     the floor is deliberately small so real-time
+//                                     deadline tests exercise the same code path)
+// ---------------------------------------------------------------------------
+export const NODE_TIMER_MAX_MS = 2_147_483_647;
+export const MIN_EXECUTION_TIMEOUT_MS = 50;
+
+export function validateExecutionTimeout(ms: number): { ok: true; value: number } | { ok: false; reason: string } {
+  if (typeof ms !== 'number' || Number.isNaN(ms)) {
+    return { ok: false, reason: `execution timeout must be a number of milliseconds, got ${String(ms)}` };
+  }
+  if (!Number.isFinite(ms)) {
+    return { ok: false, reason: `execution timeout must be finite, got ${String(ms)}` };
+  }
+  if (ms <= 0) {
+    return { ok: false, reason: `execution timeout must be positive (got ${ms}); unlimited execution is not supported - making it legal is a design decision, not a default` };
+  }
+  if (ms > NODE_TIMER_MAX_MS) {
+    return { ok: false, reason: `execution timeout ${ms}ms exceeds the Node timer maximum (${NODE_TIMER_MAX_MS} ms); a larger value would silently become a ~1 ms deadline` };
+  }
+  if (ms < MIN_EXECUTION_TIMEOUT_MS) {
+    return { ok: false, reason: `execution timeout ${ms}ms is below the minimum (${MIN_EXECUTION_TIMEOUT_MS} ms)` };
+  }
+  return { ok: true, value: ms };
+}
+
 export type TransportKind = 'cli-jsonl' | 'acp' | 'app-server';
 
 /**
@@ -358,11 +400,56 @@ export interface TransportExit {
   readonly cleanup: CleanupReport;
 }
 
+/**
+ * W3.2: what the runtime can PROVE about OS process creation for an execution.
+ *
+ *   `not-started`       the runtime proved nothing was ever created (launcher proven
+ *                       absent, control setup refused, request rejected before spawn,
+ *                       image not found). The ONLY value that may release a WRITE
+ *                       scope without a tree-stop proof.
+ *   `may-have-started`  the edge was entered and creation was possible, with no proof
+ *                       either way. The conservative default.
+ *   `started`           a process was created.
+ *
+ * It lives here, in `core`, rather than beside the execution seam because both the
+ * runtime (`ManagedProcess`) and orchestration consume it, and `core` must not depend
+ * on `orchestration`.
+ */
+export type ProcessStartDisposition = 'not-started' | 'may-have-started' | 'started';
+
 export interface CleanupReport {
   /** True only when a tree kill was issued against a LIVE root. */
   readonly rootKilled: boolean;
   readonly descendantsReaped: boolean;
   readonly note: string;
+  /**
+   * W3: has the PHYSICAL descendant tree been CONFIRMED stopped?
+   *
+   * This is a different question from every other field here, and the only one
+   * that may gate a WRITE-scope release. `rootKilled` says a kill was attempted;
+   * `descendantsReaped` describes best-effort cleanup; neither is evidence that
+   * the tree is gone. Only this is.
+   *
+   * It is true only when the containment producer positively observed the Job's
+   * `ActiveProcesses == 0` (naturally, or after a cooperative termination on
+   * request). A killed launcher, a missing control record, an unconfirmed stop or
+   * any non-Windows path leaves it false, and the caller must retain write
+   * protection instead of releasing it.
+   */
+  readonly treeStopConfirmed: boolean;
+  /**
+   * W3.2: what the runtime can PROVE about OS process creation for this execution.
+   *
+   * Carried on the report so a run that ends in a frozen result — rather than a throw —
+   * can still release its WRITE scope when the runtime proved nothing was ever created.
+   * Without it, "the launcher binary did not exist" would retain physical protection
+   * forever and leave the scope permanently blocked even after the operator fixed it.
+   *
+   * `'not-started'` is only ever set by the runtime process layer from a positively
+   * known pre-spawn failure. Absent means "not observable", which is treated as NOT
+   * proven — never as zero/success.
+   */
+  readonly processStart: ProcessStartDisposition;
 }
 
 /**
@@ -383,8 +470,17 @@ export interface Transport {
   events: (opts?: SubscribeOptions) => AsyncIterable<TransportFrame>;
   /** Resolves when the agent process is gone and output has drained. */
   wait: () => Promise<TransportExit>;
-  /** Stop the agent, including descendants where the platform allows. */
-  cancel: (reason: string) => Promise<void>;
+  /** Stop the agent, including descendants where the platform allows.
+   *
+   * R5-1.2C (§9): returns `true` when the stop is CONFIRMED. Resolving `false` (or
+   * rejecting) means the end state is UNKNOWN — the process tree may still be running.
+   * It used to be typed `Promise<void>`, so a `false` from the real CLI transport was
+   * indistinguishable from success and a `cancelled` terminal could be produced for an
+   * execution that was still alive. The confirmation is now part of the contract, so it
+   * cannot be discarded by accident. A transport that genuinely cannot confirm may
+   * resolve `undefined` (treated as "unknown", never as confirmed).
+   */
+  cancel: (reason: string) => Promise<boolean | void>;
   /** Release resources. Called exactly once, after the outcome is frozen. */
   dispose: () => Promise<void>;
 }

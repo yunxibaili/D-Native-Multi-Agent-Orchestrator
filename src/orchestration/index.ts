@@ -66,10 +66,28 @@ export {
   isExecutable,
   EXECUTABLE_STATUSES,
   type RuntimeRunner,
+  type ProcessStartDisposition,
   type RunRequestMapping,
   type BuildRunRequestInput,
   type ExecuteOutcome,
 } from './execute.ts';
+
+// TeamRun T3-a.1: the READ-only fan-out topology vocabulary + deterministic aggregation
+// projection. Pure values/helpers; the materialization runs on NativeWorkbench.
+export {
+  FANOUT_ACCESS_MODE,
+  FANOUT_MEMBER_TASK_TYPE,
+  FANOUT_MAX_MEMBERS,
+  FANOUT_MIN_MEMBERS,
+  validateFanoutMembers,
+  projectFanoutAggregation,
+  type ExecutionTopology,
+  type FanoutMemberSpec,
+  type FanoutProvenance,
+  type FanoutAggregation,
+  type FanoutMemberState,
+  type FanoutValidation,
+} from './fanout.ts';
 
 export {
   WorkspaceManager,
@@ -447,6 +465,20 @@ export {
   type SessionIntent,
   type WorkbenchSession,
 } from './workbench-sessions.ts';
+
+// TeamRun T1-b: Worker identity is a PROJECTION over the authorities above — the pair
+// Assignment chose plus the session SessionRegistry resolved. Exported next to them so a
+// consumer is never tempted to treat it as an authority of its own.
+export {
+  workerIdentity,
+  workerKeyOf,
+  sameWorker,
+  distinctWorkers,
+  workerIdentityOfSession,
+  workerIdentityOfAttempt,
+  type WorkerIdentity,
+  type WorkerProjection,
+} from './worker-identity.ts';
 
 // P6-D1: the dynamic decision loop, and the migration path it uses. Both are
 // compositions of authorities that already existed - nothing here is a new engine.

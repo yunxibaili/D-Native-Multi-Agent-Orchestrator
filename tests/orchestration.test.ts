@@ -30,11 +30,12 @@ import { launcherFor } from '../src/runtime/launcher.ts';
 import { createCodexAdapter } from '../src/adapters/codex.ts';
 import { createOpenCodeAdapter } from '../src/adapters/opencode.ts';
 import { createWorkBuddyAdapter } from '../src/adapters/workbuddy.ts';
-import { createFakeAdapter, type ScriptStep } from './helpers.ts';
+import { createFakeAdapter, sourceText, type ScriptStep } from './helpers.ts';
 import type { AgentAdapter, AgentDescriptor, RunHandle, RunRequest, RunResult } from '../src/core/types.ts';
 import type { PresentedLease } from '../src/orchestration/assignment-lease.ts';
 import type { LauncherSpec } from '../src/core/types.ts';
 import type { QuotaRecord } from '../src/quota/types.ts';
+import type { Usage } from '../src/core/types.ts';
 import {
   DEFAULT_LIMITS,
   Orchestrator,
@@ -155,7 +156,7 @@ const registryWith = (entries: Array<[string, string, string[], 'available' | 'u
       { agentId, modelId, provider: 'test', taskTypes: taskTypes as never, modelSource: 'test', quotaSource: 'test' },
       NOW,
     );
-    reg.setAvailability(agentId, availability);
+    reg.setAgentAvailability(agentId, availability);
   }
   return reg;
 };
@@ -994,10 +995,18 @@ section('5C-1 section2 existing runtime untouched by this layer');
 // duplicating the execution path that Runtime already owns.
 const srcFiles = ['task.ts', 'store.ts', 'spawn-gate-input.ts', 'translate.ts', 'orchestrator.ts'];
 for (const f of srcFiles) {
-  const text = readFileSync(new URL(`../src/orchestration/${f}`, import.meta.url), 'utf8');
+  const text = sourceText(new URL(`../src/orchestration/${f}`, import.meta.url));
   const importLines = text.split('\n').filter((l) => l.trimStart().startsWith('import '));
   check(`${f} imports no adapter`, importLines.every((l) => !/from '\.\.\/adapters\//.test(l)));
-  check(`${f} imports no transport/session/spawn module`, importLines.every((l) => !/from '\.\.\/runtime\//.test(l)));
+  check(`${f} imports no transport/session/spawn module`,
+    importLines.every((l) =>
+      !/from '\.\.\/runtime\//.test(l) ||
+      // W3.2: the ONE permitted runtime import is the start-proof PREDICATE. It is a
+      // pure value consumer — it reads a module-private WeakSet and owns nothing — so
+      // it cannot duplicate the execution path. The guard exists to stop orchestration
+      // reaching into spawn/session/transport IMPLEMENTATION, and that prohibition is
+      // preserved verbatim below.
+      /from '\.\.\/runtime\/start-proof\.ts'/.test(l)));
   check(`${f} spawns no process`, !/\bspawnSync\b|\bexecSync\b|child_process/.test(text));
 }
 check('the orchestrator exposes no process handle', !Object.getOwnPropertyNames(Orchestrator.prototype).some((n) => /^(spawn|kill|dispose)$/.test(n)));
@@ -1103,10 +1112,21 @@ const withDeps = buildRunRequest({
 });
 check('dependencies are named in the prompt', withDeps.request.prompt.includes('d1, d2'));
 check('artifacts are referenced by path', withDeps.request.prompt.includes('C:/x.diff'));
-check('a caller prompt overrides the derived one', buildRunRequest({ task: mapImpl, cwd: 'C:/w', prompt: 'do the thing' }).request.prompt === 'do the thing');
+// TeamRun T2-b: an EXECUTION request is now the canonical contract + the task instruction,
+// so these two assertions are re-expressed as COMPOSITION rather than identity. The
+// behaviour they guarded is unchanged: a caller prompt still replaces the derived one, and
+// `buildTaskPrompt` still produces exactly the task instruction that is carried through.
+check('a caller prompt overrides the derived one',
+  (() => {
+    const p = buildRunRequest({ task: mapImpl, cwd: 'C:/w', prompt: 'do the thing' }).request.prompt;
+    return p.includes('do the thing') && !p.includes('the thing is done');
+  })());
 check('a threadId is passed through when supplied', buildRunRequest({ task: mapImpl, cwd: 'C:/w', threadId: 'T-9' }).request.threadId === 'T-9');
 check('no threadId is sent when not supplied', !('threadId' in buildRunRequest({ task: mapImpl, cwd: 'C:/w' }).request));
-check('buildTaskPrompt is exported and matches the request prompt', buildTaskPrompt(mapImpl) === builtImpl.request.prompt);
+// TeamRun T2-b: the execution prompt is now `contract + unchanged task instruction`, so
+// equality became "carries buildTaskPrompt verbatim, behind the contract".
+check('buildTaskPrompt is exported and matches the request prompt',
+  builtImpl.request.prompt.endsWith(buildTaskPrompt(mapImpl)));
 check('buildTaskPrompt omits the dependency line when there are none', !buildTaskPrompt(mapImpl).includes('Depends on'));
 check('buildRunRequest refuses an empty cwd', (() => {
   try { buildRunRequest({ task: mapImpl, cwd: '  ' }); return false; } catch { return true; }
@@ -1328,27 +1348,65 @@ const FAIL_SCRIPT: ScriptStep[] = [{ kind: 'exit', code: 7, stderrTail: 'native 
   rmSync(dir, { recursive: true, force: true });
 }
 
-// --- a handle whose result() rejects is also a failure
+// --- result() rejections are judged by the handle's OWN state (R5-1 P1-A)
 {
   const dir = tmpDir();
-  const rejecting: RuntimeRunner = {
+  // A wait that returns without a terminal result (the AgentSession wait-timeout
+  // contract: "bounds THIS call only and does not alter the outcome") must never be
+  // read as an execution failure. The orchestrator keeps the handle, the lease and
+  // the claim, and keeps waiting for the REAL terminal.
+  let rejections = 0;
+  let settled = false;
+  const liveGap: RuntimeRunner = {
     run(): RunHandle {
       return {
         taskId: 'rt-1', agentId: FAKE_IMPL,
-        state: () => 'running',
+        state: () => (settled ? 'succeeded' : 'running'),
+        events: () => { throw new Error('unused'); },
+        result: () => {
+          if (rejections < 1) {
+            rejections++;
+            return Promise.reject(new Error('result(60000) timed out; task rt-1 is still running'));
+          }
+          settled = true;
+          return Promise.resolve({
+            taskId: 'rt-1', threadId: 'th-1', agentId: FAKE_IMPL, state: 'succeeded',
+            startedAt: now(), endedAt: now() + 1, exitCode: 0, signal: null,
+            output: 'done', outputTruncated: false, transcriptPath: 't', usage: { inputTokens: 0, outputTokens: 0 } as Usage,
+            toolCalls: [], diagnostics: [],
+            cleanup: { rootKilled: false, treeStopConfirmed: true, processStart: 'started', descendantsReaped: false, note: '' },
+            error: null,
+          });
+        },
+        cancel: () => Promise.resolve(),
+      };
+    },
+  };
+  const o = new Orchestrator({ gate: execSources(), now, runtime: liveGap, defaultCwd: dir });
+  seed(o, { root: 'r', child: 'c1' });
+  const res = await o.executeTask({ taskId: 'c1' });
+  check('a wait gap on a LIVE execution is not a failure', res.ok === true);
+  check('the run reaches its real terminal after the wait gap', res.ok === true && o.getStore().get('c1')?.status === 'to_verify');
+  // And the GENUINE failure case is unchanged: the handle itself says the execution
+  // is over (terminal state) but no frozen result exists.
+  const dead: RuntimeRunner = {
+    run(): RunHandle {
+      return {
+        taskId: 'rt-2', agentId: FAKE_IMPL,
+        state: () => 'failed',
         events: () => { throw new Error('unused'); },
         result: () => Promise.reject(new Error('transport stream died')),
         cancel: () => Promise.resolve(),
       };
     },
   };
-  const o = new Orchestrator({ gate: execSources(), now, runtime: rejecting, defaultCwd: dir });
-  seed(o, { root: 'r', child: 'c1' });
-  const res = await o.executeTask({ taskId: 'c1' });
-  check('a rejected result() is a failure', !res.ok && res.code === 'runtime-result-failed');
-  check('the rejection message is preserved', res.ok === false && res.reason.includes('transport stream died'));
-  check('the task is failed, not left running', o.getStore().get('c1')?.status === 'failed');
-  check('the handle is released after a rejection', !o.hasLiveRun('c1'));
+  const o2 = new Orchestrator({ gate: execSources(), now, runtime: dead, defaultCwd: dir });
+  seed(o2, { root: 'r', child: 'c1' });
+  const res2 = await o2.executeTask({ taskId: 'c1' });
+  check('a rejected result() on a TERMINAL handle is a failure', !res2.ok && res2.code === 'runtime-result-failed');
+  check('the rejection message is preserved', res2.ok === false && res2.reason.includes('transport stream died'));
+  check('the task is failed, not left running', o2.getStore().get('c1')?.status === 'failed');
+  check('the handle is released after a rejection', !o2.hasLiveRun('c1'));
   rmSync(dir, { recursive: true, force: true });
 }
 
@@ -1486,39 +1544,45 @@ section('5C-2: authority and structural boundaries');
 
 check('a task must exist before it can be executed', (() => {
   // Structural: executeTask only ever reads the store, it never inserts.
-  const src = readFileSync(new URL('../src/orchestration/orchestrator.ts', import.meta.url), 'utf8');
+  const src = sourceText(new URL('../src/orchestration/orchestrator.ts', import.meta.url));
   const body = src.slice(src.indexOf('async executeTask('), src.indexOf('async cancelTask('));
   return !/store\.create\(/.test(body) && !/\.insert\(/.test(body);
 })());
 check('the execute path never constructs a RunResult', (() => {
-  const src = readFileSync(new URL('../src/orchestration/orchestrator.ts', import.meta.url), 'utf8');
+  const src = sourceText(new URL('../src/orchestration/orchestrator.ts', import.meta.url));
   const body = src.slice(src.indexOf('async executeTask('), src.indexOf('async cancelTask('));
   return !/state:\s*'(succeeded|failed)'/.test(body);
 })());
 check('orchestration never spawns a process', (() => {
   const files = ['execute.ts', 'orchestrator.ts'];
   return files.every((f) => {
-    const text = readFileSync(new URL(`../src/orchestration/${f}`, import.meta.url), 'utf8');
+    const text = sourceText(new URL(`../src/orchestration/${f}`, import.meta.url));
     return !/child_process|\bspawnSync\b|\bexecSync\b|\bexecFile\b|\bspawn\(/.test(text);
   });
 })());
 check('orchestration never builds a transport or session', (() => {
   const files = ['execute.ts', 'orchestrator.ts'];
   return files.every((f) => {
-    const text = readFileSync(new URL(`../src/orchestration/${f}`, import.meta.url), 'utf8');
+    const text = sourceText(new URL(`../src/orchestration/${f}`, import.meta.url));
     return !/new AgentSession|createTransport\(/.test(text);
   });
 })());
 check('orchestration does not import the runtime or adapters', (() => {
   const files = ['execute.ts', 'orchestrator.ts'];
   return files.every((f) => {
-    const text = readFileSync(new URL(`../src/orchestration/${f}`, import.meta.url), 'utf8');
+    const text = sourceText(new URL(`../src/orchestration/${f}`, import.meta.url));
     const imports = text.split('\n').filter((l) => l.trimStart().startsWith('import '));
-    return !imports.some((l) => /from '\.\.\/(runtime|adapters)\//.test(l));
+    return !imports.some((l) =>
+      /from '\.\.\/(runtime|adapters)\//.test(l) &&
+      // W3.2: `../runtime/start-proof.ts` is the ONE allowed exception — a pure
+      // predicate over a runtime-private brand, with no control and no process access.
+      // Everything else under `../runtime/` (spawn, session, transport, launcher) stays
+      // forbidden, so orchestration still cannot duplicate or steer the execution path.
+      !/from '\.\.\/runtime\/start-proof\.ts'/.test(l));
   });
 })());
 check('the runtime seam is only the run() method', (() => {
-  const src = readFileSync(new URL('../src/orchestration/execute.ts', import.meta.url), 'utf8');
+  const src = sourceText(new URL('../src/orchestration/execute.ts', import.meta.url));
   const iface = src.slice(src.indexOf('export interface RuntimeRunner'), src.indexOf('}', src.indexOf('export interface RuntimeRunner')));
   return iface.includes('run(req: RunRequest): RunHandle') && !iface.includes('cancel') && !iface.includes('kill');
 })());
@@ -1537,7 +1601,7 @@ check('the root itself is not executable through executeTask', (() => {
 check('5C-2 adds no scheduler concepts', (() => {
   const files = ['execute.ts', 'orchestrator.ts'];
   return files.every((f) => {
-    const text = readFileSync(new URL(`../src/orchestration/${f}`, import.meta.url), 'utf8');
+    const text = sourceText(new URL(`../src/orchestration/${f}`, import.meta.url));
     return !/topolog|workerPool|worker pool|priorityQueue|replan\w*\(/.test(text);
   });
 })());
@@ -2540,11 +2604,11 @@ section('5C-4: auto-loop lifecycle and re-entrancy');
 
 // --- the controller stays thin: it holds no concurrency/dependency/timer logic
 check('CONTROLLER: no dependency, concurrency or timer logic leaked in', (() => {
-  const src = readFileSync(new URL('../src/orchestration/controller.ts', import.meta.url), 'utf8');
+  const src = sourceText(new URL('../src/orchestration/controller.ts', import.meta.url));
   return !/unmetDependencies|dependency-|maxConcurrency|maxChildren|maxConcurrentAgents|setInterval|setTimeout|counter/.test(src);
 })());
 check('CONTROLLER: it still just forwards to the orchestrator/scheduler', (() => {
-  const src = readFileSync(new URL('../src/orchestration/controller.ts', import.meta.url), 'utf8');
+  const src = sourceText(new URL('../src/orchestration/controller.ts', import.meta.url));
   return src.includes('this.orch.executeTask') && src.includes('new TaskScheduler');
 })());
 
@@ -2909,7 +2973,7 @@ section('5C-5: execution wiring and failure semantics');
 
 /** Source with comments stripped, so an assertion tests CODE, not prose. */
 function codeOf(relPath: string): string {
-  return readFileSync(new URL(relPath, import.meta.url), 'utf8')
+  return sourceText(new URL(relPath, import.meta.url))
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/^\s*\/\/.*$/gm, '');
 }
@@ -3024,12 +3088,28 @@ check('REGRESSION: the tick decrements its own free count rather than re-reading
    * A runtime that records the cwd it is handed and runs a fake agent under the
    * SAME agent id - rewriting `agentId` would be caught (correctly) by the
    * orchestrator's "result came from agent X but task is assigned to Y" check.
+   *
+   * R5-1.2C (§11): the fake is registered through `replaceAdapters`, NOT
+   * `extraAdapters`. `extraAdapters` only ADDS, so the built-in factory for a real
+   * agent id of the same name ('opencode') stayed registered and could shadow the fake —
+   * which meant "the worktree reached OpenCode" could in fact have invoked the REAL
+   * installed OpenCode CLI. The identity is now PROVEN below, so this cannot silently
+   * regress back into a native call.
    */
   const countingRuntime = (agentId: string) => {
     const inner = new RuntimeOrchestrator({
       config: { agents: {} }, storeDir: tmpRoot('wt-oc-store-'),
-      extraAdapters: [createFakeAdapter({ id: agentId, script: [{ kind: 'exit', code: 0 }], capabilities: { newTask: true, review: true, modelSelection: true } })],
+      replaceAdapters: [createFakeAdapter({ id: agentId, script: [{ kind: 'exit', code: 0 }], capabilities: { newTask: true, review: true, modelSelection: true } })],
     });
+    // Identity proof: the registry must hold the FAKE for this id. A real native adapter
+    // would carry its real launcher command instead of the fake's.
+    const registered = inner.registry.get(agentId);
+    if (registered.descriptor.launcher.command !== 'fake-agent') {
+      throw new Error(
+        `fixture broken: the "${agentId}" adapter is not the fake (launcher="${registered.descriptor.launcher.command}"), ` +
+        'so this case could invoke a real native CLI',
+      );
+    }
     const calls: string[] = [];
     return { calls, run: (r: RunRequest): RunHandle => { calls.push(r.cwd); return inner.run(r); } };
   };

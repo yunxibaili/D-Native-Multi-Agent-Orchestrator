@@ -224,7 +224,7 @@ async function main(): Promise<void> {
         const reg = new ModelRegistry();
         for (const a of [AGENT_A, AGENT_B]) {
           reg.upsert({ agentId: a, modelId: MODEL, provider: 'test', taskTypes: [impl], modelSource: 'test', quotaSource: 'test' } as never, NOW);
-          reg.setAvailability(a, 'available');
+          reg.setAgentAvailability(a, 'available');
         }
         return reg;
       })(),
@@ -247,7 +247,7 @@ async function main(): Promise<void> {
       const reg = new ModelRegistry();
       for (const a of [AGENT_A, AGENT_B]) {
         reg.upsert({ agentId: a, modelId: MODEL, provider: 'test', taskTypes: [impl], modelSource: 'test', quotaSource: 'test' } as never, NOW);
-        reg.setAvailability(a, 'available');
+        reg.setAgentAvailability(a, 'available');
       }
       return reg;
     })(),

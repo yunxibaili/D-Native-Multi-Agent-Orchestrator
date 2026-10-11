@@ -84,6 +84,25 @@ export function toExecutionTarget(
     : { agentId: identity.agentId, modelId: identity.modelId, sessionPolicy: 'fresh' };
 }
 
+/**
+ * TeamRun T1-c: the ONE compatibility rule between a session and an assignment pair.
+ *
+ *   session.agentId === pair.agentId AND (session.modelId ?? null) === (pair.modelId ?? null)
+ *
+ * `null` modelId on both sides means "no model was selected" and matches itself — the
+ * same normalisation `open` uses when guarding a resume — so a native/default-model
+ * session is only ever compatible with an assignment that also selected no model. This
+ * is the rule the session authority itself enforces on reuse; it lives HERE, next to
+ * `open`, so every caller (rebinding, attempt attribution) reads the same rule instead
+ * of re-deriving it.
+ */
+export function sessionCompatibleWith(
+  session: Pick<WorkbenchSession, 'agentId' | 'modelId'>,
+  pair: { readonly agentId: string; readonly modelId: string | null },
+): boolean {
+  return session.agentId === pair.agentId && (session.modelId ?? null) === (pair.modelId ?? null);
+}
+
 /** One working context on one native agent. */
 export interface WorkbenchSession {
   readonly sessionId: string;
@@ -262,6 +281,23 @@ export class SessionRegistry {
       status: 'open',
       lastEventAt: now,
     }));
+    return updated ?? this.fail(sessionId);
+  }
+
+  /**
+   * TeamRun T1-e: settle an execution that STARTED on this session but ended WITHOUT
+   * a `RunResult` (`handle.result()` rejected with a terminal state). The existing
+   * `recordRun` cannot express "the execution is over, nothing was reported", and
+   * leaving a session `running` forever is exactly the lie this round forbids.
+   *
+   * This is the minimal state transition the contract allows — `running` -> `open`,
+   * the same terminal resting state `recordRun` produces, with the settle time
+   * recorded — made on the registry's OWN authority. No native handle is invented,
+   * no outcome is fabricated, and an unknown session is refused like everywhere else.
+   */
+  endExecution(sessionId: string, now: number): WorkbenchSession {
+    const updated = this.update(sessionId, (s) =>
+      s.status === 'running' ? { ...s, status: 'open', lastEventAt: now } : s);
     return updated ?? this.fail(sessionId);
   }
 

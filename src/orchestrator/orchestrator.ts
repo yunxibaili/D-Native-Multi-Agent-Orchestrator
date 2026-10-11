@@ -22,11 +22,11 @@
 import { createAdapter, knownAgentIds } from '../adapters/index.ts';
 import {
   CapabilityError,
-  InvalidRequestError,
   ThreadNotFoundError,
   ThreadOwnershipError,
 } from '../core/errors.ts';
 import { log } from '../core/log.ts';
+import { validateRuntimeLaunchPreflight } from '../runtime/preflight.ts';
 import type {
   AgentAdapter,
   AgentCapabilities,
@@ -163,53 +163,36 @@ export class Orchestrator {
     const cfg = this.configFor(req.agentId);
     const caps = adapter.descriptor.capabilities;
 
-    if (!caps.newTask && !req.threadId) throw new CapabilityError(req.agentId, 'newTask');
-
-    // `review` and `resume` are mutually exclusive entrypoints. A review is a
-    // one-shot judgement over a diff; it has no conversation to continue. The
-    // agents cannot express "review and continue thread 123", so combining them
-    // would mean the threadId is silently ignored. Refuse instead.
-    if (req.mode === 'review' && req.threadId) {
-      throw new InvalidRequestError(
-        req.agentId,
-        'mode=review together with threadId',
-        `A review is a one-shot judgement and has no conversation to continue. ` +
-          `Drop threadId to run a review, or use mode=default with threadId to resume.`,
-      );
-    }
-
-    // Resume ownership: a threadId is not a global key.
-    const effective = req.threadId ? this.resolveResumeTarget(req, caps.resume) : undefined;
-
-    if (req.mode === 'review' && !caps.review) {
-      // The adapter's own validateRequest gives a better message; this is the
-      // generic guard for adapters that do not implement it.
-      throw new CapabilityError(req.agentId, 'review');
-    }
-
-    // A configured sandbox applies to ORDINARY FRESH RUNS only.
-    //
-    // `codex exec review` and `codex exec resume` both reject `--sandbox`
-    // (verified: exit 2), and a review/resume entrypoint is not something we
-    // get to constrain anyway. Injecting our own default there would make the
-    // adapter refuse every review and every resume, which is our bug, not the
-    // caller's. An EXPLICIT `--sandbox` on review/resume is still REFUSED by the
-    // adapter — that is a caller error and must be reported, not absorbed.
-    const sandboxApplies = !req.threadId && req.mode !== 'review';
-    const sandboxDefault = sandboxApplies ? cfg.sandbox : undefined;
-
-    const merged: RunRequest = {
-      ...req,
-      threadId: effective,
-      model: req.model ?? cfg.model,
-      role: req.role ?? cfg.role,
-      sandbox: req.sandbox ?? sandboxDefault,
-      timeoutMs: req.timeoutMs ?? cfg.timeoutMs,
-    };
-
-    // Adapter-owned validation. Throws for anything it cannot honour, so no
-    // option is ever silently dropped on the way to the native CLI.
-    adapter.validateRequest(merged);
+    /*
+     * W3.3: ALL pre-process validation is delegated to the runtime-owned preflight.
+     *
+     * Everything below this point — capability gates, resume ownership, the timeout
+     * validator, the adapter's own option validation — is guaranteed to happen before a
+     * transport, a child, or any OS process exists. That makes it part of the runtime's
+     * process-start truth, so the runtime certifies it: on failure the preflight brands
+     * the ORIGINAL error (identity preserved) and the execution edge can release its
+     * WRITE claim.
+     *
+     * The boundary is drawn HERE, deliberately. `createTransport`, `AgentSession` and
+     * `session.start()` stay OUTSIDE the preflight, because from `session.start()` on a
+     * process may exist and no failure past that line may be certified as "nothing ran".
+     *
+     * This layer never inspects an error class to decide any of this — the phase the
+     * error occurred in is the only evidence, and the phase is structural.
+     */
+    const preflight = validateRuntimeLaunchPreflight({
+      req,
+      capabilities: { newTask: caps.newTask, review: caps.review, resume: caps.resume },
+      config: {
+        model: cfg.model,
+        role: cfg.role,
+        sandbox: cfg.sandbox,
+        timeoutMs: cfg.timeoutMs,
+      },
+      validateAdapterRequest: (r) => adapter.validateRequest(r),
+      resolveResumeTarget: (r, supportsResume) => this.resolveResumeTarget(r, supportsResume),
+    });
+    const merged = preflight.merged;
 
     const transport = adapter.createTransport(merged);
     const session = new AgentSession(adapter, this.store, merged, transport, {

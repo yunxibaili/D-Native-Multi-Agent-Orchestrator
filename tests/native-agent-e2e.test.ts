@@ -81,7 +81,7 @@ function makeWorkbench(
   reg.upsert({ agentId: 'opencode', modelId: MODEL_B, provider: 'opencode', taskTypes: ['implementation', 'research', 'test'], modelSource: 'observed', quotaSource: 'observed' }, NOW);
   reg.upsert({ agentId: 'codex', modelId: CODEX_MODEL, provider: 'codex', taskTypes: ['review', 'implementation'], modelSource: 'observed', quotaSource: 'observed' }, NOW);
   reg.upsert({ agentId: 'workbuddy-intl', modelId: 'hy3', provider: 'workbuddy', taskTypes: ['implementation', 'research'], modelSource: 'observed', quotaSource: 'observed' }, NOW);
-  for (const a of ['opencode', 'codex', 'workbuddy-intl']) reg.setAvailability(a, 'available');
+  for (const a of ['opencode', 'codex', 'workbuddy-intl']) reg.setAgentAvailability(a, 'available');
   const budgets = new BudgetManager(10_000_000);
   // The gate is fail-closed on missing budget scopes, so every task id that will
   // pass through spawnChild/executeTask must have its scope allocated UP FRONT.
@@ -116,7 +116,7 @@ function makeWorkbench(
     // that fact; reading it back off the workspace handle would be circular.
     runtime: { run: (r) => { requests.push(r); return rt.run(r); } },
     defaultCwd: repo,
-    resultTimeoutMs: 600_000,
+    executionTimeoutMs: 600_000,
     // ---- R2-1.1 (P2-2): optional real WorkspaceManager wiring -------------
     // Absent for every pre-R2-1 case, which is what keeps their behaviour identical.
     // When present, tasks are admitted into REAL git worktrees and take a resource

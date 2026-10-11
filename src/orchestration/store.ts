@@ -441,13 +441,25 @@ export class TaskStore {
    * the assignment window is not permanently un-dispatchable (see `activateLease` for
    * why that livelock was a bug). Returns the task's lease unchanged when there is none
    * or it has moved on - an audit/deadline marker must never fail a dispatch.
+   *
+   * R5-1: `policy` may be supplied by the dispatching caller. The orchestrator passes
+   * a policy whose TTL covers the run's own execution deadline, so a legitimately long
+   * execution does not go stale while it is still working (a lease that expires
+   * mid-execution would have its write-back refused and the attempt would survive
+   * only as F5 evidence). The store keeps no memory of the override: the NEXT
+   * activation or renew uses the store's own policy again.
    */
-  markLeaseUsed(taskId: string, now: number): AssignmentLease | null {
+  markLeaseUsed(taskId: string, now: number, policy?: RenewPolicy): AssignmentLease | null {
     const lease = this.leases.get(taskId);
     if (lease === undefined) return null;
-    const active = activateLease(lease, now, this.renewPolicy);
+    const active = activateLease(lease, now, policy ?? this.renewPolicy);
     this.leases.set(taskId, active);
     return active;
+  }
+
+  /** The lease/renew policy this store was built with. Read-only accessor. */
+  get leasePolicy(): RenewPolicy {
+    return this.renewPolicy;
   }
 
   /**

@@ -167,10 +167,12 @@ const descriptor = (id: string): AgentDescriptor => ({
 /**
  * Build a registry the way the sealed API actually allows.
  *
- * `ModelRegistry.setAvailability(agentId, -` applies to EVERY entry of one
- * agent - there is no per-model availability setter. So availability is declared
- * per agent, and a scenario that needs one model `unknown` uses its own registry
- * rather than fighting the API.
+ * TeamRun T1-a: availability now has two setters. `setAgentAvailability(agentId, …)`
+ * records a FAMILY fact and `setModelAvailability(agentId, modelId, …)` records one
+ * PAIR's fact. This helper still declares availability per agent because that is what
+ * these scenarios mean (a whole agent installed or not) — but a scenario that needs a
+ * single model to differ can now say so directly instead of building a second registry
+ * to work around a missing setter.
  */
 function registryWith(
   models: Array<{ agentId: string; modelId: string; taskTypes: TaskType[] }>,
@@ -181,7 +183,7 @@ function registryWith(
     reg.upsert({ agentId: m.agentId, modelId: m.modelId, provider: 'test', taskTypes: m.taskTypes, modelSource: 'test', quotaSource: 'test' }, NOW);
   }
   for (const [agentId, availability] of Object.entries(agentAvailability)) {
-    reg.setAvailability(agentId, availability);
+    reg.setAgentAvailability(agentId, availability);
   }
   return reg;
 }

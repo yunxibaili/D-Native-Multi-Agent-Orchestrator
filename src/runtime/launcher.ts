@@ -132,6 +132,35 @@ function quoteForCmd(s: string): string {
   return `"${s}"`;
 }
 
+/**
+ * Build the FULL raw Windows command line for a cmd-wrapper launch, in the exact
+ * form cmd.exe parses:
+ *
+ *   "C:\Windows\System32\cmd.exe" /d /s /c ""C:\path with spaces\tool.cmd" "arg one" "arg two""
+ *
+ * Two things are load-bearing and BOTH were wrong before (empirically, on this
+ * machine):
+ *
+ *   1. The whole command string is wrapped in an EXTRA outer pair of quotes. `cmd
+ *      /s` strips exactly one outer pair; without this extra pair it strips the
+ *      pair around the .cmd path and corrupts the command.
+ *   2. The string must reach CreateProcessW VERBATIM. libuv/CRT argv quoting
+ *      escapes `"` as `\"`, which cmd.exe takes LITERALLY, so any pre-quoted cmd
+ *      string routed through normal per-argument quoting is destroyed. The
+ *      launcher's `--raw` mode exists precisely to carry this line unchanged.
+ *
+ * This is a delivery format for cmd.exe, NOT the CRT argv format — the two are
+ * different syntax layers and must not be conflated.
+ */
+export function buildCmdRawCommandLine(
+  launcher: LauncherSpec,
+  args: readonly string[],
+): string {
+  const q = (s: string): string => `"${s}"`;
+  const inner = [q(launcher.target), ...args.map(q)].join(' ');
+  return `${q(launcher.command)} ${launcher.prefixArgs.join(' ')} "${inner}"`;
+}
+
 /** Convenience: is this path a natively-executable binary? */
 export function isNativeExecutable(command: string): boolean {
   return NATIVE_EXT.has(extname(command).toLowerCase());

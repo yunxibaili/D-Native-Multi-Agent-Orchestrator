@@ -27,7 +27,7 @@
     "test:spawn-gate-production": "node tests/spawn-gate-production.test.ts",
     "test:execution-monitor": "node tests/execution-monitor.test.ts",
     "e2e:native": "node tests/native-agent-e2e.test.ts",
-    "test": "node tests/unit.test.ts && node tests/contract.test.ts && node tests/decision.test.ts && node tests/workbuddy.test.ts && node tests/cline.test.ts && node tests/quota.test.ts && node tests/memory.test.ts && node tests/orchestration.test.ts && node tests/model-pool.test.ts && node tests/state-loop.test.ts && node tests/review-loop.test.ts && node tests/attempt-record.test.ts && node tests/assignment.test.ts && node tests/assignment-lease.test.ts && node tests/planner.test.ts && node tests/workbench.test.ts && node tests/spawn-gate-production.test.ts && node tests/resource-claim.test.ts && node tests/execution-monitor.test.ts && node tests/unified-review.test.ts && node tests/continuation.test.ts && node tests/handoff-production-round.test.ts && node tests/round-result.test.ts",
+    "test": "node scripts/test-timed.mjs",
     "test:unit": "node tests/unit.test.ts",
     "test:contract": "node tests/contract.test.ts",
     "test:decision": "node tests/decision.test.ts",
@@ -42,7 +42,14 @@
     "verify": "npm run typecheck && npm test && npm run smoke:quick",
     "test:resource-claim": "node tests/resource-claim.test.ts",
     "e2e:native:handoff": "node tests/native-handoff-e2e.test.ts",
-    "test:round-result": "node tests/round-result.test.ts"
+    "test:round-result": "node tests/round-result.test.ts",
+    "test:w41-natural-exit": "node tests/w41-opencode-natural-exit.test.ts",
+    "test:w42-opencode": "node tests/w42-opencode-lifecycle.test.ts",
+    "test:w42-codex": "node tests/w42-codex-lifecycle.test.ts",
+    "test:w43-evidence": "node tests/w43-opencode-evidence.test.ts",
+    "test:real-agent": "npm run test:w43-evidence && npm run test:w42-opencode",
+    "test:w44-cleanup": "node tests/real-agent-cleanup.test.ts",
+    "test:w51-evidence": "node tests/w51-real-descendant-isolation.test.ts"
   },
   "dependencies": {},
   "devDependencies": {
