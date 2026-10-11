@@ -22,7 +22,7 @@
 
 这是运行在个人 Windows 工作站上的本机 Native Coding Agent 编排后端。
 Agent 使用自身登录、模型入口和工具；内核不直接调用模型供应商 API。
-OpenCode 主要负责开发，Codex 负责独立审核；本轮只有文档整理和版本归档。
+OpenCode 主要负责开发，Codex 负责独立审核；本次上传仅同步 W5.1b 独立审核说明，不修复生产代码。
 正式前端需求未确认，临时观察工具不是最终前端方案。
 
 ## 2. 当前执行链
@@ -62,13 +62,15 @@ OpenCode 主要负责开发，Codex 负责独立审核；本轮只有文档整�
 | W4 | SEALED WITH P2 / ENVIRONMENT BLOCKERS |
 | W5 | NOT SEALED |
 | W5.1 | 实现方曾报告完成；不能覆盖独立审核所指出的证据问题 |
-| W5.1a | 修订代码已存在；本轮只读到修订，未进行独立验收 |
+| W5.1a | 独立审核 BLOCKED；后续修订为 W5.1b |
+| W5.1b | 独立审核 BLOCKED：stress 失败传播及 fallback 进程身份仍有 P1 |
+| W5.1c | 已提供最小收口任务提示词；尚未验证完成 |
 | PARALLEL_WRITE | CLOSED |
 | 新后端需求 | 已整理；差距阶段尚未授权实现 |
 | 前端 | 需求待讨论；开始前提醒用户 |
 
-W5 的既往四个 P1 需针对最新 W5.1a 重新核查。
-不能声称旧问题仍然存在，也不能仅根据测试源码或作者注释声称已关闭。
+W5.1b 已进行最新源码与定向分支复核，不能依据实现方的 82/82 或 child ledger=9
+宣称所有失败路径已关闭。当前 P1 及独立验证见下节；上传不等于封板或开放并行写。
 
 ## 5. 当前主要差距
 
@@ -77,10 +79,38 @@ W5 的既往四个 P1 需针对最新 W5.1a 重新核查。
 端到端预算以及 token 节省对比，均未完成整体验收。
 新能力不能绕过既有 Spawn Gate 或为了调度可用而放宽未知事实语义。
 
-## 6. 本轮验证范围
+## 6. W5.1b 独立审核与上传说明
 
-2026-10-11：npm run typecheck 已通过；文档整理后检查 Git 差异和当前文档链接。
-未运行 full suite、W5 stress、真实 Agent/模型调用或新的封板审核。
-旧文档的历史测试数量不作为本轮测试结果保留。
+日期：2026-10-11。结论：BLOCKED，W5 NOT SEALED，PARALLEL_WRITE=CLOSED。
+
+W5.1b 已审核范围为 OpenCode 的三个测试文件修订：
+`tests/w51-real-descendant-isolation.test.ts`、`tests/helpers/process-observer.ts`、
+`native/windows-job-launcher/src/w1fixture.c`。`src/**` 与生产 `w1joblauncher.c` 无改动。
+本次上传仅含项目基线和阶段说明，分支为 `codex/w51b-review-blocked`，不作为可封板版本。
+上传前校验发现 fixture/helper 内容继续变化，因此未把正在修改的测试代码纳入说明提交；
+这些后续修改尚未独立审核，不能据此推断 W5.1c 结论。最新代码完成复核后再单独同步。
+
+已确认修复：client wait 到期返回 OBSERVATION_ERROR，原生 WAIT_TIMEOUT 才提供 ALIVE；
+持有原进程句柄可以证明真实退出；root-first 已使用显式释放握手；生产链用例已有 finally。
+
+仍需关闭：
+
+- P1：stress 最终清理丢弃 cancel/reaped 结果，最终 OBSERVATION_ERROR 不计失败，
+  cleanupFailures 未更新；一侧启动失败后的检查仍以非 ALIVE 作为无残留证明。
+- P1：fallback 在缺少原始 held handle 时仍按旧 PID 重新打开并终止进程，
+  没有证明新句柄与原身份一致；生产链 fallback 也不能把 fresh observation 冒充原身份退出证明。
+- 证据缺口：删除失败 child 使用另写的固定失败结果，未经过主流程同一 finalizer。
+- native reap 忽略 WaitForSingleObject 返回值，发起异步终止后直接报告成功；须区分确认退出、超时和错误。
+
+Codex 本次独立执行：npm run typecheck PASS；git diff --check PASS。
+从当前源码提取实际 stress 函数并注入受控依赖，复现 cancel=false、observer.reaped=false、
+最终 OBSERVATION_ERROR 时 observationErrors/surviving/cleanupFailures 仍全零。
+另对实际 reclaim 分支确认：无原始句柄也会调用按 PID 的 fallback。
+这些是实际函数的分支验证，不是生产 Job containment 失效的物理复现。
+
+原生定向 probe 确认 client timeout/原生 WAIT_TIMEOUT/held-handle EXITED 的区分；
+使用本次创建的受控 sentinel 确认 reap 只需 PID 即可终止，未强行制造 PID 重用，未操作其他运行的进程。
+未重跑 W5 的 3/50-round、full suite 或真实 Agent/模型调用。
+实现方报告的测试数量不作为本次独立运行结果。
 
 历史报告已从当前树移除；备份标签和恢复说明见 [阶段分析](STAGE_ANALYSIS.md#历史备份)。
