@@ -307,10 +307,25 @@ export function decideCleanup(input: CleanupInput): CleanupDecision {
       } else if (g.fallback.kind === 'TERMINATE_REFUSED') {
         counters.fallbackFailures++;
         problems.push(`${g.name} pid ${g.pid}: fallback terminate REFUSED on the held handle (${g.fallback.why}); nothing proven`);
-      } else if (g.fallback.kind === 'IDENTITY_UNCONFIRMED') {
+} else if (g.fallback.kind === 'IDENTITY_UNCONFIRMED') {
         counters.fallbackFailures++;
         counters.identityUnconfirmed++;
-        problems.push(`${g.name} pid ${g.pid}: fallback REFUSED �?identity unconfirmed (${g.fallback.why}); NOTHING was killed`);
+        problems.push(`${g.name} pid ${g.pid}: fallback REFUSED — identity unconfirmed (${g.fallback.why}); NOTHING was killed`);
+      } else if (g.fallback.kind === 'COMMAND_CHANNEL_LOST') {
+        // W5.1d: the command channel broke, so no terminate was sent. That is a real
+        // failure of the cleanup attempt and is always recorded. The accompanying
+        // evidence is the HELD HANDLE's own statement about the target and is kept
+        // separate: a proven EXITED there still means the exit is confirmed, but it
+        // was NOT caused by our command, so it is not a missing exit.
+        counters.fallbackFailures++;
+        if (g.fallback.evidence.state === 'OBSERVATION_ERROR' && g.liveness.state !== 'OBSERVATION_ERROR') {
+          // Only counted once: when the generation's own observation was already a
+          // no-fact, this is the same missing fact seen through the other channel.
+          counters.observationErrors++;
+        }
+        problems.push(`${g.name} pid ${g.pid}: command channel lost (${g.fallback.why}); no terminate was sent; `
+          + `held-handle evidence=${g.fallback.evidence.state}`
+          + (g.fallback.evidence.state === 'OBSERVATION_ERROR' ? ` (${g.fallback.evidence.why})` : ''));
       } else {
         counters.fallbackFailures++;
         counters.observationErrors++;
@@ -1061,6 +1076,133 @@ async function productionAdmission(): Promise<void> {
   }
 }
 
+/**
+ * W5.1d — observer command-pipe / lifecycle boundary regressions.
+ *
+ * Each case starts its OWN controlled target (a direct child of this process, NOT a
+ * contained run) so a failing probe cannot leak into the containment evidence. The
+ * `finally` reclaims every observer AND the target itself, independently of whatever
+ * the case asserted — a failing assertion must not leave a stray process behind.
+ */
+async function observerChannelBoundaryRegressions(): Promise<void> {
+  const targets: ReturnType<typeof spawn>[] = [];
+  const observers: Observer[] = [];
+  const startTarget = (): number => {
+    const t = spawn(NODE, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore', windowsHide: true });
+    targets.push(t);
+    return t.pid as number;
+  };
+
+  try {
+    // --- 1. natural native timeout, with the exit NOT yet delivered to JS ---------
+    // The event loop is deliberately blocked so the observer's exit notification has
+    // not been processed when the terminate is requested: the write hits a dead pipe.
+    {
+      const pid = startTarget();
+      const obs = openObserver(pid, { holdMs: 60 });
+      if (obs === null) {
+        log.check('W5.1d 1 :: natural timeout does not crash and yields a typed result', false, 'ENVIRONMENT_BLOCKED: fixture missing');
+      } else {
+        observers.push(obs);
+        await obs.acquired();
+        // Block the loop: the observer has already timed out natively, but JS has not
+        // processed its exit yet. This is the exact W5.1d reproduction.
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+        const r = await obs.terminateAndVerify(1_000);
+        log.check('W5.1d 1 :: a dead command pipe yields COMMAND_CHANNEL_LOST, never a crash',
+          r.kind === 'COMMAND_CHANNEL_LOST', `result=${JSON.stringify(r)}`);
+        log.check('W5.1d 1 :: the lost channel did NOT fabricate an exit confirmation',
+          r.kind !== 'EXIT_CONFIRMED', `result=${JSON.stringify(r)}`);
+        log.check('W5.1d 1 :: the held handle still reports the truth (target still running)',
+          r.kind === 'COMMAND_CHANNEL_LOST' && r.evidence.state === 'ALIVE',
+          `evidence=${JSON.stringify(r.kind === 'COMMAND_CHANNEL_LOST' ? r.evidence : null)}`);
+        log.check('W5.1d 1 :: the recorded pipe failure is reported, not swallowed',
+          obs.channelFailure() !== null, `channelFailure=${String(obs.channelFailure())}`);
+        // The target must genuinely still be alive: nothing was killed.
+        const live = await livenessNative(pid, 700);
+        log.check('W5.1d 1 :: no terminate was sent, so the controlled target is still alive', live.state === 'ALIVE',
+          `verdict=${live.state}`);
+      }
+    }
+
+    // --- 2. delayed exit notification: historical exit evidence is preserved ------
+    // Once the observer has reported a REAL WAIT_OBJECT_0, that held-handle fact must
+    // survive a later, unusable command channel rather than being discarded.
+    {
+      const pid = startTarget();
+      const obs = openObserver(pid, { holdMs: 120_000 });
+      if (obs === null) {
+        log.check('W5.1d 2 :: valid held-handle exit evidence survives a lost channel', false, 'ENVIRONMENT_BLOCKED: fixture missing');
+      } else {
+        observers.push(obs);
+        await obs.acquired();
+        // Terminate through the held handle: this DOES use the command channel.
+        const first = await obs.terminateAndVerify(10_000);
+        log.check('W5.1d 2 :: a working channel confirms the exit on the held handle',
+          first.kind === 'EXIT_CONFIRMED', `result=${JSON.stringify(first)}`);
+        // The channel is now spent by construction; a second request must not throw.
+        const second = await obs.terminateAndVerify(1_000);
+        log.check('W5.1d 2 :: a second request on a spent channel is typed, not a crash',
+          second.kind === 'COMMAND_CHANNEL_LOST' || second.kind === 'OBSERVER_LOST', `result=${JSON.stringify(second)}`);
+        log.check('W5.1d 2 :: the earlier EXITED evidence is still available via verdict()',
+          (await obs.verdict(1_000)).state === 'EXITED', 'held-handle WAIT_OBJECT_0 retained');
+        log.check('W5.1d 2 :: a spent channel never fabricates a NEW exit confirmation',
+          second.kind !== 'EXIT_CONFIRMED', `result=${JSON.stringify(second)}`);
+        // The target really is gone, proven on the held handle.
+        const gone = await livenessNative(pid, 700);
+        log.check('W5.1d 2 :: the controlled target really exited', gone.state !== 'ALIVE', `verdict=${gone.state}`);
+      }
+    }
+
+    // --- 3. close() first, then request a terminate --------------------------------
+    {
+      const pid = startTarget();
+      const obs = openObserver(pid);
+      if (obs === null) {
+        log.check('W5.1d 3 :: terminate after close() is refused, not fatal', false, 'ENVIRONMENT_BLOCKED: fixture missing');
+      } else {
+        observers.push(obs);
+        await obs.acquired();
+        obs.close();
+        log.check('W5.1d 3 :: a closed observer reports an unusable command channel',
+          !obs.commandChannelUsable(), `usable=${obs.commandChannelUsable()}`);
+        const r = await obs.terminateAndVerify(1_000);
+        log.check('W5.1d 3 :: terminate after close() is a typed COMMAND_CHANNEL_LOST',
+          r.kind === 'COMMAND_CHANNEL_LOST', `result=${JSON.stringify(r)}`);
+        log.check('W5.1d 3 :: nothing was terminated and no exit was fabricated',
+          r.kind !== 'EXIT_CONFIRMED', `result=${JSON.stringify(r)}`);
+        // Control: the target must be untouched by a refused command.
+        const live = await livenessNative(pid, 700);
+        log.check('W5.1d 3 :: the controlled target survived the refused terminate', live.state === 'ALIVE',
+          `verdict=${live.state}`);
+        // reaped() must confirm the OBSERVER's own exit, independent of any pipe error.
+        const gone = await obs.reaped(5_000);
+        log.check('W5.1d 3 :: reaped() confirms the observer process actually exited', gone, `reaped=${gone}`);
+        if (!gone) cleanupFailures.push({ resource: 'W5.1d 3', error: 'observer did not exit after close' });
+      }
+    }
+  } finally {
+    // Independent parent-side reclamation: observers first (they hold handles on the
+    // targets), then every controlled target this section started.
+    for (const o of observers) {
+      const gone = await o.reaped(5_000);
+      if (!gone) cleanupFailures.push({ resource: 'W5.1d regression', error: `observer for pid ${o.pid} did not exit` });
+    }
+    for (const t of targets) {
+      try { t.kill('SIGKILL'); } catch { /* already gone */ }
+    }
+    for (const t of targets) {
+      await Promise.race([
+        new Promise<void>((res) => { t.once('exit', () => res()); }),
+        sleep(5_000),
+      ]);
+      if (t.exitCode === null && t.signalCode === null) {
+        cleanupFailures.push({ resource: 'W5.1d regression', error: `controlled target ${String(t.pid)} did not exit` });
+      }
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // W5.1c §3 — regressions for the SAME cleanup judgment the real paths run.
 //
@@ -1176,6 +1318,45 @@ function cleanupTruthRegressions(): void {
   log.check('W5.1c §3 D :: an identity that cannot be confirmed blocks the fallback and is recorded',
     !dMismatch.ok && dMismatch.counters.fallbackFailures === 1 && dMismatch.counters.identityUnconfirmed === 1,
     `fallbackFailures=${dMismatch.counters.fallbackFailures}`);
+
+  // W5.1d: a lost command channel is a real cleanup failure and MUST reach the ledger
+  // through this same judgment — and it is never an exit confirmation.
+  const channelLive = decideCleanup({
+    label: 'W5.1d channel lost (still running)', stop: 'CONFIRMED',
+    generations: [{
+      name: 'writer', pid: 121, identityHeld: true, liveness: { state: 'ALIVE' },
+      fallback: { kind: 'COMMAND_CHANNEL_LOST', why: 'stdin write failed: write EPIPE', evidence: { state: 'ALIVE' } },
+    }],
+    observerReapFailures: [],
+  });
+  log.check('W5.1d :: a lost command channel is a failure in the shared ledger',
+    !channelLive.ok && channelLive.counters.fallbackFailures === 1 && channelLive.problems.some((p) => p.includes('command channel lost')),
+    `fallbackFailures=${channelLive.counters.fallbackFailures} observationErrors=${channelLive.counters.observationErrors}`);
+  log.check('W5.1d :: a lost channel with a real ALIVE fact is NOT an observation error',
+    channelLive.counters.observationErrors === 0, `observationErrors=${channelLive.counters.observationErrors}`);
+
+  const channelExited = decideCleanup({
+    label: 'W5.1d channel lost (exit already proven)', stop: 'CONFIRMED',
+    generations: [{
+      name: 'writer', pid: 122, identityHeld: true, liveness: { state: 'EXITED' },
+      fallback: { kind: 'COMMAND_CHANNEL_LOST', why: 'observer already exited with code 0', evidence: { state: 'EXITED' } },
+    }],
+    observerReapFailures: [],
+  });
+  log.check('W5.1d :: a lost channel PRESERVES valid held-handle EXITED evidence without counting a missing exit',
+    !channelExited.ok && channelExited.counters.unprovenExits === 0 && channelExited.problems.some((p) => p.includes('evidence=EXITED')),
+    `unprovenExits=${channelExited.counters.unprovenExits} problems=${channelExited.problems.length}`);
+
+  const channelNoFact = decideCleanup({
+    label: 'W5.1d channel lost (no fact)', stop: 'CONFIRMED',
+    generations: [{
+      name: 'writer', pid: 123, identityHeld: true, liveness: { state: 'OBSERVATION_ERROR', why: 'observer lost' },
+      fallback: { kind: 'COMMAND_CHANNEL_LOST', why: 'stdin write failed: write EPIPE', evidence: { state: 'OBSERVATION_ERROR', why: 'observer lost' } },
+    }],
+    observerReapFailures: [],
+  });
+  log.check('W5.1d :: a lost channel with no fact counts as an observation error too',
+    !channelNoFact.ok && channelNoFact.counters.observationErrors === 1, `observationErrors=${channelNoFact.counters.observationErrors}`);
 }
 
 /**
@@ -1466,6 +1647,9 @@ if (owned === null) {
   try {
 console.log(`== W5.1a P1-4 observation regressions ==`);
     await observationRegressions();
+
+    console.log(`\n== W5.1d observer command-pipe / lifecycle boundary ==`);
+    await observerChannelBoundaryRegressions();
 
     console.log(`\n== W5.1c §3 cleanup-truth regressions (same shared judgment as stress) ==`);
     cleanupTruthRegressions();

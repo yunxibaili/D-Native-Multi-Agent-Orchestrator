@@ -77,6 +77,18 @@ export type TerminateResult =
    * terminated. This is the fail-closed branch that replaces the old pid-only reap.
    */
   | { readonly kind: 'IDENTITY_UNCONFIRMED'; readonly why: string }
+  /**
+   * W5.1d: the COMMAND CHANNEL (stdin) could not carry the terminate command, so no
+   * terminate was sent at all. This is NOT evidence about the target either way, so it
+   * is never `EXIT_CONFIRMED`.
+   *
+   * `evidence` is whatever the observer ACTUALLY reported afterwards — a real native
+   * WAIT_TIMEOUT (still running), a real WAIT_OBJECT_0 (the held handle proves the
+   * target exited, independently of our command), or an honest no-fact. Separating
+   * the channel outcome from the historical exit evidence is what keeps a valid
+   * held-handle EXITED usable while refusing to fabricate one.
+   */
+  | { readonly kind: 'COMMAND_CHANNEL_LOST'; readonly why: string; readonly evidence: Liveness }
   /** The observer itself was lost (spawn error / signal / no verdict in time). */
   | { readonly kind: 'OBSERVER_LOST'; readonly why: string };
 
@@ -113,6 +125,16 @@ export interface Observer {
    * it, the caller must refuse to guess.
    */
   holdsIdentity(): boolean;
+  /**
+   * Whether the terminate COMMAND CHANNEL could still carry a command at this moment.
+   *
+   * W5.1d: this is deliberately separate from `holdsIdentity()`. A lost pipe says
+   * nothing about whether the native handle is still held, and vice versa; conflating
+   * them is what used to produce either a crash or a fabricated exit proof.
+   */
+  commandChannelUsable(): boolean;
+  /** The recorded pipe failure, or null when no channel failure was seen. */
+  channelFailure(): string | null;
   /** Bounded verdict: ALIVE / EXITED / OBSERVATION_ERROR (never a false death). */
   verdict(timeoutMs: number): Promise<Liveness>;
   /**
@@ -174,6 +196,18 @@ export function open(targetPid: number, opts?: { holdMs?: number }): ObserverInt
   let acquiredFlag = false;
   let resolveAcquired: (() => void) | null = null;
   let terminateAck: 'none' | 'sent' | 'failed' = 'none';
+  /*
+   * W5.1d: the observer's stdin/stdout/stderr are OS pipes that break when the child
+   * dies. Those failures are RECORDED here and turned into typed results — they are
+   * deliberately not swallowed by an empty listener (an empty listener would hide a
+   * real channel failure) and not left unhandled (which crashed the whole run with
+   * `write EPIPE`).
+   */
+  let channelError: string | null = null;
+  const noteChannelError = (where: string, e: unknown): void => {
+    const err = e as NodeJS.ErrnoException;
+    channelError ??= `${where} ${err.code ?? 'error'}: ${err.message}`;
+  };
   const acquiredPromise = new Promise<boolean>((res) => {
     resolveAcquired = () => res(acquiredFlag);
   });
@@ -189,6 +223,8 @@ export function open(targetPid: number, opts?: { holdMs?: number }): ObserverInt
     if (text.includes('terminate=sent')) terminateAck = 'sent';
     else if (text.includes('terminate=failed')) terminateAck = 'failed';
   });
+  child.stdout?.on('error', (e: unknown) => { noteChannelError('stdout', e); });
+  child.stderr?.on('error', (e: unknown) => { noteChannelError('stderr', e); });
   // If the observer dies before ACK, acquisition failed.
   child.on('exit', () => {
     if (resolveAcquired !== null) resolveAcquired();
@@ -211,6 +247,71 @@ export function open(targetPid: number, opts?: { holdMs?: number }): ObserverInt
 
   let closed = false;
   let exited: Promise<void> = Promise.resolve();
+
+  /*
+   * W5.1d: the command channel state is tracked EXPLICITLY, because a stream that
+   * merely exists is not the same thing as a stream that can still carry a command.
+   * `channelClosed` covers the pipe being torn down by the OS when the child dies;
+   * `closed` covers the caller having released this observer.
+   */
+  let channelClosed = false;
+  child.stdin?.on('error', (e: unknown) => { noteChannelError('stdin', e); });
+  child.stdin?.on('close', () => { channelClosed = true; });
+
+  /** Whether the command channel could still carry a terminate right now. */
+  const channelUsable = (): boolean =>
+    !closed
+    && !channelClosed
+    && channelError === null
+    && spawnError === null
+    && exitCode === null
+    && child.stdin !== null
+    && child.stdin !== undefined
+    && !child.stdin.destroyed
+    && !child.stdin.writableEnded;
+
+  /**
+   * W5.1d: send the terminate command, capturing ASYNCHRONOUS write failures.
+   *
+   * A `try/catch` around `write()` cannot see a broken pipe: the error is delivered
+   * later through the stream's `error` event (and the write callback). Both paths are
+   * captured here, so a lost pipe becomes a typed result instead of an uncaught throw.
+   */
+  const sendTerminate = async (): Promise<{ ok: true } | { ok: false; why: string }> => {
+    const stdin = child.stdin;
+    if (closed) return { ok: false, why: 'observer was already closed by the caller' };
+    if (spawnError !== null) return { ok: false, why: spawnError };
+    if (exitCode !== null) return { ok: false, why: `observer already exited with code ${String(exitCode)}` };
+    if (channelError !== null) return { ok: false, why: channelError };
+    if (channelClosed) return { ok: false, why: 'command channel already closed' };
+    if (stdin === null || stdin === undefined || stdin.destroyed || stdin.writableEnded) {
+      return { ok: false, why: 'command channel is destroyed or ended' };
+    }
+    return new Promise<{ ok: true } | { ok: false; why: string }>((resolve) => {
+      let settled = false;
+      const done = (r: { ok: true } | { ok: false; why: string }): void => {
+        if (settled) return;
+        settled = true;
+        resolve(r);
+      };
+      // A write whose callback never fires (wedged pipe) must not hang the caller.
+      const guard = setTimeout(() => { done({ ok: false, why: 'terminate write callback did not fire' }); }, 2_000);
+      guard.unref?.();
+      try {
+        stdin.write('T', (err?: Error | null) => {
+          clearTimeout(guard);
+          if (err !== null && err !== undefined) done({ ok: false, why: `stdin write failed: ${err.message}` });
+          else done({ ok: true });
+        });
+        stdin.end();
+      } catch (e) {
+        clearTimeout(guard);
+        noteChannelError('stdin', e);
+        done({ ok: false, why: `stdin write threw: ${String((e as Error).message)}` });
+      }
+    });
+  };
+
   const close = (): void => {
     if (closed) return;
     closed = true;
@@ -286,22 +387,28 @@ export function open(targetPid: number, opts?: { holdMs?: number }): ObserverInt
    * was lost) NOTHING is sent and the caller is told identity is unconfirmed. This
    * replaces the W5.1b pid-only `reap` role, which could only ever re-open a pid —
    * and a re-opened pid cannot restore the original process identity.
+   *
+   * W5.1d: a lost command channel is its OWN outcome. The observer's verdict is still
+   * requested and still valid (it is held-handle evidence about the target, not about
+   * our command), so it is returned alongside the channel failure. A channel failure
+   * alone is never upgraded to EXIT_CONFIRMED.
    */
   const terminateAndVerify = async (timeoutMs = 12_000): Promise<TerminateResult> => {
     if (spawnError !== null) return { kind: 'OBSERVER_LOST', why: spawnError };
-    if (exitCode !== null) return { kind: 'OBSERVER_LOST', why: `observer already exited with code ${String(exitCode)}` };
     if (!acquiredFlag) {
       // Give the ACK a last bounded chance before declaring identity unconfirmed.
       const ok = await acquired();
       if (!ok) return { kind: 'IDENTITY_UNCONFIRMED', why: 'target handle was never acquired; refusing to terminate by pid' };
     }
-    try {
-      child.stdin?.write('T');
-      child.stdin?.end();
-    } catch (e) {
-      return { kind: 'OBSERVER_LOST', why: `terminate command could not be sent: ${String((e as Error).message)}` };
-    }
+
+    const send = await sendTerminate();
+    // The verdict is obtained either way: it is the held handle's evidence about the
+    // TARGET and stays valid even when our command never left this process.
     const v = await verdict(timeoutMs);
+
+    if (!send.ok) {
+      return { kind: 'COMMAND_CHANNEL_LOST', why: send.why, evidence: v };
+    }
     if (v.state === 'EXITED') return { kind: 'EXIT_CONFIRMED', via: 'held-handle' };
     if (v.state === 'ALIVE') return { kind: 'STILL_ALIVE', native: 'WAIT_TIMEOUT' };
     if (terminateAck === 'failed') return { kind: 'TERMINATE_REFUSED', why: 'native TerminateProcess failed on the held handle' };
@@ -317,7 +424,7 @@ export function open(targetPid: number, opts?: { holdMs?: number }): ObserverInt
     return done;
   };
 
-  return { pid: targetPid, acquired, holdsIdentity, verdict, terminateAndVerify, close, reaped, _settled: false };
+  return { pid: targetPid, acquired, holdsIdentity, commandChannelUsable: channelUsable, channelFailure: () => channelError, verdict, terminateAndVerify, close, reaped, _settled: false };
 }
 
 /**
