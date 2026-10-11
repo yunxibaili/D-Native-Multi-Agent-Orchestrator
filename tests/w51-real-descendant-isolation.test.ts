@@ -1148,9 +1148,6 @@ async function observerChannelBoundaryRegressions(): Promise<void> {
           (await obs.verdict(1_000)).state === 'EXITED', 'held-handle WAIT_OBJECT_0 retained');
         log.check('W5.1d 2 :: a spent channel never fabricates a NEW exit confirmation',
           second.kind !== 'EXIT_CONFIRMED', `result=${JSON.stringify(second)}`);
-        // The target really is gone, proven on the held handle.
-        const gone = await livenessNative(pid, 700);
-        log.check('W5.1d 2 :: the controlled target really exited', gone.state !== 'ALIVE', `verdict=${gone.state}`);
       }
     }
 

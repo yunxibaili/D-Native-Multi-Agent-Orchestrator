@@ -22,7 +22,7 @@
 
 这是运行在个人 Windows 工作站上的本机 Native Coding Agent 编排后端。
 Agent 使用自身登录、模型入口和工具；内核不直接调用模型供应商 API。
-OpenCode 主要负责开发，Codex 负责独立审核；本次上传归档 W5.1d 测试修订及独立审核说明，不修复实现代码。
+OpenCode 主要负责开发，Codex 负责独立审核；OpenCode 删除冗余断言，Codex 独立复核并更新封板与上传说明，不修改实现代码。
 正式前端需求未确认，临时观察工具不是最终前端方案。
 
 ## 2. 当前执行链
@@ -60,18 +60,19 @@ OpenCode 主要负责开发，Codex 负责独立审核；本次上传归档 W5.1
 | W1 / W2 / W3 | SEALED |
 | W4.1 | RE-SEALED |
 | W4 | SEALED WITH P2 / ENVIRONMENT BLOCKERS |
-| W5 | NOT SEALED |
+| W5 | SEALED WITH P2：执行证据收口与 readiness 裁定完成；PARALLEL_WRITE 仍 CLOSED |
 | W5.1 | 实现方曾报告完成；不能覆盖独立审核所指出的证据问题 |
 | W5.1a | 独立审核 BLOCKED；后续修订为 W5.1b |
 | W5.1b | 历史独立审核 BLOCKED；原有两个 P1 已在 W5.1c 当前路径收口 |
 | W5.1c | 历史独立审核 BLOCKED；异步 EPIPE P1 已在 W5.1d 关闭 |
-| W5.1d | 独立审核 PASS WITH P2；observer 通道边界收口，冗余退出断言仍需简化 |
+| W5.1d | closure PASS；observer 通道边界与冗余断言 P2 均已独立确认关闭 |
 | PARALLEL_WRITE | CLOSED |
 | 新后端需求 | 已整理；差距阶段尚未授权实现 |
 | 前端 | 需求待讨论；开始前提醒用户 |
 
 W5.1d 已进行最新源码、独立边界 probe、3-round 和 50-round 复核。
-本轮范围内无未关闭 P0/P1；独立验证及 P2 见下节。上传不等于 W5 整体封板或开放并行写。
+冗余断言 P2 已独立确认关闭；本轮执行/清理范围内无未关闭 P0/P1。
+W5 封板保留下述兼容性及证据时效 P2，不代表全部 Agent 或新后端需求已验收，不开放并行写。
 
 ## 5. 当前主要差距
 
@@ -80,20 +81,51 @@ W5.1d 已进行最新源码、独立边界 probe、3-round 和 50-round 复核�
 端到端预算以及 token 节省对比，均未完成整体验收。
 新能力不能绕过既有 Spawn Gate 或为了调度可用而放宽未知事实语义。
 
-## 6. W5.1d 独立审核与上传说明
+## 6. W5 最终证据包与上传说明
 
-日期：2026-10-11。结论：PASS WITH P2，仅确认 W5.1d closure；
-W5 NOT SEALED，PARALLEL_WRITE=CLOSED，B1–B5 未授权。
+日期：2026-10-11。Codex 最终裁定：W5.1d closure PASS；**W5 SEALED WITH P2**。
+封板确认现有准入/清理/观测证据与 readiness 评估完成；并行写仍未获生产授权。
+PARALLEL_WRITE=CLOSED，B1–B5 未授权，全部 Agent 兼容性与新后端产品验收均不在本次封板内。
 
-相对上一份已上传 W5.1c 审核版本，本轮实现差异仅为
-`tests/helpers/process-observer.ts` 与 `tests/w51-real-descendant-isolation.test.ts`。
-`native/windows-job-launcher/src/w1fixture.c` 保留 W5.1c 已审核修改，未再次变化。
-`src/**` 与生产 `w1joblauncher.c` 无改动；runtime.run 生产调用边仍为 1，新增生产 authority 为 0。
-本次分支为 `codex/w51d-review-pass-with-p2`，上传两个测试文件和两个审核文档的增量，
-分支累计保留原 fixture 修订。保留共享工作树和 main，不合并或覆盖 OpenCode 的本地修改。
-提交前核对三个测试/fixture 文件 blob hash，避免上传未审核的新版本。
+本轮实现差异仅为 `tests/w51-real-descendant-isolation.test.ts`：删除 W5.1d §2 第二个 case 中
+重新按 PID 观测的冗余断言 `gone.state !== 'ALIVE'`。该断言会让 OBSERVATION_ERROR 通过并
+打印“controlled target really exited”；同一 case 前面的原句柄 `EXIT_CONFIRMED` 与缓存
+`EXITED` 强断言已证明退出，故直接删除而不新建观测/清理框架。
+`tests/helpers/process-observer.ts` 与 `native/windows-job-launcher/src/w1fixture.c` 保留 W5.1d/W5.1c
+已审核版本，本轮未再次变化。`src/**` 与生产 `w1joblauncher.c` 无改动；
+runtime.run 生产调用边仍为 1，新增生产 authority 为 0。
 
-已确认收口：
+### 6.1 证据分层（必须分开阅读，不能互相提升）
+
+**(a) production admission case 与底层 stress 分开**
+
+| 层 | 内容 | 证据边界 |
+|---|---|---|
+| production admission | TaskOrchestrator → executeTask → Runtime → replaceAdapters 测试适配器 → 真实 CliJsonlTransport → 真实 contained ManagedProcess，两个任务在各自 isolated worktree | 证明“真实生产准入链 + 适配器替换生效 + 未调用本机真实收费 Agent”，不等于真实 Agent 兼容性 |
+| 底层 stress | 直接 contained root（cmd/PowerShell/git descendant、root-first、hardkill、stop-order swap、并发非干扰、50-round） | 证明 contained descendant 的停止/回收物理事实，不是完整产品验收 |
+
+**(b) 受控失败注入与 OS 物理事实分开**
+
+| 类别 | 内容 | 说明 |
+|---|---|---|
+| OS 物理事实 | 真实 cmd/PowerShell/git descendant 退出、原句柄 WAIT_OBJECT_0、root-first 后 descendant 存活、hardkill、ActiveProcesses==0 | 由真实进程与原生等待产生 |
+| 受控失败注入 | cancel=false/TIMEOUT/THREW、observer.reaped=false、最终 OBSERVATION_ERROR、身份缺失/不匹配、COMMAND_CHANNEL_LOST、删除失败 | 共享 `decideCleanup` 输入回归证明失败判定/计数；源码确认实际清理将失败写入 ledger/finalizer。cancel=false + 无退出事实、删除失败另有真实 child 非零退出证据；不将所有纯输入回归描述为真实 OS 故障或 child 非零运行 |
+
+**(c) 本轮实跑、Codex 已独立验证、历史未重跑分开**
+
+| 来源 | 结果 |
+|---|---|
+| 本轮实跑（OpenCode） | `npm run typecheck` PASS；`W51_ROUNDS=3` → EXIT=0，139 passed / 0 failed，attempted=3/completed=3，stress 失败计数全 0；`git diff --check` clean。断言数由 140 降为 139 仅因删除 1 条冗余断言 |
+| 本轮独立实跑（Codex 最终审核） | typecheck PASS；`W51_ROUNDS=3` EXIT=0、139/0，attempted=3/completed=3，stress 失败计数全 0；READ fan-out 121/0；resource-claim 192/0；diff check PASS；已知 suite/删除失败 child 根目录及 observer 无残留 |
+| Codex 已独立验证（W5.1d 审核） | typecheck PASS；三个 observer 边界 probe（自然超时/重复终止/close 后终止）；`W51_ROUNDS=3` 与 `W51_ROUNDS=50` 均 EXIT=0、140/0；stress 计数全 0；删除失败 child status=1/signal=null；foreign sentinel 保留；diff check PASS |
+| 历史未重跑 | W5.1/W5.1a/W5.1b/W5.1c 历史结论、W4 真实 Agent、其他已封板 T/W 阶段、full suite 本轮均未重跑；旧测试数量不作为本轮结果 |
+
+**(d) fixture 不提升为真实 Agent 兼容性证据**
+
+cmd/PowerShell/git/受控 node 与 observer fixture 只证明 OS 级 contained 行为与测试链路；
+不能据此宣称 OpenCode/Codex/WorkBuddy 的模型、会话、费用或隔离兼容性。
+
+### 6.2 已确认收口（当前路径）
 
 - stdin/stdout/stderr error 进入 channelError；write 回调捕获异步 EPIPE，避免未处理异常退出。
 - closed/lost 命令通道返回 typed failure；历史 held-handle EXITED 独立保留，
@@ -102,39 +134,36 @@ W5 NOT SEALED，PARALLEL_WRITE=CLOSED，B1–B5 未授权。
   无事实仍计入 observationErrors。原停止、观测、身份及回收失败的 fail-closed 路径保留。
 - 删除失败 child 与主流程仍共享 finalizeSuite；root-first、原句柄终止和对称回收未回退。
 
-Codex 独立执行结果（不是转录实现方报告）：
+### 6.3 最终裁定、保留 P2 与适用范围
 
-| 检查 | 结果 |
-|---|---|
-| npm run typecheck | PASS |
-| 独立自然超时 probe：holdMs=60，ACK 后阻断 JS 250ms | COMMAND_CHANNEL_LOST / ALIVE；无崩溃，target 仍存活 |
-| 独立重复终止 probe | 首次 EXIT_CONFIRMED；再次 COMMAND_CHANNEL_LOST / EXITED，历史事实保留 |
-| 独立 close 后终止 probe | COMMAND_CHANNEL_LOST；target 仍存活，observer reaped=true |
-| W51_ROUNDS=3 | EXIT=0，140 passed / 0 failed；attempted=3，completed=3 |
-| W51_ROUNDS=50 | EXIT=0，140 passed / 0 failed；attempted=50，completed=50 |
-| 两次 stress 的 readiness/observation/containment/surviving/cleanup | 均为 0 |
-| 删除失败注入 | child status=1，signal=null，error=undefined；foreign sentinel 保留 |
-| git diff --check | PASS |
+- 原冗余死亡断言 P2 已关闭；代码增量仅删除 3 行，原句柄 EXIT_CONFIRMED 与缓存 EXITED 强断言保留。
+  未改变 stress 或共享清理路径，因此复用上一轮独立 50-round，不再次重复执行。
+- 保留兼容性 P2：W4 的 Codex `MODEL/SERVICE_LATENCY`、WorkBuddy CN/Intl `ENVIRONMENT_BLOCKED`
+  及尚未证实的真实 adapter pipeline/hardkill 范围。fixture 通过不提升这些历史状态。
+- 保留证据时效 P2：本轮 READ/resource 定向回归通过，但未重新运行 full-suite parity。
+  这不是默认 suite 已全绿的声明，也不能据此放开生产并行写。
+- 纠正文档 259 语义：句柄 NONSIGNALED 且退出查询为 259 时才是 STILL_ACTIVE；
+  WAIT_OBJECT_0 已证明进程终止时，259 可以是合法实际 DWORD 退出码，不能仅按数值拒绝。
+  poll 分支先检查 WAIT_OBJECT_0；现有 final reconciliation 分支仍有 `reconciled != STILL_ACTIVE`
+  过滤，可能拒绝已经 signaled 的真实 259。此为生产 launcher 的既有可用性 P2，非环境事实；
+  本轮仅源码记录，未重新运行 259 probe 或修改 launcher，不宣称该分支已符合上述数值无关契约。
+- W5 SEALED WITH P2 确认的是执行证据收口和 readiness 评估，不是全部 Agent 验收或生产开写许可。
+  READ fan-out 仍拒绝 WRITE member，资源冲突/保护保留规则不变，runtime.run 生产边为 1，新增 authority 为 0。
+- 未重跑 full suite、真实 Agent/模型调用、其他已封板 T/W 阶段；未复刻实现方全部回归数量。
+- 复用既有 observer、cleanupRun、decideCleanup、finalizeSuite 与 Node Writable 能力，无新依赖。
 
-实际覆盖 cmd/PowerShell/git descendant、root-first、hardkill、双 writer stop-order swap、
-一侧启动失败、生产准入链与测试 adapter 替换。fixture 不能替代真实 Agent 兼容性证据。
-本轮两个已知 suite 根目录、两个已知删除失败 child 根目录均不存在；结束时 observer 为 0，
-未发现归属于本轮 suite 的残留进程。独立 probe 的受控 target 均由 finally 等待退出。
+### 6.4 上传说明
 
-P0/P1：本轮范围内无未关闭项。
-P2：新增 §6 第二个 case 的冗余断言 `gone.state !== 'ALIVE'` 会让 OBSERVATION_ERROR
-通过并打印“controlled target really exited”；本轮 3/50-round 都实际打印了该组合。
-前面的同一原句柄 EXIT_CONFIRMED/EXITED 强断言已证明退出，因此不构成本轮 P1 或封板阻断。
-最小处理为删除这个重新按 PID 观测的冗余检查，或复用既有原句柄/直接 ChildProcess 的正面退出证据；
-不得把无法观测改成 EXITED。
-
-未重跑 full suite、真实 Agent/模型调用、其他已封板 T/W 阶段；未复刻实现方全部回归数量。
-W5 整体证据边界和授权仍需最终独立裁定，不新增生产开关或调度系统。
-复用既有 observer、cleanupRun、decideCleanup、finalizeSuite 与 Node Writable 能力，无新依赖。
-GitHub MCP 检索并读取了 Node 自身 EPIPE 回归作为参考，没有引入或复制第三方框架。
+审核分支：`codex/w5-final-evidence-seal`，父提交为已上传 W5.1d 审核提交
+`874075f805fa93ab267345e8f786629165b5c32c`。
+本次增量仅包含一个测试文件的 3 行删除与两个审核文档；原 helper/fixture 修订沿父提交保留。
+Codex 仅编辑文档，提交前核对三个测试/fixture 文件 blob hash。
+使用独立临时 Git index，保留 main、共享工作树和原索引，不创建 PR、不合并 main。
 
 依据：[Node Writable error 事件](https://nodejs.org/api/stream.html#event-error)、
 [write 异步回调](https://nodejs.org/api/stream.html#writablewritechunk-encoding-callback)、
-[Node EPIPE 回归](https://github.com/nodejs/node/blob/main/test/parallel/test-stdout-close-catch.js)。
+[Node EPIPE 回归](https://github.com/nodejs/node/blob/main/test/parallel/test-stdout-close-catch.js)、
+[Microsoft GetExitCodeProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getexitcodeprocess)、
+[Microsoft WaitForSingleObject](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject)。
 
 历史报告已从当前树移除；备份标签和恢复说明见 [阶段分析](STAGE_ANALYSIS.md#历史备份)。

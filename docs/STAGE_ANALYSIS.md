@@ -5,18 +5,18 @@
 
 ## 1. 当前所在阶段
 
-执行底座已有大量可复用能力；当前先完成 W5 最终证据范围与封板裁定，
-再按用户另行授权扩展后端产品能力。PARALLEL_WRITE=CLOSED。
-不能继续把项目描述为“T2-b.1 / T3 未开始”，也不能直接宣称 W5 已通过。
+执行底座已有大量可复用能力；W5 执行证据收口与 readiness 裁定已完成，状态为 SEALED WITH P2。
+新后端能力仍按用户另行授权推进，PARALLEL_WRITE=CLOSED。
+不能继续把项目描述为“T2-b.1 / T3 未开始”，也不能将 W5 封板解释为全部 Agent 或新需求已验收。
 
-最新 W5.1d 独立审核结论为 PASS WITH P2。历史 stress 失败传播、pid-only fallback
+最新 W5.1d closure 独立审核结论为 PASS。历史 stress 失败传播、pid-only fallback
 及 observer 异步 EPIPE P1 均已在当前路径收口。
-独立 observer 边界 probe、3-round 与 50-round 通过，两次均 EXIT=0、140/0，stress 失败计数全 0。
-详见 [项目基线](PROJECT_BASELINE.md#6-w51d-独立审核与上传说明)。
-剩余非阻断 P2 是新增冗余死亡断言把 OBSERVATION_ERROR 打印为退出证明；
-已有同一原句柄的强断言保障该 case 的核心结论。
-下一步整理 W5 最终证据与适用范围，最多简化这一测试断言，不重新实现清理框架，
-不进入 B1 实现，不开放并行写。
+上一轮独立 observer 边界 probe、3-round 与 50-round 通过，两次均 EXIT=0、140/0，stress 失败计数全 0。
+详见 [项目基线](PROJECT_BASELINE.md#6-w5-最终证据包与上传说明)。
+本轮已删除唯一剩余的非阻断 P2：新增冗余死亡断言把 OBSERVATION_ERROR 打印为退出证明；
+同一 case 的原句柄 EXIT_CONFIRMED/EXITED 强断言保留，未新建观测或清理框架。
+Codex 本轮独立 3-round 为 139/0，补充 READ 121/0、resource-claim 192/0，typecheck/diff check 通过。
+保留真实 Agent 兼容性、full-suite 时效及现有 259 reconciliation 可用性 P2；不进入 B1 实现，不开放并行写。
 
 ## 2. 需求与实现差距
 
@@ -48,11 +48,11 @@
 ## 3. 建议阶段
 
 B 编号仅用于新需求分析，不重命名或重开已封板的 T/W 阶段。
-每个 B 阶段均为 PLANNED / NOT AUTHORIZED，不得因本文自行开工。
+B0 为执行证据收口标签，现已完成。B1–B5 仍为 PLANNED / NOT AUTHORIZED，不得因本文自行开工。
 
 | 阶段 | 最小目标 | 依赖与退出条件 |
 |---|---|---|
-| B0 执行证据收口 | W5.1d P1 已关闭；整理 W5 最终范围与非阻断 P2 | 最终独立封板裁定；已通过路径不回退；开写权限另行裁定 |
+| B0 执行证据收口 | COMPLETE：W5 SEALED WITH P2；观测/清理 P0/P1 与冗余断言 P2 已关闭 | 兼容性和证据时效限制保留；PARALLEL_WRITE=CLOSED |
 | B1 可用能力与用户规则 | 复用 registry/adapter 表，明确 Agent/Model/Skill/MCP 事实和用户约束 | 区分目录与可用；固定/禁用/费用冲突可验证 |
 | B2 费用与候选约束 | 入口/账户归属、免费依据、有效期、共享额度和预算 | 每次分配/接力均校验；未知不伪造；全部不可用安全停止 |
 | B3 LAYA 能力选择 | 联合选择 Agent/Model 与 Skill/MCP，提供必要角色能力事实 | 只选合格候选，复用原生执行，实际能力可核对 |
@@ -64,26 +64,34 @@ B1 只收集必要事实；B2 决定哪些候选可进入预算范围；B3 才�
 在 B3 前不另造路由服务，在 B4 前不先做通用工作流引擎。
 Skill/MCP 的最小调用与费用观察可在其所属阶段验证，不必等待最终前端。
 
-## 4. W5 已有证据与剩余裁定（尚未整体封板）
+## 4. W5 封板证据与保留限制
 
-- 已验证：两个 writer 经 TaskOrchestrator → executeTask → Runtime → 测试适配器
-  → 真实 Transport/Contained ManagedProcess，并在不同 worktree 执行。
-- 已验证：A/B 一侧启动失败时另一侧对称回收；停止失败/超时/抛错进入共享判定与最终结果。
-- 已验证：owned fixture 根目录删除失败使同一 finalizer 的 child 非零退出，foreign sentinel 保留。
-- 已验证核心路径：观测失败/超时为 OBSERVATION_ERROR，不被认作死亡；
-  保持原进程句柄，避免 PID 重用导致错误归因。
-- 已验证：root-first、hardkill、stop-order swap、跨运行隔离和 50-round stress 有真实证据。
-- 已验证：测试适配器替换生效，未调用本机真实收费 Agent。
-- 测试通过不自动开 PARALLEL_WRITE；后续是否开放需独立明确裁定。
+证据分层（详见 [项目基线 §6](PROJECT_BASELINE.md#6-w5-最终证据包与上传说明)），
+下列四类必须分开阅读，不能互相提升：
+
+- **production admission**：两个 writer 经 TaskOrchestrator → executeTask → Runtime → 测试适配器
+  → 真实 Transport/Contained ManagedProcess，并在不同 worktree 执行；证明真实生产准入链与适配器替换生效。
+- **底层 stress**：cmd/PowerShell/git descendant、root-first、hardkill、stop-order swap、跨运行隔离、
+  50-round；证明 contained descendant 的停止/回收物理事实。
+- **受控失败注入**：cancel=false/TIMEOUT/THREW、observer.reaped=false、最终 OBSERVATION_ERROR、
+  身份缺失/不匹配、COMMAND_CHANNEL_LOST 验证共享判定/计数；源码确认 ledger/finalizer 接线。
+  cancel=false + 无退出事实、删除失败另有真实 child 非零退出证据，不把所有纯输入回归称为真实 OS 故障。
+- **真实 Agent 历史证据**：W4 真实 Agent 兼容性与环境限制、旧 full-suite parity；本轮未重跑，
+  不能由 fixture stress 自动提升为通过。
+
+已确认收口：一侧启动失败时另一侧对称回收；停止失败/超时/抛错进入共享判定与最终结果；
+owned fixture 根目录删除失败使同一 finalizer 的 child 非零退出且 foreign sentinel 保留；
+观测失败/超时为 OBSERVATION_ERROR，不被认作死亡，保持原进程句柄避免 PID 重用错误归因；
+测试适配器替换生效，未调用本机真实收费 Agent。
+测试通过不自动开 PARALLEL_WRITE；后续是否开放需独立明确裁定。
 
 W5.1d 独立审核已运行 typecheck、diff check、三个 observer 边界 probe、3-round 与 50-round。
-共享清理判定、原句柄终止、同一 finalizer 及 typed channel failure 已有实际路径证据；
-不可继续沿用已关闭的 W5.1b/W5.1c P1。
-当前只保留冗余死亡断言的 P2；不得以 OBSERVATION_ERROR 为死亡证据，也不必新建观测框架。
-W5 最终证据包应区分 production admission case、底层 stress、受控失败注入和真实 Agent 历史证据，
-逐项明确已证实的结论、未重新运行的历史结果及环境限制。
-W4 真实 Agent 兼容性/环境限制与旧 full-suite parity 不能由 fixture stress 自动提升为通过。
-不要求再次重跑已通过 50-round，除非后续修改触及它的执行/清理路径或暴露异常。
+本轮删除 P2 冗余断言后，OpenCode 与 Codex 各自实跑 `W51_ROUNDS=3`，均 EXIT=0、139/0
+（少 1 条冗余断言），stress 失败计数全 0；
+未重跑 50-round（本轮只删除冗余断言，未触及执行/清理路径）。
+不可继续沿用已关闭的 W5.1b/W5.1c/W5.1d P1；当前执行/观测/清理范围内无未关闭 P0/P1。
+Codex 裁定 W5 SEALED WITH P2；真实 Agent 兼容性、full-suite parity 时效及现有 259 reconciliation
+可用性限制继续记录，不因 fixture 或定向 READ 通过而提升。PARALLEL_WRITE 仍 CLOSED。
 
 ## 5. 复用与删减
 
@@ -122,8 +130,15 @@ Agent Orchestrator 可参考执行/工作区协作，RouteLLM 可参考评估方
 
 ## 6. 本轮检查与限制
 
-Codex 独立 typecheck、三个 observer 边界 probe、W51_ROUNDS=3/50 与 diff check 通过。
-两次 suite 都为 EXIT=0、140/0，打印的 stress 失败计数为 0；已知 owned 根目录及 observer 无残留。
-Codex 仅更新审核说明，没有修复 OpenCode 实现；实现文件提交前按 blob hash 核对。
-上传审核分支，不合并 main，不开放 PARALLEL_WRITE，不授权 B1–B5。
-未运行 full suite、真实 Agent 或重新审核已封板阶段；W5 整体封板仍待最终裁定。
+本轮 OpenCode 实跑：`npm run typecheck` PASS；`W51_ROUNDS=3` EXIT=0、139 passed / 0 failed，
+attempted=3/completed=3，readiness/observation/containment/surviving/cleanup 全 0；`git diff --check` clean。
+断言数由 140 降为 139 仅因删除 1 条 P2 冗余断言；本轮未重跑 50-round。
+Codex 本轮独立验证：typecheck、W51_ROUNDS=3（139/0）、READ fan-out（121/0）、resource-claim（192/0）、diff check 通过。
+Codex 上轮独立验证（W5.1d）：三个 observer 边界 probe、W51_ROUNDS=3/50（均 140/0）通过；
+已知 owned 根目录及 observer 无残留。
+本轮仅删除冗余断言并整理文档，未修复实现代码、未改 observer helper/native fixture/生产 launcher；
+未运行 full suite、真实 Agent 或重新审核已封板阶段。
+环境限制仍在：Codex `MODEL/SERVICE_LATENCY`、WorkBuddy `ENVIRONMENT_BLOCKED`。
+259 需按 handle 是否 signaled 判断，不能一概视为非 terminal。final reconciliation 的现有数值过滤
+属于既有 launcher 可用性限制，非环境事实；本轮未修改或重新探测该路径，详情见项目基线 §6.3。
+最终 W5 SEALED WITH P2，PARALLEL_WRITE=CLOSED；不授权 B1–B5。
