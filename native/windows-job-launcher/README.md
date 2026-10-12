@@ -1,8 +1,8 @@
 # Windows Job Launcher
 
-更新日期：2026-10-11
-状态：W1/W2/W3 已封板，W4.1 已重新封板；已有生产 Runtime containment 集成。
-W4 状态和 W5 未完成的独立验收见 [项目基线](../../docs/PROJECT_BASELINE.md)。
+更新日期：2026-10-12
+状态：已有生产 Runtime containment 集成；阶段封板与授权只见唯一 [项目基线](../../docs/PROJECT_BASELINE.md)。
+当前 W5 已 SEALED WITH P2，不沿用旧“未完成独立验收”描述。
 本次更新是文档整理，没有重新运行 native 测试或更改 launcher。
 
 ## 作用与不变量
@@ -81,5 +81,7 @@ hardkill 的物理清理与最终可信 control 是不同证据；
 
 命令从仓库根目录执行，需满足对应 opt-in、Windows 和构建前提。
 真实 Agent 测试另行授权；本次未运行上述测试。
-W5.1a 修订待独立验收；任何一次通过都不自动打开 PARALLEL_WRITE。
+多模型、异构工作流和协作组继续复用该生产 containment，不另建 launcher 或进程管理器。
+模型流失联、root 终止与 tree stopped 是不同事实；后续掉线接力仍先要求可信停止/保护事实。
+任何一次通过都不自动打开 PARALLEL_WRITE；不重开已关闭的 W5.1a 历史 finding。
 历史 W0/W1 设计及增量报告见 [Git 备份](../../docs/STAGE_ANALYSIS.md#历史备份)。

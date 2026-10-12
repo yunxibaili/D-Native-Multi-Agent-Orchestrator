@@ -1,7 +1,8 @@
 # Decision Loop 执行证据契约
 
-更新日期：2026-10-11
+更新日期：2026-10-12
 状态：既有有效证据约束。完整历史设计在 Git 归档，不作为当前状态入口。
+当前状态只在唯一 [PROJECT_BASELINE.md](PROJECT_BASELINE.md) 维护。
 
 ## 1. 证据链
 
@@ -39,6 +40,16 @@ Session 缺失时 Worker projection 可为 null，不能从 thread ID 猜 Sessio
 请求的 Agent/Model、准入结果、拒绝原因和真实执行身份保持区分。
 跳过、拒绝、依赖未满足不能沿用旧 evidence；
 Review、聚合和 Observation 消费当前同一份 execution references。
+
+### 4.1 异构任务与后续协作组证据
+
+职责、预期交付物和允许文件范围属于 Requested；不能直接投影成已完成或已强制隔离。
+上游报告与测试产物必须有 task/Attempt/同次结果来源；下游引用不能从旧 latest-by-task 拼接。
+下游 brief 应消费相关交付引用或有界内容，不广播所有会话；外部内容保持不可信输入边界。
+报告保留请求的 pair、实际派发 pair、Session、阻塞原因和现有验证结果；服务端实际模型未知则未知。
+协作组全部 terminal 不等于验收通过；组员意见、机器测试和独立 Review 分层。
+B4.0 实现时应覆盖真实 CLI/调度到受控 Runtime 的链路，而不只测试 DTO 或请求构造。
+这些是新切片验收约束，不代表该闭环已经实现。
 
 ## 5. Append 与状态
 

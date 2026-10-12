@@ -1,7 +1,8 @@
 # Execution Round 当前语义
 
-更新日期：2026-10-11
+更新日期：2026-10-12
 状态：现有执行边界参考；新需求的目标能力另见 BACKEND_REQUIREMENTS.md。
+阶段与授权的唯一基准是 [PROJECT_BASELINE.md](PROJECT_BASELINE.md)。
 
 ## 1. 有界执行
 
@@ -43,12 +44,24 @@ cancel/deadline 先触发既有停止协议，等物理停止事实得到确认�
 用户暂停应区分停止后续调度、协作保存检查点和取消；
 现状不承诺任意进程原地暂停恢复。
 
+执行中模型掉线恢复为后续计划：静默不直接判死亡，真实流/额度/认证/服务故障与未知分开。
+有界重试考虑部分写入和重复工具调用；fixed 失效不自动换 pair，缺合格免费候选不转付费。
+
 ## 5. Review、结果与用户
 
 Review 消费当前执行证据，通过统一 verification 契约给出结论。
 原生普通返工与任务级 replan 不同；不能把 Review 变成第二个 Scheduler。
 CLI Round 汇总报告并停止，新要求由用户发起。
 Observation 与结果摘要是只读派生，不新增 ReportAuthority/ResultStore。
+
+## 6. 下一工作流切片的兼容边界
+
+B4.0 拟通过既有入口 opt-in 选择调研→实现→测试候选计划，默认入口保持兼容。
+角色用现有 taskType 与必要职责标签表达；各任务独立分配具体 Agent × Model。
+先按依赖顺序执行，沿已有完成/verification 条件，不私自改成功状态语义来推进下游。
+前置任务失败或证据不可用时下游保持阻塞，报告真实原因；报告存在不等于业务通过。
+组内 2–3 模型共建是后续切片，不改变 READ topology 或 PARALLEL_WRITE 的限制。
+所有阶段仍到现有 Human Gate 停止；本轮仅更新文档，没有实现新 Round 自动循环。
 
 相关入口：
 [项目基线](PROJECT_BASELINE.md)、
