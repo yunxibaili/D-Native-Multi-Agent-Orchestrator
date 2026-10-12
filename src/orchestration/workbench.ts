@@ -66,7 +66,7 @@ import { buildHandoff, buildTaskBrief, type TaskHandoff } from './workbench-hand
 // dependency on the report layer, and so the direction stays one-way (report <- workbench).
 import type { AttemptEvidenceInput } from './round-result.ts';
 import { commitPlan, replanSubtree } from './planner-wiring.ts';
-import { planTasks } from './planner.ts';
+import { planTasks, type CandidateTask } from './planner.ts';
 import { planFromSpec, type WorkbenchTaskSpec, type PlanFromSpecResult } from './workbench-plan.ts';
 // TeamRun T3-a.1: the READ-only fan-out topology validation + grouping evidence. Pure value
 // helpers; the materialization below still goes through the SAME `commitPlan` write path.
@@ -485,6 +485,52 @@ unDecisionCycle can read a real TickResult. */
         ...(planned.plan.sessionIntent !== undefined ? { sessionIntent: planned.plan.sessionIntent } : {}),
       });
     }
+    return { root: created.task, planned, children: committed.created };
+  }
+
+  /**
+   * B4.0: commit a caller-supplied candidate set (e.g. a bounded workflow plan) instead
+   * of a shape-expanded one.
+   *
+   * Same write path as `plan()` — create the root, `commitPlan`, record the per-candidate
+   * intent — so a workflow plan is validated and committed by the EXISTING authorities
+   * and cannot diverge from a shape plan. The root is created here (the candidates hang
+   * from `spec.taskId`).
+   */
+  planWithCandidates(spec: WorkbenchTaskSpec, candidates: readonly CandidateTask[], notes: readonly string[] = []): PlanOutcome {
+    const rootAgentId = this.rootAgentIdFor(spec);
+    const created = this.orchestrator.createRoot({
+      taskId: spec.taskId,
+      agentId: rootAgentId,
+      taskType: spec.taskType ?? 'implementation',
+      acceptanceCriteria: spec.objective,
+    });
+    if (!created.ok) {
+      throw new Error(`workbench could not create root "${spec.taskId}": ${created.code} ${created.reason}`);
+    }
+    const committed = commitPlan(this.store, candidates, {
+      agentId: rootAgentId,
+      modelId: spec.preferredModel ?? null,
+      budgetUnits: spec.budgetUnits,
+      generation: 0,
+    });
+    if (!committed.ok) {
+      throw new Error(`workbench could not commit workflow plan: ${committed.code} ${committed.reason}`);
+    }
+    for (const task of committed.created) {
+      const fromPlan = candidates.find((c) => c.taskId === task.taskId);
+      this.taskIntents.set(task.taskId, {
+        ...(fromPlan?.skills !== undefined ? { skills: fromPlan.skills } : {}),
+        ...(fromPlan?.preferredAgent !== undefined ? { preferredAgent: fromPlan.preferredAgent } : {}),
+        ...(fromPlan?.preferredModel !== undefined ? { preferredModel: fromPlan.preferredModel } : {}),
+      });
+    }
+    const planned: PlanFromSpecResult = {
+      taskType: spec.taskType ?? 'implementation',
+      shape: 'chain',
+      classificationReason: null,
+      plan: { candidates: [...candidates], notes: [...notes], generation: 0 },
+    };
     return { root: created.task, planned, children: committed.created };
   }
 

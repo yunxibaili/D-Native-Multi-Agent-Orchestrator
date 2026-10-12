@@ -56,6 +56,9 @@ const SUITES = [
   // B1.4: user Agent × Model selection (auto/fixed, project/task). Hermetic — a fake
   // runtime records the RunRequests; the real workbench/assignment path runs.
   'b14-selection',
+  // B4.0: sequential heterogeneous workflow (research -> implementation -> test).
+  // Hermetic — the real Workbench/Planner/Assignment/Scheduler chain with fake adapters.
+  'b40-workflow',
   'memory',
   'orchestration',
   'model-pool',

@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前状态入口
 
-更新日期：2026-10-12
+更新日期：2026-10-13
 性质：当前事实、阶段状态、授权边界与证据索引；不是未来能力承诺。
 
 ## 1. 文档权责
@@ -27,13 +27,12 @@ README 是导航。用户明确指令优先；发现源码、证据与基线不�
 | B1.3a | DSH 输出保真收口 PASS；其测试 P2 在 B1.4a 关闭 |
 | B1.4a | 独立 PASS：动态 fixed 约束、CLI 缺值、DSH setup 清理收口 |
 | B1 overall | NOT SEALED |
-| 下一任务 B4.0 | 提示词与范围已整理，尚未启动实现；只做异构任务顺序闭环 |
-| B2 / B3 / B4 其余切片 / B5 | PLANNED；本轮未授权启动实现 |
+| B4.0 | 独立审核 BLOCKED：候选计划与 Workbench 手动推进可用；CLI 顺序执行闭环未完成 |
+| B4.1 / B2 / B3 / B5 | PLANNED；本轮未授权启动实现 |
 | PARALLEL_WRITE | CLOSED |
 | 本产品前端 | 需求未确认；进入前端前提醒用户单独梳理 |
 
 B4.0 是在现有底座上提前交付最小工作流，不自动授权整个 B4，也不把 B2/B3 的缺口宣称已实现。
-本轮只维护技术文档并交付下一任务提示词，没有改源码、测试或调用模型。
 P0/P1 由具体影响与证据裁定；非阻断 P2 进入计划，不重开所有历史封板。
 
 ## 3. 产品目标与当前差距
@@ -90,9 +89,16 @@ rootSelections 与 fixedLockFor 在现有 reassign 入口维护有效约束，�
 ### 5.4 任务与协作
 
 Planner/CandidateTask/commitPlan、TaskStore、Assignment、Scheduler 与依赖材料交接已经存在。
-当前 planFromSpec 主要按 shape 生成同类候选；不能据此称已完成调研/实现/测试异构角色闭环。
-READ fan-out 使用父容器与独立 child task；成员有各自 Lease/Session/Attempt。
-ALL-terminal 是聚合事实，不是通过验收；PARALLEL_WRITE=CLOSED。
+B4.0 新增 opt-in `--workflow sequential`，full/lean 有界候选和 LAYA typed 计划选择已接线。
+受控 Workbench 链中，显式调用既有 Verification 后，下游才准入；独立 probe 确认上游实际输出
+经既有 handoff 进入 implementation brief，不只是标题。依赖失败阻止下游的测试通过。
+但生产 CLI 仍只运行一个 decision cycle：full 只执行 research，停在 `to_verify`，后两步仍 `planned`，
+却返回 exit=0、`ok=true`、`executionIncomplete=false`。不能把测试手动完成前置任务当作 CLI 自动闭环。
+非法候选被既有 validator 拒绝，但 `planWithCandidates` 已先创建根，留下部分状态；同 ID 修正重试失败。
+非 Git 工作区中 lean 的 implementation 还会被既有资源门拒绝（把依赖未满足的 planned test 算作并行工作）；
+这是当前适用性限制，不能为通过此片关闭资源保护。旧入口定向回归通过，不等于全面兼容性验收。
+功能 B（同目标 2–3 模型分工共建/集成）与完整角色计划尚未实现；READ fan-out 使用父容器与独立 child task，
+ALL-terminal 是聚合事实不是通过验收；PARALLEL_WRITE=CLOSED。
 
 ## 6. 不可绕过的契约
 
@@ -107,7 +113,8 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 ## 7. 真实缺口与后续边界
 
 1. DSH 缺逐请求选模型与恢复协议；要用 DSH 做多模型调配，必须先取得受支持的真实接口证据。
-2. 完整角色计划、同目标分工/集成与实际下游交付消费尚缺；B4.0 先做顺序异构任务。
+2. B4.0 首先收口 CLI 有界顺序推进、Verification、未完成状态与最终 Review/Result；已有计划/材料交接可复用。
+   功能 B（同目标 2–3 模型分工共建与集成责任）、完整角色计划、prefer/角色默认仍缺，留后续切片。
 3. Skill/MCP 只有部分意图/原生支持，目录、授权、具体选择和实际调用核对未闭环。
 4. 动态免费资格、账户共享额度和全流程费用授权未验收；预算 units 不是 token/货币。
 5. 模型中途掉线恢复列后续计划：区分流中断、限流/额度/认证/崩溃与未知，静默不等于死亡；
@@ -120,6 +127,25 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 不新增 provider 网关、群聊平台、第二个调度器或通用工作流引擎来掩盖协议缺口。
 
 ## 8. 最近独立证据与上传记录
+
+本轮 B4.0 独立审核（2026-10-13）：**BLOCKED**，不修改生产代码/测试。
+独立实跑 `b40-workflow` 31/0、planner 189/0、workbench 413/0、b14-selection 46/0、
+initial-assignment-decision 37/0、handoff-production-round 312/0、contract 248/0（2 skipped）、unit 92/0，
+isolation 守卫 5 opt-in/0 违规；typecheck PASS、diff check PASS，以上命令 exit=0。
+生产任务编排 runtime.run 调用边=1；新增调度 authority=0。
+
+- P1：复用既有 productionRound 受控 runtime seam，真实 CLI full 仅有 1 次 research 请求，后两步未运行。
+  `to_verify/planned/planned` 却 exit=0、ok=true、executionIncomplete=false；CLI 没有顺序完成/验证推进。
+- P2：直接调用 planWithCandidates 提交重复候选，store 从空变成仅根 `r`；有效计划用同 ID 重试被 task-id-duplicate 拒绝。
+- P2：同一 CLI seam 由 typed provider 选择 lean，非 Git 工作区中首步 resource-unavailable，runtime 请求=0；
+  planned 的依赖下游被既有保护算作并行工作。需兼容既有门或如实声明支持范围，不绕过保护。
+- 正向证据：Workbench 显式 completeTask 后，implementation brief 包含上游 `UPSTREAM_BODY_42` 实际内容。
+  这是库级显式推进证据；不认证 CLI 自动推进或最终 Review 已通过。
+
+probe 的 provider/runtime 均受控，生产 planning/assignment/scheduler/report 路径保留。
+full 问题在默认请求审核与显式 no-review 下均出现；默认 probe 只证明审核被调用，不认证其 verdict。
+NOT_RUN/fixture/真实模型证据不互相提升；未跑 full suite、未调用真实模型、未读凭据、未改本机配置。
+独立 probe 的命名临时目录均已清理，无探测进程；历史残留不属于本轮所有权。
 
 上一轮 B1.4a 独立审核（2026-10-12）：
 typecheck；b14 46/0；workbench 413/0；initial-assignment 37/0；handoff-production-round 312/0；
@@ -135,5 +161,6 @@ DSH 64/0；isolation 5 opt-in/0 违规；diff check PASS，正常命令 exit 均
 
 W5 的 production admission、底层 stress、受控失败注入与真实 Agent 历史证据分层保持。
 不重新沿用已关闭历史 P1，不把旧 full suite 或 fixture 成绩写成本轮结果。
-本轮文档整合以 098279e 为父，提交至 codex/backend-docs-next-b40 分支；
-只改现有 10 份 Markdown，不改代码/测试/配置，不合入 main；上传后的准确 commit 见会话交付。
+上一轮 10 份技术文档整合快照为 0b24cf93ba3b13e952e5c5a13322bb07161c09fc，分支 codex/backend-docs-next-b40。
+本次审核快照以它为父，分支 codex/b40-review-blocked，包含实现方 B4.0 改动与 Codex 的两份文档纠偏；
+不合入 main，不宣布 B4.0 完成；上传后的准确 commit 见会话交付。

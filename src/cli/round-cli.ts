@@ -141,6 +141,8 @@ import {
   type ContinuationResult,
 } from '../orchestration/continuation.ts';
 import { buildHandoff } from '../orchestration/workbench-handoff.ts';
+import { WORKFLOW_PLAN_CHOICES, buildWorkflowCandidates, isWorkflowChoice, type HeterogeneousWorkflowChoice } from '../orchestration/workflow-plan.ts';
+import { decideWorkflowPlan, type WorkflowPlanCandidate } from '../decision/plan-choice.ts';
 import { buildDispatchReceipt } from '../orchestration/dispatch-receipt.ts';
 import { projectDispatchTaskEvidence } from '../orchestration/dispatch-evidence.ts';
 import { buildExecutionSnapshot } from '../orchestration/execution-monitor.ts';
@@ -191,6 +193,10 @@ OPTIONS
                                  enforces the exact pair (accept or refuse, never substitute)
   --agent <id>           with --model: the FIXED agent; alone: prefer this agent
   --model <id>           with --agent: the FIXED full model id; alone: prefer this model
+  --workflow sequential  opt-in heterogeneous workflow (B4.0): research -> implementation
+                         -> test as independent tasks run in dependency order. Absent = legacy.
+  --workflow-choice <c>  pin the workflow plan (full|lean); absent = LAYA picks among the
+                         bounded candidates (requires --workflow sequential).
   --laya-url <url>       laya-serve base URL (default: http://127.0.0.1:8077)
   --laya-timeout <ms>    decision timeout (default: 60000)
   --execution-timeout <ms>
@@ -255,6 +261,10 @@ interface RoundOptions {
   model?: string;
   /** B1.4: task-level selection mode; `auto` or `fixed`. Absent = project/auto. */
   select?: string;
+  /** B4.0: opt-in heterogeneous sequential workflow (`sequential`). Absent = legacy. */
+  workflow?: string;
+  /** B4.0: pin a single workflow plan choice (`full`/`lean`); absent = LAYA picks. */
+  workflowChoice?: string;
   layaUrl: string;
   layaTimeoutMs: number;
   /** R5-1 (P1-A): native EXECUTION deadline (RunRequest.timeoutMs), not a wait bound. */
@@ -296,7 +306,7 @@ interface RoundOptions {
  */
 const OBSERVE_HEARTBEAT_MS = 5_000;
 
-const VERBATIM = new Set(['laya-url', 'agent', 'model', 'select', 'cwd', 'observe', 'review-agent']);
+const VERBATIM = new Set(['laya-url', 'agent', 'model', 'select', 'workflow', 'workflow-choice', 'cwd', 'observe', 'review-agent']);
 
 function parse(argv: readonly string[]): RoundOptions | { error: string } {
   const positionals: string[] = [];
@@ -362,6 +372,20 @@ function parse(argv: readonly string[]): RoundOptions | { error: string } {
     if (select !== undefined && select !== 'auto' && select !== 'fixed') {
       return { error: `--select must be "auto" or "fixed" (got "${select}")` };
     }
+    // B4.0: opt-in heterogeneous sequential workflow. A bare flag is a usage error.
+    const workflow = s('workflow');
+    if (flags.workflow === true) return { error: '--workflow requires a value: "sequential"' };
+    if (workflow !== undefined && workflow !== 'sequential') {
+      return { error: `--workflow must be "sequential" (got "${workflow}")` };
+    }
+    const workflowChoice = s('workflow-choice');
+    if (flags['workflow-choice'] === true) return { error: '--workflow-choice requires a value: "full" or "lean"' };
+    if (workflowChoice !== undefined && !isWorkflowChoice(workflowChoice)) {
+      return { error: `--workflow-choice must be one of full, lean (got "${workflowChoice}")` };
+    }
+    if (workflowChoice !== undefined && workflow === undefined) {
+      return { error: '--workflow-choice requires --workflow sequential' };
+    }
     const agentFlag = s('agent');
     const modelFlag = s('model');
     if (select === 'fixed' && (agentFlag === undefined || modelFlag === undefined)) {
@@ -376,6 +400,8 @@ function parse(argv: readonly string[]): RoundOptions | { error: string } {
       ...(agentFlag !== undefined ? { agent: agentFlag } : {}),
       ...(modelFlag !== undefined ? { model: modelFlag } : {}),
       ...(select !== undefined ? { select } : {}),
+      ...(workflow !== undefined ? { workflow } : {}),
+      ...(workflowChoice !== undefined ? { workflowChoice } : {}),
       layaUrl: s('laya-url') ?? 'http://127.0.0.1:8077',
       layaTimeoutMs: num('laya-timeout', 60_000),
       // R5-1.1 (§6/P1-A): the NATIVE EXECUTION deadline — a different thing from the
@@ -855,14 +881,59 @@ export async function runRoundCli(
   // ---- STEP 4: plan + assign (Planner and Assignment, the only authorities) --
   let planned;
   let assigned;
+  // B4.0: which bounded workflow plan ran, and how it was chosen (for the report).
+  let workflowChoiceUsed: HeterogeneousWorkflowChoice | null = null;
+  let workflowPlanSource = '';
   try {
-    planned = wb.plan(spec, classification);
+    if (o.workflow === 'sequential') {
+      /*
+       * B4.0: a bounded heterogeneous plan (research -> implementation -> test). LAYA
+       * picks among the OFFERED plans; it never invents a DAG. A pinned choice or a
+       * single candidate is handled by the explicit rule and does NOT fake a LAYA
+       * comparison. The chosen candidates go through the SAME commitPlan path.
+       */
+      const choices: WorkflowPlanCandidate[] = WORKFLOW_PLAN_CHOICES.map((c) => ({
+        choice: c.choice, label: c.label, roles: c.steps.map((s) => s.role),
+      }));
+      if (o.workflowChoice !== undefined && isWorkflowChoice(o.workflowChoice)) {
+        workflowChoiceUsed = o.workflowChoice;
+        workflowPlanSource = 'pinned (--workflow-choice)';
+      } else if (provider !== null && choices.length > 1) {
+        workflowChoiceUsed = (await decideWorkflowPlan(provider, {
+          task: { taskId: rootId, objective: o.objective },
+          candidates: choices,
+        })) as HeterogeneousWorkflowChoice;
+        workflowPlanSource = 'Laya decision';
+      } else {
+        workflowChoiceUsed = WORKFLOW_PLAN_CHOICES[0]!.choice;
+        workflowPlanSource = provider === null ? 'no provider: first bounded plan' : 'single candidate';
+      }
+      planned = wb.planWithCandidates(spec, buildWorkflowCandidates(workflowChoiceUsed, o.objective, rootId), [
+        `B4.0 sequential workflow plan: ${workflowChoiceUsed} (${workflowPlanSource})`,
+      ]);
+    } else {
+      planned = wb.plan(spec, classification);
+    }
+    // B4.0: report the workflow plan (mode, choice, how it was chosen, the steps).
+    if (o.workflow === 'sequential' && workflowChoiceUsed !== null) {
+      const plan = WORKFLOW_PLAN_CHOICES.find((c) => c.choice === workflowChoiceUsed);
+      report.workflow = {
+        enabled: true,
+        choice: workflowChoiceUsed,
+        source: workflowPlanSource,
+        steps: (plan?.steps ?? []).map((s) => ({ role: s.role, taskType: s.taskType, deliverable: s.deliverable })),
+        note: 'sequential: each step depends on the one before; PARALLEL_WRITE=CLOSED',
+      };
+    } else {
+      report.workflow = { enabled: false };
+    }
     // TeamRun T3-a.1: Laya decides the execution TOPOLOGY. SOLO is the existing path and
     // the default; PARALLEL_READ materializes N independent READ member Tasks. A transport
     // failure returns null (no topology opinion -> SOLO); a MALFORMED PARALLEL_READ throws
     // a schema error and refuses the round — it must never silently become SOLO.
+    // B4.0: a workflow plan is already a sequential chain, so topology is left SOLO.
     let topology: RawExecutionTopology | null = null;
-    if (provider !== null) {
+    if (o.workflow !== 'sequential' && provider !== null) {
       const readCandidates = registry.list()
         .filter((e) => e.modelId !== null && e.modelId !== '' && e.taskTypes.includes(FANOUT_MEMBER_TASK_TYPE))
         .map((e) => ({
