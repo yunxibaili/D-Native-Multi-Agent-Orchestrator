@@ -439,12 +439,15 @@ section('B1.2b P1-2: a cleanup failure alone decides the exit code (real child)'
   check('cleanup-failure child: only the named owned root was cleaned', !existsSync(childRoot));
 }
 // ---------------------------------------------------------------------------
-section('B1.2b P1-1: the suite is hermetic — it passes with OpenCode UNREACHABLE');
+section('B1.2b P1-1/P2: the catalogue ENTRY with OpenCode UNREACHABLE');
 
 {
   /*
-   * The decisive hermeticity check. The child is given an environment in which the
+   * This case runs the catalogue ENTRY (`tests/b12-opencode-model-catalog.test.ts`)
+   * as a child — NOT this whole suite. The child is given an environment in which the
    * installed OpenCode CANNOT be reached by any route:
+   *    - `ORCH_B12_REAL_CATALOG` is pinned OFF below, so the entry's NOT_RUN path is
+   *      decided by the flag alone rather than by an inherited ambient value;
    *    - `ORCH_B12_OPENCODE_COMMAND` names an absolute path that does not exist;
    *    - `APPDATA` points at an empty directory, so the npm-global package layout
    *      (`%APPDATA%\npm\node_modules\opencode-ai\bin\opencode.exe`) resolves to
@@ -452,35 +455,49 @@ section('B1.2b P1-1: the suite is hermetic — it passes with OpenCode UNREACHAB
    *    - `PATH` is rebuilt to contain node and the Windows system directories only, so
    *      no PATH lookup can find an `opencode` binary or shim.
    *
-   * If this suite passed only because the machine happened to have no OpenCode, this
-   * case would not be provable. It passes because every case names its OWN fixture.
+   * With the opt-in OFF the entry must print NOT_RUN and exit 0 without starting
+   * anything. With the opt-in ON the same unreachable environment must fail — an
+   * enabled run that never queried anything may not report success.
    */
   const nodeDir = dirname(process.execPath);
   const winDir = process.env.SystemRoot ?? 'C:\\Windows';
   const emptyAppData = ownDir();
+
+  /*
+   * B1.2b P2: the opt-in flag is EXPLICITLY off here. Relying on the ambient
+   * environment happening to be unset made this child enable the entry whenever the
+   * suite was run with `ORCH_B12_REAL_CATALOG=1`, which turned the expected NOT_RUN
+   * into a failure.
+   */
   const r = runEntry(childEnv({
+    ORCH_B12_REAL_CATALOG: '0',
     ORCH_B12_OPENCODE_COMMAND: join(emptyAppData, 'no-such-opencode.exe'),
     APPDATA: emptyAppData,
     PATH: [nodeDir, join(winDir, 'System32'), winDir].join(';'),
   }));
-  check('opencode unreachable: the suite still exits 0', r.status === 0 && r.signal === null,
+  check('opencode unreachable + opt-in off: the catalogue ENTRY exits 0',
+    r.status === 0 && r.signal === null,
     `status=${String(r.status)} signal=${String(r.signal)} error=${r.error ?? 'none'}`);
-  check('opencode unreachable: no assertion failed', !/^\s*FAIL\b/m.test(r.stdout),
+  check('opencode unreachable + opt-in off: the ENTRY reports NOT_RUN and starts nothing',
+    /NOT_RUN/.test(r.stdout) && /no discovery, no agent start, no owned context/.test(r.stdout),
+    r.stdout.slice(-200));
+  check('opencode unreachable + opt-in off: no assertion failed in the ENTRY run',
+    !/^\s*FAIL\b/m.test(r.stdout),
     (r.stdout.match(/^\s*FAIL.*$/m) ?? []).join(' | '));
 
-  // And the same environment with the opt-in ON still fails rather than launching
-  // anything: an enabled run with an unreachable agent is an ENVIRONMENT_BLOCKED
-  // failure, which is the whole point of P1-1.
+  // The failure contrast: the SAME unreachable environment with the opt-in ON must
+  // fail rather than launch anything.
   const r2 = runEntry(childEnv({
     ORCH_B12_REAL_CATALOG: '1',
     ORCH_B12_OPENCODE_COMMAND: join(emptyAppData, 'no-such-opencode.exe'),
     APPDATA: emptyAppData,
     PATH: [nodeDir, join(winDir, 'System32'), winDir].join(';'),
   }));
-  check('opencode unreachable + opt-in: exits NON-ZERO', r2.status !== 0 && r2.status !== null,
+  check('opencode unreachable + opt-in on: the catalogue ENTRY exits NON-ZERO',
+    r2.status !== 0 && r2.status !== null,
     `status=${String(r2.status)} signal=${String(r2.signal)}`);
-  check('opencode unreachable + opt-in: does NOT print PASS', !/^\s*PASS\b/m.test(r2.stdout),
-    r2.stdout.slice(-300));
+  check('opencode unreachable + opt-in on: the ENTRY does NOT print PASS',
+    !/^\s*PASS\b/m.test(r2.stdout), r2.stdout.slice(-300));
 }
 // ---------------------------------------------------------------------------
 section('the entry itself may not mask its exit code');

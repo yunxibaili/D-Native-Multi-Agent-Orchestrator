@@ -449,15 +449,6 @@ section('the probe releases its timer on every path (architecture guard)');
 }
 
 // ---------------------------------------------------------------------------
-for (const d of tmpDirs) {
-  try { rmSync(d, { recursive: true, force: true }); } catch { /* best effort */ }
-}
-
-process.stdout.write(`\n${passed} passed, ${failed} failed\n`);
-if (failures.length) process.stdout.write(`failing:\n  ${failures.map((f) => `- ${f}`).join('\n  ')}\n`);
-process.exitCode = failed === 0 ? 0 : 1;
-
-// ---------------------------------------------------------------------------
 section('B1.2b P1-2: a cleanup failure alone decides the exit code (real child)');
 
 {

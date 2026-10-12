@@ -1,6 +1,6 @@
 # 项目基线
 
-更新日期：2026-10-12（B1.2b hermetic 测试与清理退出收口更新）
+更新日期：2026-10-12（B1.2c 清理 finalizer 与 opt-in 显式化收口更新）
 范围：当前代码事实、已有封板状态和执行边界。未来需求不自动转为实现事实。
 
 ## 文档入口与优先关系
@@ -81,7 +81,7 @@ W5 封板保留下述兼容性及证据时效 P2，不代表全部 Agent 或新�
 端到端预算以及 token 节省对比，均未完成整体验收。
 新能力不能绕过既有 Spawn Gate 或为了调度可用而放宽未知事实语义。
 
-### 5.1 B1.1 只读模型目录诊断（最小诊断切片 PASS；B1.2b 独立复核 BLOCKED：清理 P1 未关闭）
+### 5.1 B1.1 只读模型目录诊断（最小诊断切片 PASS；B1.2c 剩余 P1/P2 独立收口 PASS）
 
 用户显式请求时，`doctor --models <agent>` 返回该 Agent 原生 CLI 列出的模型目录快照。
 仅支持 **OpenCode**（`opencode models`，官方命令）；其他 Agent 明确返回 `unsupported`，
@@ -125,6 +125,16 @@ NOT_ENABLED case 显式关闭 opt-in；所有 child env 用副本。新增反证
 入口与受控回归共用同一实现；version 与 models 各自按本轮创建/新增的记录关联，
 记录缺失、INVALID、停止未确认即失败，任一阶段成功不能替代另一阶段。
 本轮只修该 probe 与本入口，未重写其他 adapter、未新增依赖、未新建 ProcessManager/ProbeManager/authority。
+
+B1.2c 收口（2026-10-12，详见 §8.15）：§8.14 剩余的一个清理 P1 与一个 opt-in P2 已在当前路径收口，
+B1.2c 已独立确认 **PASS**（§8.16）：仅认证剩余清理 P1 与 opt-in P2 关闭，B1 整体仍 NOT SEALED。
+**P1**（version 套件旧清理循环吞掉首次删除失败）：删除该套件中旧的 `tmpDirs` 删除循环、
+旧结果汇总与仅依赖 `failed` 的旧退出码块，只保留唯一 cleanup ledger finalizer；
+本轮 owned 目录只经统一清理路径处理，首次删除失败进入 `cleanupFailures`，
+后续成功不抹去该失败，最终结果只汇总一次。
+**P2**（unreachable 用例继承 ambient opt-in）：该期待 NOT_RUN 的 child 显式设 `ORCH_B12_REAL_CATALOG: '0'`，
+并保留后面显式 opt-in=1 的失败对照；文案更正为实际运行对象是目录入口（`b12-opencode-model-catalog.test.ts`），
+不是整个套件。
 
 冻结事实边界（不因本片改变）：
 
@@ -861,3 +871,116 @@ PID 列表仅用于残留观察，不提升为 held-handle 死亡证明。
 当前 main/HEAD/共享索引保持不变。Codex 仅修改上述两份文档，没有修复测试或生产代码。
 
 结论：BLOCKED。P0 无；P1 一个（清理失败传播未闭合）；P2 一个（ambient opt-in）；P3 无新增。
+
+### 8.15 B1.2c 清理 finalizer 与 opt-in 显式化收口（实现方实跑，待独立复核）
+
+日期：2026-10-12。范围仅限 §8.14 剩余的一个 P1 与一个 P2。
+不改 `src/**`、`native/**`、helper、`scripts/test-timed.mjs`，也不改已通过的 association/model-catalog 实现。
+不新增报告 MD、依赖、框架或产品配置；不实现 DSH adapter、ClawChat、RTK 或前端。
+
+#### 修改文件
+
+| 文件 | 改动 |
+|---|---|
+| `tests/b12-version-probe-bounded.test.ts` | 删除旧 `tmpDirs` 删除循环、旧结果汇总与仅依赖 `failed` 的旧退出码块（原约 451–458 行）；只保留唯一 cleanup ledger finalizer |
+| `tests/b12-entry-failure-semantics.test.ts` | unreachable 用例显式设 `ORCH_B12_REAL_CATALOG: '0'`；保留显式 opt-in=1 失败对照；文案更正为目录入口而非整个套件 |
+| `docs/PROJECT_BASELINE.md`、`docs/STAGE_ANALYSIS.md` | 仅更新现有文档 |
+
+#### P1：删除旧的重复 finalizer
+
+修改位置：`tests/b12-version-probe-bounded.test.ts`（删除原约 451–458 行）。
+修复前该文件同时存在：旧 `for (const d of tmpDirs) { try { rmSync(...) } catch { best effort } }` +
+旧汇总 + `process.exitCode = failed === 0 ? 0 : 1`，位于新增 ledger finalizer 之前。
+旧循环先把 owned 目录删成功，后面的 `removeOwnedDir` 再次调用自然成功，`cleanupFailures` 仍为空，最终 exit 0。
+修复后只保留一个 `for (const d of tmpDirs) removeOwnedDir(d)`、一个汇总、一个 `finalizeExitCode()`。
+
+**边界 A 独立注入（真实套件主清理路径）**：未修改工作树，仅在隔离 Node 中用 `--require` 标注
+`fs.rmSync`，对本套件直接创建的 `b12vp-` owned 目录（排除 `b12vp-failchild-`）第一次调用抛 EBUSY，
+后续放行；hook 只加载在顶层 suite 进程，其 spawn 的 child 不受影响。
+
+- 注入目标：`C:\Users\Admin\AppData\Local\Temp\b12vp-I1TS52`（本轮 `mkdtempSync` 创建）。
+- 真实结果：**35 passed / 0 failed**，但 `exit=1`；`signal`/`error` 不适用（suite 自身非零退出）。
+- ledger 保留原始失败：`owned dir removal threw for …b12vp-I1TS52: injected: first owned removal failed (EBUSY)`。
+- 仅本轮已记录的路径被处理：该路径由 `removeOwnedDir` 记录后保留；其余 owned 目录后续删除成功。
+- probe 结束后仅清理本轮记录的该路径，未按枚举删除。
+
+#### P2：明确关闭 NOT_RUN child 的 opt-in
+
+修改位置：`tests/b12-entry-failure-semantics.test.ts` unreachable 用例。
+该 child 运行的是**目录入口** `tests/b12-opencode-model-catalog.test.ts`，不是整个套件；
+修改前未指定 opt-in，外部 `ORCH_B12_REAL_CATALOG=1` 时该 child 被启用，missing command 导致非零，与期待 exit=0 冲突。
+现显式 `ORCH_B12_REAL_CATALOG: '0'`，环境仍为 `childEnv()` 副本；保留后面显式 opt-in=1 的失败对照；
+检查名与注释改为“目录入口（ENTRY）”，不再写成整套套件在不可达环境通过。
+
+**边界 B 独立验证（ambient opt-in）**：以 child env 副本运行整个 entry-failure 套件，
+外部设 `ORCH_B12_REAL_CATALOG=1`、`ORCH_B12_OPENCODE_COMMAND` 指向明确不存在的绝对路径、
+`APPDATA` 指向本轮空目录、`PATH` 仅保留 Node 与 Windows 系统目录：
+
+- 修复后整个套件 **38 passed / 0 failed / exit=0**（修复前可复现 35/2、exit=1）。
+- 同环境下显式 opt-in=1 的入口对照仍非零：直接运行目录入口得 `FAIL (assertions=1) exit=1`；
+  opt-in=0 同环境得 `NOT_RUN … exit=0`。
+- 未启动真实 Agent（command 明确不存在，discovery 直接失败）。
+
+#### 常规验证（本轮实跑）
+
+`npm run typecheck` PASS。
+`node tests/b12-entry-failure-semantics.test.ts` **38/0、exit=0**；
+`node tests/b12-version-probe-bounded.test.ts` **35/0、exit=0**；
+`node tests/b12-control-evidence-association.test.ts` **32/0、exit=0**；
+`node tests/real-agent-isolation.test.ts` 守卫 **5 个 opt-in、0 违规、exit=0**；
+`git diff --check` clean、exit=0。
+未跑 full suite，未调用真实 Agent/模型，未读凭据，未安装依赖，未改本机 Agent 配置。
+
+#### 本轮残留
+
+b12 owned 临时目录 **0**、b12 report 文件 **0**、opencode CLI 进程 **0**、临时 probe 目录 **0**。
+边界 A 注入遗留的 `b12vp-I1TS52` 由 probe 自身按记录的路径清理，未按枚举删除。
+历史 `w44-INgj3j` 不作本轮所有权或退出证据，也未删除；PID 列表仅用于残留观察。
+
+#### 尚未验证事项
+
+本机 DSH 版本与实际 headless 协议、每任务模型选择、会话恢复与隔离、cancel/deadline 与 contained 进程停止、
+终态事件与退出码失败传播一致性，均未验证；本轮未实现这些能力。
+B1.2 标 **READY FOR CODEX INDEPENDENT REVIEW**；B1 整体 NOT SEALED，PARALLEL_WRITE=CLOSED，B2–B5 未授权。
+
+
+### 8.16 B1.2c 独立收口 PASS 与上传说明
+
+日期：2026-10-12。仅复核 §8.14 剩余的清理 P1 与 opt-in P2，结论 **PASS**。
+B1 整体仍 NOT SEALED、W5 SEALED WITH P2、PARALLEL_WRITE=CLOSED、B2–B5 未授权。
+未把测试收口升级为所有 Agent/模型可调用、免费额度或 DSH 产品适配的证明。
+
+范围与源码：相对审核快照 645e5b536de1b0499d0d50d251710c0b7412a42e，
+仅两个测试与两份既有文档变化；src/**、native/**、helper、association/model-catalog 套件、
+scripts/test-timed.mjs 均保持上一快照。version 旧吞错清理/旧汇总/旧退出码块确实删除，
+只保留一处 tmpDirs 清理、一处最终汇总与 finalizeExitCode。entry 的 NOT_RUN child 显式 opt-in=0，
+保留 opt-in=1 失败对照，措辞已区分实际目录 ENTRY 与整个 suite。
+
+**独立边界 A**：未修改源码，在隔离 Node 中拦截真实 version 套件主流程创建的 b12vp 目录
+首次 rmSync，仅匹配本轮直接位于 tmpdir 的 owned 路径，排除 failchild 路径，子进程不加载拦截器。
+三个 owned 根目录第一次删除均抛 INDEPENDENT_FIRST_REMOVAL_FAILED；实际检查 35/0，
+cleanup ledger 保留三个原始失败；真实 status=1、signal=null、error=null。
+probe 根据自身记录、核验路径边界后重试清理三个目录，remaining 3→0，exitCode 仍为 1。
+原始失败未被后续成功清理抹去，且最终检查汇总只出现一次。不是只调用注入 helper 的证明。
+
+**独立边界 B**：child env 副本设 ambient opt-in=1、明确不存在的绝对 command、
+本轮空 APPDATA、仅 Node/Windows 系统 PATH，实际运行整个 entry-failure suite：
+38/0、status=0、signal=null、error=null。同环境直接运行目录 ENTRY，
+opt-in=1 为 FAIL/assertions=1、status=1；opt-in=0 为 NOT_RUN、status=0；signal/error 均 null。
+未启动真实 Agent，未原地修改父环境变量。
+
+**本轮独立常规验证**：typecheck PASS；entry 38/0；version 35/0；association 32/0；
+real-agent-isolation 守卫 5 opt-in/0 违规；git diff --check PASS，实际 exit 均 0。
+model-catalog 68/0、ownership 60/0 为上一轮独立结果，本轮未重跑；真实目录结果为历史证据，
+本轮未重复。未跑 full suite、真实 Agent/模型任务、DSH/ClawChat 集成；未读凭据、装依赖或改本机配置。
+
+本轮 b12 临时目录/report 无残留，受控 Node、launcher、fixture 与 OpenCode CLI 未发现残留。
+只读列表中的 OpenCode 桌面应用属于用户运行的 foreign 进程，未清理、不作为本轮 owned 对象。
+历史 w44-INgj3j 未触碰；PID 残留观察不提升为原始 handle 死亡证明。
+
+**上传说明**：沿用用户既有上传授权，四文件 PASS 增量快照分支 codex/b12c-review-pass，
+父提交 645e5b536de1b0499d0d50d251710c0b7412a42e。仅两个测试与两份文档，
+Codex 本轮只更新文档、未修改测试实现。隔离 Git index 生成提交；不 checkout/合并 main，
+不改变共享索引、不创建 PR；不上传凭据、机器配置、临时 probe 或报告文件。
+
+本次审核范围无未关闭 P0/P1/P2，P3 无新增。B1.2c closure PASS；B1 整体不封板、不开放并行写。
