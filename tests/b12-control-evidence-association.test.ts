@@ -52,6 +52,8 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 
 import { judgeStageEvidence, snapshotControlDir } from './helpers/b12-control-evidence.ts';
 
@@ -70,6 +72,35 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 let passed = 0;
 let failed = 0;
 const failures: string[] = [];
+/**
+ * B1.2b P1-2: cleanup failures are a SEPARATE ledger from assertion failures, and
+ * BOTH decide the final exit code — the pattern `tests/model-catalog.test.ts` already
+ * proved. This suite used to swallow a removal error and still exit 0.
+ */
+const cleanupFailures: string[] = [];
+function recordCleanupFailure(detail: string): void {
+  cleanupFailures.push(detail);
+}
+function finalizeExitCode(): number {
+  return failed === 0 && cleanupFailures.length === 0 ? 0 : 1;
+}
+/**
+ * Remove ONE owned directory that THIS run created. A throw AND a surviving directory
+ * are both cleanup failures; only paths this suite recorded are ever passed here.
+ */
+function removeOwnedDir(dir: string, opts?: { injectRemovalFailure?: boolean }): void {
+  if (opts?.injectRemovalFailure === true) {
+    recordCleanupFailure(`owned dir removal failed for ${dir}: injected`);
+    return;
+  }
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  } catch (e) {
+    recordCleanupFailure(`owned dir removal threw for ${dir}: ${(e as Error).message}`);
+    return;
+  }
+  if (existsSync(dir)) recordCleanupFailure(`owned dir ${dir} still present after removal`);
+}
 function check(name: string, cond: boolean, detail = ''): void {
   if (cond) {
     passed++;
@@ -190,6 +221,23 @@ function verdicts(stdout: string): Array<{ verdict: string; name: string }> {
     });
 }
 
+// ===========================================================================
+// B1.2b P1-2 injection child: drive the SAME ledger in an isolated process and exit
+// with its REAL code, so the parent can assert the child's actual status.
+// ===========================================================================
+if (process.env.B12CE_FAIL_CHILD !== undefined) {
+  const mode = process.env.B12CE_FAIL_CHILD;
+  const root = process.env.B12CE_FAIL_ROOT ?? join(tmpdir(), `b12ce-failchild-${process.pid}`);
+  mkdirSync(root, { recursive: true });
+  if (mode === 'rm') {
+    removeOwnedDir(root, { injectRemovalFailure: true });
+  } else {
+    recordCleanupFailure(`unknown B12CE_FAIL_CHILD mode "${mode}"`);
+  }
+  const code = finalizeExitCode();
+  writeFileSync(join(root, 'report.json'), JSON.stringify({ cleanupFailures, exit: code }));
+  process.exit(code);
+}
 // ---------------------------------------------------------------------------
 section('P2: the shared per-stage rule, exercised directly');
 
@@ -354,10 +402,45 @@ section('the entry decides with the SHARED rule, not a private copy');
 }
 
 // ---------------------------------------------------------------------------
+section('B1.2b P1-2: a cleanup failure alone decides the exit code (real child)');
+
+{
+  const testFile = fileURLToPath(import.meta.url);
+  const childRoot = join(tmpdir(), `b12ce-failchild-${randomUUID().slice(0, 8)}`);
+  const res = spawnSync(process.execPath, [testFile], {
+    cwd: REPO,
+    env: { ...process.env, B12CE_FAIL_CHILD: 'rm', B12CE_FAIL_ROOT: childRoot },
+    encoding: 'utf8',
+    timeout: 90_000,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  check('cleanup-failure child: exits NON-ZERO', res.status !== 0 && res.status !== null,
+    `status=${String(res.status)} signal=${String(res.signal)} error=${res.error ? String((res.error as Error).message) : 'none'}`);
+  check('cleanup-failure child: was not killed by a signal', res.signal === null, `signal=${String(res.signal)}`);
+  let report: { cleanupFailures?: string[]; exit?: number } | null = null;
+  try {
+    report = JSON.parse(readFileSync(join(childRoot, 'report.json'), 'utf8')) as { cleanupFailures?: string[]; exit?: number };
+  } catch { /* unreadable */ }
+  check('cleanup-failure child: the shared ledger recorded the failure',
+    report !== null && (report.cleanupFailures?.length ?? 0) >= 1, JSON.stringify(report));
+  check('cleanup-failure child: the ledger and the real exit agree',
+    report !== null && report.exit === res.status, `report.exit=${String(report?.exit)} status=${String(res.status)}`);
+  check('cleanup-failure child: the reported root is a path this run named',
+    childRoot.startsWith(join(tmpdir(), 'b12ce-failchild-')), childRoot);
+  removeOwnedDir(childRoot);
+  check('cleanup-failure child: only the named owned root was cleaned', !existsSync(childRoot));
+}
+// ---------------------------------------------------------------------------
+// B1.2b P1-2: owned cleanup. Every recorded path is removed, and a removal failure
+// reaches the SAME ledger as an assertion failure.
+// ---------------------------------------------------------------------------
 for (const d of tmpDirs) {
-  try { rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* best effort */ }
+  removeOwnedDir(d);
 }
 
 process.stdout.write(`\n${passed} passed, ${failed} failed\n`);
 if (failures.length) process.stdout.write(`failing:\n  ${failures.map((f) => `- ${f}`).join('\n  ')}\n`);
-process.exitCode = failed === 0 ? 0 : 1;
+if (cleanupFailures.length) {
+  process.stdout.write(`cleanup failures (must fail the test):\n  ${cleanupFailures.map((f) => `- ${f}`).join('\n  ')}\n`);
+}
+process.exitCode = finalizeExitCode();

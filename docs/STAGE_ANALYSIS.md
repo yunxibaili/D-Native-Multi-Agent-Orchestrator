@@ -1,6 +1,6 @@
 # 后端阶段分析
 
-更新日期：2026-10-12
+更新日期：2026-10-12（B1.2b hermetic 测试与清理退出收口）
 性质：需求与源码差距分析、建议顺序；不是自动启动开发的指令，也不改变已封板状态。
 
 ## 1. 当前所在阶段
@@ -87,7 +87,7 @@ B2–B5 仍为 PLANNED / NOT AUTHORIZED，不得因本文自行开工。
 | 阶段 | 最小目标 | 依赖与退出条件 |
 |---|---|---|
 | B0 执行证据收口 | COMPLETE：W5 SEALED WITH P2；观测/清理 P0/P1 与冗余断言 P2 已关闭 | 兼容性和证据时效限制保留；PARALLEL_WRITE=CLOSED |
-| B1 可用能力与用户规则 | 复用 registry/adapter 表，明确 Agent/Model/Skill/MCP 事实和用户约束 | **B1.1 最小只读诊断切片 PASS**；B1.2a 原发现关闭，新增测试 P1 导致 BLOCKED；其余未实现 |
+| B1 可用能力与用户规则 | 复用 registry/adapter 表，明确 Agent/Model/Skill/MCP 事实和用户约束 | **B1.1 最小只读诊断切片 PASS**；B1.2b 独立复核 BLOCKED：真实 Agent 隔离 P1 与弱 PID P2 已关闭，清理 P1 未关闭，另有 opt-in 继承 P2；其余未实现 |
 | B2 费用与候选约束 | 入口/账户归属、免费依据、有效期、共享额度和预算 | 每次分配/接力均校验；未知不伪造；全部不可用安全停止 |
 | B3 LAYA 能力选择 | 联合选择 Agent/Model 与 Skill/MCP，提供必要角色能力事实 | 只选合格候选，复用原生执行，实际能力可核对 |
 | B4 异构任务闭环 | 候选内容生成 → LAYA 选择 → 调研/实现/测试/审核 | 同 Agent 多模型独立会话；工作区隔离和材料交接有实证 |
@@ -164,7 +164,23 @@ Agent Orchestrator 可参考执行/工作区协作，RouteLLM 可参考评估方
 
 ## 6. 本轮检查与限制
 
-### 6.1 B1.2a 本轮（2026-10-12）检查与限制
+### 6.1 B1.2b 实现方报告（2026-10-12；独立结论见 §6.4）
+
+`npm run typecheck` PASS。
+`node tests/b12-entry-failure-semantics.test.ts` **37/0、exit=0**；
+`node tests/b12-version-probe-bounded.test.ts` **35/0、exit=0**；
+`node tests/b12-control-evidence-association.test.ts` **32/0、exit=0**；
+`node tests/model-catalog.test.ts` **68/0、exit=0**；
+`node tests/real-agent-isolation.test.ts` 守卫 **5 个 opt-in、0 违规、exit=0**；
+`node tests/real-agent-ownership.test.ts` **60/0、exit=0**；`git diff --check` clean、exit=0。
+OpenCode 完全不可达（command 指向不存在绝对路径、`APPDATA` 空目录、`PATH` 只含 node 与系统目录）时，
+三个 hermetic 套件加 model-catalog、ownership 守卫均 exit=0。
+负控：`finalizeExitCode()` 临时忽略 cleanup 失败时，三个套件分别 **36/1、34/1、31/1**、真实 exit=1；
+负控副本已删除，工作树无残留。
+b12* 临时目录 **0**、b12ef report 文件 **0**、opencode CLI 进程 **0**；
+历史目录 `w44-INgj3j`（12:43，早于本轮）保留，其中 4 个 launcher/root pid 均已退出。
+未跑 full suite、未启用真实 Agent opt-in、未调用真实模型、未读凭据、未安装依赖、未改本机 Agent 配置。
+### 6.2 B1.2a 本轮（2026-10-12）检查与限制
 
 typecheck PASS；model-catalog **68/0**；contract **246/0（2 skipped）**；ownership 守卫 **5 个 opt-in、0 违规**；
 real-agent-ownership **60/0**；三个新增 hermetic suite 分别 **26/0、29/0、26/0**，均 exit=0；
@@ -174,7 +190,7 @@ B1.2 未启用 NOT_RUN、exit=0；显式启用真实目录查询 **PASS、exit=0
 本轮 owned root/observer/CLI 进程残留 0；temp 下另有本轮之前历史遗留空目录 1 个（对应 pid 均已退出）。
 未跑 full suite、未调用真实模型任务、未读凭据、未改本机配置；未重复实现方 help/端口采样。
 
-### 6.2 上一轮（B1.2）检查与限制
+### 6.3 上一轮（B1.2）检查与限制
 
 上一轮（B1.2）OpenCode 实跑：`npm run typecheck` PASS；`tests/model-catalog.test.ts` **68/0**；
 `tests/real-agent-isolation.test.ts` ownership 守卫 PASSED（5 个 opt-in，0 违规）；
@@ -230,7 +246,7 @@ P2 逐次关联 control 证据：新增唯一判定函数 `tests/helpers/b12-con
 详见 [项目基线 §8.11](PROJECT_BASELINE.md#811-b12a-两个-p1-与一个-p2-收口实现方实跑待独立复核)。
 listed≠connected≠callable≠free 仍冻结；B1 整体 NOT SEALED，PARALLEL_WRITE=CLOSED，B2–B5 未授权。
 
-### 6.3 B1.2a 当前独立审核结论
+### 6.4 B1.2a 当前独立审核结论
 
 原两个 P1 与一个 P2 关闭；typecheck、model-catalog、contract（246/0、2 skipped）、
 bounded-version（29/0）、control association（26/0）、ownership（60/0）、guard 和 diff check 均通过。
@@ -242,3 +258,36 @@ PID-only 退出断言为非阻断 P2，本轮采用 Job validated terminated/空
 作者 7 PASS 真实目录查询未在本轮重跑；未跑 full suite、模型推理或 DSH/ClawChat 接入。
 此报告对应 OpenCode 专项收口，DSH 作为开发工具与 DSH 已接入产品是不同事实。
 审核快照分支 codex/b12a-review-blocked；main 和共享索引保持原状，详见基线 §8.12。
+
+**B1.2b 实现方收口报告（2026-10-12；独立结论 BLOCKED，见 §6.4 与基线 §8.14）**：以下为实现方结果，不能据此认证清理 P1 已关闭。
+P1-1 默认测试 hermetic：`b12-entry-failure-semantics` 每个 child 都显式获得本套件自写的 controlled fixture
+（`--version` 与 `models` 均成功），不存在省略 controlled command 的 case，不会 fallback 到真实 Agent；
+NOT_ENABLED case 显式关闭 opt-in；所有 child env 用副本。新增反证 case：OpenCode command 指向不存在绝对路径、
+`APPDATA` 空目录、`PATH` 只含 node 与系统目录时，套件仍 37/0、exit=0。
+P1-2 cleanup 失败进入退出码：三个新套件统一沿用 `model-catalog.test.ts` 已验证 ledger，
+检查失败与 owned 删除失败共同决定退出码；各新增最小独立 child 回归，断言真实 status 非零并分别检查 signal/error。
+P2 删除弱 PID 死亡断言：`pidAlive`/resident 存活观测/轮询全部移除，死亡证据只用本轮已有的
+生产验证 Job `terminated` 与 `activeProcessesFinal=0` 记录，不新建 observer 或第二套死亡证明。
+负控：把 `finalizeExitCode()` 临时改为忽略 cleanup 失败，三个套件分别 36/1、34/1、31/1、真实 exit=1，
+证明回归有效；负控副本已删除，工作树无残留。
+详见 [项目基线 §8.13](PROJECT_BASELINE.md#813-b12b-hermetic-测试与清理退出收口实现方实跑待独立复核)。
+B1.2 标 READY FOR CODEX INDEPENDENT REVIEW；B1 整体 NOT SEALED，PARALLEL_WRITE=CLOSED，B2–B5 未授权。
+
+
+### 6.4 B1.2b Codex 独立复核与上传（2026-10-12）
+
+**BLOCKED**：真实 Agent 隔离 P1 与弱 PID 证据 P2 已关闭；清理 P1 未关闭。
+version 套件 :452 保留旧 rmSync/catch best effort，随后才执行新 ledger 清理；
+独立注入三个 owned 目录首次删除失败、后续成功，仍 35/0、真实 exit=0，失败未保留。
+另有 P2：entry-failure :461 的 unreachable child 继承 opt-in；外部 opt-in=1 时独立实跑 35/2、exit=1。
+前者删除旧重复 finalizer 即可；后者显式关闭该 NOT_RUN child 的 opt-in，并修正文案证据范围。
+
+本轮独立验证：typecheck；entry 37/0；version 35/0；association 32/0；model-catalog 68/0；
+isolation 5 opt-in/0 违规；ownership 60/0；diff check，常规全部 exit=0。
+两个边界 probe 与常规结果分开记录；实现方负控/历史真实目录不算本轮重复验证。
+本轮 owned b12 目录、report 及受控进程残留未发现；历史 foreign root 不删除、不按旧 PID 认证死亡。
+
+仅更新现有两份文档，上传三个测试加两份文档的五文件 BLOCKED 增量，
+分支 codex/b12b-review-blocked，父快照 5d43b19；main 和共享索引保持不变，不创建 PR。
+详见项目基线 §8.14。B1 NOT SEALED、PARALLEL_WRITE=CLOSED、B2–B5 未授权不变。
+未跑 full suite、真实 Agent/模型任务或 DSH/ClawChat 集成；未改生产实现。

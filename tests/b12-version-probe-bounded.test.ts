@@ -24,12 +24,20 @@
  *   1. the fixture really was alive and really made the probe wait;
  *   2. the IMPLEMENTATION'S OWN deadline fired (no external watchdog, no test-side
  *      race, no injected cancel) — the elapsed time is bounded by the probe's
- *      deadline, and the fixture is still running when the deadline fires;
+ *      deadline;
  *   3. a REAL cancel and a REAL stop confirmation occurred on the ORIGINAL
- *      ManagedProcess (the launcher's own control record says so);
+ *      ManagedProcess: the launcher's own control record says it terminated the Job
+ *      on our request and then POSITIVELY observed `ActiveProcesses == 0`;
  *   4. probe.ok === false, and the partial version output did NOT become the version;
  *   5. the test itself ended bounded;
  *   6. this round's owned resources were cleaned up.
+ *
+ * B1.2b P2: the accepted proof that the process tree stopped is that PRODUCTION-
+ * VALIDATED Job record — `terminated` with `treeStopped=1` and
+ * `activeProcessesFinal=0`. There is deliberately NO fresh-PID liveness probe here:
+ * `process.kill(pid, 0)` cannot distinguish "the process I started exited" from
+ * "some unrelated process now holds that pid", and it maps most errors to "dead",
+ * so it is not a death fact in either direction.
  *
  * ============================================================================
  * THE WATCHDOG IS A LAST-RESORT BACKSTOP ONLY
@@ -49,9 +57,11 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 
 const REPO = process.cwd();
 
@@ -65,6 +75,35 @@ const ownDir = (): string => {
 let passed = 0;
 let failed = 0;
 const failures: string[] = [];
+/**
+ * B1.2b P1-2: cleanup failures are a SEPARATE ledger from assertion failures, and
+ * BOTH decide the final exit code — the pattern `tests/model-catalog.test.ts` already
+ * proved. This suite used to swallow a removal error and still exit 0.
+ */
+const cleanupFailures: string[] = [];
+function recordCleanupFailure(detail: string): void {
+  cleanupFailures.push(detail);
+}
+function finalizeExitCode(): number {
+  return failed === 0 && cleanupFailures.length === 0 ? 0 : 1;
+}
+/**
+ * Remove ONE owned directory that THIS run created. A throw AND a surviving directory
+ * are both cleanup failures; only paths this suite recorded are ever passed here.
+ */
+function removeOwnedDir(dir: string, opts?: { injectRemovalFailure?: boolean }): void {
+  if (opts?.injectRemovalFailure === true) {
+    recordCleanupFailure(`owned dir removal failed for ${dir}: injected`);
+    return;
+  }
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  } catch (e) {
+    recordCleanupFailure(`owned dir removal threw for ${dir}: ${(e as Error).message}`);
+    return;
+  }
+  if (existsSync(dir)) recordCleanupFailure(`owned dir ${dir} still present after removal`);
+}
 function check(name: string, cond: boolean, detail = ''): void {
   if (cond) {
     passed++;
@@ -102,16 +141,26 @@ function writeResidentVersionFixture(dir: string): { cmd: string; cjs: string; p
   return { cmd, cjs, pidFile: join(dir, 'resident.pid') };
 }
 
-/** Is the pid still running? EPERM means it exists but belongs to another user. */
-function pidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
 
+// ===========================================================================
+// B1.2b P1-2 injection child: drive the SAME ledger in an isolated process and exit
+// with its REAL code, so the parent can assert the child's actual status.
+// ===========================================================================
+if (process.env.B12VP_FAIL_CHILD !== undefined) {
+  const mode = process.env.B12VP_FAIL_CHILD;
+  const root = process.env.B12VP_FAIL_ROOT ?? join(tmpdir(), `b12vp-failchild-${process.pid}`);
+  mkdirSync(root, { recursive: true });
+  if (mode === 'rm') {
+    // The owned root is deliberately left for the parent; its removal is injected as
+    // a failure through the SAME helper the real cleanup uses.
+    removeOwnedDir(root, { injectRemovalFailure: true });
+  } else {
+    recordCleanupFailure(`unknown B12VP_FAIL_CHILD mode "${mode}"`);
+  }
+  const code = finalizeExitCode();
+  writeFileSync(join(root, 'report.json'), JSON.stringify({ cleanupFailures, exit: code }));
+  process.exit(code);
+}
 // ---------------------------------------------------------------------------
 section('P1-2: a REAL resident version process is bounded and really stopped');
 
@@ -154,14 +203,15 @@ section('P1-2: a REAL resident version process is bounded and really stopped');
     '  out.recordCount = after.length;',
     '  out.statuses = [];',
     '  out.treeStoppedFacts = [];',
+    '  out.activeFinal = [];',
     '  for (const n of after) {',
     '    const v = ctl.readControlRecord(path.join(owned.controlDir, n));',
-    '    if (v.ok) { out.statuses.push(v.record.launcherStatus); out.treeStoppedFacts.push(ctl.treeStopConfirmedFrom(v.record)); }',
+    '    if (v.ok) { out.statuses.push(v.record.launcherStatus); out.treeStoppedFacts.push(ctl.treeStopConfirmedFrom(v.record)); out.activeFinal.push(v.record.activeProcessesFinal); }',
     '    else out.statuses.push("<invalid:" + v.reason + ">");',
     '  }',
     '  // The fixture pid, read from the file the fixture itself wrote.',
     '  try { out.residentPid = Number(fs.readFileSync(process.env.B12VP_PIDFILE, "utf8").trim()); } catch { out.residentPid = 0; }',
-    '  out.residentAliveAtReport = out.residentPid > 0 ? (() => { try { process.kill(out.residentPid, 0); return true; } catch { return false; } })() : false;',
+
     '} catch (e) {',
     '  out.threw = String((e as Error).message);',
     '} finally {',
@@ -191,7 +241,7 @@ section('P1-2: a REAL resident version process is bounded and really stopped');
     const o = JSON.parse(jsonLine.slice('B12VP_JSON '.length)) as {
       elapsedMs?: number; probeOk?: boolean; probeVersion?: string | null; probeDetail?: string;
       recordCount?: number; statuses?: string[]; treeStoppedFacts?: boolean[];
-      residentPid?: number; residentAliveAtReport?: boolean; cleanupFailures?: Array<{ resource: string; error: string }>;
+      residentPid?: number; activeFinal?: Array<number | null>; cleanupFailures?: Array<{ resource: string; error: string }>;
       threw?: string; launcherOk?: boolean;
     };
 
@@ -221,17 +271,23 @@ section('P1-2: a REAL resident version process is bounded and really stopped');
     check('the launcher record proves a cooperative TERMINATED stop (we asked, it confirmed)',
       (o.statuses ?? []).includes('terminated'), `statuses=${JSON.stringify(o.statuses)}`);
 
-    // 4/5. the process is really gone and the test ended bounded.
-    const residentPid = o.residentPid ?? 0;
-    let residentGone = false;
-    if (residentPid > 0) {
-      for (let i = 0; i < 100; i++) {
-        if (!pidAlive(residentPid)) { residentGone = true; break; }
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
-      }
-    }
-    check('the resident fixture process is really gone after the probe returned', residentGone,
-      `pid=${residentPid} alive=${pidAlive(residentPid)}`);
+    /*
+     * B1.2b P2: the death of the resident fixture is NOT asserted with a fresh-PID
+     * probe. `process.kill(pid, 0)` answers "is some process with this pid alive",
+     * which is not the same question as "the process I started exited": a recycled
+     * pid reads as alive, and every error other than EPERM reads as dead, so the
+     * check can be wrong in BOTH directions.
+     *
+     * The evidence this round actually accepts is the one the production path already
+     * produced and validated: the sealed launcher's OWN control record says it
+     * terminated the Job on our request and then POSITIVELY observed
+     * `ActiveProcesses == 0`. That is a held-handle-grade fact about the Job, not a
+     * pid lookup, and it is asserted above. No observer or second death proof is
+     * introduced for this.
+     */
+    check('the Job reported itself EMPTY after the cooperative stop (the accepted death evidence)',
+      (o.treeStoppedFacts ?? []).some((x) => x === true) && (o.activeFinal ?? []).every((v) => v === 0),
+      `facts=${JSON.stringify(o.treeStoppedFacts)} activeProcessesFinal=${JSON.stringify(o.activeFinal)}`);
     check('the whole run ended bounded (no watchdog kill)', elapsed < 90_000, `elapsed=${elapsed}ms`);
 
     // 6. this round's owned resources were cleaned up.
@@ -400,3 +456,47 @@ for (const d of tmpDirs) {
 process.stdout.write(`\n${passed} passed, ${failed} failed\n`);
 if (failures.length) process.stdout.write(`failing:\n  ${failures.map((f) => `- ${f}`).join('\n  ')}\n`);
 process.exitCode = failed === 0 ? 0 : 1;
+
+// ---------------------------------------------------------------------------
+section('B1.2b P1-2: a cleanup failure alone decides the exit code (real child)');
+
+{
+  const testFile = fileURLToPath(import.meta.url);
+  const childRoot = join(tmpdir(), `b12vp-failchild-${randomUUID().slice(0, 8)}`);
+  const res = spawnSync(process.execPath, [testFile], {
+    cwd: REPO,
+    env: { ...process.env, B12VP_FAIL_CHILD: 'rm', B12VP_FAIL_ROOT: childRoot },
+    encoding: 'utf8',
+    timeout: 90_000,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  check('cleanup-failure child: exits NON-ZERO', res.status !== 0 && res.status !== null,
+    `status=${String(res.status)} signal=${String(res.signal)} error=${res.error ? String((res.error as Error).message) : 'none'}`);
+  check('cleanup-failure child: was not killed by a signal', res.signal === null, `signal=${String(res.signal)}`);
+  let report: { cleanupFailures?: string[]; exit?: number } | null = null;
+  try {
+    report = JSON.parse(readFileSync(join(childRoot, 'report.json'), 'utf8')) as { cleanupFailures?: string[]; exit?: number };
+  } catch { /* unreadable */ }
+  check('cleanup-failure child: the shared ledger recorded the failure',
+    report !== null && (report.cleanupFailures?.length ?? 0) >= 1, JSON.stringify(report));
+  check('cleanup-failure child: the ledger and the real exit agree',
+    report !== null && report.exit === res.status, `report.exit=${String(report?.exit)} status=${String(res.status)}`);
+  check('cleanup-failure child: the reported root is a path this run named',
+    childRoot.startsWith(join(tmpdir(), 'b12vp-failchild-')), childRoot);
+  removeOwnedDir(childRoot);
+  check('cleanup-failure child: only the named owned root was cleaned', !existsSync(childRoot));
+}
+// ---------------------------------------------------------------------------
+// B1.2b P1-2: owned cleanup. Every recorded path is removed, and a removal failure
+// reaches the SAME ledger as an assertion failure.
+// ---------------------------------------------------------------------------
+for (const d of tmpDirs) {
+  removeOwnedDir(d);
+}
+
+process.stdout.write(`\n${passed} passed, ${failed} failed\n`);
+if (failures.length) process.stdout.write(`failing:\n  ${failures.map((f) => `- ${f}`).join('\n  ')}\n`);
+if (cleanupFailures.length) {
+  process.stdout.write(`cleanup failures (must fail the test):\n  ${cleanupFailures.map((f) => `- ${f}`).join('\n  ')}\n`);
+}
+process.exitCode = finalizeExitCode();
