@@ -180,6 +180,16 @@ function agentCandidates(agentId: string): string[] {
       // It has no CLI surface (argv is swallowed), so discovery is just this.
       return ['D:\\Cline\\code-sidecar.exe'];
     }
+    case 'dsh': {
+      // DeepSeek Harness installs as the npm package `@deepseek-ai/dsh`; its entry
+      // point is a Node script (`lib/bin.js`), so the runnable form is the npm
+      // `.cmd` shim, which `launcherFor` runs through cmd.exe. The bare `.js` is
+      // deliberately NOT a candidate: the launcher refuses `.js`.
+      const out: string[] = [];
+      if (roaming) out.push(join(roaming, 'npm', 'dsh.cmd'));
+      out.push(join(home, 'AppData', 'Roaming', 'npm', 'dsh.cmd'));
+      return out;
+    }
     default:
       // Unknown agents: nothing special. Extending agent support is exactly a
       // new entry here plus a factory in adapters/index.ts.

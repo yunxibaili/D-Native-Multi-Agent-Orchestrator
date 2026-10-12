@@ -1,6 +1,6 @@
 # 项目基线
 
-更新日期：2026-10-12（B1.2c 清理 finalizer 与 opt-in 显式化收口更新）
+更新日期：2026-10-12（B1.3 DSH 独立审核 BLOCKED，见 §9.7）
 范围：当前代码事实、已有封板状态和执行边界。未来需求不自动转为实现事实。
 
 ## 文档入口与优先关系
@@ -984,3 +984,119 @@ Codex 本轮只更新文档、未修改测试实现。隔离 Git index 生成提
 不改变共享索引、不创建 PR；不上传凭据、机器配置、临时 probe 或报告文件。
 
 本次审核范围无未关闭 P0/P1/P2，P3 无新增。B1.2c closure PASS；B1 整体不封板、不开放并行写。
+
+## 9. DSH 基础接入与两层任务分配复用映射（实现方实跑，待独立复核）
+
+日期：2026-10-12。B1.2c closure 独立 PASS 不变；B1 整体 NOT SEALED；W5 SEALED WITH P2；
+PARALLEL_WRITE=CLOSED；B2–B5 未授权。本轮把用户确认的两层任务分配写入需求/阶段文档，
+并完成 DSH 最小 headless 接入切片；不实现完整 B3/B4。
+
+### 9.1 交接状态
+
+工作树含 DSH 接入（`src/adapters/dsh.ts` 及 `adapters/index.ts` / `runtime/discover.ts` 的注册）
+与 B1.2c 收口改动。DSH 写入已停止（本轮开始时 >30 分钟无写入），本轮在其基础上完成最小切片与验证，
+**未重新生成第二份 adapter，未同时修改相同文件**。
+
+### 9.2 本机协议（已核实，非猜测）
+
+- 安装 `@deepseek-ai/dsh@0.1.5-rc.2`；launcher 解析为 **`cmd-wrapper`**（`%APPDATA%\npm\dsh.CMD`），
+  contained `--version` 探测返回 `0.1.5-rc.2`。
+- 一次性入口 `dsh --profile headless "<task>"`（`dsh-headless` bundle，无 Host/HTTP/浏览器层）。
+- 由**安装包** `lib/index.js` / `lib/startup.js` / README 核实：任务为**位置参数**并按空格连接；
+  **stdout 为最终回答**；**stderr 为 `dsh: reasoning:` 下的推理**，失败为 `dsh: <code>: <message>`
+  （直接驱动失败为 `dsh: <message>`）；退出码 `reason.kind === 'completed' ? 0 : 1`；
+  native `session-<uuid>` **不打印**；本版本**无 `--json`**、**无逐请求模型参数**（模型取自 `agentDefaultModel`）。
+- 未据上游 dev 文档硬写本机不存在的参数。
+
+### 9.3 已实现能力（最小切片）与如实限制
+
+新建一次 headless 执行、`cwd`、与真实协议一致的输出映射（stdout→最终回答；stderr→推理/错误诊断）、
+正常/非零/启动失败、cancel/deadline、**启动前拒绝**不支持选项
+（`model`/`role`/`sandbox`/`threadId`/`extraArgs`/`review`/前导 `-` 的任务）。
+capabilities 如实：`resume`/`review`/`modelSelection`/`roleSelection`/`sandbox`/`extraArgs`/
+`skills`/`steering`/`worktree`/`fork`/`stdinPrompt` 均为 **false**；`workspaceModes: ['shared']`（隔离未验证，fail-closed）。
+无 native sessionId → `threadId` 保持 `null`；无 usage/cost → 不伪造。
+
+**协议适配的关键点**：`AgentSession` 对 stderr 直接记为诊断、对无法解析的 stdout 记为 `unparsed`，
+不会调用 adapter 的 `mapEvent`。因此 DSH 纯文本 stdout 必须由**传输层交付为已解码 `data`**
+（会话对 `frame.data` 优先于 JSON 解析 `frame.text`）才能进入 `mapEvent`。为此在既有
+`CliJsonlTransport` 上新增**可选** `plainTextLines`（默认关，JSONL agent 不受影响），
+保留原始 `text`、不发明 JSON、**未新增 transport**。
+
+### 9.4 两层分配复用映射（用户能力 → 已有模块 → 实际缺口 → 后续阶段）
+
+| 用户能力 | 已有模块 | 实际缺口 | 后续阶段 |
+|---|---|---|---|
+| 功能 A：目标→工作流拆分 | `planner.ts` / `planner-wiring.ts` | 角色→候选任务的接口/输入材料/交付物契约 | B3/B4 |
+| 功能 A：每任务选 Agent×Model | `decision/initial-assignment.ts`（`explicitPair`）、`assignment.ts` | 项目/角色/任务选择层级与 pause | B1/B3 |
+| 功能 A：每任务独立会话 | `SessionRegistry`、`WorkerIdentity`、`workbench-sessions.ts` | 无（已具备） | — |
+| 功能 A：依赖顺序 | `scheduler.ts`、`task.ts` | 无（已具备） | — |
+| 功能 A：Skill/MCP 任务级选择 | Skill intent（`planner`/`workbench-plan`） | **MCP 全缺**；Skill 无目录/授权/实际调用核对 | B1/B3 |
+| 功能 B：协作组成员 Agent×Model×范围 | `fanout.ts`（`FanoutMemberSpec`/`validateFanoutMembers`） | 仅有 `scope`；缺职责/文件范围/交付物/验收/成员依赖 | B3/B4 |
+| 功能 B：分组证据 | `fanout.ts`（`FanoutProvenance`） | 无“集成责任”字段 | B4 |
+| 功能 B：受控汇总 | `fanout.ts`（`projectFanoutAggregation`，ALL-terminal） | 无集成/汇总/验收判定；**不把 all-terminal 当验收通过** | B4 |
+| 功能 B：写并行 | `ResourceClaim`/`Workspace`；topology 拒绝 WRITE member | `PARALLEL_WRITE=CLOSED` | 独立裁定 |
+| DSH 接入 | `adapters/dsh.ts` + `CliJsonlTransport` + `ManagedProcess` | 逐请求模型/会话恢复/隔离未验证 | B1/B3 |
+
+约束核对：既有 fan-out 已用**父容器任务 + 独立 child task**，同一个 `taskId` 不会被复制成多个同时执行的
+Worker；本轮**未**新建 TeamStore / WorkerManager / 第二套 DAG 或任务状态机。
+
+### 9.5 实跑证据与残留（实现方）
+
+`npm run typecheck` PASS；`node tests/dsh-adapter.test.ts` **41/0、exit=0**（受控 fixture 经
+`Orchestrator → AgentSession → CliJsonlTransport → contained ManagedProcess`，含成功/非零/启动失败/cancel/deadline）；
+受影响的 contract **248/0（2 skipped）**、unit **92/0**、orchestration **968/0**、workbuddy **137/0**、
+cline **88/0**、containment-production **233/0**、execution-lifecycle **136/0**、ownership 守卫 **5 opt-in/0 违规**；
+`git diff --check` clean。DSH 本机 `--version` 为**受控无推理探测**；未调用真实模型、未读凭据、未改本机配置。
+本轮 owned 临时目录/observer/CLI 进程残留 **0**；`%TEMP%` 下的 `dsh-*` 目录为 DSH 自身运行时产物
+（`acl-skill`/`subprocess`/`spill`/`workspace-changes`，时间早于本轮），非本切片 owned 资源，未删除。
+
+### 9.6 边界与未验证
+
+DSH 基础接入 ≠ 逐模型选择 ≠ B1 完成。两层分配（功能 A/B）为正式后端需求，但**执行闭环仍按 B3/B4 授权推进**。
+`listed ≠ connected ≠ callable ≠ free`；未验证任何模型实际可调用、账户额度、免费资格、角色适配或真实推理兼容性；
+未跑 full suite、未调用真实模型任务、未开放并行写、未进入前端或群聊平台。
+本轮标 **READY FOR CODEX INDEPENDENT REVIEW**。
+
+### 9.7 B1.3 Codex 独立审核 BLOCKED 与上传说明
+
+日期：2026-10-12。§9.1–§9.6 为实现方报告；本节为独立结论，**BLOCKED**。
+B1.2c closure PASS 不变；B1 整体 NOT SEALED、W5 SEALED WITH P2、PARALLEL_WRITE=CLOSED、B2–B5 未授权。
+两层任务分配需求已落档，但不是两层执行闭环已实现的证据。
+
+**P1：多行最终回答被破坏。** `ManagedProcess.emitCompleteLines` 去掉行结束符并跳过空行，
+`CliJsonlTransport.plainTextLines` 只把已拆行的文本交付为 data；DSH `mapEvent` 随后直接 `noteText(text)`。
+因此纯文本绕过 JSON 解析并不等于内容保真。本轮独立受控 fixture 经实际
+`Orchestrator → AgentSession → CliJsonlTransport → contained ManagedProcess` 输出
+`const a = 1;\n\nconst b = 2;\n`，实际 result.output 为 `const a = 1;const b = 2;`，
+state=succeeded、treeStopConfirmed=true。损失包含内部空行，不能只在 adapter 为每个已保留行补换行。
+现有 41 项用单行答案检查 includes，未发现此问题。必须修复并增加真实链路多行/空行保真断言后再审核；
+Codex 本轮不修改生产实现或测试，不建议另建 transport/执行器，也不改变默认 JSONL 行为。
+
+**P2：stderr 分支测试与真实调用链不一致。** `AgentSession.handleFrame` 在 stderr 分支直接记诊断并 return，
+不会调用 DSH adapter 的 stderr `mapEvent`。独立 fixture 发出 reasoning 标题和正文，实际 progressCount=0，
+diagnostics 为两条 stderr 诊断；直接调用 mapEvent 的单元断言不能证明真实 reasoning/progress/native-signal 映射。
+非零 exit 仍由 terminalPolicy 判失败，此发现不表示错误退出被认证成功。应按既有会话契约修正文档/测试声明，
+删除无效分支或用最小明确的 opt-in 接线并验证；不为此全局放开其他 adapter 的 stderr 路由。
+
+**协议与复用调查**：独立读取安装包确认 `@deepseek-ai/dsh@0.1.5-rc.2`，headless startup 仅位置参数任务，
+最终 stdout 写 `outcome.text + "\n"`，退出按 completed 判 0/1。当前版本没有逐请求模型/JSON/session 输出能力。
+本轮 GitHub MCP 实际成功读取 deepseek-ai/deepseek-harness 的 headless README，固定上游提交
+d743267388641bc76f17c45ce8b4c231aed1d32c；上游存在与本机不同的协议参数，不将其反推为本机能力。
+继续复用现有 adapter、ManagedProcess、transport、Session 和 fan-out；未新增依赖或第二套 authority。
+
+**本轮独立实跑**：typecheck PASS；dsh-adapter 41/0；contract 248/0（2 skipped）；unit 92/0；
+containment-production 233/0；execution-lifecycle 136/0；real-agent-isolation 5 opt-in/0 违规；
+`git diff --check` PASS，实际退出均为 0。上述多行 probe 单独报告，不被这些 PASS 覆盖。
+runtime.run 生产调用边仍为 1。实现方 orchestration/workbuddy/cline 数量与真实 DSH version probe 未在本轮重复。
+未跑 full suite、真实模型推理或真实 DSH 任务，未读取凭据、装依赖或改本机 Agent 配置。
+
+**P3：历史 flake 观察。** 实现方报告一次 containment-production 间歇失败，本轮一次独立运行未复现。
+没有具体失败 assertion，不能证明与 DSH 无关，也不据此认证 containment 失效；保留后续观察项。
+本轮多行 probe 的唯一 owned 根目录已清理，cleanupFailures=[]、rootRemains=false；不清理历史/foreign 资源。
+
+**上传说明**：按用户既有授权上传九文件 BLOCKED 增量快照，分支 `codex/b13-review-blocked`，
+父提交 dde5c7c0acc50d9d2e16aea131a02282085a376e。范围为三个既有文档、test-timed、adapter 工厂、
+discovery、CLI transport、新 DSH adapter 与新 DSH 测试；Codex 仅更新两份现有审核文档。
+使用隔离 Git index，不 checkout/合并 main、不改变共享索引、不创建 PR；不上传临时 probe、机器配置或凭据。
+该上传是可复核快照，不代表 DSH 接入或 B1 封板通过。

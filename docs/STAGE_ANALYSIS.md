@@ -1,6 +1,6 @@
 # 后端阶段分析
 
-更新日期：2026-10-12（B1.2c 清理 finalizer 与 opt-in 显式化收口）
+更新日期：2026-10-12（B1.3 DSH 独立审核 BLOCKED）
 性质：需求与源码差距分析、建议顺序；不是自动启动开发的指令，也不改变已封板状态。
 
 ## 1. 当前所在阶段
@@ -51,6 +51,19 @@ Codex 2026-10-12 独立真实查询同样得到 1.18.35 / ok / 42 models / 3 PAS
 B1.2a（2026-10-12）原两个 P1 与一个 P2 已独立确认关闭；新增默认测试隔离与清理失败传播两个 P1，
 当前仍 BLOCKED，另有一个非阻断 PID 退出证据 P2。详见 [项目基线 §8.12](PROJECT_BASELINE.md#812-b12a-独立复核原发现关闭新增-p1-导致-blocked)。
 
+B1.2b/B1.2c（2026-10-12）为上述测试收口；B1.2c closure 已独立 PASS（快照 dde5c7c0）。
+
+B1.3（2026-10-12）：把用户确认的**两层任务分配**写入需求（功能 A 跨角色独立任务分配、功能 B 同目标模型协作组），
+并完成 **DSH 最小 headless 接入切片**。DSH 本机 `0.1.5-rc.2`，launcher 为 `cmd-wrapper`；
+已核实位置参数任务、stdout 最终回答、stderr `dsh: reasoning:`/错误、退出码 `completed?0:1`、
+**无 `--json`、无逐请求模型、native sessionId 不打印**。适配纯文本需让传输层交付已解码 `data`
+（既有 `CliJsonlTransport` 新增默认关闭的 `plainTextLines`，未新增 transport）。
+未验证逐请求选模型、会话恢复、隔离；DSH 基础接入 ≠ 逐模型选择 ≠ B1 完成。
+详见 [项目基线 §9](PROJECT_BASELINE.md#9-dsh-基础接入与两层任务分配复用映射实现方实跑待独立复核)。
+
+**B1.3 独立结论 BLOCKED**：真实 contained fixture 的多行答案被压成一行，详见 §6.8。
+两层需求落档有效，但 DSH 纯文本交付尚未保真，不能按实现方 PASS 封板。
+
 ## 2. 需求与实现差距
 
 | 需求 | 可复用实现 | 仍需确认或补齐 |
@@ -67,6 +80,8 @@ B1.2a（2026-10-12）原两个 P1 与一个 P2 已独立确认关闭；新增默
 | REQ-10 节省消耗 | 原生工具、上下文、memory/evidence | 去重、按需上下文、真实对照数据 |
 | REQ-11 状态与交付 | Attempt/Result/Review/Observation | 对外稳定事实契约；前端设计以后确认 |
 | REQ-12 范围 | Native CLI 架构 | 保持 Agent-native；不自动引入网关/直接 API |
+| REQ-13 功能 A：跨角色独立任务分配 | planner、assignment、scheduler、SessionRegistry、WorkerIdentity | 每任务的 Skill/MCP 任务级选择与输入/交付契约；项目/角色/任务选择层级 |
+| REQ-14 功能 B：同目标模型协作组 | `fanout.ts`（容器任务 + 独立 child task、`FanoutMemberSpec`、READ-only 门、ALL-terminal 投影） | 每成员职责/文件范围/交付物/验收/依赖与集成责任；受控汇总与验收判定（不得把 all-terminal 当验收） |
 
 这些是当前检查范围内的差距，非完整代码审计结论。
 例如“接口能选模型”与“完整用户选择产品已验收”必须分开。
@@ -87,7 +102,7 @@ B2–B5 仍为 PLANNED / NOT AUTHORIZED，不得因本文自行开工。
 | 阶段 | 最小目标 | 依赖与退出条件 |
 |---|---|---|
 | B0 执行证据收口 | COMPLETE：W5 SEALED WITH P2；观测/清理 P0/P1 与冗余断言 P2 已关闭 | 兼容性和证据时效限制保留；PARALLEL_WRITE=CLOSED |
-| B1 可用能力与用户规则 | 复用 registry/adapter 表，明确 Agent/Model/Skill/MCP 事实和用户约束 | **B1.1 最小只读诊断切片 PASS；B1.2c 剩余清理 P1 与 opt-in P2 独立收口 PASS**；B1 整体 NOT SEALED，其余未实现 |
+| B1 可用能力与用户规则 | 复用 registry/adapter 表，明确 Agent/Model/Skill/MCP 事实和用户约束 | **B1.1 最小只读诊断切片 PASS；B1.2c 剩余清理 P1 与 opt-in P2 独立收口 PASS**；**B1.3 完成 DSH 最小 headless 接入 + 两层分配需求落档**；B1 整体 NOT SEALED，其余（选择层级、Skill/MCP、逐请求模型）未实现 |
 | B2 费用与候选约束 | 入口/账户归属、免费依据、有效期、共享额度和预算 | 每次分配/接力均校验；未知不伪造；全部不可用安全停止 |
 | B3 LAYA 能力选择 | 联合选择 Agent/Model 与 Skill/MCP，提供必要角色能力事实 | 只选合格候选，复用原生执行，实际能力可核对 |
 | B4 异构任务闭环 | 候选内容生成 → LAYA 选择 → 调研/实现/测试/审核 | 同 Agent 多模型独立会话；工作区隔离和材料交接有实证 |
@@ -327,3 +342,42 @@ diff check，均 exit=0。上一轮 model-catalog/ownership 与历史真实目�
 上传仅含两个测试、两份现有文档；Codex 没有修复实现或新建报告 MD。详见项目基线 §8.16。
 B1 整体 NOT SEALED、PARALLEL_WRITE=CLOSED、B2–B5 未授权保持；DSH 产品适配未实现。
 本轮未跑 full suite、真实 Agent/模型任务或 DSH/ClawChat 集成。
+
+### 6.7 B1.3 DSH 接入 + 两层分配落档（实现方实跑，2026-10-12）
+
+`npm run typecheck` PASS；`node tests/dsh-adapter.test.ts` **41/0、exit=0**（受控 fixture 经
+`Orchestrator → AgentSession → CliJsonlTransport → contained ManagedProcess`，覆盖成功/非零/启动失败/cancel/deadline）；
+受影响的 contract **248/0（2 skipped）**、unit **92/0**、orchestration **968/0**、workbuddy **137/0**、
+cline **88/0**、containment-production **233/0**、execution-lifecycle **136/0**、ownership 守卫 **5 opt-in/0 违规**；
+`git diff --check` clean。
+DSH 本机 `--version` 为受控无推理探测（`cmd-wrapper`、0.1.5-rc.2）；未调用真实模型、未读凭据、未改本机配置。
+本轮 owned 临时目录/observer/CLI 进程残留 **0**；`%TEMP%` 下 `dsh-*` 为 DSH 自身运行时产物（早于本轮），未删除。
+两层分配为正式需求（功能 A/B），执行闭环仍按 B3/B4 授权推进；DSH 基础接入 ≠ 逐模型选择 ≠ B1 完成。
+DSH 适配关键点：会话对 stderr 与不可解析 stdout 不走 `mapEvent`，故纯文本需由既有传输的
+可选 `plainTextLines`（默认关）交付已解码 `data`，未新增 transport、未发明 JSON。
+`containment-production` 在一次性批量运行中出现过 **1 次不可复现的间歇失败**（其后 16+ 次含组合运行均通过），
+与 DSH 切片无关（`plainTextLines` 默认关闭），按“不重复重试直到偶然成功”未强行复现。
+B1 整体 NOT SEALED、PARALLEL_WRITE=CLOSED、B2–B5 未授权。
+
+### 6.8 B1.3 Codex 独立审核 BLOCKED（2026-10-12）
+
+**P1**：DSH 最终 stdout 多行/空行丢失。独立 fixture 经实际 Orchestrator/Session/CLI transport/contained
+ManagedProcess 输出 `const a = 1;\n\nconst b = 2;\n`，实际 result.output=`const a = 1;const b = 2;`，
+仍为 succeeded、treeStopConfirmed=true。进程层已去掉换行并过滤空行，adapter 直接拼接，
+所以只给现存行补换行不足以恢复原文。需最小修改保真路径并补真实链路回归；不新建执行器/transport，
+不改变默认 JSONL 行为。Codex 本轮未修复实现或测试。
+
+**P2**：Session 对 stderr 提前诊断并 return，DSH adapter 的 stderr mapEvent 实际不可达。
+独立 reasoning fixture 为 progressCount=0、两条 stderr diagnostics；直接 mapEvent 单元测试不证明真实接线。
+按既有诊断契约修正文档/测试声明或做最小明确接线；非零退出失败判定仍正常。
+
+本轮独立：typecheck；dsh 41/0；contract 248/0（2 skipped）；unit 92/0；containment-production 233/0；
+execution-lifecycle 136/0；isolation 5 opt-in/0 违规；diff check，实际 exit 均 0。
+多行 probe 的 owned 根目录清理无失败且不再存在。实现方其他套件/真实 version 为历史报告，未重跑。
+GitHub MCP 本轮成功读取上游固定提交 d743267 的 headless README；安装版本 0.1.5-rc.2 的协议以本机包为准，
+不使用上游新参数猜测本机能力。
+
+**P3**：实现方 containment 间歇失败本轮未复现；无具体 assertion，暂无法归因，保留观察。
+未跑 full suite、真实模型/DSH 推理任务、读取凭据或改本机配置。
+九文件快照上传 `codex/b13-review-blocked`，父 dde5c7c0；main/共享索引保持原状，不创建 PR。
+详见基线 §9.7。B1 NOT SEALED、PARALLEL_WRITE=CLOSED、B2–B5 未授权；未进入前端。

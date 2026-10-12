@@ -226,3 +226,37 @@ LAYA 可以选择同 Agent 的其他模型、其他 Agent 的相同模型或其�
   不表示项目已经接入 OpenRouter。
 
 实现差距和阶段边界见 [阶段分析](STAGE_ANALYSIS.md)，当前事实见 [项目基线](PROJECT_BASELINE.md)。
+
+## 16. 两层任务分配（功能 A / 功能 B）
+
+本节把用户确认的两层任务分配正式记为后端需求；**执行闭环仍按 B3/B4 后续授权推进**。
+两层都复用既有 Planner / Assignment / Scheduler / SessionRegistry / WorkerIdentity / Fan-out
+与 ResourceClaim / Workspace，**不新增拥有调度权的“主管 Agent”**，也不新增 TeamStore、WorkerManager、
+第二套 DAG 或第二套任务状态机。
+
+### 16.1 功能 A：跨角色独立任务分配（REQ-13）
+
+用户提交目标后，LAYA 拆分工作流，为每项任务选择：**具体 Agent、Agent 内的具体模型、独立执行会话、
+必要 Skill 与 MCP 工具**，以及输入材料、验收标准与交付物。
+角色按任务变化，不固定四个 Agent；依赖关系决定顺序，具备条件才并行。
+LAYA 作决策，既有 Planner / Assignment / Scheduler 落实执行。
+每项任务必须落实到**具体 Agent × Model 与独立任务/会话**。
+
+### 16.2 功能 B：同一目标的模型协作组（REQ-14）
+
+某项任务可由 LAYA 分配给 **2–3 个模型**共同完成；成员可来自**同一 Agent 的不同模型/会话**，
+也可来自**不同 Agent**。默认分工共建，每个成员仍有**独立子任务**：具体 Agent × Model、独立会话、
+职责、依赖、文件范围、交付物与验收条件。LAYA 指定分工与**集成责任**；成员数量按需要决定。
+**不默认全员重复实现、不广播全部上下文；不把多数票或“所有成员结束”直接当成验收通过。**
+
+### 16.3 边界（与既有契约一致）
+
+- 每个成员必须落实到具体 Agent × Model 与独立任务/会话；**同一个 taskId 不得被复制成多个同时执行的
+  Worker**（既有 fan-out 用“父容器任务 + 独立 child task”满足该约束）。
+- 免费优先、用户自动/偏好/固定选择继续生效（见 REQ-03 / REQ-08）。
+- Skill / MCP 由 LAYA 作**任务级**选择，按需加载（见 REQ-06）。
+- **同任务协作组 ≠ 开放并行写**：`PARALLEL_WRITE=CLOSED`，写任务不得绕过既有准入并发执行；
+  分工计划可以表达未来并行意图，但当前执行仍须遵守顺序、隔离与集成约束；
+  **不得把 PARALLEL_READ 改名后用于写入**。
+- “前端”只是任务编排示例；本产品前端设计/实现尚未开始。
+- 不新增第二套 Runtime、Python 框架、群聊平台或 provider 网关。

@@ -19,6 +19,7 @@
 
 import { createClineAdapter } from './cline.ts';
 import { createCodexAdapter } from './codex.ts';
+import { createDshAdapter } from './dsh.ts';
 import { createOpenCodeAdapter } from './opencode.ts';
 import { createWorkBuddyAdapter } from './workbuddy.ts';
 import type { WorkBuddyId } from './workbuddy.ts';
@@ -50,6 +51,8 @@ const WORKBUDDY_FACTORIES: Record<WorkBuddyId, AdapterFactory> = {
 export const ADAPTER_FACTORIES: Readonly<Record<string, AdapterFactory>> = Object.freeze({
   opencode: createOpenCodeAdapter,
   codex: createCodexAdapter,
+  // DSH (DeepSeek Harness) headless one-shot surface (see adapters/dsh.ts).
+  dsh: createDshAdapter,
   // Cline has no CLI at all: its sidecar is reached over WebSocket, so it is
   // this table's first `app-server` transport (see adapters/cline.ts).
   cline: createClineAdapter,

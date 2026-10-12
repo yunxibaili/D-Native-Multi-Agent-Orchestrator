@@ -50,6 +50,9 @@ const SUITES = [
   // Drives a CONTROLLED resident fixture through the real contained path — no real
   // agent, no installed OpenCode dependency.
   'b12-version-probe-bounded',
+  // B1.3: the DSH (DeepSeek Harness) headless adapter. Hermetic — driven by a
+  // controlled fixture through the real Orchestrator/transport/contained process.
+  'dsh-adapter',
   'memory',
   'orchestration',
   'model-pool',

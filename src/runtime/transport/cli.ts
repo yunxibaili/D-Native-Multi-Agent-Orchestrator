@@ -28,6 +28,18 @@ export interface CliTransportOptions {
   stderrTailBytes?: number;
   /** Diagnostics are surfaced to the hub so the session can persist them. */
   hub?: EventHub<TransportFrame>;
+  /**
+   * The agent speaks PLAIN TEXT, not JSONL.
+   *
+   * When true, each stdout line is delivered as a DECODED payload
+   * (`data: { text }`) alongside the untouched `text`. `AgentSession` gives
+   * `frame.data` precedence over JSON-parsing `frame.text`, so this is what routes
+   * a plain-text line to the adapter's `mapEvent` instead of classifying it as an
+   * "unparsed" banner. It is NOT a claim that the output is JSON — the raw text is
+   * preserved and no parsing is invented. Off by default, so JSONL agents are
+   * unaffected.
+   */
+  plainTextLines?: boolean;
 }
 
 export class CliJsonlTransport implements Transport {
@@ -77,7 +89,15 @@ export class CliJsonlTransport implements Transport {
       env: this.opts.env,
       stdin: this.opts.stdin,
       stderrTailBytes: this.opts.stderrTailBytes,
-      onStdoutLine: (line) => this.publish({ channel: 'stdout', text: line }),
+      onStdoutLine: (line) =>
+        this.publish(
+          // `plainTextLines`: hand the session a decoded payload so a plain-text
+          // line reaches `mapEvent` rather than being treated as unparseable JSON.
+          // The raw `text` is preserved either way; nothing is parsed or faked.
+          this.opts.plainTextLines === true
+            ? { channel: 'stdout', text: line, data: { text: line } }
+            : { channel: 'stdout', text: line },
+        ),
       onStderrLine: (line) => this.publish({ channel: 'stderr', text: line }),
     });
     this.proc = proc;
