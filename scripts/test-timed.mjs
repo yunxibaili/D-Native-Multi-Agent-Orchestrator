@@ -59,6 +59,9 @@ const SUITES = [
   // B4.0: sequential heterogeneous workflow (research -> implementation -> test).
   // Hermetic — the real Workbench/Planner/Assignment/Scheduler chain with fake adapters.
   'b40-workflow',
+  // B4.0a: the PRODUCTION round CLI drives the workflow to completion (bounded loop,
+  // existing Verification via LAYA's `complete`, honest incomplete status). Hermetic.
+  'b40a-cli-workflow',
   'memory',
   'orchestration',
   'model-pool',

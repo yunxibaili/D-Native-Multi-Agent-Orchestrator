@@ -282,10 +282,23 @@ export type MutateOutcome =
  * Depth > 0 excludes the root: a root is never dispatched, so it is not a peer.
  */
 function hasParallelWorkBeside(store: TaskStore, selfTaskId: string): boolean {
-  const live: ReadonlySet<TaskStatus> = new Set<TaskStatus>(['planned', 'queued', 'running']);
-  return store
-    .all()
-    .some((t) => t.depth > 0 && t.taskId !== selfTaskId && live.has(t.status));
+  const all = store.all();
+  const known = new Map(all.map((t) => [t.taskId, t]));
+  return all.some((t) => {
+    if (t.depth <= 0 || t.taskId === selfTaskId) return false;
+    // A RUNNING task is a live writer: always parallel work.
+    if (t.status === 'running') return true;
+    // A `planned`/`queued` task is parallel work only if it could actually run NOW —
+    // i.e. its dependencies are satisfied. A task still waiting on an unmet dependency
+    // (a later step of a SEQUENTIAL workflow) is NOT competing for the workspace, so it
+    // must not be counted as a peer. Counting it is what refused a sequential write step
+    // in a shared (non-git) workspace. Readiness uses the SAME `unmetDependencies` the
+    // scheduler and `executeTask` use, so this cannot disagree with what would run.
+    if (t.status === 'planned' || t.status === 'queued') {
+      return unmetDependencies(t, known).length === 0;
+    }
+    return false;
+  });
 }
 
 export class Orchestrator {

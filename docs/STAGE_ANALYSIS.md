@@ -20,7 +20,8 @@ P0/P1 按实际影响处理；非阻断 P2 登记，不反复重审所有历史 
 | 顺序/切片 | 最小交付 | 明确不包含 |
 |---|---|---|
 | 已完成 B1.4a | 项目/任务 auto/fixed、动态后代固定锁、CLI/测试收口 | 不等于 B1 整体封板 |
-| B4.0 待收口 / 下一任务 B4.0a | 有界候选与 Workbench 显式推进已接线；补真实 CLI 的 Verification/顺序推进/未完成状态/最终 Review/Result，并修正非法计划残留 | 不新增工作流引擎，不把 exit=0 自动当业务验收，不开放并行写 |
+| B4.0 / B4.0a 已验证部分 | 有界候选、异构 DAG、CLI 顺序状态推进、实际上游材料交接、未完成状态与非 Git 顺序写接线 | LAYA complete 判断尚缺目标/验收条件/实际材料，不认证完整闭环 |
+| 下一建议 B4.0b | 现有决策请求接线验收材料；补非法计划根边界、有效 reviewer fixture 与默认测试报告隔离 | 不新建 verifier/工作流框架，不扩大工具/费用/恢复范围 |
 | 后续 B4.1 | 同目标 2–3 模型按职责共建、交付与集成；写任务先顺序，READ 协作沿已有 fan-out | 不把 READ fan-out 改名成 WRITE，不复制 taskId 并发执行 |
 | B3 小片 | Skill/MCP 只读目录、任务级选择、原生执行核对，按需上下文 | 不新增工具大脑或通用 MCP 网关 |
 | B2 小片 | 免费依据与未知事实、预算授权、共享额度约束 | 不根据模型名猜免费，不静默新增支出 |
@@ -28,13 +29,13 @@ P0/P1 按实际影响处理；非阻断 P2 登记，不反复重审所有历史 
 | 后续真实兼容性 | 支持选模型的实际 Agent/Model、会话隔离、最小用户授权任务 | fixture 不算真实模型证据 |
 | F | 用户确认前端需求后再设计与实现 | 本轮不进入前端 |
 
-**B4.0 独立审核 BLOCKED；下一建议范围仅 B4.0a 收口，具体以用户下发任务为授权。B4.1/B2/B3/B5 未授权。**
+**B4.0a 独立审核 BLOCKED；下一建议仅 B4.0b 收口，以用户下发任务为授权。B4.1/B2/B3/B5 未授权。**
 费用/工具能力未完成不妨碍 hermetic 工作流接线验证，但不能放宽真实运行准入。
 
 ## 3. B4.0 整合任务范围
 
-**状态：部分实现，CLI 闭环独立验证未通过，见 [项目基线 §5.4](PROJECT_BASELINE.md) 与 §8 证据。**
-以下为原始范围与下一片验收依据，不是完成声明。
+**状态：顺序状态推进已验证；验收材料接线未完成，独立结论见 [项目基线 §5.4](PROJECT_BASELINE.md) 与 §8。**
+以下为原始范围记录，不是封板声明。
 
 目标：让当前“按 shape 复制同类任务”迈向“职责不同、依赖真实、成果实际消费”的最小工作流。
 
@@ -64,23 +65,25 @@ P0/P1 按实际影响处理；非阻断 P2 登记，不反复重审所有历史 
 不跑 full suite，不调用真实模型，不改本机 Agent/API 配置。
 DSH 缺逐请求模型支持、Skill/MCP 未闭环与费用未知必须列明，不能伪造已支持来通过此片。
 
-### 3.1 下一建议任务 B4.0a：只补缺失的 CLI 闭环
+### 3.1 B4.0a 已验证与下一建议 B4.0b
 
-先读 round-cli 的单次 decision cycle、既有 complete/Verification、依赖准入、结果和 Human Gate，
-复用已有有界推进/停止模式；本地小范围接线修复无需重新调查或安装通用编排框架。
+有界循环、无进展停止、状态门、下游交接和非 Git 顺序写已通过定向验证，不重写。
+先读 runOneCycle、orchestrationDecisionRequest、completeTask、已有 handoff/Attempt 与 reviewer fixture。
+本地小范围接线修复无需重新调查或安装通用编排框架。
 
-1. 仅 workflow opt-in 有界推进：已有 Verification 正向接受后再调度下游，完成、失败、拒绝、待人确认或无进展时明确停止。
-   不能自动 complete 所有 exit=0，也不能无限调用 LAYA；旧非 opt-in 单轮语义保留。
-2. 计划成员尚未执行/验证不能被 report.executionIncomplete=false 掩盖；通过既有结果/Human Gate 表达原因。
-   最终独立 Review 看到实际各步 Attempt/RunResult，不能在只完成 research 时宣称整个 workflow 完成。
-3. 非法候选在创建根前用既有 validator/commit 约定校验；不建新事务层。测试实际调用 planWithCandidates，
-   比较失败前后 store，确认修正后同 ID 可重试；不要只测纯 validator。
-4. 补真实 CLI hermetic 成功 full/lean、上游失败/Verification 拒绝或缺失、无进展的回归；
-   fixture 输出不同材料标记，下游断言实际内容；不能由测试在 CLI 外手动 complete 来代替闭环。
-5. 非 Git 的顺序写准入限制须有明确结果；如果适配既有资源门，只依据真实依赖/存活执行事实，
-   保留对独立或仍存活并行工作的拒绝。不能一律关闭资源门或假称 PARALLEL_WRITE 已开放。
+1. 给 workflow 的现有 DecisionRequest 接入目标、待验证任务验收条件、同次执行有界输出/材料引用。
+   优先复用 handoff/brief 与既有证据来源，缺事实保持未知；不广播完整历史、不造第二套证据或验证 authority。
+   complete 仍由 LAYA 显式决定并通过既有 applyVerification；不能靠看见 to_verify 就盲目 complete。
+2. 用受控 provider 检查实际请求材料，再作接受/拒绝或 wait；缺材料不得 complete，下游不启动。
+   保留 full/lean 成功链、上游失败、fixed、无进展/硬上限，检查最终 Review 请求含每步实际材料。
+3. 补 candidate.taskId==spec.taskId、首 candidate.parentTaskId==null 写前拒绝，复用既有校验/commit 约定。
+   真实调用 planWithCandidates 比较拒绝前后 store，并验证修正后同 ID 可重试；无需事务框架。
+4. 修正新套件 reviewer fixture 的 frame.data.text 与必需 verdict 字段，断言 completed/pass 与真实 review Attempt；
+   另保留无效 verdict 为失败的对照，不能只断言 review 被调用。
+5. 默认 hermetic suite 隔离 ORCH_HOME/round-result 发布目录。复用已有 owned 环境/路径 seam；
+   不原地修改共享环境，不清理 foreign 目录；验证调用者报告目录未被覆盖。
 
-只运行 typecheck、b40-workflow 与受影响的现有定向回归及 diff check，不跑 full suite/真实模型。
+只运行 typecheck、b40a-cli-workflow、b40-workflow 与受影响的现有定向回归及 diff check，不跑 full suite/真实模型。
 更新现有基线/阶段分析并区分本轮、历史和未验证证据，不新增报告 MD；实现方仍不 commit/push。
 这是一片可独立验证的修复，不扩展角色平台、Skill/MCP、费用、恢复或功能 B。
 

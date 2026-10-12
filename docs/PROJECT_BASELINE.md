@@ -27,7 +27,8 @@ README 是导航。用户明确指令优先；发现源码、证据与基线不�
 | B1.3a | DSH 输出保真收口 PASS；其测试 P2 在 B1.4a 关闭 |
 | B1.4a | 独立 PASS：动态 fixed 约束、CLI 缺值、DSH setup 清理收口 |
 | B1 overall | NOT SEALED |
-| B4.0 | 独立审核 BLOCKED：候选计划与 Workbench 手动推进可用；CLI 顺序执行闭环未完成 |
+| B4.0 | 有界异构计划、依赖和材料交接已接线；原先 CLI 只跑一步的问题由 B4.0a 修正 |
+| B4.0a | 独立审核 BLOCKED：有界顺序推进已验证，但 LAYA complete 决策缺任务目标/验收条件/执行材料 |
 | B4.1 / B2 / B3 / B5 | PLANNED；本轮未授权启动实现 |
 | PARALLEL_WRITE | CLOSED |
 | 本产品前端 | 需求未确认；进入前端前提醒用户单独梳理 |
@@ -90,13 +91,18 @@ rootSelections 与 fixedLockFor 在现有 reassign 入口维护有效约束，�
 
 Planner/CandidateTask/commitPlan、TaskStore、Assignment、Scheduler 与依赖材料交接已经存在。
 B4.0 新增 opt-in `--workflow sequential`，full/lean 有界候选和 LAYA typed 计划选择已接线。
-受控 Workbench 链中，显式调用既有 Verification 后，下游才准入；独立 probe 确认上游实际输出
-经既有 handoff 进入 implementation brief，不只是标题。依赖失败阻止下游的测试通过。
-但生产 CLI 仍只运行一个 decision cycle：full 只执行 research，停在 `to_verify`，后两步仍 `planned`，
-却返回 exit=0、`ok=true`、`executionIncomplete=false`。不能把测试手动完成前置任务当作 CLI 自动闭环。
-非法候选被既有 validator 拒绝，但 `planWithCandidates` 已先创建根，留下部分状态；同 ID 修正重试失败。
-非 Git 工作区中 lean 的 implementation 还会被既有资源门拒绝（把依赖未满足的 planned test 算作并行工作）；
-这是当前适用性限制，不能为通过此片关闭资源保护。旧入口定向回归通过，不等于全面兼容性验收。
+B4.0a 补上 CLI 状态推进：`--workflow sequential` 现在运行**有界循环**（每轮一个 action：`continue` 派发就绪步骤，
+或既有 `complete` 经 `applyVerification` 接受 `to_verify` 步骤），下游只在**直接上游 `succeeded`**（既有
+Verification 明确接受）后才准入；循环在全部成功、终态失败、无进展、非 ok 轮或硬上限时停止，不无限调用 LAYA。
+成员未 `succeeded` 时 `report.ok=false`、`executionIncomplete=true`，并列出 pending 与停止原因；
+只跑 research 不再报告整个 workflow 完成。最终 Review 的请求确实包含各步实际输出与 Attempt。
+但循环发给 LAYA 的 next_action 请求只有状态：没有目标、验收条件、执行输出或材料引用。
+现有 completeTask 会把 LAYA 的 complete 直接交给 applyVerification(pass)；缺少判断材料时，
+不能把状态驱动的 fixture 自动 complete 提升成有依据的业务验收。独立 probe 要求先看到材料后接受，实际停在 research。
+`planWithCandidates` 对重复候选、悬空依赖、依赖环已做到写前拒绝和同 ID 重试；
+候选 ID 等于新根 ID、首候选 parent=null 仍在创建根后被 commitPlan 拒绝，留下根并阻止重试。
+顺序写准入适配：`hasParallelWorkBeside` 只把 RUNNING（存活写者）或依赖已满足的就绪任务算作并行工作，
+未就绪的下游不再误判；独立并行写与存活写者保护不变，资源门未关闭。
 功能 B（同目标 2–3 模型分工共建/集成）与完整角色计划尚未实现；READ fan-out 使用父容器与独立 child task，
 ALL-terminal 是聚合事实不是通过验收；PARALLEL_WRITE=CLOSED。
 
@@ -113,7 +119,8 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 ## 7. 真实缺口与后续边界
 
 1. DSH 缺逐请求选模型与恢复协议；要用 DSH 做多模型调配，必须先取得受支持的真实接口证据。
-2. B4.0 首先收口 CLI 有界顺序推进、Verification、未完成状态与最终 Review/Result；已有计划/材料交接可复用。
+2. B4.0a 已补有界顺序状态推进；须先给 LAYA complete 决策提供同任务验收条件与实际有界材料，
+   补原子计划边界及测试收口，才能认证 workflow 闭环。
    功能 B（同目标 2–3 模型分工共建与集成责任）、完整角色计划、prefer/角色默认仍缺，留后续切片。
 3. Skill/MCP 只有部分意图/原生支持，目录、授权、具体选择和实际调用核对未闭环。
 4. 动态免费资格、账户共享额度和全流程费用授权未验收；预算 units 不是 token/货币。
@@ -128,7 +135,44 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 
 ## 8. 最近独立证据与上传记录
 
-本轮 B4.0 独立审核（2026-10-13）：**BLOCKED**，不修改生产代码/测试。
+本轮 B4.0a 独立审核（2026-10-13）：**BLOCKED**。未修改生产代码或测试。
+独立实跑：typecheck PASS；b40a-cli-workflow 22/0、b40-workflow 31/0、resource-claim 192/0、
+orchestration 968/0、workbench 413/0、handoff-production-round 312/0、b14-selection 46/0、
+state-loop 169/0、planner 189/0、execution-lifecycle 136/0、contract 248/0（2 skipped）、unit 92/0；
+isolation 守卫 5 opt-in/0 违规；以上命令 exit=0。diff check PASS，生产 runtime.run 边=1，新增 authority=0。
+
+- 已关闭旧问题：状态驱动 full=3 次执行/6 个 cycle，lean=2 次执行；不同上游输出进入下游 brief。
+  无 complete 时 no-progress 停止且 incomplete；非法 complete 目标被拒绝，后两步不运行。
+  非 Git 顺序写成功；独立并行/存活写者保护的现有定向回归通过。
+- P1：截获全部 3 次待验证状态的真实 DecisionRequest，任务目标标记和 STEP_OUT 输出均不存在，
+  task/context 也未提供。要求有材料才 complete 的受控 provider 只能 wait；research 后 no-progress 停止。
+  最小修复是向现有决策请求接线同任务验收条件/有界实际材料，不新建验证框架。
+- P2：实际 planWithCandidates 的重复/悬空/环均拒绝且 store 不变；根 ID 冲突和 null parent 仍留下根，
+  有效同 ID 重试失败。这两项不能继续归为已关闭。
+- P2：新测试 reviewer frame 未按 fake adapter 契约提供 data.text，且 verdict 缺 reviewedAt/findings/recommendedAction；
+  原套件全绿时实际 unifiedReview=failed、reviewer-output-invalid。其断言仅检查审核调用次数，不证明合法 verdict。
+  仅在内存修正 fixture 后，独立 probe 得 completed/pass、review Attempt att_0004、审核请求含 3 步输出；生产审核路径可复用。
+- P2：新默认套件没有隔离 ORCH_HOME；runRoundCli 按生产默认发布 round-result.json，存在覆盖用户报告的副作用。
+  下一片复用 owned 子进程环境或既有路径 seam 隔离，不能把测试临时 cwd 当作报告目录隔离。
+
+probe 复用既有测试 seam，以内存导出/受控 fixture 运行，不修改工作树测试；命名 probe 目录均已清理。
+常规 suite 与 probe 证据分开；未跑 full suite、未调用真实模型、未读凭据、未改本机 Agent 配置。
+
+B4.0a 实现方报告（历史描述，不能覆盖上述独立结论）：`b40a-cli-workflow` **22/0**（经真实 `runRoundCli` +
+受控 provider/runtime）；`b40-workflow` 31/0、resource-claim 192/0、orchestration 968/0、workbench 413/0、
+handoff-production-round 312/0、state-loop 169/0、planner 189/0、assignment 235/0、execution-lifecycle 136/0、
+contract 248/0（2 skipped）、unit 92/0；isolation 守卫 5 opt-in/0 违规；typecheck PASS、`git diff --check` clean；
+`runtime.run` 生产调用边=1、新增 authority=0、owned 残留 0。
+- 成功链：CLI 有界循环驱动 full（research→implementation→test 三步各自运行，下游 brief 含**不同**上游
+  `STEP_OUT_n` 实际标记）；lean 两步；全成员 `succeeded`、`report.ok=true`、`executionIncomplete=false`、
+  Review 读真实 Attempt/RunResult。
+- 前置失败：上游失败后仅 research 运行，循环 `terminal-failure` 停止，`ok=false`/`executionIncomplete=true`。
+- 缺验证：provider 不发 `complete` 时 research 停 `to_verify`，`no-progress` 停止，下游不启动，pending 如实列出。
+- 非法候选：实现方声明写前校验；独立核验的剩余边界见上文。
+- 固定选择：整条 CLI workflow 用固定 pair，完成后 `ok=true`。
+上述为本轮 hermetic 证据；未跑 full suite、未调用真实模型、未读凭据、未改本机配置。
+
+上一轮 B4.0 独立审核（2026-10-13）：**BLOCKED**，不修改生产代码/测试。
 独立实跑 `b40-workflow` 31/0、planner 189/0、workbench 413/0、b14-selection 46/0、
 initial-assignment-decision 37/0、handoff-production-round 312/0、contract 248/0（2 skipped）、unit 92/0，
 isolation 守卫 5 opt-in/0 违规；typecheck PASS、diff check PASS，以上命令 exit=0。
@@ -162,5 +206,6 @@ DSH 64/0；isolation 5 opt-in/0 违规；diff check PASS，正常命令 exit 均
 W5 的 production admission、底层 stress、受控失败注入与真实 Agent 历史证据分层保持。
 不重新沿用已关闭历史 P1，不把旧 full suite 或 fixture 成绩写成本轮结果。
 上一轮 10 份技术文档整合快照为 0b24cf93ba3b13e952e5c5a13322bb07161c09fc，分支 codex/backend-docs-next-b40。
-本次审核快照以它为父，分支 codex/b40-review-blocked，包含实现方 B4.0 改动与 Codex 的两份文档纠偏；
-不合入 main，不宣布 B4.0 完成；上传后的准确 commit 见会话交付。
+B4.0 BLOCKED 审核快照为 baab39e92dc7e115d974b2ee904b14aa7931700d，分支 codex/b40-review-blocked。
+本次 B4.0a 审核快照以 baab39e 为父，分支 codex/b40a-review-blocked，保留实现和两份文档纠偏；
+不合入 main，不宣布 B4.0a 完成；上传后的准确 commit 见会话交付。

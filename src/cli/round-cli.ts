@@ -1183,7 +1183,7 @@ export async function runRoundCli(
     },
   };
 
-  const outcome = await runDecisionCycle({
+  const runOneCycle = (): Promise<Awaited<ReturnType<typeof runDecisionCycle>>> => runDecisionCycle({
     store: wb.store,
     scheduler,
     provider,
@@ -1194,6 +1194,39 @@ export async function runRoundCli(
       'action requires one.',
     capabilities: handoffCapabilities,
   });
+
+  let outcome: Awaited<ReturnType<typeof runDecisionCycle>> = await runOneCycle();
+  let workflowCycles = 1;
+  let workflowStop: string | null = null;
+  if (o.workflow === 'sequential') {
+    /*
+     * B4.0a: BOUNDED sequential progression. Each cycle applies ONE action — dispatch a
+     * ready step, or the EXISTING `complete` action (which goes through
+     * `applyVerification`) for a `to_verify` step. The CLI never auto-verifies: a
+     * downstream step runs only after LAYA's `complete` reaches the existing verification
+     * authority, so a Runtime exit 0 is not treated as acceptance. The loop stops on
+     * completion, terminal failure, NO state change, a non-ok cycle, or a hard cycle
+     * bound — LAYA is never called unbounded.
+     */
+    const memberIds = planned.children.map((c) => c.taskId);
+    const maxCycles = memberIds.length * 3 + 3;
+    const sig = (): string => memberIds.map((id) => wb.store.get(id)?.status ?? 'missing').join(',');
+    if (outcome.status !== 'ok') {
+      workflowStop = `cycle-${outcome.status}`;
+    } else {
+      for (;;) {
+        const members = memberIds.map((id) => wb.store.get(id));
+        if (members.length > 0 && members.every((m) => m?.status === 'succeeded')) { workflowStop = 'all-succeeded'; break; }
+        if (members.some((m) => m?.status === 'failed' || m?.status === 'cancelled')) { workflowStop = 'terminal-failure'; break; }
+        if (workflowCycles >= maxCycles) { workflowStop = 'cycle-limit'; break; }
+        const before = sig();
+        outcome = await runOneCycle();
+        workflowCycles++;
+        if (outcome.status !== 'ok') { workflowStop = `cycle-${outcome.status}`; break; }
+        if (sig() === before) { workflowStop = 'no-progress'; break; }
+      }
+    }
+  }
 
   // ---- R2-3: bounded SAME-TASK CONTINUATION, then ONE review of everything -----
   //
@@ -1670,7 +1703,18 @@ export async function runRoundCli(
   // settled and is reviewable.
   const finalFanout = (report.fanout ?? []) as ReadonlyArray<{ allSettled: boolean }>;
   const fanoutAllSettled = fanoutGroups.length === 0 || finalFanout.every((g) => g.allSettled);
-  const executionIncomplete = fanoutGroups.length > 0 && !fanoutAllSettled;
+  // B4.0a: a sequential workflow is complete only when EVERY member actually reached
+  // `succeeded` (i.e. the existing verification accepted it). A member still `planned`
+  // (never dispatched), `to_verify` (run but not verified) or missing makes the round
+  // INCOMPLETE — running only research must never report the whole workflow as done.
+  const workflowMemberIds: string[] = o.workflow === 'sequential' && planned !== undefined
+    ? (planned.children as ReadonlyArray<{ taskId: string }>).map((c) => c.taskId)
+    : [];
+  const workflowPending = workflowMemberIds
+    .map((id) => ({ taskId: id, status: wb.store.get(id)?.status ?? 'missing' }))
+    .filter((m) => m.status !== 'succeeded');
+  const workflowIncomplete = o.workflow === 'sequential' && workflowPending.length > 0;
+  const executionIncomplete = (fanoutGroups.length > 0 && !fanoutAllSettled) || workflowIncomplete;
 
   report.fanoutDrain = {
     iterations: fanoutDrain.iterations,
@@ -1679,6 +1723,14 @@ export async function runRoundCli(
     fixpoint: fanoutDrain.fixpoint,
     unresolvedAtStop: [...fanoutDrain.unresolvedAtStop],
   };
+  if (o.workflow === 'sequential') {
+    report.workflow = {
+      ...(report.workflow as Record<string, unknown>),
+      cycles: workflowCycles,
+      stop: workflowStop,
+      pending: workflowPending,
+    };
+  }
 
   // `report.ok` must not contradict the Human Gate. An incomplete execution set is not a failure
   // of anything that ran, but it is NOT a complete round, so it cannot be reported as ok. The

@@ -66,7 +66,7 @@ import { buildHandoff, buildTaskBrief, type TaskHandoff } from './workbench-hand
 // dependency on the report layer, and so the direction stays one-way (report <- workbench).
 import type { AttemptEvidenceInput } from './round-result.ts';
 import { commitPlan, replanSubtree } from './planner-wiring.ts';
-import { planTasks, type CandidateTask } from './planner.ts';
+import { planTasks, validateCandidateDag, type CandidateTask } from './planner.ts';
 import { planFromSpec, type WorkbenchTaskSpec, type PlanFromSpecResult } from './workbench-plan.ts';
 // TeamRun T3-a.1: the READ-only fan-out topology validation + grouping evidence. Pure value
 // helpers; the materialization below still goes through the SAME `commitPlan` write path.
@@ -498,6 +498,28 @@ unDecisionCycle can read a real TickResult. */
    * from `spec.taskId`).
    */
   planWithCandidates(spec: WorkbenchTaskSpec, candidates: readonly CandidateTask[], notes: readonly string[] = []): PlanOutcome {
+    // B4.0a: validate BEFORE creating the root. `createRoot` writes, and the previous order
+    // created the root first, so an illegal candidate set left a new root (and a same-id
+    // retry was then refused). `validateCandidateDag` is the EXISTING validator; the root is
+    // registered as a synthetic "existing" node purely so the parent check can see the parent
+    // that is about to be created. No transaction framework.
+    if (this.store.has(spec.taskId)) {
+      throw new Error(`workbench could not commit workflow plan: root "${spec.taskId}" already exists`);
+    }
+    for (const c of candidates) {
+      if (this.store.has(c.taskId)) {
+        throw new Error(`workbench could not commit workflow plan: task "${c.taskId}" already exists`);
+      }
+    }
+    const existing = new Map(this.store.all().map((t) => [t.taskId, { taskId: t.taskId, dependencies: t.dependencies } as const]));
+    existing.set(spec.taskId, { taskId: spec.taskId, dependencies: [] as string[] });
+    const validation = validateCandidateDag(candidates, existing);
+    if (!validation.ok) {
+      throw new Error(
+        `workbench could not commit workflow plan: the candidate DAG is invalid: ` +
+          validation.rejections.map((r) => `${r.code} (${r.detail})`).join('; '),
+      );
+    }
     const rootAgentId = this.rootAgentIdFor(spec);
     const created = this.orchestrator.createRoot({
       taskId: spec.taskId,
