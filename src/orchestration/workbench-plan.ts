@@ -25,6 +25,7 @@
  */
 
 import type { TaskType } from '../quota/types.ts';
+import type { SelectionSpec } from '../core/types.ts';
 import type { TaskClassification } from '../decision/routing.ts';
 import type { PlannerError } from './planner.ts';
 import { planTasks, type PlannerOutput } from './planner.ts';
@@ -74,6 +75,13 @@ export interface WorkbenchTaskSpec {
    * authorities: one is a decision, the other is a compatibility entry point.
    */
   readonly explicitPair?: AgentModelIntent;
+  /**
+   * B1.4: the TASK-level user selection. `auto` explicitly restores the existing
+   * LAYA decision (and overrides a project default); `fixed` pins the Agent × Model
+   * pair the user named. When absent, the project default (if any) applies, else
+   * `auto`. Resolved by `resolveSelection` and enforced through `explicitPair`.
+   */
+  readonly selection?: SelectionSpec;
   /**
    * Laya's SKILL INTENT — "this work needs these skills", as a request.
    *

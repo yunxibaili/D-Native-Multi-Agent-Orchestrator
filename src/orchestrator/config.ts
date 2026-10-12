@@ -8,6 +8,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { BadConfigError } from '../core/errors.ts';
 import { log } from '../core/log.ts';
+import type { SelectionSpec } from '../core/types.ts';
 
 export interface AgentConfig {
   /** Absolute path OR a bare name to look up on PATH. */
@@ -28,6 +29,12 @@ export interface OrchestratorConfig {
   agents: Record<string, AgentConfig>;
   /** Where transcripts are written. */
   storeDir?: string;
+  /**
+   * B1.4: the PROJECT's default Agent × Model selection. A task-level selection
+   * overrides it; when neither is set the existing LAYA/auto behaviour applies.
+   * A `fixed` pair is enforced by Assignment exactly like an explicit pair.
+   */
+  selection?: SelectionSpec;
 }
 
 export const DEFAULT_STORE_DIR = join(homedir(), '.native-agent-orchestrator');
@@ -73,10 +80,36 @@ function validate(raw: unknown, source: string): OrchestratorConfig {
     }
     agents[id] = value as AgentConfig;
   }
+  const selection = validateSelection(obj.selection, source);
   if (typeof obj.storeDir === 'string') {
-    return { agents, storeDir: obj.storeDir };
+    return { agents, storeDir: obj.storeDir, ...(selection === undefined ? {} : { selection }) };
   }
-  return { agents };
+  return { agents, ...(selection === undefined ? {} : { selection }) };
+}
+
+/**
+ * B1.4: validate the project's default selection. A `fixed` pair is ATOMIC — both a
+ * non-empty agentId and a non-empty modelId — and the model id is kept verbatim (no
+ * provider is prepended, nothing is trimmed into a different id). An unknown mode is
+ * refused rather than guessed.
+ */
+function validateSelection(raw: unknown, source: string): SelectionSpec | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new BadConfigError(`${source}: "selection" must be an object`);
+  }
+  const sel = raw as Record<string, unknown>;
+  if (sel.mode === 'auto') return { mode: 'auto' };
+  if (sel.mode === 'fixed') {
+    if (typeof sel.agentId !== 'string' || sel.agentId.trim() === '') {
+      throw new BadConfigError(`${source}: selection.agentId must be a non-empty string`);
+    }
+    if (typeof sel.modelId !== 'string' || sel.modelId.trim() === '') {
+      throw new BadConfigError(`${source}: selection.modelId must be a non-empty string (a fixed pair is atomic)`);
+    }
+    return { mode: 'fixed', agentId: sel.agentId, modelId: sel.modelId };
+  }
+  throw new BadConfigError(`${source}: selection.mode must be "auto" or "fixed", got ${JSON.stringify(sel.mode)}`);
 }
 
 /** Write a starter config. Never overwrites an existing one. */

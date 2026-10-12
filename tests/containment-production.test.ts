@@ -953,21 +953,37 @@ check('W3-7 the claim release is GATED on the W3.1 requirement + a confirmed sto
     'setInterval(()=>{},1000);\n',
   ].join('\n'));
   const p = spawnNode([rootScript], { cwd: dir });
-  await sleep(1200); // let the writer get going
-  const before = existsSync(marker) ? readFileSync(marker, 'utf8').length : 0;
+  // B1.4 P2: confirm the writer is genuinely PRODUCING bytes BEFORE the stop, bounded,
+  // rather than asserting that bytes appeared DURING the stop window. The old
+  // `atStop > before` raced a prompt cancellation (a correct early stop could leave the
+  // two reads equal) and false-failed. We now require observed growth before cancel and
+  // keep every post-stop assertion unchanged.
+  const sizeNow = (): number => (existsSync(marker) ? readFileSync(marker, 'utf8').length : 0);
+  let before = sizeNow();
+  let grew = false;
+  const growDeadline = Date.now() + 5000;
+  while (Date.now() < growDeadline) {
+    await sleep(50);
+    const s = sizeNow();
+    if (s > before) { grew = true; before = s; break; }
+  }
   check('W3-9 the descendant writer was writing before the stop', before > 0, `bytes=${before}`);
+  check('W3-9 and the writer had genuinely been active before it', grew, `bytes=${before}`);
   const confirmed = await p.cancel('W3-9 deadline');
   await p.exited;
   check('W3-9 the stop was CONFIRMED', confirmed === true, String(confirmed));
+  // The Job itself reported zero active processes: the tree is empty, not merely "the
+  // root is gone".
+  const facts = p.containment;
+  check('W3-9 the Job is empty (ActiveProcesses==0)', facts !== null && facts.activeProcessesFinal === 0,
+    `activeProcessesFinal=${String(facts?.activeProcessesFinal)}`);
   // ONLY NOW may anything be released, so the file must be quiescent from here on.
   await sleep(200);
-  const atStop = existsSync(marker) ? readFileSync(marker, 'utf8').length : 0;
+  const atStop = sizeNow();
   await sleep(700);
-  const after = existsSync(marker) ? readFileSync(marker, 'utf8').length : 0;
+  const after = sizeNow();
   check('W3-9 the writer produced NO bytes after the confirmed stop',
     after === atStop, `${atStop}->${after}`);
-  check('W3-9 and the writer had genuinely been active before it',
-    atStop > before, `${before}->${atStop}`);
 }
 
 {

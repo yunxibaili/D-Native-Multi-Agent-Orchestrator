@@ -92,6 +92,36 @@ export type TransportKind = 'cli-jsonl' | 'acp' | 'app-server';
 export type WorkspaceMode = 'isolated' | 'shared';
 
 /**
+ * B1.4: a user's Agent × Model SELECTION, at the PROJECT or TASK layer.
+ *
+ *  - `auto`   defer to the existing LAYA Agent × Model decision (unchanged).
+ *  - `fixed`  the user pinned an exact Agent Family and a FULL model id; scheduling
+ *             must honour it exactly and never substitute.
+ *
+ * Precedence is `resolveSelection` (task > project > auto). This is a plain value —
+ * no SelectionManager, no router, no policy engine. Enforcement reuses the existing
+ * `explicitPair` path in Assignment, so a fixed pair still runs through every
+ * capability / availability / quota / workspace / spawn-gate filter and may be
+ * REFUSED; it is never auto-substituted, and a fixed PAID model is not by itself
+ * an authorization to spend.
+ */
+export type SelectionSpec =
+  | { readonly mode: 'auto' }
+  | { readonly mode: 'fixed'; readonly agentId: string; readonly modelId: string };
+
+/** Resolve the effective selection: task overrides project, else auto. */
+export function resolveSelection(task?: SelectionSpec, project?: SelectionSpec): SelectionSpec {
+  return task ?? project ?? { mode: 'auto' };
+}
+
+/** The exact pair a FIXED selection names, or undefined for `auto`. */
+export function fixedPairOf(
+  selection: SelectionSpec,
+): { readonly agentId: string; readonly modelId: string } | undefined {
+  return selection.mode === 'fixed' ? { agentId: selection.agentId, modelId: selection.modelId } : undefined;
+}
+
+/**
  * Capabilities that are actually implemented and verified. A field may only be
  * `true` if the adapter honours the option end to end; otherwise the adapter
  * must reject the request in `validateRequest`.

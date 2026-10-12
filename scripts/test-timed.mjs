@@ -53,6 +53,9 @@ const SUITES = [
   // B1.3: the DSH (DeepSeek Harness) headless adapter. Hermetic — driven by a
   // controlled fixture through the real Orchestrator/transport/contained process.
   'dsh-adapter',
+  // B1.4: user Agent × Model selection (auto/fixed, project/task). Hermetic — a fake
+  // runtime records the RunRequests; the real workbench/assignment path runs.
+  'b14-selection',
   'memory',
   'orchestration',
   'model-pool',

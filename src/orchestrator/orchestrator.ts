@@ -36,6 +36,7 @@ import type {
   RunHandle,
   RunRequest,
   RunResult,
+  SelectionSpec,
   TransportKind,
 } from '../core/types.ts';
 import { AdapterRegistry } from '../runtime/registry.ts';
@@ -87,6 +88,12 @@ export class Orchestrator {
   readonly configSource: string | null;
 
   private readonly configs: Record<string, AgentConfig>;
+  /**
+   * B1.4: the PROJECT's default Agent × Model selection from `orchestrator.json`.
+   * `undefined` means "no project default" — the task-level selection or the
+   * existing auto behaviour applies. Read-only; never mutated at runtime.
+   */
+  private readonly selectionValue: SelectionSpec | undefined;
   private readonly sessionLimits: SessionLimits;
   /** Bounded: finished sessions are dropped, so this cannot grow forever. */
   private readonly active = new Map<string, AgentSession>();
@@ -101,6 +108,7 @@ export class Orchestrator {
     }
     this.configSource = source;
     this.configs = config.agents ?? {};
+    this.selectionValue = config.selection;
     this.sessionLimits = options.sessionLimits ?? {};
     this.store = new SessionStore(options.storeDir ?? config.storeDir);
     this.registry = new AdapterRegistry();
@@ -154,6 +162,15 @@ export class Orchestrator {
 
   configFor(agentId: string): AgentConfig {
     return this.configs[agentId] ?? {};
+  }
+
+  /**
+   * B1.4: the PROJECT default Agent × Model selection from config, or undefined.
+   * A caller (the round CLI) passes this to the Workbench so a task-level selection
+   * can override it and `auto` falls back to the existing LAYA decision.
+   */
+  projectSelection(): SelectionSpec | undefined {
+    return this.selectionValue;
   }
 
   /**

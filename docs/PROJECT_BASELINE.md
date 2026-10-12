@@ -1,6 +1,6 @@
 # 项目基线
 
-更新日期：2026-10-12（B1.3a 独立收口 PASS WITH P2，见 §9.9）
+更新日期：2026-10-12（B1.4 独立审核 BLOCKED：动态新增任务丢失 fixed 约束，见 §10.6）
 范围：当前代码事实、已有封板状态和执行边界。未来需求不自动转为实现事实。
 
 ## 文档入口与优先关系
@@ -1211,3 +1211,114 @@ fixture 写入、运行与等待均未被 finally 包住；末尾清理只在正
 父提交 4b89534e01e5bba3f1afdddce17ff7eb433e1e52。包含 spawn、CLI transport、DSH adapter、DSH 测试和两份现有文档。
 Codex 本轮仅更新两份文档，未修改实现或测试；使用隔离 Git index，不 checkout/合并 main、不改共享暂存区、不创建 PR。
 不上传临时注入器、probe、凭据或本机配置。两个 P2 保留，不扩大为 B1 封板或并行写授权。
+
+## 10. B1.4 用户 Agent × Model 选择最小闭环（实现方实跑，待独立复核）
+
+日期：2026-10-12。B1.3a 独立审核 PASS WITH P2 不变；B1 整体 NOT SEALED；W5 SEALED WITH P2；
+PARALLEL_WRITE=CLOSED；B2–B5 未授权。本轮实现**自动 / 固定**与**项目 / 任务**两层的用户
+Agent × Model 选择，并顺手关闭 B1.3a 的两个测试 P2。不重写选择器、不复制评分算法、不新增
+SelectionManager / ModelRouter / PolicyEngine / 第二套 registry/scheduler/DAG / 依赖。
+
+### 10.1 复用了什么、补了什么
+
+**复用（已完整可用，直接接线）**：`AgentModelIntent` + `validateAgentModelIntent`（原子 pair 校验）、
+`assignWorker` 的 `explicitPair` 强制（限制候选池、accept-or-refuse、**从不替换**）、
+`WorkbenchTaskSpec.explicitPair` / `TaskIntent`、`assignIdentity`（pair → Task 身份）、
+`buildRunRequest`（`task.modelId` → `RunRequest.model`）、`reassignTask`（单一 reassign 入口）、
+`resolveContainedStop` 等既有进程契约、`BadConfigError`。
+
+**新增（最小）**：
+- `core/types.ts`：`SelectionSpec = {mode:'auto'} | {mode:'fixed';agentId;modelId}` +
+  `resolveSelection`（task > project > auto）+ `fixedPairOf`（纯值，无 manager）。
+- `orchestrator/config.ts`：`OrchestratorConfig.selection` + 原子校验（partial/未知 mode 拒绝）；
+  `Orchestrator` 暴露 `projectSelection()`。
+- `workbench-plan.ts`：`WorkbenchTaskSpec.selection`。
+- `workbench.ts`：`WorkbenchOptions.projectSelection`；`selectInitialAssignment(rootId, taskSelection?)`
+  对 **fixed** 记录 `provider:'user-fixed'` 并**不再询问 Laya**；`assignChildren` 对 fixed 用用户 pair
+  作权威（不被 Laya/偏好覆盖）并登记 `fixedSelections` 锁；`reassignTask` 对已锁任务拒绝换 pair
+  （`fixed-selection-locked`）。
+- `round-cli.ts`：`--select auto|fixed`；`--agent`+`--model`（完整 pair）视为 fixed，单轴仍是偏好；
+  report 增加 `selection{mode,source,requested,note}`。
+
+### 10.2 用户可执行的配置 / 命令例子
+
+项目默认（`orchestrator.json`）：
+```json
+{ "agents": { "opencode": { "command": "…\\opencode.exe" } },
+  "selection": { "mode": "fixed", "agentId": "opencode", "modelId": "opencode/space-bunny-free" } }
+```
+任务级固定（覆盖项目）：`orchestrator round "add a retry" --select fixed --agent opencode --model opencode/space-bunny-free`
+任务级自动（覆盖项目 fixed，恢复 LAYA）：`orchestrator round "…" --select auto`
+单轴偏好（沿用既有语义）：`orchestrator round "…" --agent opencode`
+
+### 10.3 选择→分配→RunRequest 构造证据（实现方测试，hermetic）
+
+`tests/b14-selection.test.ts` 经真实 `NativeWorkbench` 验证 task selection fixed → `selectInitialAssignment` 记录
+`provider='user-fixed'`（Laya 未被询问）→ `assignChildren` 把 pair 写入 Task 身份 →
+`buildRunRequest` 的 `RunRequest.agentId/model` = 该 pair（完整 model id，未加 provider）。
+该套件未调用 round CLI 或 dispatch，fake runtime 的 requests 未被实际使用；不能据此称为执行与结果闭环。
+Codex 补充的 production round probe 及其边界见 §10.6。
+项目 fixed 在任务未选择时生效；任务 fixed 覆盖项目；任务 auto 覆盖项目 fixed 并回到 Laya。
+不可用/未注册 pair → `no-model-available` **拒绝且不替换**；固定 DSH+model 在 **preflight 前**被拒（无进程）；
+对固定任务 `reassignTask` 换 pair → `fixed-selection-locked`（防自动 handoff 偷换）。
+用户请求的模型（selection）、传给 Runtime 的模型（`RunRequest.model`）可见；Agent 自身确认的**实际模型**
+无证据时保持 unknown（不据请求参数宣称）。
+
+### 10.4 两项 P2 处理
+
+- **A（DSH 测试清理）**：`tests/dsh-adapter.test.ts` 的真实链路包在 `try/finally`；finally 对仍
+  running 的 handle 用既有 `cancel` + contained 停止确认，再删除 owned 目录；删除失败进入同一
+  cleanup ledger 与非零退出。新增独立 child 回归：注入清理失败 → 真实 `status` 非零、无 signal、ledger 有条目。
+- **B（W3-9）**：`tests/containment-production.test.ts` W3-9 改为**取消前**有界确认 writer 增长
+  （≤5s，50ms 轮询），**取消后**保留“确认停止 + Job 为空（ActiveProcesses==0）+ 不再产生字节”强断言；
+  删除会误报的 `atStop > before`；不新增固定长 sleep、不无限轮询。
+
+### 10.5 实跑证据（实现方）与边界
+
+`npm run typecheck` PASS；`b14-selection` **28/0**；`assignment` 235/0、`workbench` 413/0、
+`initial-assignment-decision` 37/0、`continuation` 138/0、`handoff-production-round` 312/0、
+`state-loop` 169/0、`round-result` 293/0、`planner` 189/0、`contract` 248/0（2 skipped）、`unit` 92/0；
+`dsh-adapter` 59/0、`containment-production` 234/0；ownership 守卫 5 opt-in/0 违规；`git diff --check` clean。
+`runtime.run` 生产调用边 = 1；新增调度 authority = 0；PARALLEL_WRITE=CLOSED。
+未跑 full suite、未调用真实模型、未读凭据、未改本机配置；本轮 owned 临时目录残留 0。
+
+**未实现（文档明确）**：角色默认层、偏好（prefer）模式、运行中改选、完整交互式暂停；两层协作组、
+Skill/MCP 目录、动态额度、免费自动接力、并行写。`listed ≠ connected ≠ callable ≠ free` 仍冻结。
+以上为实现方交接状态；当前独立裁定见 §10.6，不自行宣布 B1 封板。
+
+### 10.6 B1.4 独立审核 BLOCKED（2026-10-12）
+
+**P1：动态新增子任务丢失用户 fixed 约束。** 初始选择与分配只把已有 child 的 taskId 写入
+`fixedSelections`；`addTask` 继承父任务的 agentId/modelId，却未继承选择约束，随后 `reassignTask`
+仅查该 map。独立 probe 通过既有 `decisionCapabilities().addTask/reassign`：项目 fixed 为
+agent-a/agent-a/model-1，新增 r-s1-s1 初始继承该 pair；请求换为 agent-b/agent-b/model-2 后
+返回 `ok=true, code=migrated`，Task 身份确实变为 B pair，且准备了新 session。
+probe 未 dispatch（runtime requests=0）；证明固定选择可被接力接口绕过，不宣称真实模型已执行。
+最小收口是在现有任务创建/重规划与重分配路径保留有效选择约束，并覆盖新增 child 的接力回归；无需新增 manager。
+
+**初次分配正常路径独立通过。** 复用 handoff-production-round 的 production round harness，
+在内存 loader 中导出 harness 并注入 projectSelection（未改仓库文件），实际经过 scheduler/executeTask
+到受控 RuntimeRunner，执行和 reviewer 都为测试替身：任务 fixed A→RunRequest A；项目 fixed B→B；
+任务 auto 覆盖项目 fixed B→LAYA 选 A。三者 report.selection 与派发 pair 一致、stage=complete。
+这些是 CLI/调度接线证据，不是 OpenCode/DSH 真实推理兼容性或实际服务端模型证据。
+
+**P2：缺值 --select 被忽略。** `round "objective" --select` 的 parse 返回无 error、select 未定义；
+同 production round probe 实际按 default auto 派发 B 并完成，而不是用法错误。缺值应在启动前拒绝。
+另：未写 --select 时同时给 --agent/--model 已由旧偏好语义变为 fixed，这是兼容性变更，需保留明确说明。
+
+**旧 P2-A 未完全关闭。** DSH realChain 的 finally 仍晚于 owned 目录创建和 fixture 写入。
+独立 child 拦截实际 fixture.cjs 写入并抛错：status=1、signal=null、error=null，owned 目录仍存在；
+审核 probe 仅清理本次记录且核验边界的目录，remaining=false。没有启动 target，不据此声称进程泄漏。
+新增 fail-child 是另一条受控分支，不能证明 realChain setup 异常已受 finally 保护；列非阻断 P2。
+**旧 P2-B 已关闭。** W3-9 取消前有界观测增长，取消后保留停止确认、Job 空与不再写入断言；独立 234/0。
+
+**本轮独立实跑（全部 exit=0）**：typecheck；b14-selection 28/0；assignment 235/0；workbench 413/0；
+initial-assignment-decision 37/0；handoff-production-round 312/0；dsh-adapter 59/0；
+containment-production 234/0；contract 248/0（2 skipped）；isolation 守卫 5 opt-in/0 违规；diff check PASS。
+runtime.run 生产调用边=1，未新增调度 authority。其他实现方列出的 suite 未在本轮重复。
+独立 probe 的 owned 目录均已按名清理；未跑 full suite、真实模型任务或读取凭据/改本机配置。
+
+**上传说明**：以 bcceed2683854da7e0f30e673fbb080812c89dd6 为父，上传到 codex/b14-review-blocked 审核分支。
+差异为 13 个文件：实现方 12 文件与用户先前授权的模型中断计划所在 BACKEND_REQUIREMENTS.md；
+Codex 本轮仅修订现有基线/阶段分析的审核事实。此快照用于复核，不代表验收或合入 main。
+B1 overall NOT SEALED、PARALLEL_WRITE=CLOSED、B2–B5 未授权；模型中断仅列后续计划，本轮未实现。

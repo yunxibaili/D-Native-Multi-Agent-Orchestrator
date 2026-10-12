@@ -1,6 +1,6 @@
 # 后端阶段分析
 
-更新日期：2026-10-12（B1.3a 独立收口 PASS WITH P2）
+更新日期：2026-10-12（B1.4 独立审核 BLOCKED）
 性质：需求与源码差距分析、建议顺序；不是自动启动开发的指令，也不改变已封板状态。
 
 ## 1. 当前所在阶段
@@ -64,6 +64,11 @@ B1.3（2026-10-12）：把用户确认的**两层任务分配**写入需求（�
 **B1.3a 独立结论 PASS WITH P2**：§6.8 的历史输出保真 P1 与 stderr 契约 P2 已关闭，详见 §6.10。
 仍保留测试异常路径清理与既有 W3-9 时序断言 P2；两层需求落档不代表执行闭环或真实 DSH 推理已验收。
 
+**B1.4 当前独立结论 BLOCKED**：初次任务 fixed / 项目 fixed / 任务 auto 的 production round 接线通过，
+但动态 addTask 新 child 未继承 fixed 约束，随后 reassign 实测接受另一 pair，违反用户固定选择（P1）。
+最小下一步为补齐既有任务创建与接力路径的约束传递及回归；无需另建选择器或阻塞于企业级设计。
+W3-9 P2 已关闭；DSH setup 写入异常清理与 --select 缺值各保留非阻断 P2。详见 §6.12 / 基线 §10.6。
+
 ## 2. 需求与实现差距
 
 | 需求 | 可复用实现 | 仍需确认或补齐 |
@@ -76,7 +81,7 @@ B1.3（2026-10-12）：把用户确认的**两层任务分配**写入需求（�
 | REQ-06 Skill/MCP | Skill intent、部分 adapter skills/native tools | 目录、授权、选择、按需加载、实际调用核对 |
 | REQ-07 异构工作流 | planner DAG 模板、依赖和提交 | 不同角色的具体候选任务、接口和交付物 |
 | REQ-08 免费/预算 | 静态免费池、quota policy、Spawn Gate | 入口/账户共享额度、时效、全费用边界 |
-| REQ-09 接力 | 同 Task 新 Attempt/Lease、handoff | 完整检查点和切换约束，不能冒充原生会话迁移 |
+| REQ-09 接力 | 同 Task 新 Attempt/Lease、handoff | 完整检查点、切换约束与执行中模型中断处理（见 §3.1），不能冒充原生会话迁移 |
 | REQ-10 节省消耗 | 原生工具、上下文、memory/evidence | 去重、按需上下文、真实对照数据 |
 | REQ-11 状态与交付 | Attempt/Result/Review/Observation | 对外稳定事实契约；前端设计以后确认 |
 | REQ-12 范围 | Native CLI 架构 | 保持 Agent-native；不自动引入网关/直接 API |
@@ -112,6 +117,22 @@ B2–B5 仍为 PLANNED / NOT AUTHORIZED，不得因本文自行开工。
 B1 只收集必要事实；B2 决定哪些候选可进入预算范围；B3 才做完整智能选择。
 在 B3 前不另造路由服务，在 B4 前不先做通用工作流引擎。
 Skill/MCP 的最小调用与费用观察可在其所属阶段验证，不必等待最终前端。
+
+### 3.1 后续边界收口：任务执行途中模型中断
+
+2026-10-12 用户新增计划项，需求见 BACKEND_REQUIREMENTS.md §10.1。
+本条只登记后续工作，不扩大当前 B1.4 用户选择切片，不改变 B2–B5 未授权或 PARALLEL_WRITE=CLOSED。
+在接力能力实施与 B5 恢复验收时统一补齐，不单独建设监控平台、恢复服务或新的调度 authority。
+
+复用现有错误/活动观测、deadline/cancel、停止确认、Assignment、Attempt/Lease 与 handoff：
+区分失联、限流、额度/认证/服务错误与未知；无输出不直接判死亡。
+有界重试必须考虑重复工具调用及部分写入；确认旧执行停止后才接力，未确认则保持保护并受阻。
+保留部分文件和交付物，固定模型失效不自动换 pair，无合格免费候选不静默转付费。
+现有 B1.4 固定规则应为后续恢复复用，避免实现第二套用户选择逻辑。
+
+待统一验证：流中断；静默但存活；429/额度/认证失败；停止未确认；写入一半后重试；
+固定选择与无候选；接力再次失败后达到总时限/次数上限。使用受控 fixture 优先，真实 Agent 证据单独记录。
+当前仅列入计划，尚未实现或验收；该待办不阻塞当前最小选择闭环。
 
 ## 4. W5 封板证据与保留限制
 
@@ -429,3 +450,39 @@ execution-lifecycle 136/0；isolation 5 opt-in/0 违规；diff check，正常 ex
 
 六文件快照上传 codex/b13a-review-pass-with-p2，父 4b89534e；Codex 仅更新现有两份文档，
 main 与共享索引保持原状。B1 NOT SEALED、PARALLEL_WRITE=CLOSED、B2–B5 未授权，未进入前端。
+
+### 6.11 B1.4 用户 Agent × Model 选择最小闭环（实现方实跑，2026-10-12）
+
+实现**自动 / 固定**与**项目 / 任务**两层选择，复用既有 `explicitPair`/`assignWorker`/`WorkbenchTaskSpec`/
+`buildRunRequest`/`reassignTask`，新增 `SelectionSpec` + `resolveSelection` + config `selection` +
+`--select` CLI + report `selection`。优先级 task > project > auto；fixed 由 Assignment 精确强制
+（accept-or-refuse，不替换），不写调度 registry、不改费用授权；DSH+model 在 preflight 前拒绝；
+固定任务被 `reassignTask` 锁（`fixed-selection-locked`）防自动 handoff 偷换。
+**尚未实现**：角色默认、偏好模式、运行中改选、完整交互式暂停、两层协作组、Skill/MCP、动态额度、并行写。
+
+实跑：typecheck PASS；`b14-selection` **28/0**；assignment 235/0、workbench 413/0、
+initial-assignment-decision 37/0、continuation 138/0、handoff-production-round 312/0、
+state-loop 169/0、round-result 293/0、planner 189/0、contract 248/0（2 skipped）、unit 92/0；
+`dsh-adapter` 59/0、`containment-production` 234/0；ownership 守卫 5 opt-in/0 违规；`git diff --check` clean。
+`runtime.run`=1、新增 authority=0、PARALLEL_WRITE=CLOSED。
+实现方报告两项测试 P2 已关闭：DSH 真实链路 `finally` 清理 + child 清理失败回归；W3-9 改为取消前有界确认增长、
+取消后保留停止/Job 空/不再写入强断言。该交接结论经独立复核有所修正，当前裁定见 §6.12。
+
+### 6.12 B1.4 独立审核与下一步边界（2026-10-12）
+
+**BLOCKED，唯一阻断项 P1**：项目 fixed A/MA → 动态 addTask 创建 r-s1-s1（继承 A/MA）→
+decisionCapabilities.reassign 指定 B/MB → ok/migrated，Task 身份变成 B/MB。固定约束只登记初次 child，
+没有随后续任务创建传播。独立 probe 未 dispatch；这是接力准入与身份约束失败，不是真实模型故障证明。
+沿用现有选择/任务创建/reassign 路径修复并覆盖动态 child；不扩大为新框架。
+
+独立 production round probe（受控 RuntimeRunner/reviewer）确认任务 fixed、项目 fixed、任务 auto 覆盖
+三条正常路径已到实际派发与 complete。作者 b14-selection 28/0 仅覆盖到 buildRunRequest，不能单独称执行闭环。
+P2：缺值 --select 被按默认 auto 执行；DSH fixture 写入在 finally 前，独立注入 status=1 后仍留目录（已按名清理）。
+原 W3-9 P2 已关闭，强停止证据保留。P2 不单独阻断下一步；无需重新审核完整 W1–W5。
+
+本轮独立：typecheck；b14 28/0、assignment 235/0、workbench 413/0、initial-assignment 37/0、
+handoff-production-round 312/0、DSH 59/0、containment-production 234/0、contract 248/0（2 skipped）、
+isolation 5 opt-in/0 违规、diff check PASS；正常命令 exit 均 0。未跑 full suite 或真实模型任务。
+13 文件审核快照上传 codex/b14-review-blocked，父 bcceed2683854da7e0f30e673fbb080812c89dd6；
+包含先前登记的模型执行中断计划，不代表实现接力恢复或费用授权。
+B1 NOT SEALED、PARALLEL_WRITE=CLOSED、B2–B5 未授权；未进入前端。

@@ -172,7 +172,8 @@ import type { TaskClassification } from '../decision/routing.ts';
 import type { TaskType } from '../quota/types.ts';
 // TeamRun T3-a.5: the current execution bundle names the result correlated to the current
 // Attempt, so `RunResult` is part of the projection's own vocabulary here.
-import type { RunResult } from '../core/types.ts';
+import type { RunResult, SelectionSpec } from '../core/types.ts';
+import { resolveSelection, fixedPairOf } from '../core/types.ts';
 
 const USAGE = `orchestrator round - ONE execution round: decide - execute - observe - report
 
@@ -184,8 +185,12 @@ auto-replan. Run it again yourself if you want another round.
 
 OPTIONS
   --cwd <dir>            project directory the workers run in (default: cwd)
-  --agent <id>           prefer this agent (Assignment still applies its filters)
-  --model <id>           prefer this model for the preferred agent
+  --select auto|fixed    task-level Agent x Model selection mode (B1.4).
+                         auto  = use the existing LAYA decision (overrides a project default)
+                         fixed = require --agent <id> AND --model <full-id>; Assignment
+                                 enforces the exact pair (accept or refuse, never substitute)
+  --agent <id>           with --model: the FIXED agent; alone: prefer this agent
+  --model <id>           with --agent: the FIXED full model id; alone: prefer this model
   --laya-url <url>       laya-serve base URL (default: http://127.0.0.1:8077)
   --laya-timeout <ms>    decision timeout (default: 60000)
   --execution-timeout <ms>
@@ -248,6 +253,8 @@ interface RoundOptions {
   cwd: string;
   agent?: string;
   model?: string;
+  /** B1.4: task-level selection mode; `auto` or `fixed`. Absent = project/auto. */
+  select?: string;
   layaUrl: string;
   layaTimeoutMs: number;
   /** R5-1 (P1-A): native EXECUTION deadline (RunRequest.timeoutMs), not a wait bound. */
@@ -289,7 +296,7 @@ interface RoundOptions {
  */
 const OBSERVE_HEARTBEAT_MS = 5_000;
 
-const VERBATIM = new Set(['laya-url', 'agent', 'model', 'cwd', 'observe', 'review-agent']);
+const VERBATIM = new Set(['laya-url', 'agent', 'model', 'select', 'cwd', 'observe', 'review-agent']);
 
 function parse(argv: readonly string[]): RoundOptions | { error: string } {
   const positionals: string[] = [];
@@ -341,11 +348,29 @@ function parse(argv: readonly string[]): RoundOptions | { error: string } {
   if (!execTimeoutCheck.ok) return { error: `--execution-timeout: ${execTimeoutCheck.reason}` };
 
   try {
+    // B1.4: `--select` is the task-level selection MODE. `auto` explicitly restores the
+    // LAYA decision (overriding a project default); `fixed` requires BOTH `--agent` and
+    // `--model`. Absent, a COMPLETE `--agent`+`--model` pair is treated as fixed (the
+    // repo's existing "complete pair = explicit choice" convention) and a lone
+    // `--agent`/`--model` keeps the legacy preference semantics.
+    const select = s('select');
+    if (select !== undefined && select !== 'auto' && select !== 'fixed') {
+      return { error: `--select must be "auto" or "fixed" (got "${select}")` };
+    }
+    const agentFlag = s('agent');
+    const modelFlag = s('model');
+    if (select === 'fixed' && (agentFlag === undefined || modelFlag === undefined)) {
+      return { error: '--select fixed requires BOTH --agent <id> and --model <full-id>' };
+    }
+    if (select === 'auto' && (agentFlag !== undefined || modelFlag !== undefined)) {
+      return { error: '--select auto cannot be combined with --agent/--model' };
+    }
     return {
       objective,
       cwd,
-      ...(s('agent') !== undefined ? { agent: s('agent') } : {}),
-      ...(s('model') !== undefined ? { model: s('model') } : {}),
+      ...(agentFlag !== undefined ? { agent: agentFlag } : {}),
+      ...(modelFlag !== undefined ? { model: modelFlag } : {}),
+      ...(select !== undefined ? { select } : {}),
       layaUrl: s('laya-url') ?? 'http://127.0.0.1:8077',
       layaTimeoutMs: num('laya-timeout', 60_000),
       // R5-1.1 (§6/P1-A): the NATIVE EXECUTION deadline — a different thing from the
@@ -648,12 +673,18 @@ export async function runRoundCli(
     cwd: o.cwd,
     ...(o.handoff ? { translate: { allowAvailabilityContinuation: true } } : {}),
   });
+  // B1.4: the PROJECT default selection from config. Read defensively (a test/stub
+  // runtime may not implement the accessor); absent => no project default.
+  const projectSelection = (runtime as { projectSelection?: () => SelectionSpec | undefined }).projectSelection?.();
   const wb = new NativeWorkbench({
     orchestrator: coord,
     scheduler,
     registry,
     quotaRecords,
     cwd: o.cwd,
+    // B1.4: the PROJECT default selection from orchestrator.json. The task-level
+    // selection on the spec overrides it; `auto`/absent falls back to Laya.
+    ...(projectSelection !== undefined ? { projectSelection } : {}),
     // TeamRun T2-a.1: the PRODUCTION initial path is Laya-controlled. The workbench
     // reuses the provider this command already builds for classification — no second
     // provider, no second planner. A round whose Laya selection cannot be obtained now
@@ -752,13 +783,25 @@ export async function runRoundCli(
       // through a bug in the derivation above.
     }
   };
+  // B1.4: the TASK-level selection. `--select auto` restores Laya explicitly (and
+  // overrides a project default); a COMPLETE `--agent`+`--model` pair is a fixed pair.
+  // A lone `--agent`/`--model` keeps the legacy preference semantics.
+  const taskSelection: SelectionSpec | undefined =
+    o.select === 'auto'
+      ? { mode: 'auto' }
+      : (o.agent !== undefined && o.model !== undefined
+        ? { mode: 'fixed', agentId: o.agent, modelId: o.model }
+        : undefined);
+  const lonePreferredAgent = o.agent !== undefined && o.model === undefined ? o.agent : undefined;
+  const lonePreferredModel = o.model !== undefined && o.agent === undefined ? o.model : undefined;
   const spec: WorkbenchTaskSpec = {
     taskId: rootId,
     objective: o.objective,
     taskType: taskTypeFor(classification),
     budgetUnits: o.budgetUnits,
-    ...(o.agent !== undefined ? { preferredAgent: o.agent } : {}),
-    ...(o.model !== undefined ? { preferredModel: o.model } : {}),
+    ...(taskSelection !== undefined ? { selection: taskSelection } : {}),
+    ...(lonePreferredAgent !== undefined ? { preferredAgent: lonePreferredAgent } : {}),
+    ...(lonePreferredModel !== undefined ? { preferredModel: lonePreferredModel } : {}),
   };
 
   // Budget scopes must exist BEFORE the planner commits, because the gate is
@@ -784,6 +827,25 @@ export async function runRoundCli(
       parallelWriteIsolated: workspace !== null,
     },
   };
+
+  // B1.4: report the EFFECTIVE selection so an operator can see the mode, where it came
+  // from (task / project / default), and the pair the user requested. The model passed to
+  // the Runtime and the agent-confirmed ACTUAL model are reported per task after assignment
+  // (an agent with no model evidence stays `unknown`, never a claimed provider model).
+  {
+    const effective = resolveSelection(taskSelection, projectSelection);
+    const source: 'task' | 'project' | 'default' =
+      taskSelection !== undefined ? 'task' : projectSelection !== undefined ? 'project' : 'default';
+    report.selection = {
+      mode: effective.mode,
+      source,
+      requested: fixedPairOf(effective) ?? null,
+      note:
+        effective.mode === 'auto'
+          ? 'auto: the existing LAYA Agent x Model decision applies'
+          : 'fixed: the user-pinned Agent x Model pair is enforced by Assignment (accept or refuse, never substitute)',
+    };
+  }
 
   // ---- STEP 4: plan + assign (Planner and Assignment, the only authorities) --
   let planned;
@@ -839,7 +901,7 @@ export async function runRoundCli(
     // Planner still only planned task decomposition and dependencies — it is not asked
     // for an agent, a model or a session. This call never dispatches, so the first
     // execution still happens only after Assignment has enforced the pair.
-    await wb.selectInitialAssignment(rootId);
+    await wb.selectInitialAssignment(rootId, spec.selection);
     assigned = wb.assignChildren(rootId, spec);
     // The gate needs THREE scopes to exist - global, task:<id> AND agent:<id> - and
     // `resolveBudgetHeadroom` deliberately refuses to auto-create a missing one

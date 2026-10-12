@@ -28,7 +28,8 @@
 import type { ModelRegistry } from '../quota/registry.ts';
 import type { QuotaRecord } from '../quota/types.ts';
 import type { TaskType } from '../quota/types.ts';
-import type { RunResult } from '../core/types.ts';
+import type { RunResult, SelectionSpec } from '../core/types.ts';
+import { resolveSelection, fixedPairOf } from '../core/types.ts';
 import { log } from '../core/log.ts';
 import type { TaskClassification } from '../decision/routing.ts';
 // TeamRun T2-a.1: the INITIAL Agent x Model decision. This is a preset over the existing
@@ -174,6 +175,11 @@ export interface WorkbenchOptions {
    * the scheduler, i.e. far beyond making this parameter explicit.
    */
   readonly rootAgentId?: string;
+  /**
+   * B1.4: the PROJECT default Agent × Model selection. A per-task selection on the
+   * spec overrides it; when neither is set the existing auto behaviour applies.
+   */
+  readonly projectSelection?: SelectionSpec;
 }
 
 export interface PlanOutcome {
@@ -382,6 +388,17 @@ unDecisionCycle can read a real TickResult. */
   private readonly rootAgentId: string;
   /** The single clock for every fact this workbench writes. See `WorkbenchOptions.now`. */
   private readonly nowFn: () => number;
+  /**
+   * B1.4: the PROJECT default Agent × Model selection (task overrides it). Absent =
+   * no project default. Read-only for the life of this workbench.
+   */
+  private readonly projectSelection: SelectionSpec | undefined;
+  /**
+   * B1.4: tasks whose pair was pinned by a USER selection (project or task). Used by
+   * `reassignTask` to refuse an automatic handoff that would silently swap a pinned
+   * pair. This is a lock record, NOT a new scheduling authority.
+   */
+  private readonly fixedSelections = new Map<string, AgentModelIntent>();
 
   constructor(options: WorkbenchOptions) {
     this.orchestrator = options.orchestrator;
@@ -397,6 +414,7 @@ unDecisionCycle can read a real TickResult. */
     this.decisionProvider = options.decisionProvider ?? null;
     this.rootAgentId = options.rootAgentId ?? DEFAULT_ROOT_AGENT_ID;
     this.nowFn = options.now ?? Date.now;
+    this.projectSelection = options.projectSelection;
   }
 
   /**
@@ -480,9 +498,12 @@ unDecisionCycle can read a real TickResult. */
    * Every child gets a record — including refusals — so `assignChildren` can fail a task
    * closed rather than quietly falling back to scoring.
    */
-  async selectInitialAssignment(rootTaskId: string): Promise<readonly InitialSelectionOutcome[]> {
+  async selectInitialAssignment(rootTaskId: string, taskSelection?: SelectionSpec): Promise<readonly InitialSelectionOutcome[]> {
+    // B1.4: task overrides project, else auto. A FIXED selection is recorded as the
+    // task's decision and Laya is NOT asked — the user's choice must never be re-decided.
+    const selection = resolveSelection(taskSelection, this.projectSelection);
+    const fixed = fixedPairOf(selection);
     const provider = this.decisionProvider;
-    if (provider === null) return [];
     const outcomes: InitialSelectionOutcome[] = [];
     for (const child of this.store.children(rootTaskId)) {
       if (child.status === 'succeeded' || child.status === 'failed' || child.status === 'cancelled') continue;
@@ -491,6 +512,25 @@ unDecisionCycle can read a real TickResult. */
       // Laya's own earlier choice. SOLO children have no record and behave exactly as before.
       const recorded = this.initialSelections.get(child.taskId);
       if (recorded !== undefined) { outcomes.push(recorded); continue; }
+      // B1.4: a USER-fixed pair is the decision. Validate it atomically (a partial pair
+      // is refused, never completed) and record it with a distinct provenance so the
+      // output can tell "the user pinned this" apart from "Laya chose this".
+      if (fixed !== undefined) {
+        const checked = validateAgentModelIntent(fixed);
+        const outcome: InitialSelectionOutcome = checked.ok
+          ? { taskId: child.taskId, ok: true, intent: checked.intent, provider: 'user-fixed' }
+          : {
+              taskId: child.taskId,
+              ok: false,
+              reason: `the fixed Agent x Model selection is invalid: ${checked.reason}`,
+              provider: 'user-fixed',
+            };
+        if (checked.ok) this.fixedSelections.set(child.taskId, checked.intent);
+        this.initialSelections.set(child.taskId, outcome);
+        outcomes.push(outcome);
+        continue;
+      }
+      if (provider === null) continue;
       const candidates: InitialAssignmentCandidate[] = this.registry.list().map((e) => ({
         agentId: e.agentId,
         modelId: e.modelId ?? '',
@@ -623,6 +663,10 @@ unDecisionCycle can read a real TickResult. */
 
   assignChildren(rootTaskId: string, spec: WorkbenchTaskSpec): readonly AssignOutcome[] {
     const outcomes: AssignOutcome[] = [];
+    // B1.4: task selection overrides the project default, else auto. A FIXED pair is
+    // authoritative: it is enforced exactly and never overridden by Laya or a preference.
+    const selection = resolveSelection(spec.selection, this.projectSelection);
+    const fixed = fixedPairOf(selection);
     for (const child of this.store.children(rootTaskId)) {
       if (child.status === 'succeeded' || child.status === 'failed' || child.status === 'cancelled') continue;
       // Per-task intent beats the spec default; the spec is only the fallback.
@@ -639,32 +683,44 @@ unDecisionCycle can read a real TickResult. */
       // any per-task intent and ahead of the spec. A REFUSED decision fails the task closed
       // here — it must never fall through to preferences or scoring, because that is
       // exactly how a heuristic's choice gets reported as Laya's judgement.
+      //
+      // B1.4: when the USER pinned a fixed pair, none of those Laya-authority checks
+      // apply — Laya is not the decider for this task and must not override the user.
       const layaSelection = this.initialSelections.get(child.taskId);
-      if (layaSelection !== undefined && !layaSelection.ok) {
-        outcomes.push({ taskId: child.taskId, ok: false, code: 'assignment-invalid', reason: layaSelection.reason });
-        continue;
+      if (fixed === undefined) {
+        if (layaSelection !== undefined && !layaSelection.ok) {
+          outcomes.push({ taskId: child.taskId, ok: false, code: 'assignment-invalid', reason: layaSelection.reason });
+          continue;
+        }
+        // On a Laya-controlled workbench a task with NO recorded decision is a wiring fault,
+        // not a licence to guess. Refused explicitly so the cause is visible.
+        if (this.decisionProvider !== null && layaSelection === undefined) {
+          outcomes.push({
+            taskId: child.taskId,
+            ok: false,
+            code: 'assignment-invalid',
+            reason: 'this workbench is Laya-controlled but no initial Agent x Model decision was recorded ' +
+              'for this task; call selectInitialAssignment() before assignChildren() rather than falling back to scoring',
+          });
+          continue;
+        }
       }
-      // On a Laya-controlled workbench a task with NO recorded decision is a wiring fault,
-      // not a licence to guess. Refused explicitly so the cause is visible.
-      if (this.decisionProvider !== null && layaSelection === undefined) {
-        outcomes.push({
-          taskId: child.taskId,
-          ok: false,
-          code: 'assignment-invalid',
-          reason: 'this workbench is Laya-controlled but no initial Agent x Model decision was recorded ' +
-            'for this task; call selectInitialAssignment() before assignChildren() rather than falling back to scoring',
-        });
-        continue;
-      }
-      const rawExplicitPair = layaSelection !== undefined && layaSelection.ok
-        ? layaSelection.intent
-        : (intent?.explicitPair ?? spec.explicitPair);
+      const rawExplicitPair = fixed !== undefined
+        ? fixed
+        : (layaSelection !== undefined && layaSelection.ok
+          ? layaSelection.intent
+          : (intent?.explicitPair ?? spec.explicitPair));
       const explicitPairCheck = rawExplicitPair === undefined
         ? undefined
         : validateAgentModelIntent(rawExplicitPair);
       if (explicitPairCheck !== undefined && !explicitPairCheck.ok) {
         outcomes.push({ taskId: child.taskId, ok: false, code: 'assignment-invalid', reason: explicitPairCheck.reason });
         continue;
+      }
+      // Record the user's pinned pair as a LOCK, so an automatic reassign/handoff may
+      // not later swap it (see `reassignTask`).
+      if (fixed !== undefined && explicitPairCheck !== undefined && explicitPairCheck.ok) {
+        this.fixedSelections.set(child.taskId, explicitPairCheck.intent);
       }
       const outcome = assignWorker({
         taskId: child.taskId,
@@ -861,6 +917,23 @@ unDecisionCycle can read a real TickResult. */
         ok: false, code: 'reassign-target-required',
         reason: 'reassignTask needs a target agent and/or model, or strategy="assignment" to delegate the choice',
       };
+    }
+    // B1.4: a USER-pinned pair is a lock. An automatic handoff/reassign must not swap
+    // it — the initial run honoured the fixed selection, so a later silent switch to a
+    // different pair would break the user's explicit choice. Refuse with a clear reason
+    // (no new pause state machine); the user changes the selection explicitly instead.
+    const pinned = this.fixedSelections.get(taskId);
+    if (pinned !== undefined) {
+      const sameTarget = agentId === pinned.agentId && modelId === pinned.modelId;
+      if (!sameTarget) {
+        return {
+          ok: false,
+          code: 'fixed-selection-locked',
+          reason:
+            `task "${taskId}" has a USER-fixed Agent x Model selection (${pinned.agentId} / ${pinned.modelId}); ` +
+            'an automatic reassign/handoff may not swap it — change the selection explicitly to proceed',
+        };
+      }
     }
     // TeamRun T2-a: when Laya names a COMPLETE pair (agent AND model), that is an
     // explicit Agent × Model choice, and Assignment enforces it exactly — the chosen

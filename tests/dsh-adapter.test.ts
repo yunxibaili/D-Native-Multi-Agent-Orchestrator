@@ -24,9 +24,12 @@
  * Run: node tests/dsh-adapter.test.ts
  */
 
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 
 import { UnsupportedOptionError } from '../src/core/errors.ts';
 import type {
@@ -68,7 +71,11 @@ function ownDir(): string {
   tmpDirs.push(d);
   return d;
 }
-function removeOwnedDir(dir: string): void {
+function removeOwnedDir(dir: string, opts?: { injectRemovalFailure?: boolean }): void {
+  if (opts?.injectRemovalFailure === true) {
+    cleanupFailures.push(`owned dir removal failed for ${dir}: injected`);
+    return;
+  }
   try {
     rmSync(dir, { recursive: true, force: true });
   } catch (e) {
@@ -76,6 +83,27 @@ function removeOwnedDir(dir: string): void {
     return;
   }
   if (existsSync(dir)) cleanupFailures.push(`owned dir ${dir} still present after removal`);
+}
+
+// =========================================================================
+// B1.4 P2-A: an isolated child that proves a cleanup FAILURE still drives a non-zero
+// exit even after a setup/run throw. It runs the SAME ledger + finalizer as the suite,
+// so the regression cannot pass by re-implementing the exit decision.
+// =========================================================================
+if (process.env.MC_DSH_FAIL_CHILD === '1') {
+  const root = process.env.MC_DSH_FAIL_ROOT ?? join(tmpdir(), `dsh-failchild-${process.pid}`);
+  mkdirSync(root, { recursive: true });
+  try {
+    // Simulate a setup/run throw: cleanup still runs in `finally`.
+    throw new Error('injected setup/run failure');
+  } catch {
+    // cleanup runs on the throw path too; here the removal itself fails.
+    removeOwnedDir(root, { injectRemovalFailure: true });
+  } finally {
+    const code = failed === 0 && cleanupFailures.length === 0 ? 0 : 1;
+    writeFileSync(join(root, 'report.json'), JSON.stringify({ cleanupFailures, exit: code }));
+    process.exit(code);
+  }
 }
 
 const STUB_LAUNCHER: LauncherSpec = {
@@ -211,8 +239,8 @@ interface Scenario {
   hang?: boolean;
 }
 
-async function runCollect(orch: Orchestrator, req: RunRequest): Promise<{ result: RunResult; outputEvents: string[] }> {
-  const h: RunHandle = orch.run(req);
+async function runCollect(start: (req: RunRequest) => RunHandle, req: RunRequest): Promise<{ result: RunResult; outputEvents: string[] }> {
+  const h: RunHandle = start(req);
   const texts: string[] = [];
   const sub = h.events({ replay: 'replay' });
   const drain = (async () => {
@@ -241,6 +269,16 @@ async function realChain(): Promise<void> {
   const dsh = createDshAdapter({ launcher });
   const orch = new Orchestrator({ config: { agents: {} }, storeDir: join(dir, 'store'), replaceAdapters: [dsh] });
 
+  // B1.4 P2-A: track every handle this run starts, so the `finally` can cancel anything
+  // still RUNNING (with the existing contained stop confirmation) before deleting the
+  // owned dir — even when a setup/run step threw.
+  const running: RunHandle[] = [];
+  const start = (req: RunRequest): RunHandle => {
+    const h = orch.run(req);
+    running.push(h);
+    return h;
+  };
+
   const scenarioFiles = ['payload.bin', 'stderr.txt', 'exit.txt', 'chunk.txt', 'hang.txt'];
   const setScenario = (s: Scenario): void => {
     for (const f of scenarioFiles) {
@@ -253,11 +291,13 @@ async function realChain(): Promise<void> {
     if (s.chunk !== undefined) writeFileSync(join(dir, 'chunk.txt'), String(s.chunk));
   };
 
+  try {
+
   // --- 1. multi-line answer with leading / middle / trailing empty lines ---------
   {
     const expected = '\nconst a = 1;\n\nconst b = 2;\n';
     setScenario({ payload: expected, exit: 0 });
-    const { result, outputEvents } = await runCollect(orch, { agentId: 'dsh', prompt: 'p1', cwd: dir });
+    const { result, outputEvents } = await runCollect(start, { agentId: 'dsh', prompt: 'p1', cwd: dir });
     check('P1 multi-line: state succeeded', result.state === 'succeeded', result.state);
     check('P1 multi-line: output is EXACTLY the stdout bytes', result.output === expected, JSON.stringify(result.output));
     check('P1 multi-line: output events concatenate to the same bytes', outputEvents.join('') === expected, JSON.stringify(outputEvents.join('')));
@@ -268,7 +308,7 @@ async function realChain(): Promise<void> {
   {
     const expected = 'a\r\nb\r\n\r\nc\r\n';
     setScenario({ payload: expected, exit: 0 });
-    const { result, outputEvents } = await runCollect(orch, { agentId: 'dsh', prompt: 'p2', cwd: dir });
+    const { result, outputEvents } = await runCollect(start, { agentId: 'dsh', prompt: 'p2', cwd: dir });
     check('P1 CRLF: output preserves CRLF exactly', result.output === expected, JSON.stringify(result.output));
     check('P1 CRLF: output events preserve CRLF exactly', outputEvents.join('') === expected, JSON.stringify(outputEvents.join('')));
   }
@@ -277,7 +317,7 @@ async function realChain(): Promise<void> {
   {
     const expected = '中1\n\né2\n';
     setScenario({ payload: expected, exit: 0, chunk: 1 }); // 1 byte per write
-    const { result, outputEvents } = await runCollect(orch, { agentId: 'dsh', prompt: 'p3', cwd: dir });
+    const { result, outputEvents } = await runCollect(start, { agentId: 'dsh', prompt: 'p3', cwd: dir });
     check('P1 chunked UTF-8: output reassembles exactly', result.output === expected, JSON.stringify(result.output));
     check('P1 chunked UTF-8: output events reassemble exactly', outputEvents.join('') === expected, JSON.stringify(outputEvents.join('')));
   }
@@ -286,7 +326,7 @@ async function realChain(): Promise<void> {
   {
     const expected = 'no trailing newline';
     setScenario({ payload: expected, exit: 0 });
-    const { result, outputEvents } = await runCollect(orch, { agentId: 'dsh', prompt: 'p4', cwd: dir });
+    const { result, outputEvents } = await runCollect(start, { agentId: 'dsh', prompt: 'p4', cwd: dir });
     check('P1 no-trailing-newline: output has no invented newline', result.output === expected, JSON.stringify(result.output));
     check('P1 no-trailing-newline: output events match exactly', outputEvents.join('') === expected, JSON.stringify(outputEvents.join('')));
   }
@@ -295,7 +335,7 @@ async function realChain(): Promise<void> {
   {
     const expected = '{"a":1,"b":[2,3]}\n';
     setScenario({ payload: expected, exit: 0 });
-    const { result, outputEvents } = await runCollect(orch, { agentId: 'dsh', prompt: 'p5', cwd: dir });
+    const { result, outputEvents } = await runCollect(start, { agentId: 'dsh', prompt: 'p5', cwd: dir });
     check('P1 JSON-looking answer: delivered verbatim as output', result.output === expected, JSON.stringify(result.output));
     check('P1 JSON-looking answer: output events match exactly', outputEvents.join('') === expected, JSON.stringify(outputEvents.join('')));
   }
@@ -303,7 +343,7 @@ async function realChain(): Promise<void> {
   // --- P2. stderr reasoning/errors are diagnostics, never the answer -------------
   {
     setScenario({ payload: 'answer\n', stderr: 'dsh: reasoning:\nthinking hard\n', exit: 0 });
-    const { result } = await runCollect(orch, { agentId: 'dsh', prompt: 'p2reason', cwd: dir });
+    const { result } = await runCollect(start, { agentId: 'dsh', prompt: 'p2reason', cwd: dir });
     check('P2 reasoning: state succeeded', result.state === 'succeeded', result.state);
     check('P2 reasoning: reasoning reaches diagnostics', result.diagnostics.some((d) => d.includes('reasoning')), JSON.stringify(result.diagnostics));
     check('P2 reasoning: reasoning is NOT in the final answer', !result.output.includes('reasoning') && !result.output.includes('thinking'), result.output);
@@ -311,7 +351,7 @@ async function realChain(): Promise<void> {
   }
   {
     setScenario({ payload: 'partial\n', stderr: 'dsh: E_TURN: model refused\n', exit: 1 });
-    const { result } = await runCollect(orch, { agentId: 'dsh', prompt: 'p2fail', cwd: dir });
+    const { result } = await runCollect(start, { agentId: 'dsh', prompt: 'p2fail', cwd: dir });
     check('P2 non-zero: state failed', result.state === 'failed', result.state);
     check('P2 non-zero: error code NONZERO_EXIT', result.error?.code === 'NONZERO_EXIT', result.error?.code);
     check('P2 non-zero: the dsh error reached diagnostics', result.diagnostics.some((d) => d.includes('E_TURN')), JSON.stringify(result.diagnostics));
@@ -321,7 +361,7 @@ async function realChain(): Promise<void> {
   // --- success (short), non-zero, start failure, cancel, deadline ----------------
   {
     setScenario({ payload: 'ok\n', exit: 0 });
-    const { result } = await runCollect(orch, { agentId: 'dsh', prompt: 'ok', cwd: dir });
+    const { result } = await runCollect(start, { agentId: 'dsh', prompt: 'ok', cwd: dir });
     check('success: state succeeded', result.state === 'succeeded', result.state);
     check('success: threadId null (no native session id)', result.threadId === null, String(result.threadId));
     check('success: usage stays UNKNOWN', result.usage.totalTokens === undefined && result.usage.costUsd === undefined, JSON.stringify(result.usage));
@@ -329,7 +369,7 @@ async function realChain(): Promise<void> {
   }
   {
     setScenario({ payload: 'partial\n', stderr: 'dsh: E: boom\n', exit: 2 });
-    const { result } = await runCollect(orch, { agentId: 'dsh', prompt: 'nonzero', cwd: dir });
+    const { result } = await runCollect(start, { agentId: 'dsh', prompt: 'nonzero', cwd: dir });
     check('non-zero: state failed', result.state === 'failed', result.state);
     check('non-zero: error code NONZERO_EXIT', result.error?.code === 'NONZERO_EXIT', result.error?.code);
   }
@@ -344,7 +384,7 @@ async function realChain(): Promise<void> {
   }
   {
     setScenario({ hang: true });
-    const h = orch.run({ agentId: 'dsh', prompt: 'hang', cwd: dir });
+    const h = start({ agentId: 'dsh', prompt: 'hang', cwd: dir });
     await sleep(500);
     await h.cancel('test cancel');
     const r = await h.result();
@@ -352,14 +392,48 @@ async function realChain(): Promise<void> {
   }
   {
     setScenario({ hang: true });
-    const r = await orch.run({ agentId: 'dsh', prompt: 'hang', cwd: dir, timeoutMs: 1200 }).result();
+    const r = await start({ agentId: 'dsh', prompt: 'hang', cwd: dir, timeoutMs: 1200 }).result();
     check('deadline: state timed_out', r.state === 'timed_out', r.state);
   }
 
-  removeOwnedDir(dir);
+  } finally {
+    // B1.4 P2-A: on EVERY exit path (including a setup/run throw), stop anything still
+    // running via the EXISTING cancel + contained-stop confirmation, then delete the
+    // owned dir. A cleanup failure is recorded in the ledger and drives a non-zero exit.
+    for (const h of running) {
+      if (h.state() === 'running') {
+        await h.cancel('dsh-adapter test cleanup').catch(() => undefined);
+        await h.result().catch(() => undefined);
+      }
+    }
+    removeOwnedDir(dir);
+  }
 }
 
 await realChain();
+
+// =========================================================================
+section('B1.4 P2-A: a cleanup failure after a throw drives a real non-zero exit');
+
+{
+  const testFile = fileURLToPath(import.meta.url);
+  const root = join(tmpdir(), `dsh-failchild-${randomUUID().slice(0, 8)}`);
+  const res = spawnSync(process.execPath, [testFile], {
+    cwd: process.cwd(),
+    env: { ...process.env, MC_DSH_FAIL_CHILD: '1', MC_DSH_FAIL_ROOT: root },
+    encoding: 'utf8',
+    timeout: 60_000,
+  });
+  check('fail child: exits NON-ZERO for the injected cleanup failure',
+    res.status !== 0 && res.status !== null, `status=${String(res.status)}`);
+  check('fail child: was not killed by a signal', res.signal === null, `signal=${String(res.signal)}`);
+  let report: { cleanupFailures?: string[]; exit?: number } | null = null;
+  try { report = JSON.parse(readFileSync(join(root, 'report.json'), 'utf8')); } catch { /* unreadable */ }
+  check('fail child: the shared ledger recorded the failure',
+    (report?.cleanupFailures?.length ?? 0) >= 1, JSON.stringify(report));
+  removeOwnedDir(root);
+  check('fail child: only the named owned root was cleaned', !existsSync(root));
+}
 
 // =========================================================================
 
