@@ -30,8 +30,21 @@
  * ============================================================================
  * WHAT THIS SUPPORTS / REFUSES
  * ============================================================================
- * Supported: one new headless run, `cwd`, stdout/stderr event mapping, real exit and
+ * Supported: one new headless run, `cwd`, the FINAL ANSWER on stdout, real exit and
  * cancel/deadline through the existing Runtime/AgentSession/contained stop contract.
+ *
+ * stdout is PLAIN TEXT, not JSONL, so the transport is asked for `rawStdoutText`:
+ * every stdout chunk is delivered VERBATIM (newlines, empty lines and a trailing or
+ * absent final newline preserved) and mapped to an output event without being
+ * JSON-parsed. A JSON-looking answer is therefore delivered as text, never decoded
+ * into protocol events.
+ *
+ * stderr (reasoning and `dsh: <code>: <message>` errors) is NOT mapped by this
+ * adapter: `AgentSession` routes every stderr frame to a DIAGNOSTIC before
+ * `mapEvent` is ever called, so the observable contract is "stderr appears in
+ * `RunResult.diagnostics`". This adapter does not claim to turn stderr into
+ * progress or native-signal events. `terminalPolicy` still parses the stderr TAIL
+ * for the failure detail, and the exit code remains authoritative for the outcome.
  *
  * Refused (capability false → rejected before any process starts): review mode,
  * per-request model, role, sandbox, resume/threadId, raw extra args, and a task whose
@@ -243,35 +256,28 @@ export function createDshAdapter(config?: {
       // parser joins positionals with spaces.
       const args: string[] = ['--profile', 'headless', req.prompt];
       // DSH 0.1.5-rc.2 prints the final answer as PLAIN TEXT on stdout (there is no
-      // JSONL stream in this version), so the transport must deliver stdout lines as
-      // decoded payloads for `mapEvent` to run — otherwise the session would file
-      // the answer as an "unparsed" banner and lose it. `plainTextLines` preserves
-      // the raw text and invents no JSON.
-      return new CliJsonlTransport({ launcher, args, cwd: req.cwd, plainTextLines: true });
+      // JSONL stream in this version). `rawStdoutText` delivers stdout verbatim, so
+      // the answer reaches `mapEvent` with its newlines/empty lines/trailing newline
+      // intact instead of being line-framed (lossy) or filed as an unparsed banner.
+      return new CliJsonlTransport({ launcher, args, cwd: req.cwd, rawStdoutText: true });
     },
 
     mapEvent(frame: TransportFrame, ctx: MapContext): RuntimeEvent[] {
       const c = { taskId: ctx.taskId, agentId: ctx.agentId, threadId: ctx.threadId };
-      // stdout carries the FINAL assistant message; stderr carries reasoning and errors.
-      if (frame.channel === 'stdout') {
-        const text = frame.text;
-        if (text === '') return [];
-        ctx.sink.noteText(text);
-        return [E.output(c, frame, text)];
-      }
-      if (frame.channel === 'stderr') {
-        const error = parseDshErrorLine(frame.text);
-        if (error !== null) {
-          ctx.sink.noteDiagnostic(error);
-          // Recorded as a native signal so terminalPolicy can weigh it; the exit code
-          // remains authoritative for the outcome.
-          ctx.sink.noteNativeSignal(`error: ${error}`);
-          return [E.diagnostic(c, frame, error)];
-        }
-        // Reasoning / progress, never the answer.
-        return [E.progress(c, frame, { kind: 'reasoning', text: frame.text })];
-      }
-      return [];
+      /*
+       * stdout carries the FINAL assistant message. It arrives as a VERBATIM chunk,
+       * so the text is appended as-is: no trimming, no line joining and no invented
+       * newline. Concatenating the chunks reproduces stdout exactly.
+       *
+       * stderr is deliberately NOT handled here. `AgentSession` records every stderr
+       * frame as a diagnostic and returns BEFORE calling `mapEvent`, so a stderr
+       * branch here would be unreachable and would only misstate the real contract.
+       */
+      if (frame.channel !== 'stdout') return [];
+      const text = frame.text;
+      if (text === '') return [];
+      ctx.sink.noteText(text);
+      return [E.output(c, frame, text)];
     },
   };
 }

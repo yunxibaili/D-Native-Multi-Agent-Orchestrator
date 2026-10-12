@@ -1,6 +1,6 @@
 # 后端阶段分析
 
-更新日期：2026-10-12（B1.3 DSH 独立审核 BLOCKED）
+更新日期：2026-10-12（B1.3a 独立收口 PASS WITH P2）
 性质：需求与源码差距分析、建议顺序；不是自动启动开发的指令，也不改变已封板状态。
 
 ## 1. 当前所在阶段
@@ -61,8 +61,8 @@ B1.3（2026-10-12）：把用户确认的**两层任务分配**写入需求（�
 未验证逐请求选模型、会话恢复、隔离；DSH 基础接入 ≠ 逐模型选择 ≠ B1 完成。
 详见 [项目基线 §9](PROJECT_BASELINE.md#9-dsh-基础接入与两层任务分配复用映射实现方实跑待独立复核)。
 
-**B1.3 独立结论 BLOCKED**：真实 contained fixture 的多行答案被压成一行，详见 §6.8。
-两层需求落档有效，但 DSH 纯文本交付尚未保真，不能按实现方 PASS 封板。
+**B1.3a 独立结论 PASS WITH P2**：§6.8 的历史输出保真 P1 与 stderr 契约 P2 已关闭，详见 §6.10。
+仍保留测试异常路径清理与既有 W3-9 时序断言 P2；两层需求落档不代表执行闭环或真实 DSH 推理已验收。
 
 ## 2. 需求与实现差距
 
@@ -381,3 +381,51 @@ GitHub MCP 本轮成功读取上游固定提交 d743267 的 headless README；�
 未跑 full suite、真实模型/DSH 推理任务、读取凭据或改本机配置。
 九文件快照上传 `codex/b13-review-blocked`，父 dde5c7c0；main/共享索引保持原状，不创建 PR。
 详见基线 §9.7。B1 NOT SEALED、PARALLEL_WRITE=CLOSED、B2–B5 未授权；未进入前端。
+
+### 6.9 B1.3a 纯文本保真与 stderr 契约收口（实现方实跑，2026-10-12）
+
+仅关闭 §6.8 的一个 P1 与一个 P2。**P1 根因**：`emitCompleteLines` 去换行并跳空行，初版
+`plainTextLines` 交付的是已拆行文本。**修复**：`ManagedProcess` 新增可选 `onStdoutText`
+（逐字解码 chunk，`StringDecoder` 保 UTF-8 跨 chunk 完整），`CliJsonlTransport` 新增可选
+`rawStdoutText`（默认关）交付逐字 `data`；默认 JSONL 路径字节不变，未新增 transport/authority。
+真实链路精确相等断言覆盖：多行含首/中/尾空行、CRLF、1 字节分批 + 多字节 UTF-8、末尾无换行、
+形似 JSON 的普通答案；`result.output` 与 `session.output` 事件拼接均精确相等。
+**P2**：删除 DSH `mapEvent` 中不可达的 stderr 分支与 progress/native-signal 声明，保留
+`parseDshErrorLine` 供 terminalPolicy；真实链路断言 reasoning/error 进 diagnostics、不入答案、非零仍 failed。
+
+**负控**：隔离副本改回修复前路径（不覆盖工作树），`node tests/dsh-adapter.test.ts`
+→ **exit=1、44/11**，失败即上述保真断言；恢复后 **55/0、exit=0**。
+
+本轮实跑：typecheck PASS；dsh-adapter 55/0；contract 248/0（2 skipped）；unit 92/0；
+execution-lifecycle 136/0；isolation 守卫 5 opt-in/0 违规；`git diff --check` clean。
+`runtime.run`=1、新增 authority=0、默认 JSONL 兼容。**观察项**：一次批量 containment-production
+出现 **232/1、exit=1**，失败 assertion `W3-9 and the writer had genuinely been active before it :: 1170->1170`
+（`tests/containment-production.test.ts:969` 的 200ms 心跳增长比较）；同命令单独运行一次为 **233/0、exit=0**；
+未循环重试，也不据此认证 containment 失效。
+标 **READY FOR CODEX INDEPENDENT REVIEW**；B1 NOT SEALED、PARALLEL_WRITE=CLOSED、B2–B5 未授权。
+
+### 6.10 B1.3a Codex 独立收口 PASS WITH P2（2026-10-12）
+
+原输出保真 P1 与 stderr 契约 P2 已关闭。raw stdout 使用既有 StringDecoder，显式启用才绕过行拆分，
+默认 JSONL/stderr 路径保持；无新增 transport/manager/authority/依赖。
+独立 contained fixture 每字节间隔 8ms 输出 `\n中\r\n\n{"a":1}\r\n\nEND`，
+result.output 与 18 个输出事件拼接均精确相等，treeStopConfirmed=true，stderr 仅作 diagnostic。
+owned probe root 已删除、cleanup 无失败。
+隔离内存 loader 负控去掉 DSH 文本换行，真实 suite 44/11、status=1、signal/error=null，工作树未改。
+
+本轮独立：typecheck；dsh 55/0；contract 248/0（2 skipped）；unit 92/0；containment-production 233/0（一次）；
+execution-lifecycle 136/0；isolation 5 opt-in/0 违规；diff check，正常 exit 均 0。
+未跑 full suite、真实 DSH/model 推理任务或重复历史 version/目录探测，未读凭据或改本机配置。
+
+保留非阻断 P2-A：DSH 测试 realChain 缺少异常路径 finally。
+独立 child 在 owned fixture 首次写入时抛错，status=1、signal/error=null，汇总未执行且 owned root 残留；
+审核 probe 仅按记录路径清理。此例没有启动进程，不据此宣称进程泄漏或假 PASS。
+应复用既有 ledger 用 finally 清理并补异常 child 回归，不另建框架。
+
+保留 P2-B：W3-9 在 before 之后立即 cancel，却要求停止后的 atStop>before。
+及时停止可合法没有新增字节；200ms sleep 位于确认停止之后，不能当停止前的活跃采样窗口。
+该失败不等于 confirmed Job 后代仍存活。本轮未复现，也未改此历史测试；后续应在取消前确认增长，
+保留停止后无写入与 Job 停止确认断言。详见基线 §9.9。
+
+六文件快照上传 codex/b13a-review-pass-with-p2，父 4b89534e；Codex 仅更新现有两份文档，
+main 与共享索引保持原状。B1 NOT SEALED、PARALLEL_WRITE=CLOSED、B2–B5 未授权，未进入前端。

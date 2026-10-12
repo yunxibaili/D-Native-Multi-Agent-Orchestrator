@@ -31,15 +31,21 @@ export interface CliTransportOptions {
   /**
    * The agent speaks PLAIN TEXT, not JSONL.
    *
-   * When true, each stdout line is delivered as a DECODED payload
-   * (`data: { text }`) alongside the untouched `text`. `AgentSession` gives
-   * `frame.data` precedence over JSON-parsing `frame.text`, so this is what routes
-   * a plain-text line to the adapter's `mapEvent` instead of classifying it as an
-   * "unparsed" banner. It is NOT a claim that the output is JSON — the raw text is
-   * preserved and no parsing is invented. Off by default, so JSONL agents are
-   * unaffected.
+   * When true, stdout is delivered as RAW decoded chunks (through
+   * `ManagedProcess.onStdoutText`), each published as a decoded payload
+   * (`data: { text }`) alongside the untouched `text`. Two things follow:
+   *
+   *  1. `AgentSession` gives `frame.data` precedence over JSON-parsing `frame.text`,
+   *     so a plain-text chunk reaches the adapter's `mapEvent` instead of being
+   *     classified as an "unparsed" banner — and a JSON-LOOKING answer is NOT
+   *     parsed into protocol events;
+   *  2. the chunk is verbatim, so newlines, EMPTY lines, interior whitespace and a
+   *     trailing (or absent) final newline survive; concatenating the chunks
+   *     reproduces stdout exactly. It is NOT a claim that the output is JSON.
+   *
+   * Off by default, so JSONL agents keep the line-framed behaviour unchanged.
    */
-  plainTextLines?: boolean;
+  rawStdoutText?: boolean;
 }
 
 export class CliJsonlTransport implements Transport {
@@ -82,6 +88,7 @@ export class CliJsonlTransport implements Transport {
   start(): void {
     if (this.started) return;
     this.started = true;
+    const rawStdout = this.opts.rawStdoutText === true;
     const proc = new ManagedProcess({
       launcher: this.opts.launcher,
       args: this.opts.args,
@@ -89,15 +96,12 @@ export class CliJsonlTransport implements Transport {
       env: this.opts.env,
       stdin: this.opts.stdin,
       stderrTailBytes: this.opts.stderrTailBytes,
-      onStdoutLine: (line) =>
-        this.publish(
-          // `plainTextLines`: hand the session a decoded payload so a plain-text
-          // line reaches `mapEvent` rather than being treated as unparseable JSON.
-          // The raw `text` is preserved either way; nothing is parsed or faked.
-          this.opts.plainTextLines === true
-            ? { channel: 'stdout', text: line, data: { text: line } }
-            : { channel: 'stdout', text: line },
-        ),
+      // `rawStdoutText`: stdout is delivered as VERBATIM decoded chunks and each is
+      // published as a decoded payload (`data`), so it reaches `mapEvent` and is
+      // never JSON-parsed. Otherwise the default LINE-framed path is used unchanged.
+      ...(rawStdout
+        ? { onStdoutText: (text: string) => this.publish({ channel: 'stdout', text, data: { text } }) }
+        : { onStdoutLine: (line: string) => this.publish({ channel: 'stdout', text: line }) }),
       onStderrLine: (line) => this.publish({ channel: 'stderr', text: line }),
     });
     this.proc = proc;

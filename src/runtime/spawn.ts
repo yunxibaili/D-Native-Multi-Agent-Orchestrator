@@ -81,6 +81,23 @@ export interface SpawnOptions {
   stdin?: string;
   onStdoutLine?: (line: string) => void;
   onStderrLine?: (line: string) => void;
+  /**
+   * RAW stdout text, delivered as decoded chunks VERBATIM.
+   *
+   * When set, stdout is NOT line-framed for this process: every decoded chunk is
+   * handed over untouched, so line terminators, EMPTY lines, interior whitespace
+   * and a trailing (or absent) final newline are all preserved exactly. The
+   * `StringDecoder` already reassembles multi-byte UTF-8 sequences that straddle a
+   * chunk boundary, so the concatenation of the chunks equals the byte stream.
+   *
+   * This is the entry a PLAIN-TEXT agent (e.g. DSH headless) needs, because
+   * `emitCompleteLines` deliberately strips terminators and drops empty lines — a
+   * lossy framing that is correct for JSONL but destroys plain text.
+   *
+   * Takes precedence over `onStdoutLine` for stdout; stderr is unaffected. Default
+   * (unset) keeps the existing line-framed behaviour, so JSONL agents are unchanged.
+   */
+  onStdoutText?: (text: string) => void;
   stderrTailBytes?: number;
 }
 
@@ -198,6 +215,8 @@ export class ManagedProcess {
   private readonly child: ChildProcess;
   private readonly onStdoutLine?: (line: string) => void;
   private readonly onStderrLine?: (line: string) => void;
+  /** Opt-in RAW stdout text sink (see `SpawnOptions.onStdoutText`). */
+  private readonly onStdoutText?: (text: string) => void;
 
   /** Streams that have not yet emitted 'end'. */
   private pendingStreams = 0;
@@ -375,6 +394,7 @@ export class ManagedProcess {
     this.commandLine = [opts.launcher.command, ...argv].join(' ');
     this.onStdoutLine = opts.onStdoutLine;
     this.onStderrLine = opts.onStderrLine;
+    this.onStdoutText = opts.onStdoutText;
     this.stderrTail = new TailBuffer({
       limitBytes: opts.stderrTailBytes ?? DEFAULT_STDERR_TAIL_BYTES,
       keep: 'tail',
@@ -495,7 +515,7 @@ this.startDisposition = advanceProcessStart(this.startDisposition, 'proven-pre-s
       this.child.stdin.end(opts.stdin, 'utf8');
     }
 
-    this.attach(this.child.stdout, 'stdout');
+    this.attach(this.child.stdout, 'stdout', this.onStdoutText);
     this.attach(this.child.stderr, 'stderr');
 
     this.child.on('error', (err: NodeJS.ErrnoException) => {
@@ -567,7 +587,11 @@ this.stderrTail.append(`\nspawn error: ${err.message}`);
     return !this.spawnFailed && this.child.exitCode === null && this.child.signalCode === null;
   }
 
-  private attach(stream: NodeJS.ReadableStream | null, channel: 'stdout' | 'stderr'): void {
+  private attach(
+    stream: NodeJS.ReadableStream | null,
+    channel: 'stdout' | 'stderr',
+    onText?: (text: string) => void,
+  ): void {
     if (!stream) return;
     const decoder = new StringDecoder('utf8');
     // Each stream routes to ITS OWN callback. Sharing one handler would label
@@ -584,6 +608,17 @@ this.stderrTail.append(`\nspawn error: ${err.message}`);
       // stderr is retained RAW, before line slicing, so a complete line is
       // never lost — this tail is the only explanation for a startup crash.
       if (channel === 'stderr') this.stderrTail.append(chunk);
+      if (onText) {
+        /*
+         * RAW text mode: hand the decoded chunk over VERBATIM. `StringDecoder`
+         * already reassembled any multi-byte UTF-8 sequence that straddled a chunk
+         * boundary, so concatenating the chunks reproduces the byte stream exactly
+         * — newlines, empty lines, interior whitespace and the trailing newline
+         * included. Nothing is line-split or trimmed here.
+         */
+        if (chunk.length > 0) onText(chunk);
+        return;
+      }
       lineBuffer += chunk;
       if (onLine) {
         lineBuffer = emitCompleteLines(lineBuffer, onLine);
@@ -595,12 +630,17 @@ this.stderrTail.append(`\nspawn error: ${err.message}`);
 
     stream.on('end', () => {
       const rest = decoder.end();
-      if (rest) {
-        if (channel === 'stderr') this.stderrTail.append(rest);
-        lineBuffer += rest;
-      }
-      if (lineBuffer.length) {
-        if (onLine) onLine(lineBuffer);
+      if (onText) {
+        // Flush the decoder's final reassembled characters verbatim.
+        if (rest.length > 0) onText(rest);
+      } else {
+        if (rest) {
+          if (channel === 'stderr') this.stderrTail.append(rest);
+          lineBuffer += rest;
+        }
+        if (lineBuffer.length) {
+          if (onLine) onLine(lineBuffer);
+        }
       }
       lineBuffer = '';
       this.pendingStreams--;

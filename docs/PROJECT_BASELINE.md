@@ -1,6 +1,6 @@
 # 项目基线
 
-更新日期：2026-10-12（B1.3 DSH 独立审核 BLOCKED，见 §9.7）
+更新日期：2026-10-12（B1.3a 独立收口 PASS WITH P2，见 §9.9）
 范围：当前代码事实、已有封板状态和执行边界。未来需求不自动转为实现事实。
 
 ## 文档入口与优先关系
@@ -1017,11 +1017,13 @@ capabilities 如实：`resume`/`review`/`modelSelection`/`roleSelection`/`sandbo
 `skills`/`steering`/`worktree`/`fork`/`stdinPrompt` 均为 **false**；`workspaceModes: ['shared']`（隔离未验证，fail-closed）。
 无 native sessionId → `threadId` 保持 `null`；无 usage/cost → 不伪造。
 
-**协议适配的关键点**：`AgentSession` 对 stderr 直接记为诊断、对无法解析的 stdout 记为 `unparsed`，
+**协议适配的关键点（B1.3a 修正）**：`AgentSession` 对 stderr 直接记为诊断、对无法解析的 stdout 记为 `unparsed`，
 不会调用 adapter 的 `mapEvent`。因此 DSH 纯文本 stdout 必须由**传输层交付为已解码 `data`**
-（会话对 `frame.data` 优先于 JSON 解析 `frame.text`）才能进入 `mapEvent`。为此在既有
-`CliJsonlTransport` 上新增**可选** `plainTextLines`（默认关，JSONL agent 不受影响），
-保留原始 `text`、不发明 JSON、**未新增 transport**。
+（会话对 `frame.data` 优先于 JSON 解析 `frame.text`）才能进入 `mapEvent`。
+B1.3 初版的 `plainTextLines` 走的是 `ManagedProcess` 的**行拆分**路径，行结束符与空行已被 `emitCompleteLines`
+丢弃，故内容不保真（见 §9.7 P1）。B1.3a 改为：`ManagedProcess` 新增**可选** `onStdoutText`
+（原始解码 chunk，`StringDecoder` 保证跨 chunk UTF-8 完整），`CliJsonlTransport` 用**可选**
+`rawStdoutText`（默认关）交付逐字 chunk；保留原始 `text`、不发明 JSON、**未新增 transport**、默认 JSONL 行为不变。
 
 ### 9.4 两层分配复用映射（用户能力 → 已有模块 → 实际缺口 → 后续阶段）
 
@@ -1100,3 +1102,112 @@ runtime.run 生产调用边仍为 1。实现方 orchestration/workbuddy/cline �
 discovery、CLI transport、新 DSH adapter 与新 DSH 测试；Codex 仅更新两份现有审核文档。
 使用隔离 Git index，不 checkout/合并 main、不改变共享索引、不创建 PR；不上传临时 probe、机器配置或凭据。
 该上传是可复核快照，不代表 DSH 接入或 B1 封板通过。
+
+### 9.8 B1.3a 纯文本保真与 stderr 契约收口（实现方实跑，待独立复核）
+
+日期：2026-10-12。仅关闭 §9.7 的一个 P1 与一个 P2；不重开 DSH adapter，不重审整个 B1。
+B1.2c closure PASS 不变；B1 整体 NOT SEALED、W5 SEALED WITH P2、PARALLEL_WRITE=CLOSED、B2–B5 未授权。
+
+#### P1 根因与复用方案
+
+`ManagedProcess.attach` 的默认 stdout 路径用 `emitCompleteLines` **去掉行结束符并跳过空行**；
+B1.3 的 `plainTextLines` 交付的是这份已拆行的文本，DSH `mapEvent` 再直接 `noteText` 拼接，于是
+`const a = 1;\n\nconst b = 2;\n` 变成 `const a = 1;const b = 2;`（内部空行与末尾换行丢失）。
+**复用入口**：`StringDecoder` 已保证跨 chunk 的 UTF-8 完整；只需一个**原始 chunk** 入口。
+**方案**：`ManagedProcess` 新增可选 `onStdoutText`（逐字解码 chunk，非行拆分），
+`CliJsonlTransport` 新增可选 `rawStdoutText`（默认关）据此交付逐字 `data`；DSH `createTransport` 打开它。
+未新增 transport/执行器/manager/authority；默认 JSONL 行拆分路径**字节不变**。
+
+#### P1 精确输入/输出（真实链路，受控 fixture）
+
+| 用例 | stdout（精确） | `result.output`（精确断言） | 输出事件拼接 |
+|---|---|---|---|
+| 多行含首/中/尾空行 | `\nconst a = 1;\n\nconst b = 2;\n` | 相等 | 相等 |
+| CRLF | `a\r\nb\r\n\r\nc\r\n` | 相等 | 相等 |
+| 1 字节分批 + 多字节 UTF-8 | `中1\n\né2\n` | 相等 | 相等 |
+| 末尾无换行 | `no trailing newline` | 相等（不补换行） | 相等 |
+| 形似 JSON 的普通答案 | `{"a":1,"b":[2,3]}\n` | 相等（不解析为协议事件） | 相等 |
+
+`result.output` 与 `session.output` 事件 text 拼接**均用精确相等**断言，非 `includes`。
+
+#### P1 负控（证明回归承重）
+
+在**隔离副本**上临时将 `createTransport` 改回不带 `rawStdoutText`（修复前路径），命令
+`node tests/dsh-adapter.test.ts`：**exit=1、44 passed / 11 failed**，失败均为上述保真断言
+（多行/CRLF/UTF-8/末尾换行/JSON 形态与 P2 答案），例如
+`FAIL P1 multi-line: output is EXACTLY the stdout bytes - ""`。恢复后 55/0；工作树未被覆盖或重置。
+
+#### P2 stderr 契约收口
+
+`AgentSession.handleFrame` 对 stderr 直接记诊断并 `return`，**不会**调用 adapter 的 stderr `mapEvent`。
+故删除 DSH `mapEvent` 中不可达的 stderr 分支与“映射为 progress/native signal”的声明；
+`mapEvent` 仅处理 stdout 且逐字交付。保留 `parseDshErrorLine`/`firstDshError`/`describeDshFailure`
+供 `terminalPolicy` 的失败详情使用，退出码仍权威。
+真实链路断言：reasoning/error 出现在 `RunResult.diagnostics`（形如 `stderr: dsh: reasoning:`），
+**不出现在最终答案**，非零退出仍 `failed`（`NONZERO_EXIT`）。单元 parser 测试与真实链路证据分开表述。
+
+#### 本轮实跑（实现方）
+
+`npm run typecheck` PASS；`node tests/dsh-adapter.test.ts` **55/0、exit=0**；
+`contract` **248/0（2 skipped）**、`unit` **92/0**、`execution-lifecycle` **136/0**、
+`real-agent-isolation` 守卫 **5 opt-in/0 违规**，exit 均为 0；`git diff --check` clean。
+`runtime.run` 生产调用边 = 1；新增 authority = 0；默认 JSONL 行为兼容。
+本轮 owned 临时目录/observer/CLI 进程残留 **0**（`dsh-*` 历史目录为 DSH 自身运行时产物，未删除）。
+未跑 full suite、未调用真实模型、未读凭据、未改本机配置。
+
+#### 观察项：containment-production 间歇失败（保留证据，不循环重试）
+
+一次批量运行 `node tests/containment-production.test.ts` 出现 **232 passed / 1 failed、exit=1**，
+失败 assertion：`W3-9 and the writer had genuinely been active before it :: 1170->1170`
+（源码 `tests/containment-production.test.ts:969`，判定 `atStop > before`，是 200ms 窗口内的
+心跳增长比较）。同一命令随后**单独运行一次**为 **233/0、exit=0**。证据：(a) 该失败为时间竞态断言；
+(b) 本切片只新增**可选** `onStdoutText`，默认行拆分路径字节不变（diff 显示原逻辑整体移入新 `else`）；
+(c) 未连续重试到全绿，也不据此认证 containment 失效，保留为后续观察项。
+
+本切片标 **READY FOR CODEX INDEPENDENT REVIEW**；不得据此宣布 B1 封板或开放并行写。
+
+### 9.9 B1.3a Codex 独立收口 PASS WITH P2 与上传说明
+
+日期：2026-10-12。§9.7 为历史 BLOCKED；原多行输出 P1 与 stderr 契约 P2 已独立确认关闭。
+本次切片结论 **PASS WITH P2**，限纯文本保真与 stderr 契约收口，不代表真实 DSH 推理兼容性或 B1 整体验收。
+B1 NOT SEALED、W5 SEALED WITH P2、PARALLEL_WRITE=CLOSED、B2–B5 未授权保持不变。
+
+**源码复核**：新增可选 `ManagedProcess.onStdoutText` 使用既有 StringDecoder 解码后直接交付 chunk，
+end 时刷新 decoder；仅 stdout 显式启用，默认 line framing 与 stderr 路由保留。
+CLI transport 的 rawStdoutText 默认关闭，DSH 显式启用并给出 data，Session 不再 JSON 解析答案。
+DSH mapEvent 的不可达 stderr 分支已删除；错误解析仍供 terminalPolicy 使用。
+未新建 transport/manager/authority/依赖，仍复用现有进程、会话和输出容量限制。
+
+**独立真实链路 probe**：使用 owned launcher copy 与受控 fixture，不启动真实 DSH。
+target 按 1 字节、间隔 8ms 写入 `\n中\r\n\n{"a":1}\r\n\nEND`，最后无换行；
+实际 output 精确相等，18 个 session.output 事件的 text 拼接也精确相等，state=succeeded、
+treeStopConfirmed=true。reasoning stderr 出现在 diagnostics、不在答案中。
+probe cleanupFailures=[]、owned root 不再存在，未扫描清理 foreign 资源。
+
+**独立负控**：隔离 Node loader 在内存中仅替换 DSH mapEvent 的文本取值为去换行版本，未改工作树文件。
+运行真实 DSH suite，真实 status=1、signal=null、error=null，44/11；多行、CRLF、UTF-8 等精确断言失败，
+其中多行实际退化为 `const a = 1;const b = 2;`。证明回归能发现内容丢失，而非仅检查进程成功退出。
+
+**本轮独立实跑**：typecheck PASS；dsh 55/0；contract 248/0（2 skipped）；unit 92/0；
+containment-production 233/0（一次）；execution-lifecycle 136/0；isolation 守卫 5 opt-in/0 违规；
+git diff --check PASS，正常运行实际 exit 均 0。runtime.run 生产调用边仍为 1，未新增 authority。
+DSH --version、本机目录及其他历史结果未重复；未跑 full suite、真实模型任务、读取凭据、安装依赖或改本机配置。
+
+**保留 P2-A：测试异常路径缺少 finally。** `tests/dsh-adapter.test.ts` 的 realChain 创建 owned 目录后，
+fixture 写入、运行与等待均未被 finally 包住；末尾清理只在正常流程到达时执行。
+本轮在隔离 child 拦截本套件 owned `fixture.cjs` 首次写入并抛 INDEPENDENT_SETUP_WRITE_FAILED：
+真实 status=1、signal=null、error=null，汇总未执行，owned root 仍存在。
+审核 probe 仅按它记录并核验边界的路径清理，remaining=false。
+此例在启动任何 fixture 前失败，证明目录清理缺口，不证明进程泄漏；退出已非零，不构成假 PASS，列非阻断 P2。
+最小修复是在既有 ledger 下保证 finally 清理，不另建框架，并用独立 child 证明异常后的清理和退出码。
+
+**保留 P2-B：既有 W3-9 断言可能误报及时停止。** 实现方提供的 1170→1170 失败来自 atStop>before。
+源码先取 before，再立即 cancel，等待停止后才 sleep(200) 并取 atStop；这不是停止前 200ms 的心跳采样。
+若 cancel 在下个 50ms 写入 tick 前停止 writer，before>0 与 after===atStop 可以同时成立，但 atStop>before 失败。
+因此该断言不足以证明 containment correctness failure；本轮一次独立 suite 233/0，未循环重试。
+该历史测试修订未纳入本次六文件修复；后续应在取消前独立确认增长，保留停止确认后不再写入的强断言。
+
+**上传说明**：按既有授权上传六文件 PASS WITH P2 增量快照，分支 `codex/b13a-review-pass-with-p2`，
+父提交 4b89534e01e5bba3f1afdddce17ff7eb433e1e52。包含 spawn、CLI transport、DSH adapter、DSH 测试和两份现有文档。
+Codex 本轮仅更新两份文档，未修改实现或测试；使用隔离 Git index，不 checkout/合并 main、不改共享暂存区、不创建 PR。
+不上传临时注入器、probe、凭据或本机配置。两个 P2 保留，不扩大为 B1 封板或并行写授权。
