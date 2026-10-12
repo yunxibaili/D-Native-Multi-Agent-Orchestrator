@@ -48,6 +48,8 @@ const REAL_AGENT_TESTS = [
   'w42-opencode-lifecycle.test.ts',
   'w42-codex-lifecycle.test.ts',
   'w43-opencode-evidence.test.ts',
+  // B1.2: opt-in real OpenCode `models` catalogue query (contained ManagedProcess).
+  'b12-opencode-model-catalog.test.ts',
 ];
 
 const HELPER = join(HERE, 'helpers', 'real-agent-isolation.ts');
@@ -147,7 +149,9 @@ for (const name of REAL_AGENT_TESTS) {
 }
 
 // -- every real-agent test on disk must be listed ----------------------------
-for (const f of readdirSync(HERE).filter((n) => /^w4\d-.*\.test\.ts$/.test(n))) {
+// The discovery covers the historical `w4N-` suites AND the newer `bN-` slices, so a
+// new opt-in real-agent entry cannot escape the ownership rules by naming alone.
+for (const f of readdirSync(HERE).filter((n) => /^(w4\d|b\d+)-.*\.test\.ts$/.test(n))) {
   if (REAL_AGENT_TESTS.includes(f)) continue;
   const src = code(readFileSync(join(HERE, f), 'utf8'));
   if (/agentId:\s*'(opencode|codex|cline|workbuddy)/.test(src)) {

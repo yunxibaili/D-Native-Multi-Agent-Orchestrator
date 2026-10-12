@@ -1,6 +1,6 @@
 # 项目基线
 
-更新日期：2026-10-11
+更新日期：2026-10-12
 范围：当前代码事实、已有封板状态和执行边界。未来需求不自动转为实现事实。
 
 ## 文档入口与优先关系
@@ -81,7 +81,7 @@ W5 封板保留下述兼容性及证据时效 P2，不代表全部 Agent 或新�
 端到端预算以及 token 节省对比，均未完成整体验收。
 新能力不能绕过既有 Spawn Gate 或为了调度可用而放宽未知事实语义。
 
-### 5.1 B1.1 只读模型目录诊断（最小诊断切片 PASS）
+### 5.1 B1.1 只读模型目录诊断（最小诊断切片 PASS；B1.2 正常真实路径通过，测试入口审核 BLOCKED）
 
 用户显式请求时，`doctor --models <agent>` 返回该 Agent 原生 CLI 列出的模型目录快照。
 仅支持 **OpenCode**（`opencode models`，官方命令）；其他 Agent 明确返回 `unsupported`，
@@ -474,3 +474,104 @@ W5 SEALED WITH P2 不变；PARALLEL_WRITE=CLOSED；B2–B5 未授权。本轮不
 main、共享索引、其他生产源码及 W5 已审核文件保持原状；不上传临时脚本、二进制、日志或凭据。
 未跑 full suite、真实 Agent/模型、非 Windows 路径，未读取凭据或修改本机配置。
 本轮确认小切片闭环，不将其提升为完整模型选择、费用管理或 LAYA Skill/MCP 联合决策已完成。
+
+### 8.9 B1.2 真实 OpenCode 目录兼容性（实现方实跑，待独立复核）
+
+以下保留实现方报告；2026-10-12 的独立结论见 §8.10。正常真实查询通过不等于入口失败语义与有界性通过。
+
+日期：2026-10-11。新增一个**显式 opt-in** 的真实目录测试入口
+`tests/b12-opencode-model-catalog.test.ts`（`ORCH_B12_REAL_CATALOG=1` 才运行；不在默认 `npm test`
+清单内，已登记进 `real-agent-isolation.test.ts` 的 ownership 守卫，且守卫的自动发现已覆盖 `bN-` 入口）。
+不进入 B2–B5，不开放并行写；W5 SEALED WITH P2 不变。
+
+**本机事实（只读探测）**：解析到的真实 launcher 为 native
+`%APPDATA%\npm\node_modules\opencode-ai\bin\opencode.exe`；版本 **1.18.35**；
+`opencode models [provider]` 帮助确认存在（另有 `--verbose/--refresh/--pure/--log-level`）。
+未使用 `--verbose`/`--refresh`。
+
+**真实调用链**：`Orchestrator.doctor({ modelCatalog: { agentId: 'opencode' } })` →
+`collectModelCatalog` → 默认 contained `ManagedProcess`（sealed Job launcher）→ 真实 OpenCode →
+原生 `opencode models`。**未注入 runner、未用 fixture 替代、未用包装脚本伪造模型列表。**
+只有真实 OpenCode 被允许启动；其他已注册 Agent 用既有 `replaceAdapters` seam 替换为 fake，
+因此 doctor 不会 probe 真实 Codex/WorkBuddy/Cline（**测试边界**：不代表整条 doctor CLI 的全部真实 Agent 已验证）。
+
+**快照结果**：`status=ok`、**42** 个模型、耗时约 **2068ms**；
+完整 `provider/model` 标识全部保留（`bad=0`），样例 `opencode/big-pickle`、`opencode/exo-free`、
+`opencode/ling-3.0-flash-fin-free`。未硬编码模型名/数量/免费集合。
+
+**containment 证据**：本轮 owned control 记录为 `success, success`（version probe + models），
+经生产验证函数 `treeStopConfirmedFrom` 确认为已停止（`ActiveProcesses==0`）；
+raw 字段仅作诊断，生命周期事实只由生产验证函数认证。退出仅接受既有契约。
+
+**隔离与副作用边界**：未添加 `--standalone`/`--pure`/环境变量（禁止凭猜测）。1.18.35 二进制含
+`ServerConnection`/`standalone`/`serve`/`attach` 字符串，但实测 `opencode models` 为**单次短生命周期进程**，
+运行期间与结束后均无 CLI 残留进程、无监听端口；本机另有 7 个 OpenCode **桌面应用**进程（Electron，
+非 CLI 服务），本轮未读取/停止/修改。未证明“目录命令零网络/零缓存/零插件初始化”，
+也未声称原生程序绝不访问认证信息（其可能使用自身已有配置）。仅查询目录，未发送推理请求。
+
+**未启用行为**：`ORCH_B12_REAL_CATALOG` 未设时输出 `NOT_RUN (opt-in required)`，
+不做 discovery、不启动 Agent、不建立 owned 目录、不写成 PASS。
+
+**实跑证据（实现方）**：`npm run typecheck` PASS；`node tests/model-catalog.test.ts` **68/0**；
+`node tests/real-agent-isolation.test.ts` ownership 守卫 PASSED（5 个 opt-in，0 违规）；
+`node tests/real-agent-ownership.test.ts` **60/0**；新入口未启用 EXIT=0、启用后真实查询 **PASS（EXIT=0）**；
+`git diff --check` clean。真实运行结束后 owned root/observer/CLI 进程残留 **0**，桌面应用仍为 7。
+
+**未证明的事实**：目录列出 ≠ 已连接 ≠ 可调用 ≠ 免费；未验证任何模型实际可调用、账户额度、免费资格、
+角色适配或真实推理兼容性；未跑 full suite、未调用真实模型任务、未读凭据、未改本机配置。
+不将本轮完成解释为 B1 整体封板。详见 [阶段分析](STAGE_ANALYSIS.md)。
+
+### 8.10 B1.2 独立审核 BLOCKED 与上传说明
+
+日期：2026-10-12。**BLOCKED：两个 P1、一个 P2 待关闭**。
+B1.1 最小诊断切片 PASS 不变；B1.2 正常真实目录路径已独立跑通，但新测试入口尚不能封板。
+B1 整体 NOT SEALED；W5 SEALED WITH P2；PARALLEL_WRITE=CLOSED；B2–B5 未授权。
+
+#### 独立实跑与边界
+
+- typecheck PASS；model-catalog **68/0、exit=0**；ownership guard **5 个 opt-in、0 违规、exit=0**；
+  real-agent-ownership **60/0、exit=0**；新入口未启用 **NOT_RUN、exit=0**；diff check PASS。
+- 新入口真实运行一次：native OpenCode **1.18.35**，约 **2020ms**，快照 **ok、42 models、bad=0**，
+  owned control 为 **success, success**，检查 **3 PASS、exit=0**。未注入目录 runner；其他 Agent probe 为 fake。
+- 未调用模型推理任务、未运行 full suite、未读取凭据内容或修改本机 Agent 配置。
+  本轮未重复实现方 help、端口和运行中进程采样，不能将其报告写成本轮独立实测。
+- GitHub MCP 本轮代码搜索请求成功但无匹配，未作为本机 1.18.35 内部机制的证明。
+  继续复用既有目录、ManagedProcess、owned context 与生产 control 验证函数，无依赖引入。
+
+#### 当前发现
+
+**P1-1：显式启用但没有 OpenCode，仍返回成功。**
+新测试的未发现分支记录 SKIP，finish 允许 environment blocked，最终输出只检查 FAIL，
+因此会打印 PASS 并退出 0。独立 load-hook 仅令 OpenCode discovery 失败：真实子进程
+**status=0、signal=null**，输出 **SKIP / ENVIRONMENT_BLOCKED → PASS(assertions=1)**，没有启动真实 Agent。
+另将 owned setup 的 launcher 结果置空：输出 SKIP、exit=0，没有真正查询。
+最小修复：区分未启用 NOT_RUN、启用但环境阻塞、实际通过；启用后未查询不能打印 PASS，
+自动验证入口应以失败退出或明确的非成功环境状态传播，保留 cleanup failure 的优先级。
+
+**P1-2：version probe 无 deadline，新增入口并非端到端有界。**
+测试直接 await doctor；doctor 先 await adapter.probe，OpenCode probe 直接 await proc.exited，
+没有超时。collectModelCatalog 的 20s 计时器在此后才创建，不能覆盖 --version。
+独立受控 probe 将版本进程替换为常驻 Node，沿既有 contained ManagedProcess 启动；
+650ms 时仍在等待，只有审核 watchdog 调用该原始 ManagedProcess.cancel 才继续，
+取消确认 true，随后测试完成并清理。650ms 是审核观察/清理时点，不是现有产品 deadline。
+源码无 deadline 与常驻输入共同证明挂起路径；未声称本机真实 --version 曾挂起。
+最小修复：为该 opt-in 入口提供覆盖版本与目录的真实有界执行/取消/停止确认，
+单独 Promise.race 后丢弃仍运行的进程不满足要求；不必借机重写所有 adapter。
+
+**P2-1：control 证据按任意一条成功归并，无法逐次证明。**
+ownedTreeStopConfirmed 对任意成功记录置 true，其他 INVALID/缺失记录不使其失败。
+独立合成 owned 目录：version 为生产验证合法 success，models 为 incomplete INVALID；
+实际读取/验证函数返回 **confirmed=true、statuses=[INVALID,success]**。
+这是证据归并反例，不是复现生产 catalog 将未停止进程认证成功；生产目录仍自行校验停止事实。
+最小修复：明确覆盖 version 与 models 的本轮记录，逐条验证所需事实，不能用另一条成功记录替代。
+
+#### 上传与剩余范围
+
+审核分支 **codex/b12-review-blocked**，父提交 **098f926fb8d48ddce4a605733643a8dc6f560830**。
+四文件增量：新 B1.2 测试、isolation guard 登记与发现范围、两份现有文档。
+Codex 仅修改文档，未修复实现；main、共享索引及既有生产源码保持不变。
+提交说明区分正常真实路径通过与入口 BLOCKED，不将上传解释为验收通过或开放后续阶段。
+审核 load hook 仅在独立进程内生效，不写源码；合成 control 临时目录已删除，
+受控版本进程经原 ManagedProcess 取消确认后结束；结束时 owned root/fixture/CLI 残留为 0。
+既有 OpenCode 桌面应用不属于本轮资源，未停止或修改；未用进程数量证明无服务连接。
+listed≠connected≠callable≠free 仍冻结，真实模型调用、额度、免费、角色与内部服务机制尚未验证。

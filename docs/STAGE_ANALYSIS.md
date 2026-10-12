@@ -1,6 +1,6 @@
 # 后端阶段分析
 
-更新日期：2026-10-11
+更新日期：2026-10-12
 性质：需求与源码差距分析、建议顺序；不是自动启动开发的指令，也不改变已封板状态。
 
 ## 1. 当前所在阶段
@@ -33,8 +33,20 @@ B1.1a 收口：默认执行改为复用生产 contained `ManagedProcess`（Job �
 未确认清理即判 `failed`；测试改用受控 command/fixture，不再依赖本机安装 OpenCode。
 B1.1b 收口：检查/observer 回收/owned 目录删除失败统一进入退出码；deadline timer 在 `finally` 释放；
 删除冗余 fresh-PID 断言。B1 整体仍未封板；本片不含选择层级、pause、付费授权、动态额度、Skill/MCP 或 LAYA 联合决策。
-封板限受控 fixture 与测试链路；真实 Agent 原生目录查询兼容性未验收。
-详见 [项目基线 §8.8](PROJECT_BASELINE.md#88-b11b-独立审核-pass-与上传说明)。
+封板限受控 fixture 与测试链路。
+
+**B1.2 真实 OpenCode 目录兼容性（正常路径独立通过；测试入口 BLOCKED）**：新增
+`tests/b12-opencode-model-catalog.test.ts`（`ORCH_B12_REAL_CATALOG=1` 才运行，不在默认 suite，
+已登记进 ownership 守卫）。本机 launcher native、版本 **1.18.35**、`opencode models` 帮助确认；
+经 `doctor → collectModelCatalog → contained ManagedProcess → 真实 OpenCode` 得到 `ok`、**42** 个模型、
+约 **2068ms**、完整 `provider/model` 保留；owned control 记录经生产验证为已停止。
+仅真实 OpenCode 启动，其他 Agent 用 `replaceAdapters` 替换为 fake（测试边界）。
+未加 `--standalone/--pure/环境变量`；未证明零网络/零缓存/零插件初始化，未触碰 7 个桌面应用进程。
+未验证模型可调用/额度/免费/角色适配。详见 [项目基线 §8.9](PROJECT_BASELINE.md#89-b12-真实-opencode-目录兼容性实现方实跑待独立复核)。
+Codex 2026-10-12 独立真实查询同样得到 1.18.35 / ok / 42 models / 3 PASS，但发现两个 P1：
+启用后 OpenCode 缺失仍 SKIP→PASS/exit=0；version probe 无 deadline，目录 timeout 不覆盖它。
+另有 P2：任意一条 control 成功可掩盖另一条 INVALID 的证据缺口。
+本片不得封板，详见 [项目基线 §8.10](PROJECT_BASELINE.md#810-b12-独立审核-blocked-与上传说明)。
 
 ## 2. 需求与实现差距
 
@@ -72,7 +84,7 @@ B2–B5 仍为 PLANNED / NOT AUTHORIZED，不得因本文自行开工。
 | 阶段 | 最小目标 | 依赖与退出条件 |
 |---|---|---|
 | B0 执行证据收口 | COMPLETE：W5 SEALED WITH P2；观测/清理 P0/P1 与冗余断言 P2 已关闭 | 兼容性和证据时效限制保留；PARALLEL_WRITE=CLOSED |
-| B1 可用能力与用户规则 | 复用 registry/adapter 表，明确 Agent/Model/Skill/MCP 事实和用户约束 | **B1.1 最小只读诊断切片 PASS**，只支持 OpenCode 目录；真实 CLI 兼容性未验收，其余未实现 |
+| B1 可用能力与用户规则 | 复用 registry/adapter 表，明确 Agent/Model/Skill/MCP 事实和用户约束 | **B1.1 最小只读诊断切片 PASS**；B1.2 真实 OpenCode 目录正常路径独立通过，入口审核 BLOCKED（两个 P1、一个 P2）；其余未实现 |
 | B2 费用与候选约束 | 入口/账户归属、免费依据、有效期、共享额度和预算 | 每次分配/接力均校验；未知不伪造；全部不可用安全停止 |
 | B3 LAYA 能力选择 | 联合选择 Agent/Model 与 Skill/MCP，提供必要角色能力事实 | 只选合格候选，复用原生执行，实际能力可核对 |
 | B4 异构任务闭环 | 候选内容生成 → LAYA 选择 → 调研/实现/测试/审核 | 同 Agent 多模型独立会话；工作区隔离和材料交接有实证 |
@@ -149,28 +161,31 @@ Agent Orchestrator 可参考执行/工作区协作，RouteLLM 可参考评估方
 
 ## 6. 本轮检查与限制
 
-本轮（B1.1b）OpenCode 实跑：`npm run typecheck` PASS；`tests/model-catalog.test.ts` **68/0**；
-定向回归 quota 184/0、assignment 235/0、contract 246/0（2 skipped）；`git diff --check` clean。
-统一失败判定：检查失败、observer 回收失败、owned 目录删除失败共同决定退出码；失败分支先经仍持有的原句柄
-回收再 reaped。受控 child 回归：`MC_FAIL_CHILD=reap` 与 `=rm` 均真实 `status=1`、`signal=null`，父进程按名清理。
-deadline timer 在 `finally` 释放；独立 Node child（不 `process.exit()`）以 30s deadline 查询正常 fixture，
-自然提前退出（<12s）。删除冗余 fresh-PID 断言，保留 held-handle `EXITED` 强断言。
-两组负控确认承重：移除 timer 清理 → timer child 挂起失败；退出码忽略 cleanupFailures → 两个 fail-child `status=0` 失败。
-默认 doctor 不查询；不写 registry/availability/assignment/quota/费用；新增生产 authority=0，`runtime.run` 生产调用边仍为 1。
+本轮（B1.2）OpenCode 实跑：`npm run typecheck` PASS；`tests/model-catalog.test.ts` **68/0**；
+`tests/real-agent-isolation.test.ts` ownership 守卫 PASSED（5 个 opt-in，0 违规）；
+`tests/real-agent-ownership.test.ts` **60/0**；`git diff --check` clean。
+新入口 `tests/b12-opencode-model-catalog.test.ts` 未启用时 EXIT=0（NOT_RUN，不发现/不启动）；
+启用后真实查询 **PASS（EXIT=0）**：版本 **1.18.35**、native launcher、`status=ok`、**42** 个模型、
+约 **2068ms**、完整 `provider/model` 保留（bad=0）；owned control 记录 `success, success`
+经生产验证确认为已停止。仅真实 OpenCode 启动，其他 Agent 用 `replaceAdapters` 替换为 fake（测试边界）。
+未加 `--standalone/--pure/环境变量`；实测为单次短生命周期进程，无 CLI 残留、无监听端口；未触碰 7 个桌面应用进程。
+真实运行后 owned root/observer/CLI 进程残留 **0**。
+未证明零网络/零缓存/零插件初始化；未验证模型可调用/额度/免费/角色适配。
 
-Codex 上一轮独立实跑（B1.1a：原两个 P1 关闭，整体 BLOCKED）：typecheck PASS；model-catalog 59/0、
-quota 184/0、assignment 235/0、contract 246/0（2 skipped）通过；模拟未安装 OpenCode 也 59/0、exit=0；
-独立 native probe 确认原两个 P1 关闭。新增 P1 的两次独立失败注入：observer.reaped=false 报 failing 仍 exit=0；
-owned 删除失败留下两个目录仍 exit=0。审核 probe 随后回收实际资源，owned 目录/observer/fixture 无残留。
-上述是 B1.1a 历史反例；B1.1b 已独立确认全部关闭，不继续作为当前 blocker。
-Codex 本轮独立实跑：typecheck PASS；model-catalog 68/0、quota 184/0、assignment 235/0、
-contract 246/0（2 skipped），均 exit=0；diff check PASS。
-独立 reaped=false 注入：检查 68/0，但 cleanup ledger 正确令真实 exit=1。
-独立真实 rmSync 抛错注入：66/2、cleanup ledger 有异常、真实 exit=1；五个 named owned 根目录
-由审核 probe 按本次记录的路径清理，剩余 0。异常注入不冒充 OS 物理失败，预期 exit=1 不计正常回归失败。
-独立 timer probe：timeout=30000ms，249ms 返回 ok、无活跃 Timeout，251ms 自然退出；未 process.exit()。
-冗余 fresh-PID 断言已删除，原句柄 EXITED 强断言保留且通过。当前片范围内无未关闭 P0/P1/P2。
-上一轮已完成的 GitHub MCP/官方资料复用调查仍有效；本轮只做窄收口，不新增依赖或框架。
+Codex 本轮独立实跑：typecheck、model-catalog **68/0**、ownership guard **5 个入口/0 违规**、
+ownership **60/0**、未启用 NOT_RUN、diff check 均通过；真实目录一次 **2020ms / ok / 42 models / 3 PASS / exit=0**。
+受控缺失 OpenCode：**SKIP→PASS(assertions=1)、真实 exit=0**；缺 launcher：SKIP、exit=0。
+受控常驻 version 进程需审核 watchdog 经原 ManagedProcess.cancel 才结束（确认 true），
+测试自身没有版本 deadline。合成合法 version + INVALID models 记录仍 confirmed=true。
+以上异常输入经独立进程内 load hook 或合成 owned 文件构造，未修改实现，未冒充真实 OpenCode 故障。
+正常真实兼容性证据与入口失败语义/有界性问题分开：本轮 **BLOCKED，两个 P1、一个 P2**。
+未重复作者 help/端口采样；未调用真实模型任务。审核结果与上传说明见基线 §8.10。
+
+Codex 上一轮独立实跑（B1.1b PASS）：typecheck PASS；model-catalog 68/0、quota 184/0、assignment 235/0、
+contract 246/0（2 skipped），均 exit=0；独立 reaped=false 与真实 rmSync 抛错注入均真实 exit=1；
+正常 contained fixture（timeout=30000ms）约 249ms 自然退出，active resources 无 Timeout；diff check PASS。
+异常注入不冒充 OS 物理失败，预期 exit=1 不计正常回归失败；冗余 fresh-PID 断言已删除，原句柄 EXITED 强断言保留。
+B1.1b 片范围内无未关闭 P0/P1/P2；上一轮 GitHub MCP/官方资料复用调查仍有效，本轮只做窄收口，不新增依赖或框架。
 
 上一轮 W5 实跑：`npm run typecheck` PASS；`W51_ROUNDS=3` EXIT=0、139 passed / 0 failed，
 attempted=3/completed=3，readiness/observation/containment/surviving/cleanup 全 0；`git diff --check` clean。
@@ -182,4 +197,4 @@ Codex 上轮独立验证（W5.1d）：三个 observer 边界 probe、W51_ROUNDS=
 环境限制仍在：Codex `MODEL/SERVICE_LATENCY`、WorkBuddy `ENVIRONMENT_BLOCKED`。
 259 需按 handle 是否 signaled 判断，不能一概视为非 terminal。final reconciliation 的现有数值过滤
 属于既有 launcher 可用性限制，非环境事实；未修改或重新探测该路径，详情见项目基线 §6.3。
-最终 W5 SEALED WITH P2，PARALLEL_WRITE=CLOSED；B1.1 最小诊断切片 PASS、B1 未封板，B2–B5 未授权。
+最终 W5 SEALED WITH P2，PARALLEL_WRITE=CLOSED；B1.1 最小诊断切片 PASS、B1.2 正常真实路径通过但入口审核 BLOCKED、B1 未封板，B2–B5 未授权。
