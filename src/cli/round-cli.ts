@@ -354,6 +354,11 @@ function parse(argv: readonly string[]): RoundOptions | { error: string } {
     // repo's existing "complete pair = explicit choice" convention) and a lone
     // `--agent`/`--model` keeps the legacy preference semantics.
     const select = s('select');
+    // A bare `--select` (no value) parses to boolean `true`; it must be a clear usage
+    // error BEFORE discovery / LAYA / runtime — never silently treated as `auto`.
+    if (flags.select === true) {
+      return { error: '--select requires a value: "auto" or "fixed"' };
+    }
     if (select !== undefined && select !== 'auto' && select !== 'fixed') {
       return { error: `--select must be "auto" or "fixed" (got "${select}")` };
     }

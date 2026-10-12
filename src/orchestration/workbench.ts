@@ -399,6 +399,18 @@ unDecisionCycle can read a real TickResult. */
    * pair. This is a lock record, NOT a new scheduling authority.
    */
   private readonly fixedSelections = new Map<string, AgentModelIntent>();
+  /**
+   * B1.4a: the EFFECTIVE selection resolved for each ROOT task (task > project > auto).
+   *
+   * The per-task `fixedSelections` lock only covers tasks that existed at assignment
+   * time. A task created LATER (via `addTask`, `replan`/`split`/`parallelize`) inherits
+   * the parent's agentId/modelId but no lock — which is exactly how a fixed pair was
+   * silently switched by a later reassign. Recording the ROOT's effective selection
+   * lets `fixedLockFor` derive the lock for ANY task under that root, so the constraint
+   * survives every creation path without touching them. An `auto` root records `auto`,
+   * so a Laya-chosen pair is never mistaken for a user-fixed one.
+   */
+  private readonly rootSelections = new Map<string, SelectionSpec>();
 
   constructor(options: WorkbenchOptions) {
     this.orchestrator = options.orchestrator;
@@ -502,6 +514,9 @@ unDecisionCycle can read a real TickResult. */
     // B1.4: task overrides project, else auto. A FIXED selection is recorded as the
     // task's decision and Laya is NOT asked — the user's choice must never be re-decided.
     const selection = resolveSelection(taskSelection, this.projectSelection);
+    // B1.4a: record the ROOT's effective selection so a task created later under this
+    // root still derives the fixed lock (or the absence of one for `auto`).
+    this.rootSelections.set(rootTaskId, selection);
     const fixed = fixedPairOf(selection);
     const provider = this.decisionProvider;
     const outcomes: InitialSelectionOutcome[] = [];
@@ -666,6 +681,9 @@ unDecisionCycle can read a real TickResult. */
     // B1.4: task selection overrides the project default, else auto. A FIXED pair is
     // authoritative: it is enforced exactly and never overridden by Laya or a preference.
     const selection = resolveSelection(spec.selection, this.projectSelection);
+    // B1.4a: record the ROOT's effective selection (covers a caller that never called
+    // `selectInitialAssignment`), so later-created tasks derive the right lock.
+    this.rootSelections.set(rootTaskId, selection);
     const fixed = fixedPairOf(selection);
     for (const child of this.store.children(rootTaskId)) {
       if (child.status === 'succeeded' || child.status === 'failed' || child.status === 'cancelled') continue;
@@ -882,6 +900,43 @@ unDecisionCycle can read a real TickResult. */
   }
 
   /**
+   * B1.4a: the USER-fixed pair locking a task, if any.
+   *
+   * Two sources, in order: the per-task lock recorded at assignment time, and the
+   * task's ROOT effective selection (which covers tasks created later). An `auto`
+   * root contributes no lock, so a Laya-chosen pair is never treated as user-fixed.
+   */
+  private fixedLockFor(taskId: string): AgentModelIntent | undefined {
+    const direct = this.fixedSelections.get(taskId);
+    if (direct !== undefined) return direct;
+    const sel = this.rootSelections.get(this.rootOf(taskId));
+    if (sel === undefined) return undefined;
+    const pair = fixedPairOf(sel);
+    if (pair === undefined) return undefined;
+    const checked = validateAgentModelIntent(pair);
+    return checked.ok ? checked.intent : undefined;
+  }
+
+  /**
+   * B1.4a: the TRUE root of a task, by walking the parent chain.
+   *
+   * `Task.rootTaskId` is stamped as the task's IMMEDIATE parent (task.ts), so it is not
+   * a tree root for a deep subtree. The effective selection is recorded per ROOT, so the
+   * walk is what lets a task created several levels down derive the same lock.
+   */
+  private rootOf(taskId: string): string {
+    let cur = this.store.get(taskId);
+    const seen = new Set<string>();
+    while (cur !== null && cur.parentTaskId !== null && !seen.has(cur.taskId)) {
+      seen.add(cur.taskId);
+      const parent = this.store.get(cur.parentTaskId);
+      if (parent === null) break;
+      cur = parent;
+    }
+    return cur?.taskId ?? taskId;
+  }
+
+  /**
    * Move a STARTED task to a different worker (P6-D1 / DC-1).
    *
    * `Assignment` proposes; `TaskStore.migrateIdentityAfterStart` commits. The old
@@ -918,11 +973,13 @@ unDecisionCycle can read a real TickResult. */
         reason: 'reassignTask needs a target agent and/or model, or strategy="assignment" to delegate the choice',
       };
     }
-    // B1.4: a USER-pinned pair is a lock. An automatic handoff/reassign must not swap
-    // it — the initial run honoured the fixed selection, so a later silent switch to a
-    // different pair would break the user's explicit choice. Refuse with a clear reason
-    // (no new pause state machine); the user changes the selection explicitly instead.
-    const pinned = this.fixedSelections.get(taskId);
+    // B1.4/B1.4a: a USER-pinned pair is a lock. An automatic handoff/reassign must not
+    // swap it — the initial run honoured the fixed selection, so a later silent switch to
+    // a different pair would break the user's explicit choice. The lock is looked up
+    // PER TASK first and then derived from the task's ROOT effective selection, so it
+    // also covers tasks created later (`addTask`, `replan`/`split`). Refuse with a clear
+    // reason (no new pause state machine); the user changes the selection explicitly.
+    const pinned = this.fixedLockFor(taskId);
     if (pinned !== undefined) {
       const sameTarget = agentId === pinned.agentId && modelId === pinned.modelId;
       if (!sameTarget) {

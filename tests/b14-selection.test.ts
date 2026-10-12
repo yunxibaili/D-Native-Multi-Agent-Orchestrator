@@ -29,6 +29,7 @@ import { BudgetManager } from '../src/quota/budget.ts';
 import { Orchestrator as RuntimeOrch } from '../src/orchestrator/orchestrator.ts';
 import { loadConfig } from '../src/orchestrator/config.ts';
 import { validateRuntimeLaunchPreflight } from '../src/runtime/preflight.ts';
+import { runRoundCli } from '../src/cli/round-cli.ts';
 import { createFakeAdapter } from './helpers.ts';
 import { createDshAdapter } from '../src/adapters/dsh.ts';
 import { resolveSelection, fixedPairOf, type AgentDescriptor, type RunRequest, type SelectionSpec } from '../src/core/types.ts';
@@ -314,6 +315,104 @@ section('project config: selection parses and validates');
   let badMode = false;
   try { loadConfig(write({ agents: {}, selection: { mode: 'sometimes' } })); } catch { badMode = true; }
   check('an unknown selection mode is refused', badMode);
+}
+
+// =========================================================================
+section('B1.4a: the fixed constraint survives dynamic task creation and later handoff');
+
+const newTasksSince = (h: Harness, before: Set<string>): Task[] => h.wb.store.all().filter((t) => !before.has(t.taskId));
+
+{
+  // A. project fixed → dynamic addTask → reassign to another pair is refused.
+  const h = makeHarness({ projectSelection: { mode: 'fixed', agentId: A, modelId: MA }, provider: stubProvider(`${A}\u0000${MA}`) });
+  const { children } = await planAssign(h, specFor());
+  const parentId = children[0]!.taskId;
+  const before = new Set(h.wb.store.all().map((t) => t.taskId));
+  const added = h.wb.addTask(parentId, 'follow-up work');
+  check('A: the dynamic task was added', added.ok === true, JSON.stringify(added));
+  const created = newTasksSince(h, before);
+  check('A: a new task exists under the fixed root', created.length === 1, `created=${created.length}`);
+  const dynamic = created[0]!;
+  const swap = h.wb.reassignTask(dynamic.taskId, B, MB, 'automatic handoff');
+  check('A: reassigning the dynamic task to a DIFFERENT pair is refused', swap.ok === false, JSON.stringify(swap));
+  check('A: the refusal is fixed-selection-locked', swap.code === 'fixed-selection-locked', swap.code);
+  const after = h.wb.store.get(dynamic.taskId)!;
+  check('A: the dynamic task identity is unchanged (no migration)', after.agentId === A && after.modelId === MA, `${after.agentId}/${after.modelId}`);
+  check('A: no execution was dispatched', h.requests.length === 0, `requests=${h.requests.length}`);
+}
+
+{
+  // The EXACT reported path: through the real `decisionCapabilities` wrappers
+  // (`addTask` then `reassign`), not the raw methods.
+  const h = makeHarness({ projectSelection: { mode: 'fixed', agentId: A, modelId: MA }, provider: stubProvider(`${A}\u0000${MA}`) });
+  const { children } = await planAssign(h, specFor());
+  const caps = h.wb.decisionCapabilities({});
+  const before = new Set(h.wb.store.all().map((t) => t.taskId));
+  const add = await caps.addTask?.({ parentTaskId: children[0]!.taskId, objective: 'follow up', reason: 'decision' });
+  check('caps: addTask succeeded', add?.ok === true, JSON.stringify(add));
+  const dynamic = newTasksSince(h, before)[0];
+  check('caps: the dynamic task exists', dynamic !== undefined, 'none');
+  if (dynamic !== undefined) {
+    const re = await caps.reassign?.({ taskId: dynamic.taskId, agentId: B, modelId: MB, reason: 'handoff' });
+    check('caps: reassign of a fixed-root dynamic task is refused',
+      re?.ok === false && re?.code === 'fixed-selection-locked', JSON.stringify(re));
+  }
+}
+
+{
+  // B. task fixed overrides project fixed → a dynamic child keeps the TASK constraint.
+  const h = makeHarness({ projectSelection: { mode: 'fixed', agentId: B, modelId: MB }, provider: stubProvider(`${B}\u0000${MB}`) });
+  const { children } = await planAssign(h, specFor({ mode: 'fixed', agentId: A, modelId: MA }));
+  const before = new Set(h.wb.store.all().map((t) => t.taskId));
+  h.wb.addTask(children[0]!.taskId, 'more');
+  const dynamic = newTasksSince(h, before)[0];
+  check('B: the dynamic child inherits the TASK pair, not the project pair',
+    dynamic !== undefined && dynamic.agentId === A && dynamic.modelId === MA, dynamic ? `${dynamic.agentId}/${dynamic.modelId}` : 'none');
+  if (dynamic !== undefined) {
+    const swap = h.wb.reassignTask(dynamic.taskId, B, MB, 'handoff');
+    check('B: the dynamic child is locked to the task pair', swap.code === 'fixed-selection-locked', swap.code);
+  }
+}
+
+{
+  // C. task auto over project fixed → the dynamic child is NOT misjudged as fixed.
+  const h = makeHarness({ projectSelection: { mode: 'fixed', agentId: B, modelId: MB }, provider: stubProvider(`${A}\u0000${MA}`) });
+  const { children } = await planAssign(h, specFor({ mode: 'auto' }));
+  const before = new Set(h.wb.store.all().map((t) => t.taskId));
+  h.wb.addTask(children[0]!.taskId, 'more');
+  const dynamic = newTasksSince(h, before)[0];
+  check('C: the auto-root dynamic child exists', dynamic !== undefined, 'none');
+  if (dynamic !== undefined) {
+    const swap = h.wb.reassignTask(dynamic.taskId, B, MB, 'automatic handoff');
+    check('C: an auto-root dynamic task is NOT fixed-locked', swap.code !== 'fixed-selection-locked', `${swap.code}: ${swap.reason}`);
+  }
+}
+
+{
+  // D. the replan/split creation path keeps the constraint.
+  const h = makeHarness({ projectSelection: { mode: 'fixed', agentId: A, modelId: MA }, provider: stubProvider(`${A}\u0000${MA}`) });
+  const { children } = await planAssign(h, specFor());
+  const target = children[0]!.taskId;
+  const before = new Set(h.wb.store.all().map((t) => t.taskId));
+  const replan = h.wb.replanSubtree(target, 'chain', 'split it');
+  check('D: the replan applied', replan.ok === true, JSON.stringify(replan));
+  const created = newTasksSince(h, before);
+  check('D: replan created tasks', created.length >= 1, `created=${created.length}`);
+  const unlocked = created.filter((t) => h.wb.reassignTask(t.taskId, B, MB, 'handoff').code !== 'fixed-selection-locked');
+  check('D: every replanned task keeps the fixed constraint', unlocked.length === 0, `unlocked=${unlocked.length}/${created.length}`);
+}
+
+{
+  // E. a bare `--select` (no value) is a usage error with ZERO external calls.
+  let runtimeCalls = 0;
+  const stubRuntime = {
+    descriptors: () => { runtimeCalls++; return []; },
+    agentIds: () => { runtimeCalls++; return []; },
+    configFor: () => { runtimeCalls++; return {}; },
+  } as never;
+  const code = await runRoundCli(stubRuntime, ['do something', '--select']);
+  check('E: missing --select value is a usage error (exit 2)', code === 2, String(code));
+  check('E: no discovery / LAYA / runtime call happened', runtimeCalls === 0, `runtimeCalls=${runtimeCalls}`);
 }
 
 // =========================================================================

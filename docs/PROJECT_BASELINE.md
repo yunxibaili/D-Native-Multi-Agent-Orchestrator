@@ -1,6 +1,6 @@
 # 项目基线
 
-更新日期：2026-10-12（B1.4 独立审核 BLOCKED：动态新增任务丢失 fixed 约束，见 §10.6）
+更新日期：2026-10-12（B1.4a 收口独立 PASS，见 §10.8；B1 整体未封板）
 范围：当前代码事实、已有封板状态和执行边界。未来需求不自动转为实现事实。
 
 ## 文档入口与优先关系
@@ -1322,3 +1322,73 @@ runtime.run 生产调用边=1，未新增调度 authority。其他实现方列�
 差异为 13 个文件：实现方 12 文件与用户先前授权的模型中断计划所在 BACKEND_REQUIREMENTS.md；
 Codex 本轮仅修订现有基线/阶段分析的审核事实。此快照用于复核，不代表验收或合入 main。
 B1 overall NOT SEALED、PARALLEL_WRITE=CLOSED、B2–B5 未授权；模型中断仅列后续计划，本轮未实现。
+
+### 10.7 B1.4a 固定约束传递与两个 P2 收口（实现方实跑）
+
+日期：2026-10-12。关闭 §10 独立审核的唯一 P1（固定约束在动态任务创建/后续接力中丢失）
+与两个测试 P2；B1 整体仍 NOT SEALED、PARALLEL_WRITE=CLOSED、B2–B5 未授权。
+
+**P1 根因**：`fixedSelections` 只在初始 child 赋值时登记；`addTask`/`replan`/`split` 动态创建的 child
+只继承 `agentId/modelId`，未继承**有效选择约束**，因此后续 `reassign` 能把一个 fixed 根下的新任务
+静默换到别的 pair（独立复现：project fixed A/model-1 → addTask → reassign B → `ok=true, code=migrated`）。
+**最小修复**：新增 `rootSelections: Map<rootTaskId, SelectionSpec>`，在 `selectInitialAssignment`/`assignChildren`
+记录该 ROOT 的**有效选择**（task > project > auto）；`reassignTask` 用 `fixedLockFor(taskId)` 先查 per-task 锁，
+再**沿父链走到真正的根**（`Task.rootTaskId` 只是直接父节点）取根的有效选择——fixed 则锁，`auto` 则不锁。
+修复落在唯一 reassign 入口，在 `assignWorker`/`migrateIdentity`/session 重绑定/runtime 启动**之前**拒绝。
+未新增 SelectionManager/ModelRouter/第二套 registry/DAG/scheduler；`addTask`/`replanSubtree` 创建路径未改动。
+
+**约束传递方式**：fixed 是 ROOT 有效选择的性质，而非每个任务各自继承的字段；任何在该根下的任务
+（初始、`addTask`、`replan`/`split`/`parallelize`，任意深度）在 reassign 时都派生同一把锁。
+`auto` 根记录 `auto` → 派生无锁，因此 Laya 自动选择的 pair **不会**仅因有 `agentId/modelId` 被当成用户 fixed。
+
+**P2（`--select` 缺值）**：`--select` 无值时解析为 boolean `true`，原先被当作缺省 auto 继续运行。
+现在在 `parse`（discovery/LAYA/Runtime 之前）返回 `--select requires a value` 用法错误、退出码 2。
+同时保留兼容性说明：同时提供 `--agent`+`--model` 仍解释为 fixed，单轴仍是偏好，无其他语义变化。
+
+**P2（DSH setup 清理范围）**：`realChain` 原先在写 fixture 之后才进入 `try/finally`；现改为 `ownDir()`
+之后立即进入 `try`，因此 fixture 写入等 setup 异常也走**同一个 finally**（对仍 running 的 handle 用既有
+`cancel`+停止确认，再删 owned 目录）。fatal 错误经 `fatal` 变量进入最终退出码（不吞掉）。回归**直接驱动真实
+`realChain`**：`MC_DSH_FAIL_SETUP=1` 令其在 owned 目录存在后抛错 → child 非零退出、原始错误保留、owned 目录被清理；
+`MC_DSH_FAIL_CLEANUP=1` 令清理失败 → ledger 记录、退出仍非零、父进程按名清理残留。**未另写“模拟抛错→调用清理”的独立分支。**
+
+**实跑证据（实现方）**：`npm run typecheck` PASS；`b14-selection` **46/0**（含 A–E 与 decisionCapabilities 精确复现路径）；
+`workbench` 413/0、`initial-assignment-decision` 37/0、`handoff-production-round` 312/0、`assignment` 235/0、
+`continuation` 138/0、`planner` 189/0、`state-loop` 169/0、`round-result` 293/0、`contract` 248/0（2 skipped）、`unit` 92/0；
+`dsh-adapter` 64/0；ownership 守卫 5 opt-in/0 违规；`git diff --check` clean。
+`runtime.run` 生产调用边=1；新增调度 authority=0；本轮 owned 临时目录/进程残留 0。
+未跑 full suite、未调用真实模型、未读凭据、未改本机配置。模型中途掉线恢复仍留后续边界计划，本轮未实现。
+本切片标 **READY FOR CODEX INDEPENDENT REVIEW**。
+
+### 10.8 B1.4a 收口独立 PASS 与上传说明（2026-10-12）
+
+**裁定 PASS，仅限本切片。** §10.6 的动态子任务 fixed 约束 P1、缺值 --select P2、DSH setup 清理 P2
+均已独立确认关闭。不因此宣布 B1 整体封板或开放并行写，也不重审已封板 W1–W5。
+
+**固定约束**：复核 rootSelections 记录有效选择及 fixedLockFor/rootOf 父链查找，拒绝仍在 Assignment、
+身份迁移和 session 重绑前。独立 probe 经实际 decisionCapabilities 连续 addTask 三层后 reassign：
+project fixed A/MA、task fixed A/MA 覆盖 project fixed B/MB，均 fixed-selection-locked、身份仍 A/MA；
+task auto 覆盖 project fixed B/MB 时，reassign B/MB 实际 ok/migrated，没有误锁。三者 requests=0，
+证明约束与接力准入，不冒充真实 Agent 执行；probe owned 目录全部按名清理。
+既有 b14 回归另覆盖 replan chain 与 decisionCapabilities 的原始复现路径。
+
+**承重负控**：仅在隔离 Node loader 内存中把 reassign 锁查找改回 fixedSelections.get，未改仓库文件。
+b14 真实 child status=1、signal=null、error=null，40/6；新增 child、任务覆盖及 replan 的 6 条断言失败。
+因此本次回归能检测原始缺陷，并非仅验证 helper 的返回值。
+
+**CLI 与 DSH**：缺值 --select 实际 exit=2、runtime seam 调用为 0。DSH 的 finally 现位于实际 fixture
+写入前；本轮额外拦截真实 fixture.cjs 写入并抛 INDEPENDENT_SETUP_WRITE_FAILED：child status=1、
+signal=null、error=null，原始错误进入 fatal，owned root 已不存在。probe 在内存中关闭后续回归派生段，
+只验证实际 setup/finally，未修改工作树。正常 DSH suite 64/0 则覆盖真实 setup/清理注入及子进程 guard。
+实现方报告的开发期约 160 个递归子进程事件未独立重演；当前 guard 禁止 setup-failure child 再派生回归 child，
+本轮正常 suite 完成，未以历史事件推断当前仍递归失控。
+
+**本轮独立实跑（正常命令 exit 均 0）**：typecheck PASS；b14-selection 46/0；workbench 413/0；
+initial-assignment-decision 37/0；handoff-production-round 312/0；dsh-adapter 64/0；
+isolation 守卫 5 opt-in/0 违规；git diff --check PASS。runtime.run 生产调用边仍为 1，未新增调度 authority。
+其他实现方列出的 suite 为实现方结果，本轮未重复；W3-9 234/0 为上一轮独立证据。
+未跑 full suite、真实模型任务、读取凭据、安装依赖或改本机配置。
+
+**上传说明**：六文件审核快照上传 codex/b14a-review-pass，父 6c5893727e8ed144680f4a350fa10c06773370d3。
+内容为 workbench/round-cli 修复、两份测试与现有基线/阶段文档；Codex 本轮仅修订现有两份文档。
+不合入 main，保持共享索引与当前 checkout；无 PR。B1 overall NOT SEALED、PARALLEL_WRITE=CLOSED、
+B2–B5 未授权；模型中途掉线恢复仅列后续计划，未进入前端。

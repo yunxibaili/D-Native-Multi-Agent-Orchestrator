@@ -24,11 +24,10 @@
  * Run: node tests/dsh-adapter.test.ts
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 
 import { UnsupportedOptionError } from '../src/core/errors.ts';
@@ -50,6 +49,10 @@ let failed = 0;
 const failures: string[] = [];
 const cleanupFailures: string[] = [];
 const tmpDirs: string[] = [];
+/** A setup/run error that escaped `realChain`; it must reach the final exit code. */
+let fatal: unknown;
+/** The owned dir `realChain` created, so a fatal path can still report it. */
+let lastOwnedDir: string | null = null;
 
 function check(name: string, cond: boolean, detail = ''): void {
   if (cond) {
@@ -86,25 +89,13 @@ function removeOwnedDir(dir: string, opts?: { injectRemovalFailure?: boolean }):
 }
 
 // =========================================================================
-// B1.4 P2-A: an isolated child that proves a cleanup FAILURE still drives a non-zero
-// exit even after a setup/run throw. It runs the SAME ledger + finalizer as the suite,
-// so the regression cannot pass by re-implementing the exit decision.
+// B1.4a P2-A: the injection seam for the REAL `realChain` setup/finally. When
+// `MC_DSH_FAIL_SETUP=1`, `realChain` throws AFTER its owned dir exists, so the same
+// `finally` that cleans a normal run must clean it and the fatal error must reach the
+// exit code. `MC_DSH_FAIL_CLEANUP=1` additionally makes that removal fail. There is no
+// separate "simulate a throw then call cleanup" branch — the regression drives the
+// actual function.
 // =========================================================================
-if (process.env.MC_DSH_FAIL_CHILD === '1') {
-  const root = process.env.MC_DSH_FAIL_ROOT ?? join(tmpdir(), `dsh-failchild-${process.pid}`);
-  mkdirSync(root, { recursive: true });
-  try {
-    // Simulate a setup/run throw: cleanup still runs in `finally`.
-    throw new Error('injected setup/run failure');
-  } catch {
-    // cleanup runs on the throw path too; here the removal itself fails.
-    removeOwnedDir(root, { injectRemovalFailure: true });
-  } finally {
-    const code = failed === 0 && cleanupFailures.length === 0 ? 0 : 1;
-    writeFileSync(join(root, 'report.json'), JSON.stringify({ cleanupFailures, exit: code }));
-    process.exit(code);
-  }
-}
 
 const STUB_LAUNCHER: LauncherSpec = {
   kind: 'native',
@@ -255,43 +246,47 @@ async function runCollect(start: (req: RunRequest) => RunHandle, req: RunRequest
 
 async function realChain(): Promise<void> {
   const dir = ownDir();
-  writeFileSync(join(dir, 'fixture.cjs'), FIXTURE_JS);
-  const fixtureCmd = join(dir, 'fixture.cmd');
-  writeFileSync(fixtureCmd, `@echo off\r\n"${process.execPath}" "${join(dir, 'fixture.cjs')}"\r\n`);
-
-  const launcher: LauncherSpec = {
-    kind: 'cmd-wrapper',
-    command: process.env.ComSpec ?? 'cmd.exe',
-    prefixArgs: ['/d', '/s', '/c'],
-    target: fixtureCmd,
-    buildsCommandString: true,
-  };
-  const dsh = createDshAdapter({ launcher });
-  const orch = new Orchestrator({ config: { agents: {} }, storeDir: join(dir, 'store'), replaceAdapters: [dsh] });
-
-  // B1.4 P2-A: track every handle this run starts, so the `finally` can cancel anything
+  lastOwnedDir = dir;
+  // B1.4a P2-A: track every handle this run starts, so the `finally` can cancel anything
   // still RUNNING (with the existing contained stop confirmation) before deleting the
   // owned dir — even when a setup/run step threw.
   const running: RunHandle[] = [];
-  const start = (req: RunRequest): RunHandle => {
-    const h = orch.run(req);
-    running.push(h);
-    return h;
-  };
-
-  const scenarioFiles = ['payload.bin', 'stderr.txt', 'exit.txt', 'chunk.txt', 'hang.txt'];
-  const setScenario = (s: Scenario): void => {
-    for (const f of scenarioFiles) {
-      try { rmSync(join(dir, f), { force: true }); } catch { /* ignore */ }
-    }
-    if (s.hang === true) writeFileSync(join(dir, 'hang.txt'), '1');
-    if (s.payload !== undefined) writeFileSync(join(dir, 'payload.bin'), Buffer.isBuffer(s.payload) ? s.payload : Buffer.from(s.payload, 'utf8'));
-    if (s.stderr !== undefined) writeFileSync(join(dir, 'stderr.txt'), s.stderr);
-    if (s.exit !== undefined) writeFileSync(join(dir, 'exit.txt'), String(s.exit));
-    if (s.chunk !== undefined) writeFileSync(join(dir, 'chunk.txt'), String(s.chunk));
-  };
-
   try {
+    // B1.4a P2-A: a setup failure AFTER the owned dir exists must be cleaned by the SAME
+    // finally below and must reach the exit code. This is the REAL path, not a copy.
+    if (process.env.MC_DSH_FAIL_SETUP === '1') throw new Error('injected fixture setup failure');
+
+    writeFileSync(join(dir, 'fixture.cjs'), FIXTURE_JS);
+    const fixtureCmd = join(dir, 'fixture.cmd');
+    writeFileSync(fixtureCmd, `@echo off\r\n"${process.execPath}" "${join(dir, 'fixture.cjs')}"\r\n`);
+
+    const launcher: LauncherSpec = {
+      kind: 'cmd-wrapper',
+      command: process.env.ComSpec ?? 'cmd.exe',
+      prefixArgs: ['/d', '/s', '/c'],
+      target: fixtureCmd,
+      buildsCommandString: true,
+    };
+    const dsh = createDshAdapter({ launcher });
+    const orch = new Orchestrator({ config: { agents: {} }, storeDir: join(dir, 'store'), replaceAdapters: [dsh] });
+
+    const start = (req: RunRequest): RunHandle => {
+      const h = orch.run(req);
+      running.push(h);
+      return h;
+    };
+
+    const scenarioFiles = ['payload.bin', 'stderr.txt', 'exit.txt', 'chunk.txt', 'hang.txt'];
+    const setScenario = (s: Scenario): void => {
+      for (const f of scenarioFiles) {
+        try { rmSync(join(dir, f), { force: true }); } catch { /* ignore */ }
+      }
+      if (s.hang === true) writeFileSync(join(dir, 'hang.txt'), '1');
+      if (s.payload !== undefined) writeFileSync(join(dir, 'payload.bin'), Buffer.isBuffer(s.payload) ? s.payload : Buffer.from(s.payload, 'utf8'));
+      if (s.stderr !== undefined) writeFileSync(join(dir, 'stderr.txt'), s.stderr);
+      if (s.exit !== undefined) writeFileSync(join(dir, 'exit.txt'), String(s.exit));
+      if (s.chunk !== undefined) writeFileSync(join(dir, 'chunk.txt'), String(s.chunk));
+    };
 
   // --- 1. multi-line answer with leading / middle / trailing empty lines ---------
   {
@@ -397,7 +392,7 @@ async function realChain(): Promise<void> {
   }
 
   } finally {
-    // B1.4 P2-A: on EVERY exit path (including a setup/run throw), stop anything still
+    // B1.4a P2-A: on EVERY exit path (including a setup/run throw), stop anything still
     // running via the EXISTING cancel + contained-stop confirmation, then delete the
     // owned dir. A cleanup failure is recorded in the ledger and drives a non-zero exit.
     for (const h of running) {
@@ -406,33 +401,73 @@ async function realChain(): Promise<void> {
         await h.result().catch(() => undefined);
       }
     }
-    removeOwnedDir(dir);
+    removeOwnedDir(dir, { injectRemovalFailure: process.env.MC_DSH_FAIL_CLEANUP === '1' });
   }
 }
 
-await realChain();
+// Run the REAL chain; a setup/run error is captured as `fatal` (not swallowed) so it
+// reaches the final exit code, while the owned cleanup above still ran.
+try {
+  await realChain();
+} catch (e) {
+  fatal = e;
+  process.stdout.write(`fatal: ${String((e as Error).message)}\n`);
+  const report = process.env.MC_DSH_REPORT;
+  if (report !== undefined && report !== '') {
+    try {
+      writeFileSync(report, JSON.stringify({
+        ownedDir: lastOwnedDir,
+        cleaned: lastOwnedDir !== null && !existsSync(lastOwnedDir),
+        error: String((e as Error).message),
+        cleanupFailures,
+      }));
+    } catch { /* best effort */ }
+  }
+}
 
 // =========================================================================
-section('B1.4 P2-A: a cleanup failure after a throw drives a real non-zero exit');
+section('B1.4a P2-A: the REAL realChain setup/finally cleans up and propagates');
 
-{
+interface FailReport { ownedDir?: string | null; cleaned?: boolean; error?: string; cleanupFailures?: string[] }
+// The injection child must NOT run this section (it would spawn children forever); it
+// goes straight to the summary, where `fatal` forces the non-zero exit.
+if (process.env.MC_DSH_FAIL_SETUP !== '1') {
   const testFile = fileURLToPath(import.meta.url);
-  const root = join(tmpdir(), `dsh-failchild-${randomUUID().slice(0, 8)}`);
-  const res = spawnSync(process.execPath, [testFile], {
+
+  // Case 1: setup throws AFTER the owned dir exists; the SAME finally cleans it and the
+  // original error is preserved.
+  const report1 = join(ownDir(), 'report.json');
+  const res1 = spawnSync(process.execPath, [testFile], {
     cwd: process.cwd(),
-    env: { ...process.env, MC_DSH_FAIL_CHILD: '1', MC_DSH_FAIL_ROOT: root },
+    env: { ...process.env, MC_DSH_FAIL_SETUP: '1', MC_DSH_REPORT: report1 },
     encoding: 'utf8',
     timeout: 60_000,
   });
-  check('fail child: exits NON-ZERO for the injected cleanup failure',
-    res.status !== 0 && res.status !== null, `status=${String(res.status)}`);
-  check('fail child: was not killed by a signal', res.signal === null, `signal=${String(res.signal)}`);
-  let report: { cleanupFailures?: string[]; exit?: number } | null = null;
-  try { report = JSON.parse(readFileSync(join(root, 'report.json'), 'utf8')); } catch { /* unreadable */ }
-  check('fail child: the shared ledger recorded the failure',
-    (report?.cleanupFailures?.length ?? 0) >= 1, JSON.stringify(report));
-  removeOwnedDir(root);
-  check('fail child: only the named owned root was cleaned', !existsSync(root));
+  check('P2-A setup-fail: child exits NON-ZERO', res1.status !== 0 && res1.status !== null, `status=${String(res1.status)}`);
+  check('P2-A setup-fail: not killed by a signal', res1.signal === null, `signal=${String(res1.signal)}`);
+  let r1: FailReport | null = null;
+  try { r1 = JSON.parse(readFileSync(report1, 'utf8')); } catch { /* unreadable */ }
+  check('P2-A setup-fail: the ORIGINAL error is preserved', r1?.error === 'injected fixture setup failure', JSON.stringify(r1?.error));
+  check('P2-A setup-fail: the owned dir was cleaned by the real finally', r1?.cleaned === true, JSON.stringify(r1));
+  check('P2-A setup-fail: no cleanup failure recorded', (r1?.cleanupFailures?.length ?? -1) === 0, JSON.stringify(r1?.cleanupFailures));
+
+  // Case 2: setup throws AND the cleanup fails — the ledger records it and the exit is
+  // still non-zero; the parent removes ONLY the owned dir the child reported.
+  const report2 = join(ownDir(), 'report.json');
+  const res2 = spawnSync(process.execPath, [testFile], {
+    cwd: process.cwd(),
+    env: { ...process.env, MC_DSH_FAIL_SETUP: '1', MC_DSH_FAIL_CLEANUP: '1', MC_DSH_REPORT: report2 },
+    encoding: 'utf8',
+    timeout: 60_000,
+  });
+  check('P2-A cleanup-fail: child exits NON-ZERO', res2.status !== 0 && res2.status !== null, `status=${String(res2.status)}`);
+  let r2: FailReport | null = null;
+  try { r2 = JSON.parse(readFileSync(report2, 'utf8')); } catch { /* unreadable */ }
+  check('P2-A cleanup-fail: the shared ledger recorded the failure', (r2?.cleanupFailures?.length ?? 0) >= 1, JSON.stringify(r2?.cleanupFailures));
+  check('P2-A cleanup-fail: the owned dir was left behind (injection was real)', r2?.cleaned === false, JSON.stringify(r2));
+  if (typeof r2?.ownedDir === 'string' && r2.ownedDir !== '') removeOwnedDir(r2.ownedDir);
+  check('P2-A cleanup-fail: only the reported owned dir was cleaned',
+    typeof r2?.ownedDir !== 'string' || r2.ownedDir === '' || !existsSync(r2.ownedDir));
 }
 
 // =========================================================================
@@ -444,5 +479,6 @@ if (failures.length) process.stdout.write(`failing:\n  ${failures.map((f) => `- 
 if (cleanupFailures.length) {
   process.stdout.write(`cleanup failures (must fail the test):\n  ${cleanupFailures.map((f) => `- ${f}`).join('\n  ')}\n`);
 }
+if (fatal !== undefined) process.stdout.write(`fatal (must fail the test): ${String((fatal as Error).message)}\n`);
 process.stdout.write('\n');
-process.exitCode = failed === 0 && cleanupFailures.length === 0 ? 0 : 1;
+process.exitCode = failed === 0 && cleanupFailures.length === 0 && fatal === undefined ? 0 : 1;

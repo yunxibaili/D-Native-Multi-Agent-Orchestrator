@@ -1,6 +1,6 @@
 # 后端阶段分析
 
-更新日期：2026-10-12（B1.4 独立审核 BLOCKED）
+更新日期：2026-10-12（B1.4a 收口独立 PASS；B1 整体未封板）
 性质：需求与源码差距分析、建议顺序；不是自动启动开发的指令，也不改变已封板状态。
 
 ## 1. 当前所在阶段
@@ -64,10 +64,13 @@ B1.3（2026-10-12）：把用户确认的**两层任务分配**写入需求（�
 **B1.3a 独立结论 PASS WITH P2**：§6.8 的历史输出保真 P1 与 stderr 契约 P2 已关闭，详见 §6.10。
 仍保留测试异常路径清理与既有 W3-9 时序断言 P2；两层需求落档不代表执行闭环或真实 DSH 推理已验收。
 
-**B1.4 当前独立结论 BLOCKED**：初次任务 fixed / 项目 fixed / 任务 auto 的 production round 接线通过，
+**B1.4 历史独立结论 BLOCKED（现已在 B1.4a 收口）**：初次任务 fixed / 项目 fixed / 任务 auto 的 production round 接线通过，
 但动态 addTask 新 child 未继承 fixed 约束，随后 reassign 实测接受另一 pair，违反用户固定选择（P1）。
 最小下一步为补齐既有任务创建与接力路径的约束传递及回归；无需另建选择器或阻塞于企业级设计。
 W3-9 P2 已关闭；DSH setup 写入异常清理与 --select 缺值各保留非阻断 P2。详见 §6.12 / 基线 §10.6。
+
+**当前 B1.4a 独立 PASS**：上述动态任务 P1 与两个 P2 均已确认关闭，详见 §6.14 / 基线 §10.8。
+项目/任务 auto 与 fixed 的最小切片可继续推进；B1 整体验收、真实模型兼容性及其他需求仍按各自证据裁定。
 
 ## 2. 需求与实现差距
 
@@ -486,3 +489,32 @@ isolation 5 opt-in/0 违规、diff check PASS；正常命令 exit 均 0。未跑
 13 文件审核快照上传 codex/b14-review-blocked，父 bcceed2683854da7e0f30e673fbb080812c89dd6；
 包含先前登记的模型执行中断计划，不代表实现接力恢复或费用授权。
 B1 NOT SEALED、PARALLEL_WRITE=CLOSED、B2–B5 未授权；未进入前端。
+
+### 6.13 B1.4a 固定约束传递 + 两个 P2 收口（实现方实跑，2026-10-12）
+
+关闭 B1.4 唯一 P1：fixed 约束在动态任务创建/后续接力中丢失。修复：`rootSelections` 记录每个 ROOT 的
+有效选择（task>project>auto）；`reassignTask` 经 `fixedLockFor` 先查 per-task 锁、再沿父链到真正的根取
+根选择——fixed 则锁、auto 则不锁；拒绝发生在身份迁移/session 重绑定/runtime 启动之前。
+`addTask`/`replan`/`split` 任意深度创建的任务都派生同一把锁；Laya 自动 pair 不因有 agentId/modelId 被当 fixed。
+未新增 SelectionManager/ModelRouter/第二套 registry/DAG/scheduler。
+P2：`--select` 缺值在 parse 阶段（discovery/LAYA/runtime 前）返回用法错误、exit 2；
+`realChain` 改为 `ownDir()` 后立即 `try`，fixture setup 异常走同一 finally，fatal 进入退出码；
+回归直接驱动真实 `realChain`（`MC_DSH_FAIL_SETUP`/`MC_DSH_FAIL_CLEANUP`），非模拟分支。
+
+实跑：typecheck PASS；b14-selection **46/0**；workbench 413/0、initial-assignment-decision 37/0、
+handoff-production-round 312/0、assignment 235/0、continuation 138/0、planner 189/0、state-loop 169/0、
+round-result 293/0、contract 248/0（2 skipped）、unit 92/0、dsh-adapter 64/0；isolation 守卫 5 opt-in/0 违规；
+diff check clean。runtime.run=1、新增 authority=0、owned 残留 0。标 **READY FOR CODEX INDEPENDENT REVIEW**。
+
+### 6.14 B1.4a 独立 PASS（2026-10-12）
+
+唯一 P1 与两个 P2 已关闭，不再阻塞本切片。独立复核正常测试：typecheck、b14 46/0、workbench 413/0、
+initial-assignment 37/0、handoff-production-round 312/0、DSH 64/0、isolation 5 opt-in/0 违规、diff check PASS，exit 均 0。
+独立三层动态 child probe：project fixed 与 task fixed 均拒绝换 pair；task auto 覆盖项目 fixed 后实际迁移成功。
+内存负控退回旧查锁方式后 b14 40/6、exit=1，证明新增回归承重。原始 fixture 写入异常 probe 亦已确认
+原错误保留、child exit=1、owned root 被清理；当前 setup-failure child guard 阻止递归派生回归 child。
+本轮不重演开发期失控事件、不据此新增无证据 blocker。
+
+六文件快照上传 codex/b14a-review-pass，父 6c5893727e8ed144680f4a350fa10c06773370d3；main/共享索引保持原状。
+B1 overall NOT SEALED、PARALLEL_WRITE=CLOSED、B2–B5 未授权；模型中途掉线恢复保留后续计划。
+未跑 full suite、真实模型任务或进入前端；无需新增规划/调度/清理框架。
