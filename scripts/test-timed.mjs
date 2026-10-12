@@ -39,6 +39,17 @@ const SUITES = [
   // B1.1: the READ-ONLY native model-catalogue snapshot. Hermetic — the command
   // boundary is an injected runner, so no real agent is ever started.
   'model-catalog',
+  // B1.2 P1-1: the opt-in real-catalogue ENTRY's failure semantics, proven by running
+  // the real entry as a real child (not-enabled / agent missing / launcher missing /
+  // query failure / cleanup failure). Hermetic — no real agent is started here.
+  'b12-entry-failure-semantics',
+  // B1.2 P2: the ONE per-stage control-evidence rule, shared with the real entry, so a
+  // stage's success can never stand in for another stage's record.
+  'b12-control-evidence-association',
+  // B1.2 P1-2: the OpenCode version probe is BOUNDED and really stops what it started.
+  // Drives a CONTROLLED resident fixture through the real contained path — no real
+  // agent, no installed OpenCode dependency.
+  'b12-version-probe-bounded',
   'memory',
   'orchestration',
   'model-pool',

@@ -1,6 +1,6 @@
 # 项目基线
 
-更新日期：2026-10-12
+更新日期：2026-10-12（B1.2 两个 P1 与一个 P2 收口更新）
 范围：当前代码事实、已有封板状态和执行边界。未来需求不自动转为实现事实。
 
 ## 文档入口与优先关系
@@ -81,7 +81,7 @@ W5 封板保留下述兼容性及证据时效 P2，不代表全部 Agent 或新�
 端到端预算以及 token 节省对比，均未完成整体验收。
 新能力不能绕过既有 Spawn Gate 或为了调度可用而放宽未知事实语义。
 
-### 5.1 B1.1 只读模型目录诊断（最小诊断切片 PASS；B1.2 正常真实路径通过，测试入口审核 BLOCKED）
+### 5.1 B1.1 只读模型目录诊断（最小诊断切片 PASS；B1.2a 原发现关闭，新增测试 P1 导致 BLOCKED）
 
 用户显式请求时，`doctor --models <agent>` 返回该 Agent 原生 CLI 列出的模型目录快照。
 仅支持 **OpenCode**（`opencode models`，官方命令）；其他 Agent 明确返回 `unsupported`，
@@ -98,6 +98,19 @@ B1.1b 收口（详见 §8.7）：测试清理失败（检查失败、observer �
 Codex 本轮独立复核 PASS：上述一个 P1 与两个 P2 均关闭，B1.1 最小只读诊断切片通过。
 封板仅限受控 fixture 与测试链路验证的诊断切片；未提升为真实 Agent 目录兼容性验收，详见 §8.8。
 B1 整体尚未封板；本片不含选择层级、pause、付费授权、动态额度、Skill/MCP 或 LAYA 联合决策。
+
+B1.2a 收口（2026-10-12，详见 §8.11）：上一轮 BLOCKED 的两个 P1 与一个 P2 均已在当前路径收口，
+B1.2a 独立复核已确认原发现关闭，但新增默认测试隔离与清理失败传播 P1，当前 **BLOCKED**，详见 §8.12。
+**P1-1**（启用后未执行不得 PASS）：入口区分 NOT_RUN / ENVIRONMENT_BLOCKED / FAIL / PASS 四种结果，
+启用后未发现 OpenCode、缺 launcher、查询失败、清理失败均非零退出且不打印 PASS；
+旧代码里“未发现分支提前 return”会绕过最终退出码计算，已改为统一走 `finish()`。
+**P1-2**（版本探测有界）：OpenCode probe 增加自身 deadline（15s），
+成功/异常/超时均在 `finally` 释放 timer，超时调用该次原始 `ManagedProcess.cancel` 并等待清理，
+停止未确认不得认证成功，超时前的部分版本输出不得令 `probe.ok=true`。
+**P2**（逐次关联 control 证据）：新增 `tests/helpers/b12-control-evidence.ts` 唯一判定函数，
+入口与受控回归共用同一实现；version 与 models 各自按本轮创建/新增的记录关联，
+记录缺失、INVALID、停止未确认即失败，任一阶段成功不能替代另一阶段。
+本轮只修该 probe 与本入口，未重写其他 adapter、未新增依赖、未新建 ProcessManager/ProbeManager/authority。
 
 冻结事实边界（不因本片改变）：
 
@@ -575,3 +588,133 @@ Codex 仅修改文档，未修复实现；main、共享索引及既有生产源�
 受控版本进程经原 ManagedProcess 取消确认后结束；结束时 owned root/fixture/CLI 残留为 0。
 既有 OpenCode 桌面应用不属于本轮资源，未停止或修改；未用进程数量证明无服务连接。
 listed≠connected≠callable≠free 仍冻结，真实模型调用、额度、免费、角色与内部服务机制尚未验证。
+
+### 8.11 B1.2a 两个 P1 与一个 P2 收口（实现方实跑，待独立复核）
+
+以下保留实现方报告。当前独立裁定见 §8.12；本节的 hermetic 与清理失败传播声明未全部通过独立验证。
+
+日期：2026-10-12。范围仅限上一轮 §8.10 BLOCKED 的两个 P1 与一个 P2。
+不重新实现模型目录，不扩展用户选择/免费策略/Skill/MCP，不进入 B2，不自行封板 B1。
+
+#### 修复范围与复用依据
+
+| 文件 | 改动 | 复用依据 |
+|---|---|---|
+| `src/adapters/opencode.ts` | 仅版本 probe：加自身 deadline、`finally` clearTimeout、超时走原 `ManagedProcess.cancel` + `settleCleanup`、部分输出不升级为版本 | 复用 `ManagedProcess` 与 `runContainedCatalog` 既有 deadline/`finally` 模式，未新增执行框架 |
+| `tests/b12-opencode-model-catalog.test.ts` | 重写失败语义与逐次 control 关联；移除“未发现分支提前 return” | 复用 `finish`、`setupOwnedTestContext`、生产 `readControlRecord`/`treeStopConfirmedFrom` |
+| `tests/helpers/b12-control-evidence.ts`（新） | 唯一逐次关联判定函数，入口与回归共用 | 不新增 control registry 或第二套身份系统；raw 字段仅诊断 |
+| `tests/b12-entry-failure-semantics.test.ts`（新） | 五个受控 child 回归，断言真实 status/signal/最终输出 | 沿用既有真实 child 断言方式，不测脱离入口的纯退出码函数 |
+| `tests/b12-version-probe-bounded.test.ts`（新） | 常驻版本进程回归 + 正常/非零/无法解析 + timer 不阻止自然退出 | watchdog 仅兜底，触发即失败 |
+| `tests/b12-control-evidence-association.test.ts`（新） | 四种 control 证据组合 + 入口共用同一判定函数 | 不私写只供测试通过的副本 |
+| `scripts/test-timed.mjs` | 三个 hermetic suite 登记进默认清单 | 新入口仍 opt-in，真实执行不进默认清单 |
+| `docs/PROJECT_BASELINE.md`、`docs/STAGE_ANALYSIS.md` | 仅更新现有基线/阶段文档 | 不新建报告 MD |
+
+#### deadline 与停止确认结果（本轮实测）
+
+- 版本探测 deadline：**15s**（`VERSION_PROBE_TIMEOUT_MS`，本 probe 自身）。
+- 目录 deadline：`collectModelCatalog` 默认 **20s**，只覆盖 `opencode models`。
+- 停止等待：`ManagedProcess.cancel()` 内 `CONTAINED_STOP_WAIT_MS` **35s**。
+  三者范围互不相同，不可互相替代；“查询 deadline 到期”不等于“当时已确认退出”。
+- 常驻版本进程回归：实现自身 deadline 触发，`cancel` 返回 true，
+  launcher 记录 `launcherStatus=terminated`（`treeStopped=1`、`activeProcessesFinal=0`），
+  受控 fixture 进程随后确实消失，测试自身有界结束，watchdog 未触发。
+
+#### 本机真实 OpenCode 目录结果（本轮实跑一次）
+
+native launcher `%APPDATA%\npm\node_modules\opencode-ai\bin\opencode.exe`，
+版本 **1.18.35**，`status=ok`、**42** 个模型、约 **2.7s**、完整 `provider/model` 保留（bad=0）。
+未注入目录 runner、未用 fixture 替代真实 CLI；其他 Agent probe 仍为 fake（测试边界）。
+本机版本与模型数以本轮探测为准，未硬编码。
+
+#### control 关联方式
+
+执行前快照 owned control 目录，只认本轮新增记录；version 与 models 各自按
+**自身记录的 rootPid** 关联（也可按写入时间在无 pid 时排序，但不用文件名排序——
+实测随机 UUID 命名会使 models 记录排在 version 之前）。任一阶段记录缺失、INVALID 或
+停止未确认即失败；两阶段不得共用同一记录。
+
+#### 实跑证据（实现方）
+
+`npm run typecheck` PASS。
+`node tests/model-catalog.test.ts` **68/0**；
+`node tests/contract.test.ts` **246/0（2 skipped）**；
+`node tests/real-agent-isolation.test.ts` ownership 守卫 **5 个 opt-in、0 违规**；
+`node tests/real-agent-ownership.test.ts` **60/0**；
+`node tests/b12-entry-failure-semantics.test.ts` **26/0**；
+`node tests/b12-version-probe-bounded.test.ts` **29/0**；
+`node tests/b12-control-evidence-association.test.ts` **26/0**；
+B1.2 未启用 **NOT_RUN、exit=0**；显式启用真实目录查询 **PASS、exit=0（7 断言）**；
+`git diff --check` clean。
+真实查询只运行一次，未重复直到偶然通过。
+
+#### 隔离与残留
+
+新入口仍 opt-in，未进入默认 `npm test` 的真实执行清单；三个新增 hermetic suite 进入默认清单。
+未启动真实 Agent 的 hermetic 回归按既有测试组织方式登记。
+未读取/删除共享 production control directory；owned launcher copy 与清理失败传播未退化。
+本轮 owned root/observer/CLI 进程残留 **0**（temp 下另有本轮之前历史遗留空目录 1 个，
+其中记录对应的 launcher/root pid 均已退出，无存活进程）。
+既有 OpenCode 桌面应用不属于本轮资源，未停止或修改。
+
+#### 未验证事项
+
+目录列出 ≠ 已连接 ≠ 可调用 ≠ 免费；未验证任何模型实际可调用、账户额度、免费资格、
+角色适配或真实推理兼容性；未跑 full suite、未调用真实模型任务、未读凭据、未改本机配置。
+未证明“目录命令零网络/零缓存/零插件初始化”，也未声称原生程序绝不访问认证信息。
+本轮受控失败传播、真实进程超时/停止事实、真实目录结果、历史独立证据必须分开阅读。
+B1.2 仅标 READY FOR INDEPENDENT REVIEW；B1 整体 NOT SEALED，PARALLEL_WRITE=CLOSED，B2–B5 未授权。
+
+### 8.12 B1.2a 独立复核：原发现关闭，新增 P1 导致 BLOCKED
+
+日期：2026-10-12。**BLOCKED：新增两个 P1；另有一个非阻断 P2 证据问题**。
+§8.10 的原两个 P1 与一个 P2 在当前路径关闭，不重复列为未关闭问题。
+B1.1 最小诊断切片 PASS、W5 SEALED WITH P2 保持；B1.2 不封板，B1 整体 NOT SEALED，
+PARALLEL_WRITE=CLOSED，B2–B5 未授权。
+
+#### 独立证据
+
+- typecheck PASS；model-catalog PASS/exit=0；contract **246/0、2 skipped、exit=0**；
+  ownership guard **5 个入口、0 违规、exit=0**；ownership **60/0、exit=0**；diff check PASS。
+- bounded-version **29/0、exit=0**：受控常驻版本进程触发实现自身 15s deadline，
+  probe 返回失败、部分版本未提升为成功，生产验证的 Job record 为 terminated 且确认空；
+  watchdog 未触发，正常版本子进程自然退出。此结果不声称真实 OpenCode 曾挂起。
+- control-evidence association **26/0、exit=0**：共享判定拒绝所需记录缺失/INVALID、旧记录和多记录歧义，
+  成功路径要求两条本轮记录。真实入口目前使用 write-time fallback，未提供独立观察的 stageRootPids。
+- entry-failure suite 通过标准 command seam 模拟 OpenCode 不可用：**25/1、真实 exit=1、signal=null**。
+  旧的缺 Agent、缺 launcher、查询失败及非零退出断言通过；唯一失败为 case 5 仍要求目录查询成功，
+  证明它没有使用受控成功 fixture。本轮没有因此启动本机真实 OpenCode。
+- 对 association suite 的本轮 owned b12ce-* 目录删除调用独立注入 rmSync 异常：
+  **26/0、真实 exit=0、signal=null**，8 个 named owned 根目录仍存在。
+  审核 probe 校验绝对路径位于本次 temp 根且名称归属本轮后，逐一删除，最终 **0**。
+  这是清理失败传播反例，不冒充 containment 失效；注入仅在独立进程中生效，不修改源码。
+
+#### 新增发现与最小修复
+
+**P1-1：默认 hermetic suite 实际会调用真实 OpenCode，并依赖本机安装。**
+`b12-entry-failure-semantics` 已进入 test-timed 默认清单，但 case 5 强制 opt-in 且不传受控 command。
+entryAgentConfig 默认空配置，故该 case 使用本机原生 OpenCode；机器不可用时上述 25/1 可复现。
+case 1 也继承父进程 opt-in，而不是显式关闭。最小修复：成功+清理失败 case 指向合法、受控的
+version/models 成功 fixture；未启用 case 显式关闭 opt-in，其他环境状态采用 child env 副本。
+禁止以 skip、依赖安装或删断言掩盖这个默认测试边界。
+
+**P1-2：新增测试自己的 owned 目录清理异常被吞掉，仍可全绿退出。**
+三个新增 hermetic suite 都在最终 tmpDirs 删除处 catch 后 best effort，最终退出码只检查 failed。
+association 的独立异常注入已证明实际 false-green，留下 8 个 owned 根目录。
+最小修复：让这些 suite 的删除失败进入已有检查/cleanup ledger 与最终非零退出码，
+保留按明确 named owned 路径清理，不新增框架，不以审核 probe 的后续回收覆盖原始失败。
+
+**P2：版本回归中的 PID 探测不能作原句柄退出证明。**
+pidAlive 用 process.kill(pid,0)，除 EPERM 外所有错误都映射 false；另一个 child 观测把所有异常映射 false。
+这些 fresh-PID 检查不满足旧冻结的身份/未知事实边界，且与文件头的 ORIGINAL handle 声明不符。
+本次版本收口采用已验证的 contained Job terminated/空事实，不采信这些 PID 布尔值；
+可删除冗余弱断言并更正措辞，或确需额外身份观测时复用已有 held-handle observer。
+
+#### 上传与范围
+
+审核分支 `codex/b12a-review-blocked`，父提交 `5d6bf571dcc25da22e051ce3a624bf37a73f89a1`。
+九文件增量：OpenCode probe、默认清单、B1.2 入口、一个 helper、三个回归与两份现有文档。
+Codex 只更新文档，没有接管实现修复；main、共享索引和 W5/其他生产源码保持原状。
+上传记录原发现关闭及新增阻塞，不代表 B1.2 封板；真实目录 7 PASS 为实现方报告，本轮未重复查询。
+未跑 full suite、模型推理、DSH 适配或 ClawChat 集成，未读取凭据或修改本机配置。
+结束时本轮 fixture/observer/CLI 无残留；历史目录 `w44-INgj3j` 保留，未按旧 PID 推断其进程身份。
+本次仍是 OpenCode 诊断收口，不能据此声称 DSH 已接入编排后端。

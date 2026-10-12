@@ -43,6 +43,20 @@ import type {
   UsagePatch,
 } from '../core/types.ts';
 
+/*
+ * B1.2 P1-2: the version probe's OWN deadline.
+ *
+ * It is deliberately NOT the catalogue deadline (`collectModelCatalog`'s 20s)
+ * and NOT the contained stop settle (`ManagedProcess.cancel`, 35s). `doctor`
+ * probes BEFORE it builds the catalogue deadline, so `--version` needs its own
+ * bound or the whole diagnostic can hang forever on a wedged `--version`.
+ *
+ * 15s is generous for a `--version` print and still far below any interactive
+ * wait: the native CLI answered in well under a second on this machine, so this
+ * is a safety bound, not a tuning knob.
+ */
+const VERSION_PROBE_TIMEOUT_MS = 15_000;
+
 const CAPABILITIES: AgentCapabilities = {
   newTask: true,
   resume: true,
@@ -189,7 +203,27 @@ export function createOpenCodeAdapter(config?: {
     validateRequest,
 
     async probe(): Promise<ProbeResult> {
-      // `--version` writes to stdout, so the probe must read stdout.
+      /*
+       * B1.2 P1-2: a BOUNDED version probe. `doctor` awaits `probe()` BEFORE it
+       * ever builds the catalogue deadline, so an unbounded `await proc.exited`
+       * here hung the whole diagnostic — the catalogue's own 20s timer could not
+       * cover `--version`. The wait is now explicitly bounded.
+       *
+       * This is a MINIMAL repair of the one unbounded wait in THIS probe. It does
+       * NOT introduce an outer execution framework, a service, a ProcessManager or
+       * a second authority: the process is still created, bounded, stopped and
+       * confirmed through the SAME production `ManagedProcess` the catalogue and
+       * every agent run already use.
+       *
+       * Three bounds, deliberately separate and NOT interchangeable:
+       *   - VERSION_PROBE_TIMEOUT_MS  this probe's own deadline for `--version`
+       *   - the catalogue deadline      `collectModelCatalog(timeoutMs)`, which
+       *                                 covers `opencode models` only
+       *   - CONTAINED_STOP_WAIT_MS     the bounded settle inside
+       *                                 `ManagedProcess.cancel()` (35s)
+       * An expired version deadline is NOT a confirmed stop, and neither of the
+       * other two bounds may be described as covering `--version`.
+       */
       const outLines: string[] = [];
       const proc = new ManagedProcess({
         launcher,
@@ -197,6 +231,54 @@ export function createOpenCodeAdapter(config?: {
         cwd: process.cwd(),
         onStdoutLine: (l) => outLines.push(l),
       });
+
+      // The timer is released on EVERY exit path (success, throw, timeout) so a
+      // finished probe can never hold the process open until the deadline. The
+      // `unref` is belt-and-braces; `clearTimeout` below is the real release.
+      let deadline: NodeJS.Timeout | undefined;
+      const timedOut = new Promise<'timeout'>((res) => {
+        deadline = setTimeout(() => res('timeout'), VERSION_PROBE_TIMEOUT_MS);
+        if (typeof deadline.unref === 'function') deadline.unref();
+      });
+      let settled: 'exited' | 'timeout';
+      try {
+        // A race here is ONLY a bounded wait; the still-running process is NOT
+        // discarded. On 'timeout' the ORIGINAL ManagedProcess is cancelled below.
+        settled = await Promise.race([proc.exited.then(() => 'exited' as const), timedOut]);
+      } finally {
+        if (deadline !== undefined) clearTimeout(deadline);
+      }
+
+      if (settled === 'timeout') {
+        /*
+         * Ask the ORIGINAL process to stop, then let its cleanup settle. `cancel`
+         * returns true ONLY when the launcher positively confirmed the Job empty;
+         * a request that was merely SENT is not evidence, so the boolean — not the
+         * act of calling cancel — is what decides the verdict below.
+         */
+        const stopConfirmed = await proc.cancel('opencode version probe timeout').catch(() => false);
+        await proc.settleCleanup().catch(() => false);
+
+        /*
+         * Partial output printed BEFORE the deadline is discarded, never promoted
+         * to a version. A version is only accepted from a run that actually
+         * finished within the bound and stopped cleanly.
+         */
+        const partial = extractVersion(outLines.join('\n'));
+        const tail = proc.stderrTail.toString();
+        return {
+          ok: false,
+          launcher,
+          version: null,
+          detail:
+            `opencode --version did not finish within ${VERSION_PROBE_TIMEOUT_MS}ms; ` +
+            `tree stop confirmed=${stopConfirmed && proc.isTreeStopConfirmed()}` +
+            `${partial ? `; partial output "${partial}" discarded` : ''}` +
+            `${tail ? `: ${tail.slice(0, 300)}` : ''}`,
+          warnings: [],
+        };
+      }
+
       const exit = await proc.exited;
       const version = extractVersion(outLines.join('\n')) || null;
       if (exit.code !== 0 || !version) {

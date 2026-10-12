@@ -48,6 +48,9 @@ Codex 2026-10-12 独立真实查询同样得到 1.18.35 / ok / 42 models / 3 PAS
 另有 P2：任意一条 control 成功可掩盖另一条 INVALID 的证据缺口。
 本片不得封板，详见 [项目基线 §8.10](PROJECT_BASELINE.md#810-b12-独立审核-blocked-与上传说明)。
 
+B1.2a（2026-10-12）原两个 P1 与一个 P2 已独立确认关闭；新增默认测试隔离与清理失败传播两个 P1，
+当前仍 BLOCKED，另有一个非阻断 PID 退出证据 P2。详见 [项目基线 §8.12](PROJECT_BASELINE.md#812-b12a-独立复核原发现关闭新增-p1-导致-blocked)。
+
 ## 2. 需求与实现差距
 
 | 需求 | 可复用实现 | 仍需确认或补齐 |
@@ -84,7 +87,7 @@ B2–B5 仍为 PLANNED / NOT AUTHORIZED，不得因本文自行开工。
 | 阶段 | 最小目标 | 依赖与退出条件 |
 |---|---|---|
 | B0 执行证据收口 | COMPLETE：W5 SEALED WITH P2；观测/清理 P0/P1 与冗余断言 P2 已关闭 | 兼容性和证据时效限制保留；PARALLEL_WRITE=CLOSED |
-| B1 可用能力与用户规则 | 复用 registry/adapter 表，明确 Agent/Model/Skill/MCP 事实和用户约束 | **B1.1 最小只读诊断切片 PASS**；B1.2 真实 OpenCode 目录正常路径独立通过，入口审核 BLOCKED（两个 P1、一个 P2）；其余未实现 |
+| B1 可用能力与用户规则 | 复用 registry/adapter 表，明确 Agent/Model/Skill/MCP 事实和用户约束 | **B1.1 最小只读诊断切片 PASS**；B1.2a 原发现关闭，新增测试 P1 导致 BLOCKED；其余未实现 |
 | B2 费用与候选约束 | 入口/账户归属、免费依据、有效期、共享额度和预算 | 每次分配/接力均校验；未知不伪造；全部不可用安全停止 |
 | B3 LAYA 能力选择 | 联合选择 Agent/Model 与 Skill/MCP，提供必要角色能力事实 | 只选合格候选，复用原生执行，实际能力可核对 |
 | B4 异构任务闭环 | 候选内容生成 → LAYA 选择 → 调研/实现/测试/审核 | 同 Agent 多模型独立会话；工作区隔离和材料交接有实证 |
@@ -161,7 +164,19 @@ Agent Orchestrator 可参考执行/工作区协作，RouteLLM 可参考评估方
 
 ## 6. 本轮检查与限制
 
-本轮（B1.2）OpenCode 实跑：`npm run typecheck` PASS；`tests/model-catalog.test.ts` **68/0**；
+### 6.1 B1.2a 本轮（2026-10-12）检查与限制
+
+typecheck PASS；model-catalog **68/0**；contract **246/0（2 skipped）**；ownership 守卫 **5 个 opt-in、0 违规**；
+real-agent-ownership **60/0**；三个新增 hermetic suite 分别 **26/0、29/0、26/0**，均 exit=0；
+B1.2 未启用 NOT_RUN、exit=0；显式启用真实目录查询 **PASS、exit=0（7 断言）**；`git diff --check` clean。
+真实目录查询只运行一次：1.18.35、`ok`、42 个模型、约 2.7s、bad=0，两阶段 control 记录各自 `success` 且 rootPid 不同。
+常驻版本进程回归实现自身 deadline 触发、`cancel` 确认 true、launcher 记录 `terminated`，watchdog 未触发。
+本轮 owned root/observer/CLI 进程残留 0；temp 下另有本轮之前历史遗留空目录 1 个（对应 pid 均已退出）。
+未跑 full suite、未调用真实模型任务、未读凭据、未改本机配置；未重复实现方 help/端口采样。
+
+### 6.2 上一轮（B1.2）检查与限制
+
+上一轮（B1.2）OpenCode 实跑：`npm run typecheck` PASS；`tests/model-catalog.test.ts` **68/0**；
 `tests/real-agent-isolation.test.ts` ownership 守卫 PASSED（5 个 opt-in，0 违规）；
 `tests/real-agent-ownership.test.ts` **60/0**；`git diff --check` clean。
 新入口 `tests/b12-opencode-model-catalog.test.ts` 未启用时 EXIT=0（NOT_RUN，不发现/不启动）；
@@ -198,3 +213,32 @@ Codex 上轮独立验证（W5.1d）：三个 observer 边界 probe、W51_ROUNDS=
 259 需按 handle 是否 signaled 判断，不能一概视为非 terminal。final reconciliation 的现有数值过滤
 属于既有 launcher 可用性限制，非环境事实；未修改或重新探测该路径，详情见项目基线 §6.3。
 最终 W5 SEALED WITH P2，PARALLEL_WRITE=CLOSED；B1.1 最小诊断切片 PASS、B1.2 正常真实路径通过但入口审核 BLOCKED、B1 未封板，B2–B5 未授权。
+
+**B1.2a 实现方收口报告（2026-10-12，独立结果见基线 §8.12）**：上一轮三个问题已在当前路径收口，
+但独立审核因新增默认测试隔离与清理失败传播 P1 裁定 BLOCKED，B1.2 不封板。
+P1-1 启用后未执行不得 PASS：入口区分 NOT_RUN / ENVIRONMENT_BLOCKED / FAIL / PASS；
+未发现 OpenCode、缺 launcher、查询失败、清理失败均非零退出且不打印 PASS；
+同时修复“未发现分支提前 return 绕过最终退出码计算”的次级缺陷。
+P1-2 版本探测有界：probe 增加自身 15s deadline，`finally` 释放 timer，
+超时调用该次原始 `ManagedProcess.cancel` 并等待清理；停止未确认不认证成功，
+超时前部分版本输出不令 `probe.ok=true`。
+P2 逐次关联 control 证据：新增唯一判定函数 `tests/helpers/b12-control-evidence.ts`，
+入口与受控回归共用同一实现；任一阶段记录缺失、INVALID、停止未确认即失败，
+不得用另一阶段成功替代，也不按“最后一条/任意一条成功”归并。
+三个新增 hermetic suite 进入默认清单，新真实入口仍 opt-in。
+本机真实目录本轮实跑一次：1.18.35、`ok`、42 个模型、约 2.7s、bad=0。
+详见 [项目基线 §8.11](PROJECT_BASELINE.md#811-b12a-两个-p1-与一个-p2-收口实现方实跑待独立复核)。
+listed≠connected≠callable≠free 仍冻结；B1 整体 NOT SEALED，PARALLEL_WRITE=CLOSED，B2–B5 未授权。
+
+### 6.3 B1.2a 当前独立审核结论
+
+原两个 P1 与一个 P2 关闭；typecheck、model-catalog、contract（246/0、2 skipped）、
+bounded-version（29/0）、control association（26/0）、ownership（60/0）、guard 和 diff check 均通过。
+新默认 entry-failure suite 的 case 5 未设置受控 command，会调用真实 OpenCode；
+以 command seam 模拟不可用，实得 25/1、exit=1。这不是旧的“缺失环境仍 exit=0”回归。
+另对 association suite 的 owned 删除调用注入异常，实得 26/0、exit=0，却留下 8 个目录，
+随后审核 probe 仅按本轮记录的路径回收，剩余 0。两个新 P1 都必须关闭。
+PID-only 退出断言为非阻断 P2，本轮采用 Job validated terminated/空事实作为版本停止证据。
+作者 7 PASS 真实目录查询未在本轮重跑；未跑 full suite、模型推理或 DSH/ClawChat 接入。
+此报告对应 OpenCode 专项收口，DSH 作为开发工具与 DSH 已接入产品是不同事实。
+审核快照分支 codex/b12a-review-blocked；main 和共享索引保持原状，详见基线 §8.12。
