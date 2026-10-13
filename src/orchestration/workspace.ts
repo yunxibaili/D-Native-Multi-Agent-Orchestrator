@@ -429,15 +429,24 @@ export class WorkspaceManager {
    * or a second branch, which is what makes a workspace inspectable after a
    * failure and safe to reuse if retry is ever implemented.
    */
-  async prepare(input: { taskId: string; mode: WorkspaceMode; sharedCwd?: string }): Promise<WorkspaceHandle> {
-    const existing = this.get(input.taskId);
+  async prepare(input: { taskId: string; mode: WorkspaceMode; sharedCwd?: string; ownerTaskId?: string }): Promise<WorkspaceHandle> {
+    // B4.5: the PHYSICAL owner may differ from the requesting task.
+    //
+    // A collaboration group still gives every member its own task / session / pair,
+    // but all of them (and the integration task) resolve to ONE shared worktree,
+    // owned by the group's root task. The handle is therefore keyed by the OWNER, so
+    // the same cwd / branch / baseSha is handed out to every member and reused across
+    // their sequential executions. Default (`ownerTaskId` absent) is byte-identical to
+    // the previous behaviour: owner === taskId.
+    const owner = input.ownerTaskId ?? input.taskId;
+    const existing = this.get(owner);
     if (existing !== null) return existing;
 
     const handle = input.mode === 'shared'
-      ? await this.prepareShared(input.taskId, input.sharedCwd)
-      : await this.prepareIsolated(input.taskId);
+      ? await this.prepareShared(owner, input.sharedCwd)
+      : await this.prepareIsolated(owner);
 
-    this.handles.set(this.key(input.taskId), handle);
+    this.handles.set(this.key(owner), handle);
     return handle;
   }
 

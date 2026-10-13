@@ -162,6 +162,22 @@ export interface OrchestrationOptions {
    */
   workspaceMode?: (task: Task) => WorkspaceMode | 'none';
   /**
+   * B4.5: resolve the PHYSICAL OWNER of the workspace a task runs in.
+   *
+   * Returning a task id that differs from the task's own id makes that task share
+   * the owner's physical workspace (same cwd / branch / baseSha), which is what a
+   * sequential collaboration group needs: each member keeps its OWN task, session
+   * and pair, but they all write into one shared worktree so the integrator can read
+   * their files. Returning `null` (the default) means owner === task: every task gets
+   * its own workspace exactly as before, so an existing round is unchanged.
+   *
+   * This is deliberately a pure FUNCTION of the task, not a new registry: the
+   * WorkspaceManager remains the single workspace-lifecycle authority, and the
+   * owner id is just the key it is asked to prepare. The task/Attempt identity is
+   * NEVER replaced by the owner id - only the physical directory is shared.
+   */
+  workspaceOwner?: (task: Task) => string | null;
+  /**
    * R2-1: what a task claims to access, resolved per task.
    *
    * Injected rather than computed here, because "does this task write?" is a
@@ -313,6 +329,8 @@ export class Orchestrator {
   private readonly cancelConfirmWaitMs: number;
   private readonly workspace: WorkspaceManager | null;
   private readonly workspaceMode: (task: Task) => WorkspaceMode | 'none';
+  /** B4.5: which physical workspace a task shares; `null` means owner === task. */
+  private readonly workspaceOwnerOf: ((task: Task) => string | null) | null;
   /** R2-1: per-task resource intent. `null` = no claim, and the check is skipped. */
   private readonly resourceClaims: ((task: Task) => { mode: ResourceClaimMode; scope: ResourceScope } | null) | null;
   /**
@@ -356,6 +374,7 @@ export class Orchestrator {
     this.cancelConfirmWaitMs = options.cancelConfirmWaitMs ?? CANCEL_CONFIRM_WAIT_MS;
     this.workspace = options.workspace ?? null;
     this.workspaceMode = options.workspaceMode ?? ((task) => (this.workspace === null ? 'none' : defaultWorkspaceMode(task)));
+    this.workspaceOwnerOf = options.workspaceOwner ?? null;
     this.resourceClaims = options.resourceClaims ?? null;
   }
 
@@ -1013,9 +1032,14 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
     if (this.workspace !== null) {
       const mode = requiredMode;
       if (mode !== 'none') {
+        // B4.5: a task may share the PHYSICAL workspace of an owner task (a
+        // collaboration group's root). The task keeps its own identity; only the
+        // directory/branch/baseSha are shared. Default resolver -> owner === task.
+        const ownerTaskId = this.workspaceOwnerOf?.(task) ?? task.taskId;
         try {
           workspace = await this.workspace.prepare({
             taskId: task.taskId,
+            ownerTaskId,
             mode,
             // An isolated workspace derives its own directory from the project
             // root; a shared one must be named explicitly, and the caller's cwd

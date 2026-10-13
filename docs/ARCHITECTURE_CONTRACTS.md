@@ -126,8 +126,11 @@ B4.0 顺序执行异构职责沿既有路径；B4.1 候选计划产生 N 个成�
 只剩一个候选不能直接发送被其拒绝的单选 choice。当前审核状态只见唯一基线，旧入口保持兼容。
 前后端角色仍属 implementation，不为业务标签新增并行生命周期。
 文件范围写进提示词不等于强隔离；必要限制仍由既有 Workspace/Claim/准入保证。
-协作组当前只支持共享顺序工作区：Git 隔离工作区下成员各自 worktree，既有可验证路径（`task merge`）
-只并入根检出且需人工触发，无法把成员交付送进集成者 worktree，因此启动前明确拒绝，不新造合并引擎。
+非Git协作组沿用共享顺序工作区。B4.5将Git协作组映射到由组root物理owner持有的单一隔离worktree，
+成员/集成者的task/session/pair不变；同物理workspaceId/scope继续由既有ResourceClaim准入与保留，
+不新造合并引擎、不自动并入用户检出。最终review也必须检查运行期retainedResourceProtections，
+不能只检查Git创建期unconfirmedProtections；当前剩余验收P1及未封板事实只见唯一基线。
+仓库子目录启动明确拒绝，用户脏文件不自动复制；最终人工集成保留。
 模型中断恢复后续复用停止确认与 handoff，不能借重试产生两个有效写入者。
 
 旧设计细节和历史审核在 [归档提交](STAGE_ANALYSIS.md#历史备份) 按原路径可查。

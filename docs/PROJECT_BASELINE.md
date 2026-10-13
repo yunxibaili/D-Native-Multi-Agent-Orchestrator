@@ -34,7 +34,8 @@ README 是导航。用户明确指令优先；发现源码、证据与基线不�
 | B4.3a | 独立 PASS；剩余 legacy 绑定 P1 已通过写前拒绝关闭，受控范围封板 |
 | B4 overall | NOT SEALED；功能 A/B 最小闭环 + 项目适配 + 阶段确认入口均已实现，真实模型兼容性未验收 |
 | B4.4 | 独立 PASS；最小有出处的交接/用户交付视图，声明/观察/未知分开，不等于产物或测试结果认证 |
-| B4.5+ / B2 / B3 / B5 | PLANNED；本轮未授权启动实现 |
+| B4.5 | 独立 BLOCKED；组 worktree 主链已实现，剩 1 个审核前资源保护 P1；未封板 |
+| B4.6+ / B2 / B3 / B5 | PLANNED；本轮未授权启动实现 |
 | PARALLEL_WRITE | CLOSED |
 | 本产品前端 | 本机独立进度页已授权且禁止入 Git；正式工作台 UI 需求仍待确认 |
 
@@ -105,7 +106,7 @@ B4.0b 留下的 review Attempt 弱断言已在 B4.1 测试修改中补强，独�
 
 B4.1 新增 opt-in `--workflow collaborate`，duo/trio 纯值计划包含 2/3 个顺序成员 child task，
 以及依赖全部成员的集成 task。计划指定组内成员承担集成，集成任务继承其初始 pair，独立 task/session。
-目前仅共享顺序工作区（非 Git cwd）；Git 隔离交付缺既有送入集成者工作区的路径，启动前明确拒绝。
+B4.1 原最小范围为非 Git 共享顺序工作区。B4.5 已实现 Git 组内单 worktree 顺序主链，但因最终审核漏查运行期资源保护而独立 BLOCKED，尚不能宣称 Git 协作已验收可用；子目录明确拒绝。
 有效 fixed、可用 pair 不足也明确拒绝；文件范围只是声明，不等于强隔离。PARALLEL_WRITE=CLOSED。
 
 受控 provider 下，duo/trio 实际生成不同成员文件，集成任务读取文件字节生成 combined.txt，
@@ -205,6 +206,21 @@ B4.3a 独立复核 PASS：显式工作流绑定、材料交付与 legacy 入口�
 - gate、退出语义、调度、Assignment、Workspace/停止链不变；automaticPostRoundAction=NONE，PARALLEL_WRITE=CLOSED。
   真实模型、工具原生观测覆盖、产物物理认证与完整需求批准链不属于本片 PASS。
 
+### 5.6 B4.5：Git 项目的单组隔离 worktree（未封板）
+
+复用 WorkspaceManager 的 prepare/get、现有 WorkspaceLock/ResourceClaim 和唯一 executeTask：
+workspaceOwner 只选择物理 owner，成员/集成者仍保持独立 Task/Session/Agent×Model。Git collaborate 从仓库根启动，
+组 root 拥有一个 worktree，所有成员与指定集成者按依赖顺序执行；最终审核指向同一 worktree。
+报告给出 owner/path/branch/baseSha；只从 committed base 开始，不复制 staged/unstaged/untracked；
+用户原检出 HEAD/index/文件不变，成功也保留 worktree，最终集成仍由用户显式处理，不自动 commit/merge/reclaim。
+Git 子目录启动在任务提交/创建 worktree/runtime/review 之前明确拒绝；非 Git 与 sequential 原语义保持。
+
+**独立 BLOCKED（1 个 P1）**：review gate 只查 Git 创建期 unconfirmedProtections，未查 Agent 执行后
+retainedResourceProtections。最后集成者的 cleanup.treeStopConfirmed=false 时，ResourceClaim 仍保留，
+但无下一成员触发资源门，最终 review 直接启动并把 round 报为 ok/exit0。需要用既有物理 workspaceId/scope
+核对运行期 retained claim，并 withheld 审核/成功交付；不能只按 owner Task ID 过滤成员 Task 的声明。
+这项不是已经确认的 OS descendant 逃逸：本轮证据为真实 CLI/Git 路径中的受控故障注入。
+
 ## 6. 不可绕过的契约
 
 WorkerIdentity={taskId,agentId,modelId,sessionId}；不以模型品牌替代 Agent 能力事实。
@@ -235,6 +251,23 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 不新增 provider 网关、群聊平台、第二个调度器或通用工作流引擎来掩盖协议缺口。
 
 ## 8. 最近独立证据与上传记录
+
+2026-10-14 B4.5：**Codex 独立 BLOCKED，未封板；唯一返工已用完，本轮停止**。
+
+- 调研：本轮 GitHub MCP 成功查询 [openai/symphony](https://github.com/openai/symphony) metadata（Apache-2.0、未归档，pushed 2026-09-15）；读取其 [SPEC §9](https://github.com/openai/symphony/blob/main/SPEC.md) 的同工作单元复用工作区，以及 [Git worktree 官方文档](https://git-scm.com/docs/git-worktree)。仅方法参考，未复制/安装其服务、未完成其全部 Windows/安全审计；直接实现复用仓内 WorkspaceManager/Git/Claim/executeTask。
+- 实际 wrapper：C:/Users/Admin/.codex/bin/opencode-agent，role=implement。首轮 ses_ec9f5cc5fffeBz70e2XDPMZOuA 的 84 条 assistant、唯一返工 ses_ec9e5d301ffe8I094YCSFDNNOQ 的 61 条 assistant 元数据均为 opencode-go/deepseek-v4.1-flash。首轮 finish=stop、wrapper exit0。返工 wrapper exit0，但最后把 diff 写入固定 TEMP/rc.diff 的工具调用被拒绝，finish=tool-calls、无完整最终报告；不把 exit0 当作完整正常完成。Codex未重试该固定路径写入，以实际磁盘/只读 diff 和独立验证接续审核。
+- Worker 改动仅 6 个文件：src/cli/round-cli.ts、src/orchestration/orchestrator.ts、src/orchestration/workspace.ts、tests/b41-collab-group.test.ts、tests/b45-git-collaboration.test.ts、scripts/test-timed.mjs。未改 runtime/adapters/native/依赖/生产配置；Codex未代写实现。
+- 主链独立实跑：duo/trio 的真实临时 Git worktree/文件字节/组 owner 与独立 task/session/pair、最大写并发1、脏文件 HEAD/index/内容不变、创建失败不回退、同组保留声明阻止后续读写及不同组隔离均通过。fixture 证明接线与 Git/文件行为，不证明真实 Agent 多模型兼容。
+- 首次独立 probe 复现审核 cwd=用户检出和 nested cwd 被静默改到 worktree 根；唯一返工后再独立确认 reviewUsesGroup=true，以及 nested 拒绝 exit1/runtime0/review0/no tasks/用户检出不变。
+- **剩余 P1 的实际独立 probe**：真实 runRoundCli/临时Git repo，把最后集成者的 frozen RunResult.cleanup.treeStopConfirmed 注入 false；生产日志确认 task round-mv6wpgld-int 的 claimsRetained=1，仍 requests=3/reviews=1、review completed/pass、executionIncomplete=false、ok=true、exit0。根因是 round-cli.ts 的 review guard 仅使用 workspace.unconfirmedProtections（Git创建保护），未检查 workspace.retainedResourceProtections（运行期Claim）；后者的taskId是成员/集成者，不能只匹配root owner。不是物理存活/逃逸证明，不将受控注入升级为 OS containment 失效。
+- Codex 最终独立执行全部 exit0：typecheck；b45-git-collaboration 74/0；b41-collab-group 96/0；b42-plan-file 61/0；b43-stage-material 47/0；b40a-cli-workflow 42/0；resource-claim 192/0；execution-lifecycle 136/0；orchestration 968/0；unified-review 130/0；real-agent-isolation 5 opt-in/0违规。现有 suite 绿不能覆盖独立 probe 的 P1。unified-review 出现 owned 临时目录 ENOENT warning，未升级为本阶段根因。
+- AST 生产 runtime.run 边=1（orchestration/orchestrator.ts）；新增 authority/依赖=0；本轮测试 cleanup ledger 无失败，owned b45 临时目录已回收；git diff --check 再独立核对。
+- 不跑 full suite/产品真实 Agent 推理，不读凭据/改本机配置，不开启 PARALLEL_WRITE，不推进 B3.1/B2/B5/正式前端。完成估算信用保持56/100（展示55%，剩余约45%，区间40–60%）；存在部分实现不等于阶段完成。
+- 上传目标 codex/b45-review-blocked，父 c83f6bc5067055f740e2847a74b036a13b430342；保存实现与独立 BLOCKED 事实，不并入main。准确上传结果/commit以本轮远程核对和会话交付为准；共享暂存区和 dirty 树保留，project-progress/ 全部不入Git。
+
+B4.5 首轮独立复核：worker wrapper 正常 exit0，改动限3份生产接线/2份测试/runner登记；Codex未代写生产代码。独立 in-memory probe 通过真实runRoundCli/临时Git repo复现：最终review仍在用户原检出（reviewUsesGroup=false）；--cwd repo/nested 仍exit0而实际运行在worktree根，且worktree建在原repo内部（preservedSubdir=false）。因此暂不PASS；仅发放一次 bounded rework，修审核目标与子目录写前拒绝，并要求报告反映组工作区事实。
+
+2026-10-14 B4.5：用户明确授权继续下一阶段。Codex 先核对 WorkspaceManager/ResourceClaim/mergeTaskBranch 及协作拒绝路径；GitHub MCP 本轮成功检索 openai/symphony（Apache-2.0、未归档），结合其 SPEC 的同一工作单元复用工作区与 Git 官方 worktree 文档，仅参考方法、不引入 Elixir/服务/依赖。选择协作组共用一个隔离 Git worktree、成员顺序执行的最小路线；用户原检出目录不作为写入目标，最终人工集成，PARALLEL_WRITE=CLOSED。当前为实施中，不是 PASS；其他阶段未授权。
 
 2026-10-14 本机页面与上传维护（不推进阶段）：磁盘快照此前已是 B4.4，但实时预览服务未运行，先前仅核对数据不能证明用户看到的页面已同步。本轮恢复受控终端中的只读预览 http://127.0.0.1:4318，并实际打开浏览器核对 B4.4 done / B4.5 待授权。服务停止后自动刷新停止；离线文件须重新生成并重新加载。后台常驻启动被自动安全检查拒绝（blocked by policy），未绕过该拒绝。此前 GitHub 上传确实漏做；本轮核对相对 777702f 的 13 文件差异和已审核代码哈希。初次 Git TLS 握手及 GitHub MCP 连接失败，随后 Git 连接恢复，实际 push 成功：codex/b44-review-pass 的代码快照 b5137113041f5a290c05f84df23715fa81ceac50，远程 ls-remote 已确认。快照包含 B4.3a 收口、model-catalog smoke、B4.4 及审核文档；后续仅补此上传记录。不修改 main/共享暂存区，远程 main 仍为 8b8add4250d64d2c9c78fe47ded208e7bc285aaf，project-progress/ 全部不入 Git。
 
@@ -654,18 +687,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-14T00:06:39+08:00",
+  "updatedAt": "2026-10-14T00:45:47+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "B4.4",
-    "name": "有出处的交接和用户交付视图",
-    "status": "done",
-    "summary": "Codex 独立 PASS：完整验收目标与同次任务/Attempt 证据进入 JSON 与实际命令行；声明、观察、未知/过期/阻塞分开，返工证据不丢失，命令不冒充测试结果。首次实现 + 一次返工后止于本阶段。"
+    "id": "B4.5",
+    "name": "Git 项目中的顺序协作",
+    "status": "blocked",
+    "summary": "主链、脏文件保护、审核cwd和子目录拒绝均有独立证据；仍有1个P1：最后集成者停止未确认时，审核漏查运行期保留的ResourceClaim并误报成功。唯一返工已用完，未封板。"
   },
   "next": {
-    "id": "B4.5",
-    "name": "Git 项目中的顺序协作（待单独授权）",
+    "id": "B4.5a",
+    "name": "审核前运行期资源保护单点收口（待下发）",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -750,11 +783,12 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     },
     {
       "id": "GIT",
-      "severity": "范围限制",
-      "title": "Git 项目协作交付路径缺失",
-      "detail": "现有 collaborate 主动拒绝 Git 隔离工作区；成员产物尚不能受控送入集成者工作区。",
-      "next": "B4.5",
-      "kind": "已有事实"
+      "severity": "P1",
+      "title": "Git 协作审核漏查运行期保护",
+      "detail": "最后集成者treeStopConfirmed=false，声明仍保留，但review仍调用且round ok/exit0。Git创建保护与运行期声明不是同一来源。",
+      "next": "B4.5a",
+      "kind": "已有事实",
+      "status": "已独立复现"
     },
     {
       "id": "APPROVAL",
@@ -848,9 +882,16 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     {
       "id": "B4.5",
       "title": "Git 项目顺序协作",
-      "status": "planned",
-      "deliverable": "成员真实差异可交集成，保护用户脏文件",
-      "evidence": "下一候选，尚未启动；先比较现有工作区/合并路径再选最小路线"
+      "status": "blocked",
+      "deliverable": "单组隔离worktree顺序共建与实际成果审核",
+      "evidence": "独立74/0与2处修复确认；最后集成者stop-unconfirmed仍可review/pass，剩1个P1"
+    },
+    {
+      "id": "B4.5a",
+      "title": "审核前资源保护收口",
+      "status": "next",
+      "deliverable": "同组运行期声明仍保留时不审核、不成功交付",
+      "evidence": "沿用既有Claim/Review门；下一轮仅此单点，其他阶段不启动"
     },
     {
       "id": "B3.1",
@@ -899,52 +940,52 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     {
       "name": "typecheck",
       "result": "PASS",
-      "source": "Codex 最终独立实跑"
+      "source": "Codex本轮独立实跑"
     },
     {
-      "name": "round-result / workbench",
-      "result": "346 / 419 · 全通过",
-      "source": "Codex 最终独立实跑"
+      "name": "B4.5 / 协作组",
+      "result": "74 / 96 · 全通过",
+      "source": "Codex独立实跑；不覆盖剩余故障probe"
     },
     {
-      "name": "b43 / b40a / handoff / b42",
-      "result": "47 / 42 / 312 / 61 · 全通过",
-      "source": "Codex 最终独立实跑"
+      "name": "计划 / 阶段 / CLI",
+      "result": "61 / 47 / 42 · 全通过",
+      "source": "Codex独立实跑"
     },
     {
-      "name": "real-agent-isolation",
-      "result": "5 opt-in / 0 违规",
-      "source": "Codex 本轮实跑"
+      "name": "资源 / 生命周期 / 原编排",
+      "result": "192 / 136 / 968 · 全通过",
+      "source": "Codex独立实跑"
     },
     {
-      "name": "返工证据 / 缺失分类 / review 分离",
-      "result": "PASS · 不丢失、不借用、不伪造未执行",
-      "source": "独立真实聚合 helper probe"
+      "name": "统一审核 / opt-in守卫",
+      "result": "130通过 / 5入口0违规",
+      "source": "Codex独立实跑"
     },
     {
-      "name": "worker 模型 / 返工",
-      "result": "DeepSeek V4.1 Flash · 仅一次返工",
-      "source": "两次 session 元数据；首次验证中断，返工正常完成"
+      "name": "审核cwd / 子目录拒绝",
+      "result": "已独立确认修复",
+      "source": "真实CLI/Git路径；review指向组worktree，nested无task/run/review"
     },
     {
-      "name": "git diff --check",
-      "result": "PASS",
-      "source": "Codex 本轮实跑"
+      "name": "最后集成者停止未确认",
+      "result": "FAIL · 仍reviews=1、ok=true、exit0",
+      "source": "Codex受控故障注入；生产日志claimsRetained=1；非OS逃逸证据"
+    },
+    {
+      "name": "实际worker模型 / 轮次",
+      "result": "DeepSeek V4.1 Flash · 首轮+唯一返工",
+      "source": "84/61条session assistant元数据；返工末尾工具调用被拒绝"
+    },
+    {
+      "name": "runtime.run / 新增authority",
+      "result": "1 / 0",
+      "source": "AST及实际接线独立检查"
     },
     {
       "name": "full suite / 产品真实模型",
       "result": "NOT RUN",
-      "source": "worker 委派推理不提升为产品验收"
-    },
-    {
-      "name": "本机实时进度页",
-      "result": "已恢复 · B4.4 done / B4.5 待授权",
-      "source": "实际浏览器显示核对；受控终端服务，停止后不自动刷新"
-    },
-    {
-      "name": "GitHub 上传",
-      "result": "PUSH 成功 · codex/b44-review-pass",
-      "source": "实际 git push + ls-remote 确认 b513711；main 未变；进度页未入 Git"
+      "source": "worker推理与产品Agent验收分开"
     }
   ],
   "sources": [

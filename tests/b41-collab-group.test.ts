@@ -57,7 +57,9 @@ function check(name: string, cond: boolean, detail = ''): void {
 function section(t: string): void { process.stdout.write(`\n== ${t} ==\n`); }
 function ownDir(): string { const d = mkdtempSync(join(tmpdir(), 'b41-')); tmpDirs.push(d); return d; }
 function removeOwnedDir(dir: string): void {
-  try { rmSync(dir, { recursive: true, force: true }); }
+  // maxRetries/retryDelay: a git worktree the round created under this owned parent can
+  // briefly hold a handle on Windows. A cleanup failure is still LOUD (it fails the suite).
+  try { rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 150 }); }
   catch (e) { cleanupFailures.push(`owned dir removal threw for ${dir}: ${(e as Error).message}`); return; }
   if (existsSync(dir)) cleanupFailures.push(`owned dir ${dir} still present after removal`);
 }
@@ -65,7 +67,7 @@ function removeOwnedDir(dir: string): void {
 const AGENT_A = 'agent-a';
 const AGENT_B = 'agent-b';
 const REVIEWER = 'codex';
-const CAPS = { newTask: true, review: true, modelSelection: true, cwd: true, resume: true } as never;
+const CAPS = { newTask: true, review: true, modelSelection: true, cwd: true, resume: true, workspaceModes: ['shared', 'isolated'] } as never;
 
 const ROUTING_ANSWERS: Record<string, string> = { work_kind: 'implementation', complexity: 'small' };
 
@@ -174,9 +176,20 @@ async function collabRound(opts: {
   /** Make the round's cwd a real git repository (so writing tasks would be isolated). */
   gitRepo?: boolean;
 } = {}): Promise<Round> {
-  const cwd = ownDir();
+  // For a git round the repository is nested under an OWNED parent, so the worktrees the
+  // round creates beside it (the default worktreeRoot) and its lock dir stay inside one
+  // owned directory and are reclaimed with it. B4.5: the group needs a committed base.
+  const owned = ownDir();
+  const cwd = opts.gitRepo === true ? join(owned, 'repo') : owned;
   if (opts.gitRepo === true) {
-    execFileSync('git', ['init', '-q'], { cwd });
+    mkdirSync(cwd, { recursive: true });
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd });
+    execFileSync('git', ['config', 'user.name', 'b41'], { cwd });
+    execFileSync('git', ['config', 'user.email', 'b41@test'], { cwd });
+    execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd });
+    writeFileSync(join(cwd, 'base.txt'), 'base\n', 'utf8');
+    execFileSync('git', ['add', '-A'], { cwd });
+    execFileSync('git', ['commit', '-qm', 'base'], { cwd });
   }
   const reportDir = join(ownDir(), 'reports');
   const requests: RunRequest[] = [];
@@ -200,7 +213,7 @@ async function collabRound(opts: {
   let maxConcurrentRuns = 0;
   const drivable = {
     agentIds: () => [AGENT_A, AGENT_B],
-    descriptors: () => [AGENT_A, AGENT_B].map((id) => ({ id, displayName: id, launcher: 'fake', transport: 'cli-jsonl', capabilities: { newTask: true, review: true, modelSelection: true, cwd: true, resume: true } } as never)),
+    descriptors: () => [AGENT_A, AGENT_B].map((id) => ({ id, displayName: id, launcher: 'fake', transport: 'cli-jsonl', capabilities: { newTask: true, review: true, modelSelection: true, cwd: true, resume: true, workspaceModes: ['shared', 'isolated'] } } as never)),
     configFor: () => ({}),
     store: runtime.store,
     review: (req: Omit<RunRequest, 'mode'>) => { reviewRequests.push({ ...req, mode: 'review' } as RunRequest); return runtime.review(req); },
@@ -848,16 +861,30 @@ section('boundary: a group of 2–3 cannot be faked with ONE repeated pair');
 }
 
 // =========================================================================
-section('boundary: a git-isolated workspace is refused, because integration could not be real');
+section('B4.5: a git project runs the group in ONE shared worktree (no longer refused)');
 
 {
-  const r = await collabRound({ planChoice: 'duo', gitRepo: true });
-  check('git-isolated: the round is refused at the PLAN stage', r.report.stage === 'plan' && typeof r.report.error === 'string',
+  // The OUTDATED acceptance was "a git repo is refused". B4.5 changes it: the group
+  // now runs in a single shared, isolated worktree owned by the round root — NOT
+  // per-member worktrees (integrator could not see them) and NOT the user checkout.
+  const r = await collabRound({ planChoice: 'duo', pairs: [['agent-a','agent-a/m1'], ['agent-a','agent-a/m2']], gitRepo: true });
+  const c = collabOf(r);
+  const ws = (r.report.collaboration as { workspace?: { owner?: string | null; path?: string | null; branch?: string | null; baseSha?: string | null } } | undefined)?.workspace;
+  check('git: the round is NO LONGER refused at the plan stage', r.report.stage === 'complete' && r.report.error === undefined,
     `stage=${String(r.report.stage)} error=${String(r.report.error)}`);
-  check('git-isolated: the refusal names the shared-workspace requirement, not a silent downgrade',
-    /SHARED sequential workspace/.test(String(r.report.error)) && /isolated into per-task/.test(String(r.report.error)),
-    String(r.report.error));
-  check('git-isolated: nothing ran', r.requests.length === 0, `requests=${r.requests.length}`);
+  check('git: all members and the integration task succeeded', c.members.every((m) => m.status === 'succeeded') && c.integrator.status === 'succeeded',
+    JSON.stringify(c.members.map((m) => m.status)) + ` int=${c.integrator.status}`);
+  check('git: the round is ok and the process exit code is 0', r.report.ok === true && r.exitCode === 0,
+    `ok=${String(r.report.ok)} incomplete=${String(r.report.executionIncomplete)} exit=${r.exitCode} stop=${String(wf(r).stop)}`);
+  check('git: the group ran in ONE shared worktree that is NOT the user cwd',
+    ws !== undefined && typeof ws.path === 'string' && ws.path !== r.cwd && existsSync(ws.path), JSON.stringify(ws));
+  check('git: EVERY RunRequest cwd is that same worktree', r.requests.length === 3 && r.requests.every((q) => q.cwd === ws?.path),
+    r.requests.map((q) => q.cwd).join(' | '));
+  check('git: the worktree branch and baseSha are reported and traceable',
+    ws?.branch === `orch/task/${String(r.report.rootTaskId)}` && typeof ws?.baseSha === 'string' && ws.baseSha.length >= 7,
+    JSON.stringify(ws));
+  check('git: the physical owner is the round root task', ws?.owner === r.report.rootTaskId, JSON.stringify(ws));
+  check('git: PARALLEL_WRITE stayed closed — one run at a time', r.maxConcurrentRuns === 1, `max=${r.maxConcurrentRuns}`);
 }
 
 // =========================================================================

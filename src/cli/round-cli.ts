@@ -104,6 +104,9 @@ import {
   TaskScheduler,
   WorkspaceManager,
   normalizeScopeForWorkspace,
+  // B4.5 (P1-2): the SAME path-identity normalisation the workspace lock uses, so a
+  // nested `--cwd` is detected regardless of case/separator on any platform.
+  normalizeIdentityPath,
   runDecisionCycle,
   type AcceptanceMaterial,
   type AcceptanceMaterialEntry,
@@ -961,6 +964,24 @@ export async function runRoundCli(
       .some((t) => t.depth > 0 && t.taskId !== selfTaskId && runnable.has(t.status));
   };
 
+  /*
+   * B4.5: the collaboration group's PHYSICAL workspace owner.
+   *
+   * Declared here because the Orchestrator resolvers below are built before the planner
+   * knows the group's shape. Execution happens AFTER planning, so by the time a member
+   * dispatches these holders are set; a legacy / sequential round leaves them null and
+   * every resolver is a no-op that preserves the previous behaviour exactly.
+   *
+   * Only a git project has a physical worktree to share, so `groupOwnerFor` is a no-op
+   * when `workspace === null` — a non-git collaborate round is byte-identical to before.
+   */
+  let collaborationGroupIds: ReadonlySet<string> | null = null;
+  let collaborationGroupOwner: string | null = null;
+  const groupOwnerFor = (taskId: string): string | null =>
+    workspace !== null && collaborationGroupIds !== null && collaborationGroupIds.has(taskId)
+      ? collaborationGroupOwner
+      : null;
+
   const coord = new MultiTaskOrchestrator({
     gate: gateSources as never,
     // The runtime Orchestrator IS the `RuntimeRunner` (structurally:
@@ -979,24 +1000,40 @@ export async function runRoundCli(
     // ---- R2-1: workspace admission --------------------------------------
     // Present only when the project really is a git repository; see the probe above.
     ...(workspace !== null ? { workspace } : {}),
+    // B4.5: a collaboration group's tasks share ONE physical worktree, owned by the
+    // round's root task. Each member still keeps its own task / session / pair; only
+    // the directory is shared. A non-group task resolves to null and is unchanged.
+    workspaceOwner: (task) => groupOwnerFor(task.taskId),
     workspaceMode: (task) => {
       // No workspace manager configured (not a git repo): every task runs in the
       // caller's cwd, which is exactly the pre-R2-1 behaviour and is reported.
       if (workspace === null) return 'none';
+      // B4.5: a group task ALWAYS gets the group's isolated worktree — never the
+      // user's checkout — so every member, and the integrator that reads them, see
+      // the SAME physical bytes. A read-only member would otherwise be handed the
+      // main tree by the share rule below.
+      if (groupOwnerFor(task.taskId) !== null) return 'isolated';
       const parallel = hasParallelSibling(task.taskId);
       return WorkspaceManager.mayShareWorkspace(claimModeFor(task.taskType), parallel) ? 'shared' : 'isolated';
     },
     // What each task claims. Whole-workspace scope on purpose: a task that says "I
     // write here" must conflict with every other writer here without having to
     // predict which files it will touch.
-    resourceClaims: (task) => ({
-      mode: claimModeFor(task.taskType),
-      // The scope names THIS task's own workspace, so two isolated writers are two
-      // different resources and do not contend (R2-1.1 P1-a). The root lets a path
-      // claim be tested for containment; the ORCHESTRATOR refines it to the prepared
-      // workspace's real cwd before comparing.
-      scope: normalizeScopeForWorkspace(`task:${task.taskId}`, o.cwd),
-    }),
+    resourceClaims: (task) => {
+      // B4.5: a group task claims the SHARED owner workspace, so the existing
+      // stop-unconfirmed retained claim on that ONE physical resource blocks a later
+      // member (read included) exactly as it blocks any other writer. Handing each
+      // member its own workspaceId would let it bypass that retention.
+      const owner = groupOwnerFor(task.taskId);
+      return {
+        mode: claimModeFor(task.taskType),
+        // The scope names the task's own workspace (or the group's shared owner), so
+        // two isolated writers are two different resources and do not contend
+        // (R2-1.1 P1-a). The root lets a path claim be tested for containment; the
+        // ORCHESTRATOR refines it to the prepared workspace's real cwd before comparing.
+        scope: normalizeScopeForWorkspace(`task:${owner ?? task.taskId}`, o.cwd),
+      };
+    },
   });
   liveStore = coord.getStore();
   // R2-3 P0-1: the scheduler carries the availability-continuation policy, so EVERY
@@ -1161,7 +1198,16 @@ export async function runRoundCli(
     // happened to share one directory". `null` means no git repository, so isolation
     // is impossible and every task ran in the shared cwd.
     workspace: {
-      isolation: workspace === null ? 'unavailable (not a git repository)' : 'git worktree per writing task',
+      // B4.5 (P2): a collaboration group never gets per-writing-task worktrees, so it must
+      // not be described that way even before the group's report block runs. The group's real
+      // handle (owner/path/branch) is filled in below once execution has happened; this value
+      // is overwritten there and, on a pre-execution refusal, stays path-agnostic and claims
+      // no directory.
+      isolation: workspace === null
+        ? 'unavailable (not a git repository)'
+        : (o.workflow === 'collaborate'
+          ? 'one shared git worktree for the collaboration group; the user checkout is never the cwd'
+          : 'git worktree per writing task'),
       repoRoot,
       parallelWriteIsolated: workspace !== null,
     },
@@ -1201,6 +1247,13 @@ export async function runRoundCli(
   /** The chosen collaboration plan's members + integrator, for the pair step and report. */
   let collaborationMembers: readonly PlanFileStep[] = [];
   let collaborationIntegratorMember = 0;
+  /**
+   * B4.5 (P2): the ONE description of the group's physical workspace, built from the real
+   * WorkspaceManager handle. Reused by the top-level `report.workspace`, the review's resource
+   * signals and the non-JSON output, so they cannot drift from `report.collaboration.workspace`.
+   * `null` until a collaboration group's report block runs.
+   */
+  let collaborationWorkspaceDescription: string | null = null;
   try {
     /*
      * B4.2: read + validate the structured plan file BEFORE anything is planned. A missing,
@@ -1251,6 +1304,23 @@ export async function runRoundCli(
        * BEFORE the root or any child exists, because each of them is a fact that must
        * not be papered over by silently degrading into a 1-model round.
        */
+      // B4.5 (P1-2): in a git repository the group works in ONE shared worktree whose
+      // root is a SIBLING of the project root (see `WorkspaceManager`). A NESTED `--cwd`
+      // (a subdirectory of the repo) would silently create that worktree INSIDE the user's
+      // checkout and drop the subdirectory the user asked for, so it is refused HERE —
+      // before any task, worktree, runtime call or review — and the user is told to start
+      // from the repository root. Non-git collaboration (workspace === null) is unchanged.
+      // The comparison uses the workspace lock's own path identity so case and separator
+      // differences cannot turn the repo root into a false positive.
+      if (workspace !== null && repoRoot !== null &&
+        normalizeIdentityPath(repoRoot) !== normalizeIdentityPath(o.cwd)) {
+        throw new Error(
+          'a git collaboration group must be started from the REPOSITORY ROOT: ' +
+            `--cwd is "${o.cwd}" but the repository root is "${repoRoot}". Running from a ` +
+            'subdirectory is not supported yet — it would create worktrees inside your checkout ' +
+            'and lose the subdirectory you asked for. Re-run from the repository root.',
+        );
+      }
       const effective = resolveSelection(taskSelection, projectSelection);
       if (fixedPairOf(effective) !== undefined) {
         throw new Error(
@@ -1259,25 +1329,14 @@ export async function runRoundCli(
             'run the round with --select auto (or without --select) to let Laya choose the members',
         );
       }
-      if (workspace !== null) {
-        /*
-         * The real workspace boundary, stated rather than assumed. In a git repository
-         * every writing task gets its OWN isolated worktree, so a member's files live in
-         * a directory the integrator's worktree cannot see. The one existing git path
-         * that moves a child's work (`mergeTaskBranch`) merges into the ROOT checkout,
-         * is human-triggered (`task merge --verified`) and never auto-merges — so there
-         * is NO existing verifiable path that delivers one member's branch into
-         * another member's worktree. Building one here would be a new merge engine,
-         * which this slice explicitly does not do. Refused, with the supported mode named.
-         */
-        throw new Error(
-          `collaboration groups need a SHARED sequential workspace so the integrator actually reads each ` +
-            `member's files; "${o.cwd}" is a git repository, so writing tasks are isolated into per-task ` +
-            `worktrees and a member's delivery would NOT be visible to the integrator. No automatic merge ` +
-            `into another task's worktree exists (task merge is human-triggered and merges into the root ` +
-            `checkout). Run the collaboration group in a non-git working directory`,
-        );
-      }
+      // B4.5: in a git repository the group runs in ONE shared, isolated worktree —
+      // not per-member worktrees (which the integrator could not see) and NOT the
+      // user's checkout. The worktree is created lazily by the existing
+      // WorkspaceManager on the group's first execution, keyed by the round's root
+      // task as its physical OWNER (see `groupOwnerFor` above). The user's checkout is
+      // never the cwd, is never merged into, and keeps its dirty files untouched: the
+      // worktree starts from the committed base. This replaces the old blanket
+      // refusal; non-git collaboration is unchanged (workspace === null).
       // B4.2: the plan spec comes from the user's file when one was given, else the
       // built-in duo/trio. Both produce the SAME `members` + `integratorMember` shape, and
       // both go through the SAME candidate builder, so they cannot drift apart.
@@ -1305,6 +1364,11 @@ export async function runRoundCli(
       collaborationMembers = collabSpec.members as readonly PlanFileStep[];
       collaborationIntegratorMember = collabSpec.integratorMember;
       collaborationIds = planFileCollaborationTaskIds(rootId, collaborationMembers.length, collaborationIntegratorMember);
+      // B4.5: bind the PHYSICAL workspace owner now that the group's shape is known.
+      // The root owns the shared worktree; every member and the integration task
+      // resolves to it through the resolvers handed to the Orchestrator at construction.
+      collaborationGroupOwner = rootId;
+      collaborationGroupIds = new Set([...collaborationIds.memberIds, collaborationIds.integratorId]);
       // REQ-14's own bound, asserted against the plan itself rather than assumed: a plan
       // outside 2-3 members is not a collaboration group and is refused, not run. (A file
       // plan is already bounded by `parsePlanFile`; this keeps the built-ins honest too.)
@@ -2347,6 +2411,38 @@ export async function runRoundCli(
       const knownPairs = memberRows.map((m) => m.pair).filter((p): p is string => p !== null);
       const distinctKnown = new Set(knownPairs).size;
       const everyMemberAssigned = memberRows.every((m) => m.assigned);
+      // B4.5 (P2): the ONE physical-workspace projection, read from the real WorkspaceManager
+      // handle after execution. `path: null` means no group worktree was created this round
+      // (e.g. worktree creation failed or every member was refused before dispatch) — it is
+      // NEVER the user's cwd. `collaborationWorkspaceDescription` and `report.workspace` are
+      // derived from this SAME object, so no report field can claim a directory that does not
+      // exist or describe per-writing-task worktrees for a shared group.
+      const collabWorkspace: { owner: string | null; path: string | null; branch: string | null; baseSha: string | null; note: string } = (() => {
+        if (workspace === null) {
+          return {
+            owner: collaborationGroupOwner,
+            path: null, branch: null, baseSha: null,
+            note: 'non-git cwd: members share the caller\'s working directory in order (unchanged mode)',
+          };
+        }
+        const handle = collaborationGroupOwner === null ? null : workspace.get(collaborationGroupOwner);
+        if (handle === null) {
+          return {
+            owner: collaborationGroupOwner,
+            path: null, branch: null, baseSha: null,
+            note: 'no group worktree was created this round (no member reached dispatch)',
+          };
+        }
+        return {
+          owner: handle.taskId,
+          path: handle.cwd,
+          branch: handle.branch,
+          baseSha: handle.baseSha,
+          note:
+            'the worktree starts from the committed base; uncommitted files in your checkout are NOT copied in, ' +
+            'so commit or stash them first (or bring them in another way) if the group needs them',
+        };
+      })();
       report.collaboration = {
         enabled: true,
         choice: collaborationPlanUsed,
@@ -2373,8 +2469,15 @@ export async function runRoundCli(
           integratorMember.modelId === (integratorTask?.modelId ?? null),
         // WHAT THE MODE SUPPORTS — a property of the plan, not a claim about this run.
         supportedWorkspace:
-          'shared sequential workspace (non-git cwd): members write into the same working directory in order, ' +
-          'so the integration task can read their files; git-isolated worktrees are refused for this mode',
+          workspace === null
+            ? 'shared sequential workspace (non-git cwd): members write into the same working directory in order, ' +
+              'so the integration task can read their files'
+            : 'one shared git worktree owned by the round root: members run sequentially in the SAME worktree so the ' +
+              'integration task reads their real files; the user\'s own checkout is never the cwd and is never merged into',
+        // WHAT ACTUALLY HAPPENED — the physical workspace, read from the real
+        // WorkspaceManager after execution. `null` path means no group worktree was
+        // created (e.g. every member was refused before dispatch), never the user cwd.
+        workspace: collabWorkspace,
         // WHAT ACTUALLY HAPPENED — derived from the Assignment outcomes and the AttemptStore.
         execution: {
           membersAssigned: memberRows.filter((m) => m.assigned).length,
@@ -2383,6 +2486,29 @@ export async function runRoundCli(
           integrationRan: ran(collaborationIds.integratorId),
           allMembersSucceeded: memberRows.every((m) => m.status === 'succeeded'),
         },
+      };
+      // B4.5 (P2): ONE description, derived from `collabWorkspace`, reused by the top-level
+      // `report.workspace`, the review's resource signals and the non-JSON output. A group that
+      // created NO worktree says exactly that rather than claiming a directory. `owner` is the
+      // physical owner the handle is keyed by (the round root); `path`/`branch` are the real
+      // handle's, so this can never disagree with `report.collaboration.workspace`.
+      collaborationWorkspaceDescription = workspace === null
+        ? 'shared sequential workspace (non-git cwd): the collaboration group writes into the caller\'s working directory in order'
+        : (collabWorkspace.path === null
+          ? `the collaboration group created NO worktree this round (owner ${String(collabWorkspace.owner)}); no shared directory is claimed`
+          : `one SHARED git worktree for the collaboration group at ${String(collabWorkspace.path)} ` +
+            `(owner ${String(collabWorkspace.owner)}, branch ${String(collabWorkspace.branch)})`);
+      report.workspace = {
+        isolation: workspace === null
+          ? 'shared sequential workspace (non-git cwd): the collaboration group shares the caller\'s working directory in order'
+          : (collabWorkspace.path === null
+            ? 'git repository, but the collaboration group created NO worktree this round; no shared directory is claimed'
+            : `one SHARED git worktree for the collaboration group (owner ${String(collabWorkspace.owner)}, ` +
+              `path ${String(collabWorkspace.path)})`),
+        repoRoot,
+        // The group writes in ONE worktree, sequentially, so parallel writing stays CLOSED.
+        parallelWriteIsolated: workspace !== null,
+        group: collabWorkspace,
       };
     }
   }
@@ -2528,9 +2654,14 @@ export async function runRoundCli(
   ];
   const resourceSignals = [
     ...unassigned.map((a) => `${a.taskId}: refused ${a.code}${a.reason === null ? '' : ` — ${a.reason}`}`),
-    workspace === null
-      ? 'workspace isolation UNAVAILABLE (not a git repository); every task shared one directory'
-      : `isolated worktrees under ${repoRoot}`,
+    // B4.5 (P2): a collaboration group does NOT get per-writing-task worktrees, so it must not
+    // be described that way. Reuse the ONE group-workspace description built from the real
+    // handle; other (non-group) modes keep their previous wording unchanged.
+    o.workflow === 'collaborate' && collaborationWorkspaceDescription !== null
+      ? `collaboration group workspace: ${collaborationWorkspaceDescription}`
+      : workspace === null
+        ? 'workspace isolation UNAVAILABLE (not a git repository); every task shared one directory'
+        : `isolated worktrees under ${repoRoot}`,
   ];
 
   // Laya's own words, built once and used by BOTH the review packet and the round
@@ -2561,8 +2692,55 @@ export async function runRoundCli(
     evidenceNote,
   });
 
+  // B4.5 (P1-1): WHERE the round review must read.
+  //
+  // A git collaboration group's members and integrator write into ONE shared worktree, so
+  // that worktree is the ONLY directory holding this round's real bytes. Reviewing the user's
+  // checkout would show an empty round (and could mistake unrelated user files for this
+  // round's result). The cwd is read from the SAME WorkspaceManager owner handle
+  // `report.collaboration.workspace` reports, so the two cannot disagree.
+  //
+  // It is NEVER borrowed from the user's cwd: if the group's worktree was not created, or a
+  // git operation left a RETAINED protection because its stop was never confirmed, the review
+  // is WITHHELD (a non-PASS status) instead of being run against the checkout. Every other
+  // mode keeps `o.cwd` exactly as before.
+  let reviewCwd: string = o.cwd;
+  let groupReviewWithheld: string | null = null;
+  if (o.workflow === 'collaborate' && workspace !== null) {
+    const owner = collaborationGroupOwner;
+    const retained = owner !== null && workspace.unconfirmedProtections().some((p) => p.taskId === owner);
+    const handle = owner === null ? null : workspace.get(owner);
+    if (retained) {
+      groupReviewWithheld =
+        `the collaboration group's shared worktree (owner "${String(owner)}") still holds a RETAINED protection ` +
+        'because a git operation\'s descendant stop was never confirmed, so the worktree is not safe to read; ' +
+        'the review is withheld rather than pointed at your checkout';
+    } else if (handle === null) {
+      groupReviewWithheld =
+        'the collaboration group\'s shared worktree was never created this round, so there is no group result to ' +
+        'review; the review is withheld rather than pointed at your checkout';
+    } else {
+      reviewCwd = handle.cwd;
+    }
+  }
+
   let unifiedReview: UnifiedReviewResult;
-  if (executionIncomplete) {
+  if (groupReviewWithheld !== null) {
+    // B4.5 (P1-1): the group's physical workspace is not usable, so no read review is run.
+    // This is the existing WITHHELD shape (the reviewer never ran, holds no opinion), reused
+    // rather than inventing a new status or a fabricated verdict.
+    unifiedReview = {
+      status: 'execution_incomplete',
+      reviewer: o.reviewAgent,
+      verdict: null,
+      reason: groupReviewWithheld,
+      findings: [],
+      recommendations: [],
+      outputTail: null,
+      code: 'group-workspace-unavailable',
+      reviewedAt: null,
+    };
+  } else if (executionIncomplete) {
     // TeamRun T3-b.1 — Round Completion Guard. The review is WITHHELD, not failed.
     //
     // The Unified Reviewer is the component that decides whether the round's work is acceptable.
@@ -2607,7 +2785,8 @@ export async function runRoundCli(
         reviewer: o.reviewAgent,
         // The reviewer's REAL configured model, or none: this file does not pick a model.
         modelId: runtime.configFor(o.reviewAgent).model ?? null,
-        cwd: o.cwd,
+        // B4.5 (P1-1): the GROUP worktree for a git collaboration group, `o.cwd` otherwise.
+        cwd: reviewCwd,
         now: () => Date.now(),
         timeoutMs: o.reviewTimeoutMs,
       });
@@ -2799,7 +2978,13 @@ export async function runRoundCli(
     w(`  root          ${rootId}`);
     w(`  laya          work_kind=${classification.work_kind} complexity=${classification.complexity} review=${classification.review_required}`);
     w(`  probed        ${quotaProbed.length} agent(s) with real quota records`);
-    w(`  workspace     ${workspace === null ? 'SHARED cwd - isolation unavailable (not a git repository)' : `isolated worktrees (repo ${repoRoot})`}`);
+    w(`  workspace     ${
+      o.workflow === 'collaborate' && collaborationWorkspaceDescription !== null
+        ? collaborationWorkspaceDescription
+        : workspace === null
+          ? 'SHARED cwd - isolation unavailable (not a git repository)'
+          : `isolated worktrees (repo ${repoRoot})`
+    }`);
     if (collaborationIds !== null) {
       w(`  collaboration ${collaborationPlanUsed} (${workflowPlanSource}); integration by collaborator ${collaborationIntegratorMember}`);
       for (const id of collaborationIds.memberIds) {

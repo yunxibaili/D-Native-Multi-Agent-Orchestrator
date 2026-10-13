@@ -73,6 +73,11 @@ const SUITES = [
   // BEFORE any call or task. Hermetic — the real runRoundCli + the real stage-material
   // parser/digest, with fake adapters and real files.
   'b43-stage-material',
+  // B4.5: sequential collaboration in a GIT project. Hermetic — the real runRoundCli +
+  // WorkspaceManager create ONE real shared `git worktree` owned by the round root, the
+  // controlled runtime writes into `req.cwd` and the integrator reads the members' real
+  // bytes there; the user checkout is proven byte-unchanged.
+  'b45-git-collaboration',
   'memory',
   'orchestration',
   'model-pool',

@@ -1,27 +1,37 @@
-# 下一任务候选 — B4.5 Git 项目中的顺序协作
+# 下一单点 — B4.5a 审核前运行期资源保护收口
 
-更新日期：2026-10-13
-当前 B4.4 最小有出处的交接/用户交付视图已由 OpenCode 实现、一次 bounded rework、Codex 独立验证 PASS。
-本轮到此停止。B4.5 未启动、未授权实现；不以本文件自动跨阶段。
-唯一当前状态见 [PROJECT_BASELINE.md](PROJECT_BASELINE.md)，路线见 [BACKEND_DELIVERY_PLAN.md](BACKEND_DELIVERY_PLAN.md)。
+更新日期：2026-10-14
+当前B4.5在首次实现+唯一返工后独立BLOCKED；不是整体完成，未进入B3.1/B2/B5。
+本轮停止，后续任务待用户下发。唯一状态和实际证据见[PROJECT_BASELINE.md](PROJECT_BASELINE.md)。
 
-## 已完成，不重做
+## 不重做
 
-B4.2/B4.2a 计划与顺序执行、B4.3/B4.3a 最小确认与材料交付保持通过。
-B4.4 复用 RoundResult/同次 Attempt 证据，JSON 和实际命令行显示完整目标、声明产物、观察到的写入/命令、日志、未知/过期/阻塞。
-返工保留自己的证据，missing 不借 sibling，分类未确认不被说成从未执行；shell 命令不冒充测试通过。
-完整产品/真实模型/物理产物和结构化测试结果认证未因本片通过而完成。
+组root拥有单隔离Git worktree、成员独立Task/Session/pair、集成消费真实字节、顺序写、脏文件HEAD/index/内容保护均已验证。
+最终review改用组worktree、Git子目录写前明确拒绝亦已独立确认；原非Git/sequential/fixed/stage gate保持。
 
-## 下一阶段准备方向
+## 唯一目标
 
-用户单独授权后，先读取 WorkspaceManager、ResourceClaim、工作区 scope、现有 summarizeTask/mergeTaskBranch、
-协作计划与 Git cwd 拒绝分支，复用已有 Git 执行/超时与用户脏文件保护。
-比较“协作组共享受控工作副本顺序执行”与“隔离成员实际差异送入集成者工作区”，只选一条最小路线；
-先明确真实交付、来源绑定、冲突和用户脏文件保护验收，再决定允许修改文件。
-不新建 merge engine/第二 DAG/并行写权威，不把复制到非 Git 目录当成熟 Git 支持。
-具体实施任务在该阶段授权时形成；本轮不提前写 B4.5 生产代码。
+最后集成者的RunResult.cleanup.treeStopConfirmed=false后，既有ResourceClaim保留；
+当前CLI只检查workspace.unconfirmedProtections（Git创建期），漏workspace.retainedResourceProtections（运行期）。
+独立真实CLI/临时Git受控注入仍得到reviews=1、review completed/pass、ok=true、exit0。
+这不是OS真实存活/逃逸证明，但已证明保护没有接到最终审核。
 
-## 保持边界
+复用既有ResourceClaim/WorkspaceManager与当前withheld review分支，按实际物理workspaceId/scope匹配组内保留声明。
+保留声明的taskId是成员/集成者，不一定是group root owner，不能只按owner taskId匹配。
+保护未释放时不调用review、不报告成功；不同组不互相误阻断。不得新建manager、权威、冻结/恢复框架。
 
-PARALLEL_WRITE=CLOSED；B1/B4 overall 未封板。真实模型/费用另行授权。
-project-progress/ 全部 ignored、不入 Git，temporary-dashboard 不触碰，正式工作台前端待需求确认。
+## 建议范围与验收
+
+优先只改src/cli/round-cli.ts和tests/b45-git-collaboration.test.ts。
+新回归必须经真实runRoundCli，最后集成者逻辑成功但stop-unconfirmed，真实保留Claim，reviews=0、无pass、ok=false、非零退出。
+同时保留正常duo/trio成功、创建失败、nested拒绝、同组后续读写阻断与不同组隔离。
+必要负控：删除运行期保护检查时，新回归真实非零失败；不修改工作树做负控。
+运行typecheck、b45、b41、b43、b40a、resource-claim、unified-review、diff check，不跑full suite或产品真实模型。
+每个owned临时目录清理失败影响suite退出码，不操作foreign/历史目录。
+
+## 边界
+
+OpenCode开发，Codex独立审核；实际worker仍opencode-go/deepseek-v4.1-flash。
+此后续任务最多首次实现+一次有界返工，仍有实质问题则停止BLOCKED。
+PARALLEL_WRITE=CLOSED，保持用户dirty树和共享暂存区；文档/进度页由Codex维护，project-progress/全目录不入Git。
+用户产品前端需求尚未确认，不在此处开启。
