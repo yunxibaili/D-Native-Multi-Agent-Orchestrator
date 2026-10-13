@@ -18,13 +18,13 @@ P0/P1 按实际影响处理；非阻断 P2 登记，不反复重审所有历史 
 ## 2. 依新草案重排
 
 当前状态仍只在唯一基线维护；完整任务顺序见 [后端交付计划](BACKEND_DELIVERY_PLAN.md)，
-B4.2/B4.2a 已独立 PASS WITH P2；下一任务见 [B4.3 材料确认](NEXT_TASK.md)（待用户下发）。旧“先真实多模型/角色默认”的宽泛 B4.3 建议由本计划替代。
+B4.2/B4.2a 已独立 PASS WITH P2；B4.3 独立 BLOCKED，下一任务为 [B4.3a 两个 P1 收口](NEXT_TASK.md)。旧“先真实多模型/角色默认”的宽泛 B4.3 建议由本计划替代。
 
-B4.2a 合法依赖收口（独立 PASS WITH P2）→ B4.3 需求/阶段确认 → B4.4 有据交付 → B4.5 Git 顺序协作 →
+B4.2a 合法依赖收口（独立 PASS WITH P2）→ B4.3（独立受阻）→ B4.3a 确认绑定/材料可达性收口 → B4.4 有据交付 → B4.5 Git 顺序协作 →
 B3.1 最小 Skill/MCP → B2.1 模型池/费用 → B4.6 检查点监督 → B5.1 中断接力 → B4.7 代表性真实验收。
 F0 正式前端需求另行确认；本机进度页已授权，不表示正式前端已开始。
 
-本轮完成 B4.2a 后端修复；角色默认/prefer、运行中改选和全面实时监督后置。
+本轮完成 B4.3 后端修复；角色默认/prefer、运行中改选和全面实时监督后置。
 草案新增目标纳入路线，具体实施仍逐阶段确认；不以整份草案作为全部代码实现授权。
 
 ## 3. B4.0 整合任务范围
@@ -126,6 +126,23 @@ DSH 缺逐请求模型支持、Skill/MCP 未闭环与费用未知必须列明，
   `decision.note`/`report.decision.code` 从 receipt 如实投影真实 gate 拒绝（任务+码+原因），区分等容量与被拒。
 - 未包含：Git 隔离合并、真实模型兼容性、角色默认/prefer/运行中改选、Skill/MCP、费用与掉线恢复。
 
+### 3.4 B4.3 独立 BLOCKED：确认绑定与长材料交付待收口
+
+**状态：已实现并交独立审核（`b43-stage-material` 21/0）。**
+
+问题：用户需要一个入口说明“当前确认的需求/预期效果、当前阶段范围与验收材料”，只执行本阶段；材料存在、
+JSON 可解析、LAYA 选中计划都不能代替用户确认。最小修复是显式 opt-in 的材料 + 用户确认入口，复用既有链。
+
+- 入口：`--stage <file>`（JSON：`stageId`/`scope`/`requirement`/`acceptance`，可选 `planRef`）+ `--confirm <digest>`；
+  `--stage-check` 为只读预检（打印 digest 与待办，不建任务、不调用）。
+- 自我批准拒绝：`parseStageMaterial` 拒绝任何 `approved`/`confirmed`/… 字段；确认只来自用户本次调用，
+  digest 绑定材料（改 stage/scope/requirement/acceptance/planRef 即失效）；gate 在任何外部调用前本地判定。
+- 材料进入执行：确认后以**有界摘要 + 可读引用**拼入本轮 objective，进入 plan builder → 任务验收条件/brief/验收材料。
+- 复用同一 plan-file/planWithCandidates/Assignment/Scheduler/Verification/Review；结束 `automaticPostRoundAction=NONE`；
+  旧入口不变；附带关闭 B4.2a 的等待/拒绝分类 P2。
+- 未包含：完整需求访谈/审批平台、跨阶段自主规划、真实模型、实时监督、Git 合并、角色默认/prefer、Skill/MCP、
+  费用、掉线恢复、前端、并行写。
+
 ## 4. 两层功能、免费与能力的后续连接
 
 B4.1 复用同一套任务、选择与交付，不新增 TeamStore/WorkerManager/第二个 DAG。
@@ -188,3 +205,10 @@ ClawChat 存在多个同名公开仓库，当前没有唯一确认的目标地�
 原 P1 关闭；非阻断 P2 为 skipped 的 dependency-unmet 分类与混合 receipt 主码选择，随 B4.3 小修，不再单独封板。
 当前下一任务是显式需求/阶段材料和用户确认，不自动开始真实模型验收或正式前端。
 定向验证、独立 probe 与未检查范围只在唯一基线记录；本机页面已按基线刷新，仍不入 Git。
+
+## 本轮 B4.3 独立结论
+
+常规 typecheck 与 21 项新增测试通过，不能覆盖已复现的两个 P1：planRef/实际计划未绑定、长材料关键约束在隔离工作区不可获得。
+原 B4.2a 的等待/拒绝分类 P2 独立确认关闭；round-cli 换行恢复与父快照的 token 核对通过，无额外 baseline token 变化。
+先做 B4.3a，仅修上述两项，不进入 B4.4、真实模型或正式前端；不用新增审批/材料管理平台。
+probe 来源、测试和自有临时目录清理工具限制统一记在唯一基线；本机页面同步，不宣称 reviewer 残留为 0。

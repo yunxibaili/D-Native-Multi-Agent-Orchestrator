@@ -1155,23 +1155,38 @@ export async function applyDecision(
     return { applied: true, dispatched, note: 'the scheduler dispatched at least one task' };
   }
   /*
-   * B4.2a: nothing was admitted — say WHY, from the receipt's own facts.
+   * B4.2a/B4.3: nothing was admitted — say WHY, from the receipt's own facts, and KEEP
+   * the categories apart.
    *
-   * The old note claimed "no free slot or no ready task; nothing was denied by the gate"
-   * unconditionally, so a real refusal (`resource-unavailable` on a non-git workspace, or a
-   * `resource-conflict`) was reported as if the gate had denied nothing. That erased the one
-   * fact an operator needs. The receipt already carries the scheduler's `skipped` entries
-   * (code + reason) and `waiting`; this reports them instead of guessing, and separates
-   * "waiting for a dependency / capacity" from "refused by the gate".
+   * The receipt's `skipped` mixes two different facts: a task WAITING on an unmet
+   * dependency (`dependency-unmet`) has not been judged at all, while a task the gate
+   * actually refused (`resource-unavailable`, `resource-conflict`, …) has. B4.2a called
+   * every non-`*` entry "gate refused", so a `dependency-unmet` line was mislabelled, and
+   * in a MIXED receipt the first waiting line could even become the reported main code,
+   * hiding the real refusal. This splits them: the main code is the first REAL refusal, all
+   * reasons are preserved, and waiting is reported as waiting.
    */
-  const refusals = receipt.skipped.filter((s) => s.taskId !== '*');
+  const skipped = receipt.skipped.filter((s) => s.taskId !== '*');
+  const dependencyWaiting = skipped.filter((s) => s.code === 'dependency-unmet');
+  const refusals = skipped.filter((s) => s.code !== 'dependency-unmet');
   if (refusals.length > 0) {
     const detail = refusals.map((s) => `${s.taskId}: ${s.code} (${s.reason})`).join('; ');
+    const alsoWaiting = dependencyWaiting.length > 0
+      ? `; also waiting on dependencies: ${dependencyWaiting.map((s) => s.taskId).join(', ')}`
+      : '';
     return {
       applied: true,
       dispatched: false,
       code: refusals[0]!.code,
-      note: `the scheduler admitted nothing this tick; the gate refused: ${detail}`,
+      note: `the scheduler admitted nothing this tick; the gate refused: ${detail}${alsoWaiting}`,
+    };
+  }
+  if (dependencyWaiting.length > 0) {
+    return {
+      applied: true,
+      dispatched: false,
+      code: 'dependency-unmet',
+      note: `the scheduler admitted nothing this tick; waiting on dependencies: ${dependencyWaiting.map((s) => `${s.taskId} (${s.reason})`).join('; ')}`,
     };
   }
   const reentrant = receipt.skipped.find((s) => s.taskId === '*');

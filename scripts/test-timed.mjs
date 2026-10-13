@@ -69,6 +69,10 @@ const SUITES = [
   // B4.2: a user-adaptable STRUCTURED PLAN FILE drives the same chain. Hermetic — the real
   // runRoundCli + the real plan-file parser/validator, with fake adapters and real files.
   'b42-plan-file',
+  // B4.3: the opt-in STAGE gate — material + user confirmation, bound by digest, checked
+  // BEFORE any call or task. Hermetic — the real runRoundCli + the real stage-material
+  // parser/digest, with fake adapters and real files.
+  'b43-stage-material',
   'memory',
   'orchestration',
   'model-pool',

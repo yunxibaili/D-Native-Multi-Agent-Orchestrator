@@ -73,8 +73,12 @@ export interface PlanFileStep {
   /** What this step must produce. */
   readonly deliverable: string;
   /**
-   * The ROLES this step depends on. Omitted means "the step before it" (a chain, which is
-   * what a sequential workflow normally is). An explicit `[]` means no dependencies.
+   * The ROLES this step depends on, as ADDITIONAL forward edges.
+   *
+   * B4.2a: an explicit `[]` does NOT declare a business dependency, but it does NOT mean
+   * "no execution dependency" either — a plan-file step list is a sequential workflow, so
+   * the ordered chain is always appended (see `chainDependencies`). Omitted means the same
+   * as `[]`: only the chain applies.
    */
   readonly dependencies?: readonly string[];
 }

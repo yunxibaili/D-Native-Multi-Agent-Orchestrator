@@ -30,8 +30,9 @@ README 是导航。用户明确指令优先；发现源码、证据与基线不�
 | B4.0 / B4.0a / B4.0b | 独立 PASS WITH P2；顺序工作流受控链路封板，非真实模型验收 |
 | B4.1 / B4.1a | 独立 PASS；共享顺序工作区的协作组受控闭环封板，原 1 个 P1 + 2 个 P2 关闭 |
 | B4.2 / B4.2a | 独立 PASS WITH P2；项目计划与多入口顺序执行受控闭环封板，保留等待/拒绝分类 P2 |
-| B4 overall | NOT SEALED；功能 A/B 最小闭环 + 项目适配入口均已实现，真实模型兼容性未验收 |
-| B4.3+ / B2 / B3 / B5 | PLANNED；本轮未授权启动实现 |
+| B4.3 | 独立 BLOCKED：确认未绑定实际计划，长材料在隔离 worktree 中丢失关键约束；2 个 P1 待 B4.3a |
+| B4 overall | NOT SEALED；功能 A/B 最小闭环 + 项目适配 + 阶段确认入口均已实现，真实模型兼容性未验收 |
+| B4.3a / B4.4+ / B2 / B3 / B5 | PLANNED；本轮未授权启动实现 |
 | PARALLEL_WRITE | CLOSED |
 | 本产品前端 | 本机独立进度页已授权且禁止入 Git；正式工作台 UI 需求仍待确认 |
 
@@ -155,6 +156,21 @@ B4.2a 独立审核确认原多入口 P1 关闭，原资源拒绝报告主场景�
 - 附带：`decision.ts` 是遗留 CRLF 文件（其 blob 早于 `* text=auto`），编辑它会让 `git diff --check` 把每个新增行
   的 CR 误报为行尾空白；在 `.gitattributes` 为**该文件**声明 `whitespace=cr-at-eol`，只让真正的空白错误被报告，
   不改变行尾、不做全仓 renormalize。
+
+B4.3 新增的 opt-in 阶段确认入口已实现，但独立审核 BLOCKED；以下是实现形状，不等于确认边界已封板。
+入口为 `--stage <file>` + `--confirm <digest>`（`--stage-check` 为只读预检）：
+- 阶段材料是 JSON，声明 `stageId`、`scope`、`requirement`、`acceptance`，可选 `planRef`；`parseStageMaterial`
+  在写任务前拒绝缺字段、超长、超大小，并拒绝任何自我批准字段（`approved`/`confirmed`/…）。
+- 确认只来自用户本次调用 `--confirm <digest>`，digest 由材料字段派生并**绑定材料**：改 stage/scope/requirement/
+  acceptance/planRef 即失效。文件自写 approved、模型输出或历史记忆都不能批准——gate 在**任何外部调用之前**（探测、
+  LAYA 分类、建任务之前）本地判定，失败时 `{ok:false, stage:'stage-gate', error, pending}`、runtime=0、无部分任务。
+- 信任边界如实声明：`--confirm` 是本地用户行为，不是身份认证，也不约束原生 Agent 进程内的动作。
+- 确认后，材料经**有界摘要 + 可读引用**（`ref <file>@<digest12>`）拼入本轮 objective，从而进入既有 plan builder →
+  每个任务的验收条件、执行 brief、验收材料；不是只加配置/报告字段。
+- 复用同一 plan-file/planWithCandidates/Assignment/Scheduler/Verification/Review；结束仍 `automaticPostRoundAction=NONE`，
+  不自动进入下一阶段；已批准范围内的普通任务无需重复确认；旧入口（full/lean/duo/trio、plan file、fixed）不变。
+- 附带 P2 修复：`applyDecision` 区分 Scheduler 的 `dependency-unmet`（等待）与真实准入拒绝；混合 receipt 主码取
+  真实拒绝、并保留全部原因与等待项；`PlanFileStep.dependencies` 注释改为“显式 `[]` 不声明业务依赖、执行仍追加顺序链”。
 完整角色计划、prefer/角色默认、运行中改选、真实模型兼容性、Skill/MCP、费用与掉线恢复保持后续范围。
 
 ## 6. 不可绕过的契约
@@ -172,7 +188,7 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 1. DSH 缺逐请求选模型与恢复协议；要用 DSH 做多模型调配，必须先取得受支持的真实接口证据。
 2. B4.0–B4.1a 的顺序工作流与协作组受控链路已独立封板；B4.1 输入契约、报告事实投影与未交付负例已收口。
    B4.2 提供项目适配的结构化计划文件入口（自定义 sequential/collaborate 候选）；B4.2a 收口合法多入口写计划的
-   顺序执行与 `decision.note` 的真实 gate 拒绝投影。
+   顺序执行与 `decision.note` 的真实 gate 拒绝投影；B4.3 提供 opt-in 阶段材料 + 用户确认入口。
    完整角色计划、prefer/角色默认、运行中改选、真实模型多模型兼容性仍缺，留后续切片。
 3. Skill/MCP 只有部分意图/原生支持，目录、授权、具体选择和实际调用核对未闭环。
 4. 动态免费资格、账户共享额度和全流程费用授权未验收；预算 units 不是 token/货币。
@@ -186,6 +202,48 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 不新增 provider 网关、群聊平台、第二个调度器或通用工作流引擎来掩盖协议缺口。
 
 ## 8. 最近独立证据与上传记录
+
+2026-10-13 Codex B4.3 独立审核：**BLOCKED**。新增入口的常规路径通过，但两个确认/交付 P1 尚未关闭。
+独立实跑：typecheck PASS；b43-stage-material 21/0、b42-plan-file 61/0、b40a-cli-workflow 42/0、
+b14-selection 46/0、state-loop 169/0、round-result 293/0；isolation 守卫 5 opt-in/0 违规，均 exit=0。
+
+- P1-1：stageMaterialDigest 只绑定材料字段，不绑定实际 objective、workflow 及计划内容；planRef 没有与所选计划核对。
+  独立真实 CLI/编排链 + 受控 provider/runtime：材料 planRef=stage-flow，沿用 digest 换成 unapproved-plan，仍 requests=2/exit=0；
+  改后的交付要求进入实际 RunRequest。保留 stage-flow ID 但修改计划交付要求，旧确认同样被接受。
+  确认材料存在不代表实际计划/范围被该确认覆盖；先绑定有效执行输入，再允许执行，不用模型判断自然语言是否相似。
+- P1-2：boundedStageContext 把每个字段截到 600 字符，却只提供 stage.json@digest12 的相对标签。
+  独立 owned Git repo + 实际 WorkspaceManager + 声明 isolated 能力的受控适配器：首个写任务 cwd 是真实隔离 worktree，
+  stage.json 留在源目录未提交，worktree 中不存在该相对材料；1028 字需求末尾的 CRITICAL_DO_NOT_CHANGE_DATABASE_SCHEMA
+  不在任何 runtime prompt，且首任务无法按相对引用获得全文，执行仍被接受。该 probe 只认证引用可达性与 prompt 内容，
+  不把 fixture 写入源目录的行为认证为真实 Agent 在隔离目录完成开发。
+  必要关键约束必须完整可用；全文/已批准快照无法可靠交付时先明确拒绝。不能把这项已有 B4.3 验收要求全部推迟到 B4.4。
+
+原 B4.2a 分类 P2 已关闭：独立 receipt probe 的 dependency-only 为等待，混合项主码为 resource-unavailable，并保留两任务。
+round-cli.ts 恢复核对：与父快照比较，排除明确的 B4.3 插入及 objective 替换后，TypeScript token 序列完全相等，
+包括字符串/模板字符串内部空白；没有仅凭 normalizeWhitespace 相等认证恢复，也未发现额外 baseline token 改变。
+生产 runtime.run 调用边保持 1，新增调度 authority=0；Codex 本轮不修改生产代码/测试。
+
+本轮 reviewer-owned probe：源临时目录按记录逐个清理；剩余 1 个真实 Git worktree（仅 .git/README.md 两个 fixture 文件），
+路径为 %TEMP%/.p4m-worktrees/b43-mlqsLd-round-mv6mspa4-w1。对确切目录的非递归清理亦被自动安全检查拒绝，
+返回 blocked by policy；未改用其他方式绕过。该工具限制记 P3，不能宣称本轮 reviewer 残留为 0，不属于生产 B4.3 根因。
+未跑 full suite/真实模型，未读取凭据/改本机配置。下一任务 B4.3a 仅修两个 P1，不启动 B4.4 或正式前端。
+
+
+B4.3 实现方报告（独立结果以上文为准，2026-10-13，hermetic）：`b43-stage-material` **21/0**（经真实 `runRoundCli` +
+真实 `parseStageMaterial`/digest + 受控 provider/runtime，运行时真实读写 owned 工作区文件）；`b42-plan-file` 61/0、
+`b41-collab-group` 91/0、`b40a-cli-workflow` 42/0、`b40-workflow` 41/0、decision 397/0、state-loop 169/0、
+round-result 293/0、workbench 413/0、handoff-production-round 312/0、b14-selection 46/0、contract 248/0（2 skipped）、
+unit 92/0；isolation 守卫 5 opt-in/0 违规；typecheck PASS、`git diff --check` clean；生产 `runtime.run` 调用边=1、
+新增调度 authority=0、owned 残留 0。
+- 缺材料 / 缺确认 / 确认别阶段：均在 gate 处拒绝（`stage:'stage-gate'`、exit=2），runtime=0、无 tasks、provider 从未被调用。
+- 自我批准：材料带 `approved` 被拒（`self-approval`）；provider 在 gate 失败时从不被调用，模型/工具输出无法批准。
+- `--stage-check`：只读预检，打印 digest 与待办，runtime=0、exit=0。
+- 确认后：plan-file 走真实链、写出 owned 文件、`ok/exit=0`；任务 brief 与验收材料请求均含阶段 requirement/acceptance
+  与 `ref <file>@<digest12>`；Review completed；`automaticPostRoundAction=NONE`；一个 `--confirm` 覆盖整轮、无需逐任务重复确认。
+- scope 变更后旧确认失效（`does not match`、runtime=0）；无 `--stage` 时旧入口不变；fixed 仍被强制。
+- P2：`applyDecision` 的 dependency-only 记为等待、mixed receipt 主码取真实 `resource-unavailable` 并保留等待项、
+  容量仍为 `no-free-slot`。
+上述为本轮 hermetic 证据；未跑 full suite、未调用真实模型、未读凭据、未改本机配置、未开放并行写。
 
 2026-10-13 Codex B4.2a 独立审核：**PASS WITH P2**。受控顺序计划/协作组范围封板，B4 整体仍未封板。
 独立实跑：typecheck PASS；b42-plan-file 61/0、b41-collab-group 91/0、b40a-cli-workflow 42/0、
@@ -477,18 +535,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-13T19:11:14+08:00",
+  "updatedAt": "2026-10-13T20:10:10+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "B4.2a",
-    "name": "多入口顺序执行 · 独立审核完成",
-    "status": "done",
-    "summary": "PASS WITH P2：原零执行 P1 关闭，显式空依赖顺序运行并真实集成；等待/拒绝分类 P2 随 B4.3 小修。"
+    "id": "B4.3",
+    "name": "阶段材料确认 · 独立审核受阻",
+    "status": "blocked",
+    "summary": "常规 21/0；独立复现两个 P1：旧确认可运行替换后的计划，长材料在隔离工作区缺全文且关键约束被截断。"
   },
   "next": {
-    "id": "B4.3",
-    "name": "需求与当前阶段材料确认",
+    "id": "B4.3a",
+    "name": "确认绑定实际计划与材料可达性收口",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -522,7 +580,7 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
         "name": "需求与阶段确认",
         "weight": 12,
         "earned": 1,
-        "basis": "有 Human Gate 底座；开发前材料/批准完整接线未实现"
+        "basis": "已有 Human Gate 底座；B4.3 新增局部门但实际计划绑定/材料交付 P1 未关闭，暂不计整体验收信用"
       },
       {
         "name": "成果、交接与真实验证报告",
@@ -564,12 +622,28 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
   },
   "blockers": [
     {
-      "id": "B42-P2",
-      "severity": "P2",
-      "title": "等待依赖与 gate 拒绝分类仍需小修",
-      "detail": "dependency-unmet 被显示为 gate refused；混合 receipt 以首项等待码覆盖主资源拒绝码。note 仍保留完整事实，不影响安全执行。",
-      "next": "B4.3 附带修正，不单开封板轮次",
-      "kind": "非阻断 · 独立复现"
+      "id": "B43-P1-1",
+      "severity": "P1",
+      "title": "旧确认仍可运行替换后的计划",
+      "detail": "planRef=stage-flow 的 digest 可运行 unapproved-plan；同 ID 下改交付要求也不失效。实际计划未绑定。",
+      "next": "B4.3a",
+      "kind": "独立 CLI 复现"
+    },
+    {
+      "id": "B43-P1-2",
+      "severity": "P1",
+      "title": "长材料的关键约束未可靠交付",
+      "detail": "摘要截掉关键约束；隔离 worktree 中没有相对引用的 stage.json，执行仍被接受。",
+      "next": "B4.3a",
+      "kind": "实际 Git worktree + 受控执行端"
+    },
+    {
+      "id": "B43-P3-CLEANUP",
+      "severity": "P3",
+      "title": "独立 probe 的两文件目录待手动清理",
+      "detail": "1 个自有 Git worktree 仅含 .git / README.md；确切目录清理被工具安全检查以 blocked by policy 拒绝，不是生产代码缺陷。",
+      "next": "用户手动删除已记录目录",
+      "kind": "工具限制"
     },
     {
       "id": "GIT",
@@ -582,10 +656,10 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     {
       "id": "APPROVAL",
       "severity": "产品缺口",
-      "title": "需求到阶段确认尚未接线",
-      "detail": "plan 文件不是用户批准；完整需求/计划/当前阶段材料与确认链待实现。",
-      "next": "B4.3",
-      "kind": "待实现"
+      "title": "需求到阶段确认仅最小入口",
+      "detail": "已有 opt-in 阶段门，但确认未绑定实际计划、长材料不可可靠交付；完整需求/计划/阶段批准链仍未验收。",
+      "next": "B4.3a / B4.4",
+      "kind": "部分实现"
     },
     {
       "id": "REAL",
@@ -645,21 +719,28 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "title": "合法依赖与顺序执行收口",
       "status": "done",
       "deliverable": "合法输入按序推进或写前明确拒绝，准确 gate 报告",
-      "evidence": "独立 61/0 + CLI probe；max writers=1；报告分类留 P2"
+      "evidence": "原 P1 独立关闭；报告分类 P2 本轮亦关闭"
     },
     {
       "id": "B4.3",
       "title": "需求与阶段材料确认",
-      "status": "next",
+      "status": "blocked",
       "deliverable": "批准绑定材料、范围与阶段",
-      "evidence": "下一实施任务，待用户下发；附带报告分类小修"
+      "evidence": "独立 21/0 + 2 个 P1 probe；不封板"
+    },
+    {
+      "id": "B4.3a",
+      "title": "阶段确认与材料交付收口",
+      "status": "next",
+      "deliverable": "实际计划/范围绑定；关键约束完整可达或写前明确拒绝",
+      "evidence": "仅两个已复现 P1，待用户下发"
     },
     {
       "id": "B4.4",
       "title": "交接、成果与验证视图",
       "status": "planned",
       "deliverable": "可读交付与真实测试，未知不冒充通过",
-      "evidence": "复用现有 RoundResult/handoff"
+      "evidence": "先收口 B4.3a，再由用户授权进入"
     },
     {
       "id": "B4.5",
@@ -718,34 +799,34 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "source": "Codex 本轮实跑"
     },
     {
-      "name": "b42-plan-file",
-      "result": "61 / 0",
+      "name": "b43-stage-material",
+      "result": "21 / 0",
+      "source": "常规测试未覆盖独立 P1"
+    },
+    {
+      "name": "b42 / b40a / b14",
+      "result": "61 / 42 / 46 · 全通过",
       "source": "Codex 本轮实跑"
     },
     {
-      "name": "b41 / b40a",
-      "result": "91 / 0 · 42 / 0",
+      "name": "state-loop / round-result",
+      "result": "169 / 293 · 全通过",
       "source": "Codex 本轮实跑"
     },
     {
-      "name": "resource / decision / planner / state-loop",
-      "result": "192 / 397 / 189 / 169 · 全通过",
-      "source": "Codex 本轮定向实跑"
+      "name": "计划替换 / 同 ID 内容变化",
+      "result": "旧确认仍运行 · P1",
+      "source": "独立 CLI probe"
     },
     {
-      "name": "显式 [] / duo / 混合环",
-      "result": "2 / 3 次顺序运行 · 环写前拒绝",
-      "source": "独立 CLI probe，受控 provider/runtime"
+      "name": "长材料 + Git 隔离引用",
+      "result": "关键约束缺失 · P1",
+      "source": "实际 worktree 路径检查，非真实 Agent"
     },
     {
-      "name": "旧依赖规则内存负控",
-      "result": "复现零执行 · 新报告保留拒绝",
-      "source": "不修改生产文件"
-    },
-    {
-      "name": "skipped 混合分类",
-      "result": "P2 · 不阻断",
-      "source": "独立 receipt probe"
+      "name": "CLI 恢复 / 原分类 P2",
+      "result": "token 核对通过 / P2 关闭",
+      "source": "与父快照比较及独立 receipt probe"
     },
     {
       "name": "full suite / 真实模型",
@@ -785,3 +866,6 @@ project-progress/ 全目录及旧 temporary-dashboard/ 均忽略、不进入快�
 
 本轮 B4.2a 独立 PASS WITH P2 上传快照：父 b751ffe，分支 codex/b42a-review-pass-with-p2。
 只保存当前修复与独立审核/下一任务文档；project-progress/ 不入 Git，主分支和共享暂存区不改。
+
+本轮 B4.3 独立 BLOCKED 快照上传：父 9c3aa28，分支 codex/b43-review-blocked。
+保存现有实现与独立事实，不自行修复、不封板；本机页面/备份/探测脚本不入 Git，main/共享暂存区不改。

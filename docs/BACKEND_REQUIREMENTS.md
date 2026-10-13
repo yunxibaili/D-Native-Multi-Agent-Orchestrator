@@ -260,6 +260,9 @@ LAYA 可以选择同 Agent 的其他模型、其他 Agent 的相同模型或其�
 结构化计划文件（`--workflow-plan <file>`，JSON，`kind` 为 `sequential|collaborate`，含 role/taskType/可选
 fileScope/deliverable/可选 dependencies 与协作的 integratorMember）替换内置候选。文件不命名 taskId/agent/model，
 只描述有界候选；非法输入在写入前拒绝。完整 Skill/MCP 选择、角色计划与真实模型多模型兼容性按后续切片推进。
+阶段确认契约（B4.3）：opt-in 的 `--stage <file>` 声明当前阶段材料（stageId/scope/requirement/acceptance，可选
+planRef），`--confirm <digest>` 是用户对**该材料**的确认（digest 绑定，材料变更即失效）；材料文件不得自我批准。
+材料缺失/未确认/别阶段/自我批准时，入口在任何外部调用与建任务前拒绝。完整需求/计划/阶段批准链仍属后续。
 提示词/规划不代表已经实现。
 两层都复用既有 Planner / Assignment / Scheduler / SessionRegistry / WorkerIdentity / Fan-out
 与 ResourceClaim / Workspace，**不新增拥有调度权的“主管 Agent”**，也不新增 TeamStore、WorkerManager、

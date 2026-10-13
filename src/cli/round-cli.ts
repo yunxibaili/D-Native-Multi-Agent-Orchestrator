@@ -163,6 +163,16 @@ import {
   collaborationPlanFor,
   isCollaborationChoice,
 } from '../orchestration/collab-plan.ts';
+// B4.3: the current stage's material + the user-only confirmation rule.
+import {
+  STAGE_MATERIAL_MAX_BYTES,
+  StageMaterialError,
+  boundedStageContext,
+  parseStageMaterial,
+  stageMaterialDigest,
+  stageMaterialRef,
+  type StageMaterial,
+} from '../orchestration/stage-material.ts';
 import { decideWorkflowPlan, type WorkflowPlanCandidate } from '../decision/plan-choice.ts';
 import { buildDispatchReceipt } from '../orchestration/dispatch-receipt.ts';
 import { projectDispatchTaskEvidence } from '../orchestration/dispatch-evidence.ts';
@@ -230,6 +240,18 @@ OPTIONS
                          integrator for a collaboration group). Replaces the built-in
                          plans; plan ids are then the valid --workflow-choice values.
                          Requires --workflow sequential|collaborate.
+  --stage <file>         opt-in stage gate (B4.3): a JSON file describing the CURRENT
+                         stage's material — stageId, scope, requirement, acceptance, and an
+                         optional planRef. The round REFUSES to start (no tasks, no model
+                         call) unless the material is present AND the user confirms it with
+                         --confirm <digest>. The material file cannot approve itself.
+  --confirm <digest>     the user's confirmation, bound to the stage material. It is the
+                         material's digest (shown by --stage-check, and by the refusal
+                         message). A changed stage/scope/requirement/acceptance invalidates
+                         it. This is a deliberate LOCAL user act, not identity or auth.
+  --stage-check          with --stage: validate the material and print its status + digest
+                         (and the exact --confirm value) WITHOUT creating or running
+                         anything, then stop.
   --laya-url <url>       laya-serve base URL (default: http://127.0.0.1:8077)
   --laya-timeout <ms>    decision timeout (default: 60000)
   --execution-timeout <ms>
@@ -300,6 +322,12 @@ interface RoundOptions {
   workflowChoice?: string;
   /** B4.2: a structured plan file whose bounded plans replace the built-in ones. */
   workflowPlan?: string;
+  /** B4.3: the current stage's material file (opt-in stage gate). */
+  stage?: string;
+  /** B4.3: the user's confirmation, bound to the stage material's digest. */
+  confirm?: string;
+  /** B4.3: validate + report the stage material (and its digest), then stop. */
+  stageCheck?: boolean;
   layaUrl: string;
   layaTimeoutMs: number;
   /** R5-1 (P1-A): native EXECUTION deadline (RunRequest.timeoutMs), not a wait bound. */
@@ -434,6 +462,19 @@ function parse(argv: readonly string[]): RoundOptions | { error: string } {
     if (workflowChoice !== undefined && workflow === undefined) {
       return { error: '--workflow-choice requires --workflow sequential or --workflow collaborate' };
     }
+    // B4.3: the opt-in stage gate. Material + confirmation are validated later (the file
+    // must be read first), but the flag SHAPE is a usage error here so nothing starts.
+    const stage = s('stage');
+    if (flags.stage === true) return { error: '--stage requires a file path' };
+    const confirm = s('confirm');
+    if (flags.confirm === true) return { error: '--confirm requires a value: the material digest' };
+    const stageCheck = flags['stage-check'] === true;
+    if (confirm !== undefined && stage === undefined) {
+      return { error: '--confirm requires --stage <file>: a confirmation is bound to a material, and there is none' };
+    }
+    if (stageCheck && stage === undefined) {
+      return { error: '--stage-check requires --stage <file>' };
+    }
     const agentFlag = s('agent');
     const modelFlag = s('model');
     if (select === 'fixed' && (agentFlag === undefined || modelFlag === undefined)) {
@@ -451,6 +492,9 @@ function parse(argv: readonly string[]): RoundOptions | { error: string } {
       ...(workflow !== undefined ? { workflow } : {}),
       ...(workflowChoice !== undefined ? { workflowChoice } : {}),
       ...(workflowPlan !== undefined ? { workflowPlan } : {}),
+      ...(stage !== undefined ? { stage } : {}),
+      ...(confirm !== undefined ? { confirm } : {}),
+      ...(stageCheck ? { stageCheck } : {}),
       layaUrl: s('laya-url') ?? 'http://127.0.0.1:8077',
       layaTimeoutMs: num('laya-timeout', 60_000),
       // R5-1.1 (§6/P1-A): the NATIVE EXECUTION deadline — a different thing from the
@@ -578,6 +622,78 @@ export async function runRoundCli(
     process.stderr.write(s + '\n');
   };
 
+  /*
+   * B4.3: the OPT-IN stage gate. It is purely LOCAL — a file plus a flag — and it runs
+   * BEFORE the quota probes, before LAYA classification and before any task exists, so a
+   * missing or unconfirmed stage costs NO external call and creates NOTHING.
+   *
+   * The material is DATA and cannot approve itself (see `parseStageMaterial`); approval is
+   * the user's own `--confirm <digest>`, BOUND to this material. That is a deliberate LOCAL
+   * act, not identity or authentication, and it does not constrain a native agent's own
+   * internal actions — it only decides whether THIS entry starts the stage at all.
+   */
+  let stage: { material: StageMaterial; digest: string; ref: string; context: string } | null = null;
+  if (o.stage !== undefined) {
+    const stagePath = resolve(o.cwd, o.stage);
+    const refuse = (error: string, pending: readonly string[]): number => {
+      if (o.json) w(JSON.stringify({ ok: false, stage: 'stage-gate', error, pending }, null, 2));
+      else {
+        note(`stage gate refused: ${error}`);
+        for (const p of pending) note(`  - ${p}`);
+      }
+      return 2;
+    };
+    if (!existsSync(stagePath) || !statSync(stagePath).isFile()) {
+      return refuse(`--stage "${o.stage}" is not a readable file (resolved to "${stagePath}")`, ['provide an existing stage material file']);
+    }
+    const size = statSync(stagePath).size;
+    if (size > STAGE_MATERIAL_MAX_BYTES) {
+      return refuse(`--stage "${o.stage}" is ${size} bytes, over the ${STAGE_MATERIAL_MAX_BYTES} byte limit`, ['shrink the material or split it']);
+    }
+    let raw: unknown;
+    try {
+      raw = JSON.parse(readFileSync(stagePath, 'utf8'));
+    } catch (e) {
+      return refuse(`--stage "${o.stage}" is not valid JSON: ${(e as Error).message}`, ['fix the JSON']);
+    }
+    let material: StageMaterial;
+    try {
+      material = parseStageMaterial(raw);
+    } catch (e) {
+      const detail = e instanceof StageMaterialError ? `${e.code}: ${e.detail}` : (e as Error).message;
+      return refuse(detail, ['fix the material; a material file cannot approve itself']);
+    }
+    const digest = stageMaterialDigest(material);
+    const ref = stageMaterialRef(material, o.stage);
+    const confirmHint = `--confirm ${digest}`;
+    if (o.stageCheck === true) {
+      if (o.json) {
+        w(JSON.stringify({ ok: true, stage: 'stage-check', stageId: material.stageId, digest, ref, planRef: material.planRef ?? null, pending: [`to run this stage, pass ${confirmHint}`] }, null, 2));
+      } else {
+        w(`stage material OK: ${material.stageId} (${ref})`);
+        w(`  confirm with: ${confirmHint}`);
+        w('  nothing was created or run');
+      }
+      return 0;
+    }
+    if (o.confirm === undefined) {
+      return refuse('the stage material is present but NOT confirmed by the user', [
+        `run again with ${confirmHint} (a material file, a model, or memory cannot approve it)`,
+      ]);
+    }
+    if (o.confirm !== digest) {
+      return refuse('the confirmation does not match this material', [
+        `the material is stage "${material.stageId}"; re-confirm with ${confirmHint}`,
+        'a changed stage/scope/requirement/acceptance invalidates an old confirmation',
+      ]);
+    }
+    stage = { material, digest, ref, context: boundedStageContext(material, ref) };
+  }
+  // The objective that ACTUALLY reaches classification, the plan and every task's
+  // acceptance criteria / brief. Without a confirmed stage it is the user's own text,
+  // byte-identical to before this entry existed.
+  const roundObjective = stage === null ? o.objective : `${o.objective}\n${stage.context}`;
+
   // R4: the round's own clock, read ONCE here so the reported window spans everything the
   // round did. Deliberately not `Date.now()` at report time: a round timeline that
   // disagreed with its own attempt records would be a second, worse version of the truth.
@@ -634,7 +750,7 @@ export async function runRoundCli(
   // ---- STEP 1: Laya classifies the objective -------------------------------
   let classification: TaskClassification;
   try {
-    classification = await classifyTask(provider, { task: o.objective });
+    classification = await classifyTask(provider, { task: roundObjective });
   } catch (e) {
     const msg = `${(e as Error).name}: ${(e as Error).message}`;
     if (o.json) {
@@ -889,7 +1005,7 @@ export async function runRoundCli(
   const lonePreferredModel = o.model !== undefined && o.agent === undefined ? o.model : undefined;
   const spec: WorkbenchTaskSpec = {
     taskId: rootId,
-    objective: o.objective,
+    objective: roundObjective,
     taskType: taskTypeFor(classification),
     budgetUnits: o.budgetUnits,
     ...(taskSelection !== undefined ? { selection: taskSelection } : {}),
@@ -1001,7 +1117,7 @@ export async function runRoundCli(
       }
       if (provider !== null && choices.length > 1) {
         const id = await decideWorkflowPlan(provider, {
-          task: { taskId: rootId, objective: o.objective },
+          task: { taskId: rootId, objective: roundObjective },
           candidates: choices,
         });
         return { id, source: 'Laya decision' };
@@ -1096,7 +1212,7 @@ export async function runRoundCli(
             `(${distinctPairs.length === 0 ? 'none' : distinctPairs.join(', ')}); no pair is duplicated to fill a seat`,
         );
       }
-      planned = wb.planWithCandidates(spec, buildCollaborationMemberCandidates(collaborationMembers, collaborationIntegratorMember, o.objective, rootId), [
+      planned = wb.planWithCandidates(spec, buildCollaborationMemberCandidates(collaborationMembers, collaborationIntegratorMember, roundObjective, rootId), [
         `${planFile === null ? 'B4.1' : 'B4.2 file'} collaboration group: ${collaborationPlanUsed} (${workflowPlanSource}); ` +
           `${collaborationMembers.length} members + 1 integration task by collaborator ${collaborationIntegratorMember}`,
       ]);
@@ -1145,7 +1261,7 @@ export async function runRoundCli(
         ? (WORKFLOW_PLAN_CHOICES.find((c) => c.choice === chosen.id)?.steps ?? [])
             .map((s) => ({ role: s.role, taskType: s.taskType, deliverable: s.deliverable }))
         : seqPlans!.find((p) => p.id === chosen.id)!.steps;
-      planned = wb.planWithCandidates(spec, buildSequentialStepCandidates(sequentialSteps, o.objective, rootId), [
+      planned = wb.planWithCandidates(spec, buildSequentialStepCandidates(sequentialSteps, roundObjective, rootId), [
         `${planFile === null ? 'B4.0' : 'B4.2 file'} sequential workflow plan: ${workflowChoiceUsed} (${workflowPlanSource})`,
       ]);
     } else {
@@ -1187,7 +1303,7 @@ export async function runRoundCli(
         }));
       try {
         topology = await decideExecutionTopology(provider, {
-          task: { taskId: rootId, objective: o.objective, acceptanceCriteria: o.objective },
+          task: { taskId: rootId, objective: roundObjective, acceptanceCriteria: roundObjective },
           candidates: readCandidates,
           maxMembers: FANOUT_MAX_MEMBERS,
         });
@@ -1493,7 +1609,7 @@ export async function runRoundCli(
         acceptanceCriteriaMissing: criteria.trim() === '',
       });
     }
-    return { objective: o.objective, entries };
+    return { objective: roundObjective, entries };
   };
 
   const runOneCycle = (): Promise<Awaited<ReturnType<typeof runDecisionCycle>>> => {
