@@ -29,10 +29,11 @@ README 是导航。用户明确指令优先；发现源码、证据与基线不�
 | B1 overall | NOT SEALED |
 | B4.0 / B4.0a / B4.0b | 独立 PASS WITH P2；顺序工作流受控链路封板，非真实模型验收 |
 | B4.1 / B4.1a | 独立 PASS；共享顺序工作区的协作组受控闭环封板，原 1 个 P1 + 2 个 P2 关闭 |
-| B4 overall | NOT SEALED；功能 A/B 最小闭环均已实现，真实模型兼容性未验收 |
-| B4.2+ / B2 / B3 / B5 | PLANNED；本轮未授权启动实现 |
+| B4.2 | 默认链式入口定向通过；独立 probe 发现合法多入口写计划零执行，P1 待 B4.2a 收口；整体暂不封板 |
+| B4 overall | NOT SEALED；功能 A/B 最小闭环 + 项目适配入口均已实现，真实模型兼容性未验收 |
+| B4.2a / B4.3+ / B2 / B3 / B5 | 依新草案重排；详见交付计划与下一任务，本轮只授权文档/本机进度页 |
 | PARALLEL_WRITE | CLOSED |
-| 本产品前端 | 需求未确认；进入前端前提醒用户单独梳理 |
+| 本产品前端 | 本机独立进度页已授权且禁止入 Git；正式工作台 UI 需求仍待确认 |
 
 B4.0 是在现有底座上提前交付最小工作流，不自动授权整个 B4，也不把 B2/B3 的缺口宣称已实现。
 本次封板适用有界 full/lean、现有选择/调度/Verification/审核的 hermetic 生产调用链；
@@ -123,7 +124,24 @@ B4.1 独立审核发现的 1 个 P1 + 2 个 P2 已由 B4.1a 修复，并经本�
   非零退出、报告 incomplete 并列出阻塞成员。
 测试 fixture 现在也执行真实 provider 的 choice 输入契约（单选即拒），并新增真实 provider + `fetchImpl`
 seam 的承重校验，所以“绕过输入校验”不再能通过本套件。报告投影和固定 note 问题已按事实收口。
-完整角色计划、真实模型兼容性、Skill/MCP、费用与掉线恢复保持后续范围。
+
+B4.2 新增显式 opt-in 的结构化**计划文件入口** `--workflow-plan <file>`，让用户按自己的项目表达候选计划，
+替换内置的写死模板（内置 `full/lean/duo/trio` 保持不变）：
+- 文件是 JSON，`kind` 为 `sequential` 或 `collaborate`，含少量有界候选；每个步骤/成员声明
+  `role`、既有 `taskType`、可选 `fileScope`、`deliverable`、可选 `dependencies`（角色名，缺省为链）；
+  协作计划另声明 1-based `integratorMember`。`parsePlanFile` 在写入任何任务前拒绝未知 kind、非法
+  taskType、重复角色/计划 id、悬空依赖、自依赖、依赖环、越界集成者、超出成员/步骤/计划数量与字段长度。
+- 任务 id 由系统从本轮 root 生成（sequential `-wN`、collaborate `-mN`+`-int`），文件**不能**命名 taskId，
+  因此外部计划无法覆盖既有任务，也不会与内置计划冲突。
+- 计划来源统一走既有 `decideWorkflowPlan`：多候选问 LAYA；单候选按规则记录来源、不发单选问题；
+  `--workflow-choice` 必须命中文件实际提供的 plan id，否则拒绝、不替换。文件里的 role/fileScope/deliverable/
+  dependencies 进入真实任务的验收条件、执行 brief、验收材料与报告，不只停在配置对象。
+- 复用同一 `validateCandidateDag`/`commitPlan`/Assignment/Session/Scheduler/Verification/Review；
+  协作成员仍 2–3 个、集成者属成员且复用其 pair、集成任务独立 task/session，不新增第四个模型；
+  每任务 Agent×Model 仍由既有 LAYA + Assignment 决定，不绕过 fixed/能力/额度/费用准入。
+- 内置与文件计划共用同一候选构造规则（`plan-file.ts` 的 builder），所以二者不会漂移；顺序执行、
+  最大有效写执行数=1、文件范围只是声明、成员未交付时集成不运行等边界不变。未补 Git 隔离合并，保留拒绝。
+完整角色计划、prefer/角色默认、运行中改选、真实模型兼容性、Skill/MCP、费用与掉线恢复保持后续范围。
 
 ## 6. 不可绕过的契约
 
@@ -139,6 +157,7 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 
 1. DSH 缺逐请求选模型与恢复协议；要用 DSH 做多模型调配，必须先取得受支持的真实接口证据。
 2. B4.0–B4.1a 的顺序工作流与协作组受控链路已独立封板；B4.1 输入契约、报告事实投影与未交付负例已收口。
+   B4.2 提供项目适配的结构化计划文件入口（自定义 sequential/collaborate 候选）。
    完整角色计划、prefer/角色默认、运行中改选、真实模型多模型兼容性仍缺，留后续切片。
 3. Skill/MCP 只有部分意图/原生支持，目录、授权、具体选择和实际调用核对未闭环。
 4. 动态免费资格、账户共享额度和全流程费用授权未验收；预算 units 不是 token/货币。
@@ -153,7 +172,35 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 
 ## 8. 最近独立证据与上传记录
 
-本轮 B4.1a 独立审核（2026-10-13）：**PASS**。Codex 仅更新文档，未修改生产代码或测试。
+2026-10-13 Codex 本轮：typecheck PASS；b42-plan-file 44/0、b41-collab-group 91/0、b40a-cli-workflow 42/0。
+独立 CLI probe 使用真实编排链 + 受控 provider/runtime：多候选选中 second 且只问一次；显式/默认依赖混合的环写前拒绝、requests=0。
+新 P1：合法 sequential 的两个写步骤均 dependencies:[]（collaborate 成员亦同）被接受和分配，
+但 Scheduler 实际两项均 resource-unavailable，runtime requests=0、exit=1、workflow.stop=no-progress。
+最终 decision.note 却描述为没有 free slot/ready task、没有 gate 拒绝。保护有效，未发生并行写逃逸；这是可用性与拒绝报告收口。
+仅把测试入口 max-concurrent 从 2 调为 1 的独立对照也未成功，不能宣称 cap=1 是充分修复。
+本轮不修改生产源码/测试；新增路线、任务文档与本机页面，不把默认链式 44/0 提升为所有合法输入封板。
+后续先 B4.2a，再接需求/阶段材料确认。完整新目标尚未真机验收；未跑 full suite/真实模型。
+
+
+本轮 B4.2（2026-10-13，实现方实跑，hermetic）：`b42-plan-file` **44/0**（经真实 `runRoundCli` +
+真实 `parsePlanFile`/共享候选构造 + 受控 provider/runtime，运行时真实读写 owned 工作区文件）；
+`b41-collab-group` 91/0、`b40a-cli-workflow` 42/0、`b40-workflow` 41/0、b14-selection 46/0、
+initial-assignment-decision 37/0、assignment 235/0、workbench 413/0、planner 189/0、decision 397/0、
+handoff-production-round 312/0、state-loop 169/0、contract 248/0（2 skipped）、unit 92/0；
+isolation 守卫 5 opt-in/0 违规；typecheck PASS、`git diff --check` clean；生产 `runtime.run` 调用边=1、
+新增调度 authority=0、owned 残留 0。
+- 自定义顺序计划：文件声明的 role/路径（如 `api-research`/`docs/api/**`）与内置模板不同，按序执行、
+  下游 brief 含上游**实际输出**、每步写各自声明范围文件、ok/exit=0；单候选不发 LAYA 问题、来源按规则记录。
+- 自定义双成员协作：成员写真实文件、集成任务读取并组合**实际字节**成 `combined.txt`、集成者复用成员 1 pair
+  且拥有独立 task/session、整轮仅 2 个 pair、最终 Review completed/pass。
+- 自定义三成员 sanity：三个不同 pair、独立 task/session、集成者为文件指定的成员 2、集成产物含三者字节。
+- 非法输入无部分提交：悬空依赖、依赖环、重复角色、越界集成者、四成员、超步骤/超计划/超长字段、未知 taskType、
+  重复 plan id、kind 与 `--workflow` 不匹配，均在写入前拒绝；端到端拒绝时 requests=0、无 tasks、非零退出。
+- 未交付负例：成员运行但不写文件/空输出 → 停 `to_verify`，集成从不运行、无 `combined.txt`、非零退出并列出阻塞成员。
+- 兼容：内置 full/lean/duo/trio 行为不变；文件 plan id 可被 `--workflow-choice` 固定；未知固定 id 被拒绝不替换。
+上述为本轮 hermetic 证据；未跑 full suite、未调用真实模型、未读凭据、未改本机配置。
+
+上一轮 B4.1a 独立审核（2026-10-13）：**PASS**。Codex 仅更新文档，未修改生产代码或测试。
 独立实跑 typecheck PASS；b41-collab-group 91/0、b40a-cli-workflow 42/0、b40-workflow 41/0、
 initial-assignment-decision 37/0、assignment 235/0、assignment-lease 251/0、workbench 413/0、
 decision 397/0、b14-selection 46/0；isolation 守卫 5 opt-in/0 违规，命令 exit 均 0。
@@ -367,3 +414,317 @@ B4.0b PASS WITH P2 快照为 270668a191eb0fc72ef17bcfaead82244e28df07，分支 c
 B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b41-review-blocked。
 本次 B4.1a PASS 快照以 f82f8c1 为父，分支 codex/b41a-review-pass，包含修复与两份独立审核文档；
 不合入 main，不授权 B4.2/B2/B3/B5；上传后的准确 commit 见会话交付。
+
+## 新草案重排与本机进度页
+
+用户本轮授权根据草案整理计划、任务和独立进度页；没有授权实施新后端切片。
+路线见 [BACKEND_DELIVERY_PLAN.md](BACKEND_DELIVERY_PLAN.md)，下一任务见 [NEXT_TASK.md](NEXT_TASK.md)。
+进度页位于被 Git 忽略的 project-progress/，只派生下面的维护快照；不读取 Runtime 或凭据，不作为第二状态权威。
+完成度以新草案后端目标为分母：十项权重共 100、当前已实现信用 51，四舍五入报告约 50% 完成 / 约 50% 剩余。
+合理剩余区间 40–60%，属于工程规划估算，不是客观测试统计、承诺工时或正式前端完成度。
+每次任务推进更新事实和快照后运行 node project-progress/refresh.mjs；实时预览从本文读取，不伪造任务推进。
+
+<!-- project-progress:begin -->
+```json
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-10-13T16:28:16+08:00",
+  "title": "LAYA 个人工作台",
+  "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
+  "current": {
+    "id": "B4.2",
+    "name": "结构化项目计划 · 独立收口",
+    "status": "blocked",
+    "summary": "默认链式计划已通过；合法多入口写计划出现零执行 no-progress，先做 B4.2a。"
+  },
+  "next": {
+    "id": "B4.2a",
+    "name": "合法依赖与顺序执行收口",
+    "authorized": false
+  },
+  "parallelWrite": "CLOSED",
+  "frontend": "本机进度页已授权；正式工作台前端待需求确认",
+  "estimate": {
+    "method": "按十项能力加权的工程判断；不是测试数、工时或代码统计。不得用任务数直接计算。",
+    "remainingRange": [
+      40,
+      60
+    ],
+    "capabilities": [
+      {
+        "name": "执行、身份与物理停止",
+        "weight": 20,
+        "earned": 20,
+        "basis": "T/W 底座历史独立封板；保留环境 P2，未本轮全量重测"
+      },
+      {
+        "name": "发现、模型池与用户选择",
+        "weight": 12,
+        "earned": 8,
+        "basis": "目录、auto/fixed 已有；实际模型、角色默认和动态选择不足"
+      },
+      {
+        "name": "功能 A/B 与项目计划",
+        "weight": 18,
+        "earned": 13,
+        "basis": "受控链路已建立；B4.2 多入口收口及 Git 协作仍缺"
+      },
+      {
+        "name": "需求与阶段确认",
+        "weight": 12,
+        "earned": 1,
+        "basis": "有 Human Gate 底座；开发前材料/批准完整接线未实现"
+      },
+      {
+        "name": "成果、交接与真实验证报告",
+        "weight": 10,
+        "earned": 5,
+        "basis": "有 handoff/Attempt/RoundResult；长材料、覆盖和历史不足"
+      },
+      {
+        "name": "监督与用户纠偏",
+        "weight": 5,
+        "earned": 0,
+        "basis": "草案已明确方向，检查点接线尚未实施"
+      },
+      {
+        "name": "Skill/MCP 与按需上下文",
+        "weight": 8,
+        "earned": 1,
+        "basis": "部分 intent/原生能力，目录和调用核对未闭环"
+      },
+      {
+        "name": "费用、额度与消耗覆盖",
+        "weight": 5,
+        "earned": 1,
+        "basis": "既有 quota/预算底座，全流程费用策略未验收"
+      },
+      {
+        "name": "中断接力与最小历史",
+        "weight": 6,
+        "earned": 1,
+        "basis": "已有停止与 continuation；自动恢复边界未闭环"
+      },
+      {
+        "name": "代表性真实用户验收",
+        "weight": 4,
+        "earned": 1,
+        "basis": "有历史单 Agent 证据，新使用效果尚未完整真机验收"
+      }
+    ]
+  },
+  "blockers": [
+    {
+      "id": "B42-P1",
+      "severity": "P1",
+      "title": "合法多入口写计划无法推进",
+      "detail": "显式 dependencies:[] 的两写任务可提交和分配，但 gate=resource-unavailable；requests=0、exit=1、stop=no-progress。保护未失效。",
+      "next": "B4.2a",
+      "kind": "已复现"
+    },
+    {
+      "id": "GIT",
+      "severity": "范围限制",
+      "title": "Git 项目协作交付路径缺失",
+      "detail": "现有 collaborate 主动拒绝 Git 隔离工作区；成员产物尚不能受控送入集成者工作区。",
+      "next": "B4.5",
+      "kind": "已有事实"
+    },
+    {
+      "id": "APPROVAL",
+      "severity": "产品缺口",
+      "title": "需求到阶段确认尚未接线",
+      "detail": "plan 文件不是用户批准；完整需求/计划/当前阶段材料与确认链待实现。",
+      "next": "B4.3",
+      "kind": "待实现"
+    },
+    {
+      "id": "REAL",
+      "severity": "验收缺口",
+      "title": "真实多模型与成本证据不足",
+      "detail": "fixture 不能认证真实可调用、身份、隔离或免费资格；DSH 仍不支持逐请求选模型。",
+      "next": "B2.1 / B4.7",
+      "kind": "未验证"
+    },
+    {
+      "id": "LOCAL-UI",
+      "severity": "本机维护",
+      "title": "旧临时页面待手动删除",
+      "detail": "temporary-dashboard/ 的 20 个源码文件已压缩并逐字节验证；递归删除被工具安全策略拒绝，目录尚在。这不阻塞后端开发。",
+      "next": "用户手动删除旧目录",
+      "kind": "工具限制"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "T/W",
+      "title": "执行与 Windows containment 底座",
+      "status": "done",
+      "deliverable": "既有身份、停止和资源保护",
+      "evidence": "历史独立审核；环境 P2 保留"
+    },
+    {
+      "id": "B1",
+      "title": "目录、基础接入和 auto/fixed",
+      "status": "partial",
+      "deliverable": "本机 Agent 与具体模型选择底座",
+      "evidence": "已封板子片；B1 整体未封板"
+    },
+    {
+      "id": "B4.0",
+      "title": "功能 A · 跨角色顺序分工",
+      "status": "done",
+      "deliverable": "调研 → 实现 → 测试 → 审核",
+      "evidence": "历史受控封板；本轮 b40a 42/0"
+    },
+    {
+      "id": "B4.1a",
+      "title": "功能 B · 2–3 模型分工集成",
+      "status": "done",
+      "deliverable": "独立任务/会话，指定成员集成",
+      "evidence": "独立受控 PASS；本轮 b41 91/0"
+    },
+    {
+      "id": "B4.2",
+      "title": "项目适配的计划文件",
+      "status": "blocked",
+      "deliverable": "自定义职责、路径、交付和依赖",
+      "evidence": "本轮 44/0；多入口独立 probe 暴露 P1"
+    },
+    {
+      "id": "B4.2a",
+      "title": "合法依赖与顺序执行收口",
+      "status": "next",
+      "deliverable": "合法输入推进或写前明确拒绝，准确 gate 报告",
+      "evidence": "下一实施任务，待用户下发"
+    },
+    {
+      "id": "B4.3",
+      "title": "需求与阶段材料确认",
+      "status": "planned",
+      "deliverable": "批准绑定材料、范围与阶段",
+      "evidence": "草案重排；尚未授权实施"
+    },
+    {
+      "id": "B4.4",
+      "title": "交接、成果与验证视图",
+      "status": "planned",
+      "deliverable": "可读交付与真实测试，未知不冒充通过",
+      "evidence": "复用现有 RoundResult/handoff"
+    },
+    {
+      "id": "B4.5",
+      "title": "Git 项目顺序协作",
+      "status": "planned",
+      "deliverable": "成员真实差异可交集成，保护用户脏文件",
+      "evidence": "两条备选路线，仅实施一条"
+    },
+    {
+      "id": "B3.1",
+      "title": "Skill/MCP 最小闭环",
+      "status": "planned",
+      "deliverable": "目录 → 选择 → 实际加载/调用核对",
+      "evidence": "从一个原生 Agent 接口开始"
+    },
+    {
+      "id": "B2.1",
+      "title": "模型池与费用策略",
+      "status": "planned",
+      "deliverable": "免费优先/已授权付费、共享额度与覆盖",
+      "evidence": "未知费用不默认为零"
+    },
+    {
+      "id": "B4.6",
+      "title": "检查点监督与用户纠偏",
+      "status": "planned",
+      "deliverable": "异常阻止后续派工，用户决定纠偏",
+      "evidence": "不增加第二个调度权威"
+    },
+    {
+      "id": "B5.1",
+      "title": "模型掉线的有界接力",
+      "status": "planned",
+      "deliverable": "保留部分成果，停旧执行后再接手",
+      "evidence": "不盲重放写任务或自动跨阶段"
+    },
+    {
+      "id": "B4.7",
+      "title": "真实 Agent 代表验收",
+      "status": "planned",
+      "deliverable": "成功、受阻与真实成本/停止证据",
+      "evidence": "需用户模型、费用与数据授权"
+    },
+    {
+      "id": "F0",
+      "title": "正式工作台前端需求确认",
+      "status": "planned",
+      "deliverable": "确认流程后再设计正式 UI",
+      "evidence": "当前进度页只是本机状态展示"
+    }
+  ],
+  "checks": [
+    {
+      "name": "typecheck",
+      "result": "PASS",
+      "source": "Codex 本轮实跑"
+    },
+    {
+      "name": "b42-plan-file",
+      "result": "44 / 0",
+      "source": "Codex 本轮实跑"
+    },
+    {
+      "name": "b41-collab-group",
+      "result": "91 / 0",
+      "source": "Codex 本轮实跑"
+    },
+    {
+      "name": "b40a-cli-workflow",
+      "result": "42 / 0",
+      "source": "Codex 本轮实跑"
+    },
+    {
+      "name": "多候选选择 / 混合依赖环",
+      "result": "选中 second / 写前拒绝",
+      "source": "独立内存 probe，受控 provider/runtime"
+    },
+    {
+      "name": "无依赖多写入口",
+      "result": "零执行 · P1",
+      "source": "sequential/collaborate 独立 probe"
+    },
+    {
+      "name": "full suite / 真实模型",
+      "result": "NOT RUN",
+      "source": "本轮范围外"
+    }
+  ],
+  "sources": [
+    {
+      "title": "唯一当前基准",
+      "path": "docs/PROJECT_BASELINE.md"
+    },
+    {
+      "title": "新交付计划",
+      "path": "docs/BACKEND_DELIVERY_PLAN.md"
+    },
+    {
+      "title": "下一任务",
+      "path": "docs/NEXT_TASK.md"
+    },
+    {
+      "title": "需求与效果草案",
+      "path": "docs/DRAFT_STAGED_ROLE_WORKFLOW.md"
+    }
+  ]
+}
+```
+<!-- project-progress:end -->
+
+本机页面交付：无依赖静态文件 + 从本文刷新快照；桌面页面/筛选已核对，窄屏 DOM 无横向溢出。
+旧 temporary-dashboard 源码 20 文件已压缩并逐字节验证，备份在 ignored 的 project-progress/legacy-dashboard-source.zip；
+递归删除被工具安全策略拒绝（blocked by policy），旧目录尚在，未绕过拒绝；这项是本机维护限制，不是后端 P1。
+
+本轮上传说明：计划重排与 B4.2 独立发现保存为 codex/b42-plan-realignment-blocked 快照，父提交 9980db2；
+包含现有 B4.2 实现与审核事实、草案、计划、任务和维护规则，不宣称 B4.2 封板。
+project-progress/ 全目录及旧 temporary-dashboard/ 均忽略、不进入快照；主分支与共享暂存区不动。准确提交见会话交付。

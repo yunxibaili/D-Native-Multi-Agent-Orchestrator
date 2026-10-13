@@ -4,10 +4,11 @@ node_modules/
 .DS_Store
 Thumbs.db
 
-# ZCode owns the Temporary Dashboard; it is a separate frontend project, not
-# part of the Node orchestrator. Ignored so a casual `git add -A` cannot commit
-# it by accident. Remove this line if it is ever promoted to tracked content.
+# Retired local UI; keep ignored if an external tool recreates it.
 temporary-dashboard/
+
+# User requires the independent progress page and all local backups to stay out of Git.
+/project-progress/
 
 # Local workspace bookkeeping created by the WorkspaceManager / lock.
 .p4m-locks/

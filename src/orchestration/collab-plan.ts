@@ -46,6 +46,8 @@
 
 import type { TaskType } from '../quota/types.ts';
 import type { CandidateTask } from './planner.ts';
+// B4.2: the ONE candidate-formatting rule, shared with the user's plan file.
+import { buildCollaborationMemberCandidates, collaborationTaskIds as planFileCollaborationTaskIds } from './plan-file.ts';
 
 export const COLLABORATION_CHOICES = ['duo', 'trio'] as const;
 export type CollaborationChoice = (typeof COLLABORATION_CHOICES)[number];
@@ -156,12 +158,7 @@ export interface CollaborationTaskIds {
 
 export function collaborationTaskIds(choice: CollaborationChoice, rootTaskId: string): CollaborationTaskIds {
   const plan = collaborationPlanFor(choice);
-  const memberIds = plan.members.map((_, i) => `${rootTaskId}-m${i + 1}`);
-  return {
-    memberIds: Object.freeze([...memberIds]),
-    integratorId: `${rootTaskId}-int`,
-    integratorIndex: plan.integratorMember,
-  };
+  return planFileCollaborationTaskIds(rootTaskId, plan.members.length, plan.integratorMember);
 }
 
 /**
@@ -171,6 +168,9 @@ export function collaborationTaskIds(choice: CollaborationChoice, rootTaskId: st
  * is reproducible. Members are a CHAIN (sequential writes); the integration task
  * depends on every member, which is what makes "integration actually consumed the
  * deliveries" a property of the graph rather than a claim about the report.
+ *
+ * B4.2: delegates to the shared builder, so a built-in `duo`/`trio` and a user plan file
+ * cannot drift apart.
  */
 export function buildCollaborationCandidates(
   choice: CollaborationChoice,
@@ -178,32 +178,5 @@ export function buildCollaborationCandidates(
   rootTaskId: string,
 ): CandidateTask[] {
   const plan = collaborationPlanFor(choice);
-  const { memberIds, integratorId, integratorIndex } = collaborationTaskIds(choice, rootTaskId);
-  const members = plan.members.map((spec, i) => Object.freeze({
-    taskId: memberIds[i]!,
-    parentTaskId: rootTaskId,
-    taskType: spec.taskType,
-    // The description BECOMES the acceptance criteria on commit, so role, file scope
-    // and required deliverable are what Verification checks — not report-only labels.
-    description:
-      `${objective} :: collaborator ${i + 1} (${spec.role}) — file scope: ${spec.fileScope} — ` +
-      `deliverable: ${spec.deliverable} — do not implement the other members' scopes`,
-    // Sequential write order: PARALLEL_WRITE=CLOSED, so N waits for N-1.
-    dependencies: Object.freeze(i === 0 ? [] : [memberIds[i - 1]!]),
-    requiredTaskTypes: Object.freeze([spec.taskType]),
-  }));
-  const integrator = Object.freeze({
-    taskId: integratorId,
-    parentTaskId: rootTaskId,
-    taskType: 'implementation' as const,
-    description:
-      `${objective} :: integration (collaborator ${integratorIndex} carries integration responsibility) — ` +
-      `deliverable: one combined result built from the deliveries listed in this task's handoffs, ` +
-      `naming each collaborator's actual contribution — a summary of what everyone finished is NOT a deliverable`,
-    // EVERY member, so the brief carries every delivery and every member must be
-    // `succeeded` before this task is even admissible.
-    dependencies: Object.freeze([...memberIds]),
-    requiredTaskTypes: Object.freeze(['implementation'] as const),
-  });
-  return [...members, integrator];
+  return buildCollaborationMemberCandidates(plan.members, plan.integratorMember, objective, rootTaskId);
 }

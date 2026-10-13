@@ -1,6 +1,6 @@
 # LAYA Native Multi-Agent Orchestrator
 
-更新日期：2026-10-12
+更新日期：2026-10-13
 
 个人 Windows 工作台的本机多 Agent 编排后端。用户提交目标，LAYA 决定任务分工、具体 Agent × Model 与需要的能力，既有执行链负责准入、调度、隔离、证据和验证。
 
@@ -13,7 +13,9 @@
 |---|---|
 | [后端需求](docs/BACKEND_REQUIREMENTS.md) | 用户目标与验收要求，区分已交付和未来需求 |
 | [项目基线](docs/PROJECT_BASELINE.md) | 唯一当前事实、阶段状态、限制与证据入口 |
-| [阶段分析](docs/STAGE_ANALYSIS.md) | 最短推进顺序、下一任务范围与历史备份 |
+| [阶段分析](docs/STAGE_ANALYSIS.md) | 推进分析与历史备份 |
+| [交付计划](docs/BACKEND_DELIVERY_PLAN.md) | 新草案对应的任务路线和验收边界 |
+| [下一任务](docs/NEXT_TASK.md) | 当前最小实施切片与独立复现 |
 | [架构契约](docs/ARCHITECTURE_CONTRACTS.md) | 身份、执行入口、停止与结果权威 |
 | [LAYA 接口](docs/DECISION_PROVIDER.md) | typed decision、候选选择与失败语义 |
 | [协作契约](docs/R2_COORDINATION_CONTRACT.md) | Lease、资源、工作区和协作边界 |
@@ -38,9 +40,13 @@ W5 与 B1.4a 的准确状态见唯一基线；B1 整体未封板，PARALLEL_WRIT
 DSH 当前不支持逐请求指定模型或 native session 恢复，不能声称已经通过 DSH 实现多模型调度。
 listed ≠ connected ≠ callable ≠ free；严格零新增费用尚未端到端验收。
 
-下一任务为 **B4.0 异构任务顺序闭环**：先打通调研→实现→测试→现有独立审核。
-本轮仅更新文档和提供 OpenCode 提示词，没有启动该实现；不以 B 编号强制所有未完成能力串行阻塞。
-功能 B、Skill/MCP、费用额度和模型掉线恢复按阶段分析分片补齐；并行写另行授权。
+当前到 **B4.2 项目适配计划文件的独立收口**：默认链式用例通过，合法多入口写计划的 no-progress 待 B4.2a。
+新草案要求的需求确认、阶段批准、监督、交付与恢复已重排；见 [交付计划](docs/BACKEND_DELIVERY_PLAN.md) 和 [下一任务](docs/NEXT_TASK.md)。
+完整后端目标粗估完成约一半；权重、证据和不确定区间见唯一基线，不能按测试数量计算进度。
+
+本机独立进度页：`project-progress/index.html`，不进入 Git，不接 Runtime 控制。
+本机存在时用 `node project-progress/refresh.mjs` 刷新，或加 `--serve` 只读实时预览；每次任务推进必须同步。
+旧 temporary-dashboard 已保留本机源码备份；递归删除被工具安全策略拒绝，待用户手动删除；正式工作台前端需求仍待单独确认。
 
 ## 本地使用
 

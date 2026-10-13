@@ -66,6 +66,9 @@ const SUITES = [
   // Workbench/Assignment/Session/Scheduler/Verification/Review chain with fake adapters,
   // and the integrator reads REAL member files written into the round's owned directory.
   'b41-collab-group',
+  // B4.2: a user-adaptable STRUCTURED PLAN FILE drives the same chain. Hermetic — the real
+  // runRoundCli + the real plan-file parser/validator, with fake adapters and real files.
+  'b42-plan-file',
   'memory',
   'orchestration',
   'model-pool',

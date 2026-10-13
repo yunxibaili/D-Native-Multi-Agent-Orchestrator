@@ -28,6 +28,9 @@
 
 import type { TaskType } from '../quota/types.ts';
 import type { CandidateTask } from './planner.ts';
+// B4.2: the ONE candidate-formatting rule, shared with the user's plan file so a built-in
+// plan and a file plan produce byte-identical task descriptions.
+import { buildSequentialStepCandidates } from './plan-file.ts';
 
 export const HETEROGENEOUS_WORKFLOW_CHOICES = ['full', 'lean'] as const;
 export type HeterogeneousWorkflowChoice = (typeof HETEROGENEOUS_WORKFLOW_CHOICES)[number];
@@ -100,17 +103,13 @@ export function buildWorkflowCandidates(
   generation = 0,
 ): CandidateTask[] {
   const plan = workflowPlanFor(choice);
-  const ids = plan.steps.map((_, i) => `${rootTaskId}-w${i + 1}`);
   void generation;
-  return plan.steps.map((step, i) => Object.freeze({
-    taskId: ids[i]!,
-    parentTaskId: rootTaskId,
-    taskType: step.taskType,
-    // The description BECOMES the acceptance criteria on commit (planner-wiring), so the
-    // role and the required deliverable are part of what verification checks — not a
-    // label that only appears in the report.
-    description: `${objective} :: ${step.role} — deliverable: ${step.deliverable}`,
-    dependencies: Object.freeze(i === 0 ? [] : [ids[i - 1]!]),
-    requiredTaskTypes: Object.freeze([step.taskType]),
-  }));
+  // B4.2: delegate to the shared builder so a built-in plan and a user plan file cannot
+  // drift apart. The built-in steps carry no `fileScope`, so the rendered description is
+  // byte-identical to before.
+  return buildSequentialStepCandidates(
+    plan.steps.map((s) => ({ role: s.role, taskType: s.taskType, deliverable: s.deliverable })),
+    objective,
+    rootTaskId,
+  );
 }

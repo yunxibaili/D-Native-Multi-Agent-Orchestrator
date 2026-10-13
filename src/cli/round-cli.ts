@@ -77,7 +77,7 @@
  * papered over with a fabricated `available` row.
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { Orchestrator as RuntimeOrchestrator } from '../orchestrator/orchestrator.ts';
@@ -143,16 +143,25 @@ import {
   type ContinuationResult,
 } from '../orchestration/continuation.ts';
 import { buildHandoff } from '../orchestration/workbench-handoff.ts';
-import { WORKFLOW_PLAN_CHOICES, buildWorkflowCandidates, isWorkflowChoice, type HeterogeneousWorkflowChoice } from '../orchestration/workflow-plan.ts';
+import { WORKFLOW_PLAN_CHOICES, isWorkflowChoice } from '../orchestration/workflow-plan.ts';
+// B4.2: the user-adaptable structured plan file, and the ONE shared candidate builder.
+import {
+  PLAN_FILE_MAX_BYTES,
+  buildCollaborationMemberCandidates,
+  buildSequentialStepCandidates,
+  collaborationTaskIds as planFileCollaborationTaskIds,
+  isCollaborationPlan,
+  isSequentialPlan,
+  parsePlanFile,
+  type PlanFile,
+  type PlanFileStep,
+} from '../orchestration/plan-file.ts';
 import {
   COLLABORATION_MAX_MEMBERS,
   COLLABORATION_MIN_MEMBERS,
   COLLABORATION_PLAN_CHOICES,
-  buildCollaborationCandidates,
   collaborationPlanFor,
-  collaborationTaskIds,
   isCollaborationChoice,
-  type CollaborationChoice,
 } from '../orchestration/collab-plan.ts';
 import { decideWorkflowPlan, type WorkflowPlanCandidate } from '../decision/plan-choice.ts';
 import { buildDispatchReceipt } from '../orchestration/dispatch-receipt.ts';
@@ -215,6 +224,12 @@ OPTIONS
   --workflow-choice <c>  pin the plan: full|lean (with --workflow sequential) or duo|trio
                          (with --workflow collaborate); absent = LAYA picks among the
                          bounded candidates.
+  --workflow-plan <file>
+                         a JSON file declaring your OWN bounded candidate plans (roles,
+                         taskTypes, file scopes, deliverables, dependencies, and the
+                         integrator for a collaboration group). Replaces the built-in
+                         plans; plan ids are then the valid --workflow-choice values.
+                         Requires --workflow sequential|collaborate.
   --laya-url <url>       laya-serve base URL (default: http://127.0.0.1:8077)
   --laya-timeout <ms>    decision timeout (default: 60000)
   --execution-timeout <ms>
@@ -283,6 +298,8 @@ interface RoundOptions {
   workflow?: string;
   /** B4.0/B4.1: pin a single plan choice; absent = LAYA picks among the bounded candidates. */
   workflowChoice?: string;
+  /** B4.2: a structured plan file whose bounded plans replace the built-in ones. */
+  workflowPlan?: string;
   layaUrl: string;
   layaTimeoutMs: number;
   /** R5-1 (P1-A): native EXECUTION deadline (RunRequest.timeoutMs), not a wait bound. */
@@ -398,12 +415,20 @@ function parse(argv: readonly string[]): RoundOptions | { error: string } {
     }
     const workflowChoice = s('workflow-choice');
     if (flags['workflow-choice'] === true) return { error: '--workflow-choice requires a value' };
+    // B4.2: a structured plan file. Its plan ids are unknown until the file is read, so a
+    // pinned `--workflow-choice` is only shape-checked here and validated against the file
+    // later; without a plan file the built-in choice space is enforced exactly as before.
+    const workflowPlan = s('workflow-plan');
+    if (flags['workflow-plan'] === true) return { error: '--workflow-plan requires a file path' };
+    if (workflowPlan !== undefined && workflow === undefined) {
+      return { error: '--workflow-plan requires --workflow sequential or --workflow collaborate' };
+    }
     // B4.1: the answer space is the MODE's own bounded list, so `--workflow-choice duo`
     // with `--workflow sequential` is a usage error rather than a silent fallback.
     const choiceSpace = workflow === 'collaborate'
       ? { ok: isCollaborationChoice, known: 'duo, trio' }
       : { ok: isWorkflowChoice, known: 'full, lean' };
-    if (workflowChoice !== undefined && !choiceSpace.ok(workflowChoice)) {
+    if (workflowPlan === undefined && workflowChoice !== undefined && !choiceSpace.ok(workflowChoice)) {
       return { error: `--workflow-choice must be one of ${choiceSpace.known} for --workflow ${String(workflow)} (got "${workflowChoice}")` };
     }
     if (workflowChoice !== undefined && workflow === undefined) {
@@ -425,6 +450,7 @@ function parse(argv: readonly string[]): RoundOptions | { error: string } {
       ...(select !== undefined ? { select } : {}),
       ...(workflow !== undefined ? { workflow } : {}),
       ...(workflowChoice !== undefined ? { workflowChoice } : {}),
+      ...(workflowPlan !== undefined ? { workflowPlan } : {}),
       layaUrl: s('laya-url') ?? 'http://127.0.0.1:8077',
       layaTimeoutMs: num('laya-timeout', 60_000),
       // R5-1.1 (§6/P1-A): the NATIVE EXECUTION deadline — a different thing from the
@@ -918,12 +944,73 @@ export async function runRoundCli(
   let planned;
   let assigned;
   // B4.0: which bounded workflow plan ran, and how it was chosen (for the report).
-  let workflowChoiceUsed: HeterogeneousWorkflowChoice | null = null;
+  // B4.2: the id is a plain string because a plan file can name its own plan ids.
+  let workflowChoiceUsed: string | null = null;
   let workflowPlanSource = '';
+  /** The chosen sequential plan's steps, kept so the report renders the REAL plan. */
+  let sequentialSteps: readonly PlanFileStep[] = [];
   // B4.1: the collaboration group's shape, kept for the pair step and the report.
   let collaborationIds: { memberIds: readonly string[]; integratorId: string; integratorIndex: number } | null = null;
-  let collaborationPlanUsed: CollaborationChoice | null = null;
+  let collaborationPlanUsed: string | null = null;
+  /** The chosen collaboration plan's members + integrator, for the pair step and report. */
+  let collaborationMembers: readonly PlanFileStep[] = [];
+  let collaborationIntegratorMember = 0;
   try {
+    /*
+     * B4.2: read + validate the structured plan file BEFORE anything is planned. A missing,
+     * oversized, malformed or wrong-kind file is a REFUSAL with a reason — never a silent
+     * fallback to a built-in plan, and never a partial write. The file names no task ids and
+     * no agents/models; it only describes bounded candidate plans.
+     */
+    let planFile: PlanFile | null = null;
+    if (o.workflowPlan !== undefined) {
+      const planPath = resolve(o.cwd, o.workflowPlan);
+      if (!existsSync(planPath) || !statSync(planPath).isFile()) {
+        throw new Error(`--workflow-plan "${o.workflowPlan}" is not a readable file (resolved to "${planPath}")`);
+      }
+      const size = statSync(planPath).size;
+      if (size > PLAN_FILE_MAX_BYTES) {
+        throw new Error(`--workflow-plan "${o.workflowPlan}" is ${size} bytes, over the ${PLAN_FILE_MAX_BYTES} byte limit`);
+      }
+      let raw: unknown;
+      try {
+        raw = JSON.parse(readFileSync(planPath, 'utf8'));
+      } catch (e) {
+        throw new Error(`--workflow-plan "${o.workflowPlan}" is not valid JSON: ${(e as Error).message}`);
+      }
+      planFile = parsePlanFile(raw);
+      if (planFile.kind !== o.workflow) {
+        throw new Error(
+          `--workflow-plan declares kind "${planFile.kind}" but --workflow is "${String(o.workflow)}"; they must match`,
+        );
+      }
+    }
+
+    /*
+     * The ONE choice rule, shared by every plan source: a pinned id is used only if it was
+     * actually offered; a single candidate is recorded WITHOUT asking LAYA (a one-option
+     * question carries no information and the real provider refuses it); otherwise LAYA
+     * chooses among the offered plans. It never invents a plan and never falls back.
+     */
+    const choosePlan = async (choices: readonly WorkflowPlanCandidate[], pinned?: string): Promise<{ id: string; source: string }> => {
+      if (pinned !== undefined) {
+        if (!choices.some((c) => c.choice === pinned)) {
+          throw new Error(`pinned plan "${pinned}" is not one of the offered plans [${choices.map((c) => c.choice).join(', ')}]`);
+        }
+        return { id: pinned, source: 'pinned (--workflow-choice)' };
+      }
+      if (provider !== null && choices.length > 1) {
+        const id = await decideWorkflowPlan(provider, {
+          task: { taskId: rootId, objective: o.objective },
+          candidates: choices,
+        });
+        return { id, source: 'Laya decision' };
+      }
+      return { id: choices[0]!.choice, source: provider === null ? 'no provider: first bounded plan' : 'single candidate' };
+    };
+    // Recorded on the report so a run says WHERE its plan came from.
+    const planFileLabel = o.workflowPlan === undefined ? null : o.workflowPlan;
+
     if (o.workflow === 'collaborate') {
       /*
        * B4.1 (功能 B): ONE goal, 2–3 models, each with its own child task, and a
@@ -958,36 +1045,39 @@ export async function runRoundCli(
             `checkout). Run the collaboration group in a non-git working directory`,
         );
       }
-      collaborationPlanUsed = (o.workflowChoice !== undefined && isCollaborationChoice(o.workflowChoice))
-        ? o.workflowChoice
-        : await (async () => {
-          const choices: WorkflowPlanCandidate[] = COLLABORATION_PLAN_CHOICES.map((c) => ({
-            choice: c.choice,
-            label: c.label,
-            // The integrator is part of what LAYA is choosing, so it is named in the
-            // criteria text rather than decided afterwards by the CLI.
-            roles: [...c.members.map((m) => m.role), `integration by collaborator ${c.integratorMember}`],
-          }));
-          if (provider === null) return COLLABORATION_PLAN_CHOICES[0]!.choice;
-          return (await decideWorkflowPlan(provider, {
-            task: { taskId: rootId, objective: o.objective },
-            candidates: choices,
-          })) as CollaborationChoice;
-        })();
-      collaborationPlanSource: {
-        if (o.workflowChoice !== undefined && isCollaborationChoice(o.workflowChoice)) {
-          workflowPlanSource = 'pinned (--workflow-choice)';
-        } else {
-          workflowPlanSource = provider === null ? 'no provider: first bounded plan' : 'Laya decision';
-        }
+      // B4.2: the plan spec comes from the user's file when one was given, else the
+      // built-in duo/trio. Both produce the SAME `members` + `integratorMember` shape, and
+      // both go through the SAME candidate builder, so they cannot drift apart.
+      const collabPlans = planFile === null ? null : planFile.plans.filter(isCollaborationPlan);
+      if (collabPlans !== null && collabPlans.length === 0) {
+        throw new Error('the plan file declares no collaboration plans for --workflow collaborate');
       }
-      collaborationIds = collaborationTaskIds(collaborationPlanUsed, rootId);
-      const planSpec = collaborationPlanFor(collaborationPlanUsed);
+      const collabChoices: WorkflowPlanCandidate[] = planFile === null
+        ? COLLABORATION_PLAN_CHOICES.map((c) => ({
+            choice: c.choice, label: c.label,
+            roles: [...c.members.map((m) => m.role), `integration by collaborator ${c.integratorMember}`],
+          }))
+        : collabPlans!.map((p) => ({
+            choice: p.id, label: p.label,
+            roles: [...p.members.map((m) => m.role), `integration by collaborator ${p.integratorMember}`],
+          }));
+      const collabPinned = o.workflowChoice !== undefined && (planFile !== null || isCollaborationChoice(o.workflowChoice))
+        ? o.workflowChoice : undefined;
+      const collabChosen = await choosePlan(collabChoices, collabPinned);
+      collaborationPlanUsed = collabChosen.id;
+      workflowPlanSource = collabChosen.source;
+      const collabSpec = planFile === null
+        ? collaborationPlanFor(collabChosen.id)
+        : collabPlans!.find((p) => p.id === collabChosen.id)!;
+      collaborationMembers = collabSpec.members as readonly PlanFileStep[];
+      collaborationIntegratorMember = collabSpec.integratorMember;
+      collaborationIds = planFileCollaborationTaskIds(rootId, collaborationMembers.length, collaborationIntegratorMember);
       // REQ-14's own bound, asserted against the plan itself rather than assumed: a plan
-      // outside 2-3 members is not a collaboration group and is refused, not run.
-      if (planSpec.members.length < COLLABORATION_MIN_MEMBERS || planSpec.members.length > COLLABORATION_MAX_MEMBERS) {
+      // outside 2-3 members is not a collaboration group and is refused, not run. (A file
+      // plan is already bounded by `parsePlanFile`; this keeps the built-ins honest too.)
+      if (collaborationMembers.length < COLLABORATION_MIN_MEMBERS || collaborationMembers.length > COLLABORATION_MAX_MEMBERS) {
         throw new Error(
-          `collaboration plan "${collaborationPlanUsed}" declares ${planSpec.members.length} members, outside the ` +
+          `collaboration plan "${collaborationPlanUsed}" declares ${collaborationMembers.length} members, outside the ` +
             `${COLLABORATION_MIN_MEMBERS}-${COLLABORATION_MAX_MEMBERS} a collaboration group may have`,
         );
       }
@@ -999,76 +1089,82 @@ export async function runRoundCli(
           e.modelId !== null && e.modelId !== '' && registry.isModelAvailable(e.agentId, e.modelId))
         .map((e) => `${e.agentId}/${e.modelId}`);
       const distinctPairs = [...new Set(usablePairs)];
-      if (distinctPairs.length < planSpec.members.length) {
+      if (distinctPairs.length < collaborationMembers.length) {
         throw new Error(
-          `a "${collaborationPlanUsed}" collaboration group needs ${planSpec.members.length} distinct available ` +
+          `a "${collaborationPlanUsed}" collaboration group needs ${collaborationMembers.length} distinct available ` +
             `Agent x Model pairs, but only ${distinctPairs.length} is registered and available ` +
             `(${distinctPairs.length === 0 ? 'none' : distinctPairs.join(', ')}); no pair is duplicated to fill a seat`,
         );
       }
-      planned = wb.planWithCandidates(spec, buildCollaborationCandidates(collaborationPlanUsed, o.objective, rootId), [
-        `B4.1 collaboration group: ${collaborationPlanUsed} (${workflowPlanSource}); ` +
-          `${planSpec.members.length} members + 1 integration task by collaborator ${planSpec.integratorMember}`,
+      planned = wb.planWithCandidates(spec, buildCollaborationMemberCandidates(collaborationMembers, collaborationIntegratorMember, o.objective, rootId), [
+        `${planFile === null ? 'B4.1' : 'B4.2 file'} collaboration group: ${collaborationPlanUsed} (${workflowPlanSource}); ` +
+          `${collaborationMembers.length} members + 1 integration task by collaborator ${collaborationIntegratorMember}`,
       ]);
       report.workflow = {
         enabled: true,
         mode: 'collaborate',
         choice: collaborationPlanUsed,
         source: workflowPlanSource,
-        members: planSpec.members.map((m, i) => ({
+        ...(planFileLabel === null ? {} : { planFile: planFileLabel }),
+        members: collaborationMembers.map((m, i) => ({
           index: i + 1,
           taskId: collaborationIds!.memberIds[i]!,
           role: m.role,
           taskType: m.taskType,
-          fileScope: m.fileScope,
+          fileScope: m.fileScope ?? null,
           deliverable: m.deliverable,
         })),
         integrator: {
-          index: planSpec.integratorMember,
+          index: collaborationIntegratorMember,
           taskId: collaborationIds.integratorId,
-          memberTaskId: collaborationIds.memberIds[planSpec.integratorMember - 1]!,
+          memberTaskId: collaborationIds.memberIds[collaborationIntegratorMember - 1]!,
           note: 'a selected member, reused pair: no fourth collaboration model is added for integration',
         },
         note: 'sequential: members run in order; integration depends on EVERY member and starts only when all are succeeded',
       };
     } else if (o.workflow === 'sequential') {
       /*
-       * B4.0: a bounded heterogeneous plan (research -> implementation -> test). LAYA
-       * picks among the OFFERED plans; it never invents a DAG. A pinned choice or a
-       * single candidate is handled by the explicit rule and does NOT fake a LAYA
-       * comparison. The chosen candidates go through the SAME commitPlan path.
+       * B4.0/B4.2: a bounded heterogeneous plan (research -> implementation -> test, or a
+       * user's own steps). LAYA picks among the OFFERED plans; it never invents a DAG. A
+       * pinned choice or a single candidate is handled by the explicit rule and does NOT
+       * fake a LAYA comparison. The chosen candidates go through the SAME commitPlan path.
        */
-      const choices: WorkflowPlanCandidate[] = WORKFLOW_PLAN_CHOICES.map((c) => ({
-        choice: c.choice, label: c.label, roles: c.steps.map((s) => s.role),
-      }));
-      if (o.workflowChoice !== undefined && isWorkflowChoice(o.workflowChoice)) {
-        workflowChoiceUsed = o.workflowChoice;
-        workflowPlanSource = 'pinned (--workflow-choice)';
-      } else if (provider !== null && choices.length > 1) {
-        workflowChoiceUsed = (await decideWorkflowPlan(provider, {
-          task: { taskId: rootId, objective: o.objective },
-          candidates: choices,
-        })) as HeterogeneousWorkflowChoice;
-        workflowPlanSource = 'Laya decision';
-      } else {
-        workflowChoiceUsed = WORKFLOW_PLAN_CHOICES[0]!.choice;
-        workflowPlanSource = provider === null ? 'no provider: first bounded plan' : 'single candidate';
+      const seqPlans = planFile === null ? null : planFile.plans.filter(isSequentialPlan);
+      if (seqPlans !== null && seqPlans.length === 0) {
+        throw new Error('the plan file declares no sequential plans for --workflow sequential');
       }
-      planned = wb.planWithCandidates(spec, buildWorkflowCandidates(workflowChoiceUsed, o.objective, rootId), [
-        `B4.0 sequential workflow plan: ${workflowChoiceUsed} (${workflowPlanSource})`,
+      const choices: WorkflowPlanCandidate[] = planFile === null
+        ? WORKFLOW_PLAN_CHOICES.map((c) => ({ choice: c.choice, label: c.label, roles: c.steps.map((s) => s.role) }))
+        : seqPlans!.map((p) => ({ choice: p.id, label: p.label, roles: p.steps.map((s) => s.role) }));
+      const pinned = o.workflowChoice !== undefined && (planFile !== null || isWorkflowChoice(o.workflowChoice))
+        ? o.workflowChoice : undefined;
+      const chosen = await choosePlan(choices, pinned);
+      workflowChoiceUsed = chosen.id;
+      workflowPlanSource = chosen.source;
+      sequentialSteps = planFile === null
+        ? (WORKFLOW_PLAN_CHOICES.find((c) => c.choice === chosen.id)?.steps ?? [])
+            .map((s) => ({ role: s.role, taskType: s.taskType, deliverable: s.deliverable }))
+        : seqPlans!.find((p) => p.id === chosen.id)!.steps;
+      planned = wb.planWithCandidates(spec, buildSequentialStepCandidates(sequentialSteps, o.objective, rootId), [
+        `${planFile === null ? 'B4.0' : 'B4.2 file'} sequential workflow plan: ${workflowChoiceUsed} (${workflowPlanSource})`,
       ]);
     } else {
       planned = wb.plan(spec, classification);
     }
     // B4.0: report the workflow plan (mode, choice, how it was chosen, the steps).
     if (o.workflow === 'sequential' && workflowChoiceUsed !== null) {
-      const plan = WORKFLOW_PLAN_CHOICES.find((c) => c.choice === workflowChoiceUsed);
       report.workflow = {
         enabled: true,
         mode: 'sequential',
         choice: workflowChoiceUsed,
         source: workflowPlanSource,
-        steps: (plan?.steps ?? []).map((s) => ({ role: s.role, taskType: s.taskType, deliverable: s.deliverable })),
+        ...(planFileLabel === null ? {} : { planFile: planFileLabel }),
+        steps: sequentialSteps.map((s) => ({
+          role: s.role,
+          taskType: s.taskType,
+          deliverable: s.deliverable,
+          fileScope: s.fileScope ?? null,
+        })),
         note: 'sequential: each step depends on the one before; PARALLEL_WRITE=CLOSED',
       };
     } else if (o.workflow !== 'collaborate') {
@@ -1987,7 +2083,7 @@ export async function runRoundCli(
       const memberRows = collaborationIds.memberIds.map((taskId, i) => {
         const task = wb.store.get(taskId);
         const session = wb.sessionForTask(taskId);
-        const planSpecMember = collaborationPlanFor(collaborationPlanUsed!).members[i];
+        const planSpecMember = collaborationMembers[i];
         const isAssigned = assignedOk(taskId);
         const agentId = task?.agentId ?? null;
         const modelId = task?.modelId ?? null;
@@ -2470,8 +2566,7 @@ export async function runRoundCli(
     w(`  probed        ${quotaProbed.length} agent(s) with real quota records`);
     w(`  workspace     ${workspace === null ? 'SHARED cwd - isolation unavailable (not a git repository)' : `isolated worktrees (repo ${repoRoot})`}`);
     if (collaborationIds !== null) {
-      const planSpec = collaborationPlanFor(collaborationPlanUsed!);
-      w(`  collaboration ${collaborationPlanUsed} (${workflowPlanSource}); integration by collaborator ${planSpec.integratorMember}`);
+      w(`  collaboration ${collaborationPlanUsed} (${workflowPlanSource}); integration by collaborator ${collaborationIntegratorMember}`);
       for (const id of collaborationIds.memberIds) {
         const t = wb.store.get(id);
         w(`    member      ${id} (${t?.taskType ?? '?'}) ${t?.agentId ?? '?'}/${t?.modelId ?? '?'} session=${wb.sessionForTask(id)?.sessionId ?? 'none'}`);
