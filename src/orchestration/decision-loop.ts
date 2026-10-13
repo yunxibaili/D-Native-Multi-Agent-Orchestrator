@@ -92,6 +92,15 @@ export const ACTION_PARAMETERS_FIELD = 'action_parameters';
 export const ORCHESTRATION_ACTION_ID = 'next_action';
 
 /**
+ * B4.0b: the `state` key carrying acceptance material for `complete`.
+ *
+ * A separate key rather than a wider `next_action` blob, so the status projection's
+ * shape (and every reader of it) is unchanged, and so a reader can tell "the brain was
+ * given evidence" from "the brain was not" without inspecting the contents.
+ */
+export const ACCEPTANCE_MATERIAL_FIELD = 'acceptance_material';
+
+/**
  * The answer space, which is P6-D1's whole point at this layer.
  *
  * Until D1 the criteria offered exactly three actions, so the other eight existed in
@@ -121,6 +130,62 @@ export const ACTION_CRITERIA: Record<(typeof ALL_ACTIONS)[number], string> = {
 export interface OrchestrationDecisionRequestOptions {
   /** Prose context for the brain. Observations, never commands. */
   readonly instructions?: string;
+  /**
+   * B4.0b: the material a `complete` judgement is actually MADE from.
+   *
+   * The observation is STATUS ONLY - it says a task reached `to_verify`, not whether
+   * the run met the criteria. A brain asked to accept on that alone is being asked to
+   * guess, and this seam is what stops the guess from being the only option.
+   *
+   * Deliberately a narrow, caller-built projection rather than a new subsystem: no
+   * second authority, no evidence store, no transcript. It carries the objective, and
+   * for each awaiting-verification task ONLY that same task's criteria and the bounded
+   * output of the run correlated to its OWN attempt. Absent means the caller chose not
+   * to supply it, which is the pre-B4.0b behaviour and stays supported.
+   */
+  readonly acceptanceMaterial?: AcceptanceMaterial;
+}
+
+/**
+ * One task's acceptance evidence, for the single task a `complete` decision is about.
+ *
+ * Every field is a FACT or an explicit absence. `unknown*` flags exist so a missing
+ * fact is reported as missing rather than silently read as a pass.
+ */
+export interface AcceptanceMaterialEntry {
+  readonly taskId: string;
+  readonly taskType: string;
+  /** The criteria THIS task was created with. Never another task's. */
+  readonly acceptanceCriteria: string;
+  /** The attempt this task's own execution produced, when one is known. */
+  readonly attemptId: string | null;
+  readonly agentId: string | null;
+  readonly modelId: string | null;
+  /** Byte-bounded tail of assistant text for THIS run. `''` when there is no run. */
+  readonly output: string;
+  /** `RunResult.outputTruncated`, propagated so a partial read is never a full one. */
+  readonly outputTruncated: boolean;
+  /** True when this material was bounded further for the request. */
+  readonly boundedForRequest: boolean;
+  /** Reference to the full material. The transcript is NOT copied into the request. */
+  readonly transcriptPath: string | null;
+  readonly artifacts: readonly string[];
+  /** Terminal state of this run, or `null` when no run is known. */
+  readonly runState: string | null;
+  readonly exitCode: number | null;
+  /** Why this run failed, when it did. */
+  readonly runError: { readonly code: string; readonly message: string } | null;
+  /** No attempt/RunResult could be paired for this task. Explicit, never blank. */
+  readonly executionMissing: boolean;
+  /** No acceptance criteria were recorded for this task. */
+  readonly acceptanceCriteriaMissing: boolean;
+}
+
+export interface AcceptanceMaterial {
+  /** The original objective the round was asked to accomplish. */
+  readonly objective: string;
+  /** Tasks awaiting verification. Same-task entries only. */
+  readonly entries: readonly AcceptanceMaterialEntry[];
 }
 
 /**
@@ -149,6 +214,12 @@ export function orchestrationDecisionRequest(
       // Machine-readable, so the model can be told WHICH fields each action needs
       // instead of having to infer them from prose it may skim.
       [ACTION_PARAMETERS_FIELD]: JSON.stringify(ACTION_PARAMETERS),
+      // B4.0b: PRESENT ONLY when the caller supplied it. A caller that does not (every
+      // non-workflow round) gets the byte-identical request it got before this seam,
+      // so default behaviour is untouched rather than "mostly the same".
+      ...(options.acceptanceMaterial === undefined
+        ? {}
+        : { [ACCEPTANCE_MATERIAL_FIELD]: JSON.stringify(options.acceptanceMaterial) }),
     },
   };
 }
@@ -231,6 +302,12 @@ export interface DecisionLoopOptions {
   /** Extra prose context for the request. */
   readonly instructions?: string;
   /**
+   * B4.0b: forwarded verbatim into the request. See
+   * `OrchestrationDecisionRequestOptions.acceptanceMaterial`. Omitted by every caller
+   * that does not want it, which is why the field is optional rather than empty.
+   */
+  readonly acceptanceMaterial?: AcceptanceMaterial;
+  /**
    * P6-D1: the EXISTING authorities this cycle may reach.
    *
    * Injected, not constructed. `NativeWorkbench.decisionCapabilities()` supplies them
@@ -286,7 +363,10 @@ export async function runDecisionCycle(options: DecisionLoopOptions): Promise<De
   try {
     const request = orchestrationDecisionRequest(
       observation,
-      options.instructions === undefined ? {} : { instructions: options.instructions },
+      {
+        ...(options.instructions === undefined ? {} : { instructions: options.instructions }),
+        ...(options.acceptanceMaterial === undefined ? {} : { acceptanceMaterial: options.acceptanceMaterial }),
+      },
     );
     const response = await options.provider.decide(request);
     rawAction = extractAction(response);

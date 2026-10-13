@@ -295,6 +295,58 @@ section('fixed selection survives the workflow; illegal plans are refused');
 }
 
 // =========================================================================
+section('B4.0b atomic plan boundary: both refusals happen BEFORE any write');
+
+/*
+ * The two cases the existing `validateCandidateDag` does NOT catch. Both used to be
+ * caught only by `commitPlan`, i.e. after `createRoot` had already written: the root
+ * was left behind and a corrected same-id retry was refused forever. Each case is
+ * therefore asserted on all three facts that matter - refused, store UNCHANGED, and
+ * the corrected same-id plan still commits.
+ */
+{
+  // Boundary 1: a candidate whose id IS the root id about to be created.
+  const h = makeHarness({ provider: stubProvider(`${A}\u0000${MA}`) });
+  const spec = specFor();
+  const before = h.wb.store.all().length;
+  let msg = '';
+  try {
+    h.wb.planWithCandidates(spec, [{ taskId: 'r', parentTaskId: 'r', taskType: 'research', description: 'collides with the root', dependencies: [], requiredTaskTypes: ['research'] }]);
+  } catch (e) { msg = (e as Error).message; }
+  check('boundary: a candidate with the root id is refused', msg.includes('same id as the root'), msg);
+  check('boundary: that refusal wrote NOTHING', h.wb.store.all().length === before, `${before} -> ${h.wb.store.all().length}`);
+  check('boundary: the root was not left behind', !h.wb.store.has('r'), String(h.wb.store.has('r')));
+  const okCands = buildWorkflowCandidates('full', 'goal', 'r');
+  for (const c of okCands) h.budgets.task(c.taskId, 100_000);
+  let retried = '';
+  try { h.wb.planWithCandidates(spec, okCands); retried = 'ok'; } catch (e) { retried = (e as Error).message; }
+  check('boundary: after correcting the id, the SAME root id commits', retried === 'ok', retried);
+  check('boundary: the corrected retry really created the root and its steps',
+    h.wb.store.has('r') && h.wb.store.has('r-w1'), `${retried} ${h.wb.store.all().map((t) => t.taskId).join(',')}`);
+}
+{
+  // Boundary 2: the FIRST candidate has no parent.
+  const h = makeHarness({ provider: stubProvider(`${A}\u0000${MA}`) });
+  const spec = specFor();
+  const before = h.wb.store.all().length;
+  let msg = '';
+  try {
+    h.wb.planWithCandidates(spec, [{ taskId: 'r-w1', parentTaskId: null, taskType: 'research', description: 'orphan', dependencies: [], requiredTaskTypes: ['research'] }]);
+  } catch (e) { msg = (e as Error).message; }
+  check('boundary: a first candidate with no parent is refused', msg.includes('has no parent'), msg);
+  check('boundary: that refusal wrote NOTHING', h.wb.store.all().length === before, `${before} -> ${h.wb.store.all().length}`);
+  check('boundary: no orphan task was left behind', !h.wb.store.has('r-w1'), String(h.wb.store.has('r-w1')));
+  const okCands = buildWorkflowCandidates('lean', 'goal', 'r');
+  for (const c of okCands) h.budgets.task(c.taskId, 100_000);
+  let retried = '';
+  try { h.wb.planWithCandidates(spec, okCands); retried = 'ok'; } catch (e) { retried = (e as Error).message; }
+  check('boundary: after correcting the parent, the SAME root id commits', retried === 'ok', retried);
+  check('boundary: the corrected retry really created both steps',
+    h.wb.store.has('r') && h.wb.store.has('r-w1') && h.wb.store.has('r-w2'),
+    `${retried} ${h.wb.store.all().map((t) => t.taskId).join(',')}`);
+}
+
+// =========================================================================
 section('CLI opt-in: usage errors reject before any runtime call; opt-out unchanged');
 
 {

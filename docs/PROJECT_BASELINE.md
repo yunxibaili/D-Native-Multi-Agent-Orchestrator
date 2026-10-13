@@ -27,13 +27,15 @@ README 是导航。用户明确指令优先；发现源码、证据与基线不�
 | B1.3a | DSH 输出保真收口 PASS；其测试 P2 在 B1.4a 关闭 |
 | B1.4a | 独立 PASS：动态 fixed 约束、CLI 缺值、DSH setup 清理收口 |
 | B1 overall | NOT SEALED |
-| B4.0 | 有界异构计划、依赖和材料交接已接线；原先 CLI 只跑一步的问题由 B4.0a 修正 |
-| B4.0a | 独立审核 BLOCKED：有界顺序推进已验证，但 LAYA complete 决策缺任务目标/验收条件/执行材料 |
+| B4.0 / B4.0a / B4.0b | 独立 PASS WITH P2；顺序工作流受控链路封板，非真实模型验收 |
+| B4 overall | NOT SEALED；功能 B 尚未实现 |
 | B4.1 / B2 / B3 / B5 | PLANNED；本轮未授权启动实现 |
 | PARALLEL_WRITE | CLOSED |
 | 本产品前端 | 需求未确认；进入前端前提醒用户单独梳理 |
 
 B4.0 是在现有底座上提前交付最小工作流，不自动授权整个 B4，也不把 B2/B3 的缺口宣称已实现。
+本次封板适用有界 full/lean、现有选择/调度/Verification/审核的 hermetic 生产调用链；
+不认证真实 LAYA/Agent 的判断质量、真实多模型兼容性或全部后端完成。
 P0/P1 由具体影响与证据裁定；非阻断 P2 进入计划，不重开所有历史封板。
 
 ## 3. 产品目标与当前差距
@@ -103,6 +105,18 @@ Verification 明确接受）后才准入；循环在全部成功、终态失败�
 候选 ID 等于新根 ID、首候选 parent=null 仍在创建根后被 commitPlan 拒绝，留下根并阻止重试。
 顺序写准入适配：`hasParallelWorkBeside` 只把 RUNNING（存活写者）或依赖已满足的就绪任务算作并行工作，
 未就绪的下游不再误判；独立并行写与存活写者保护不变，资源门未关闭。
+B4.0b 给 `complete` 决策接入验收材料：新增 `acceptance_material` 请求字段，仅 `--workflow sequential` 发送，
+含原始目标，以及**仅**待验证任务的自身验收条件、自身 Attempt 配对的 RunResult 有界输出、transcript 引用，
+并如实标记 `executionMissing`/`acceptanceCriteriaMissing`/`outputTruncated`/`boundedForRequest`；
+材料取自既有 `currentActualOf` 配对（同任务同执行，缺失为 null 而非旧结果），不广播 transcript、不复制历史上下文，
+不新增 verifier/证据库/manager/第二 authority；LAYA 选择 `complete` 后仍走既有 `applyVerification`，
+Runtime exit=0 不等于接受。
+三个 P2 收口：`planWithCandidates` 在任何写入前拒绝候选 ID 等于根 ID、首个候选 parent=null
+（不再先建根再由 commitPlan 拒绝，修正后同 ID 可重试）；reviewer fixture 按 fake adapter 契约提供 `data.text`
+并满足 verdict 全字段，合法/非法 verdict 均有对照；`RoundCliOverrides.roundResultDir` 复用既有
+`publishRoundResult({dir})` 路径 seam 隔离报告发布目录，不改共享 `process.env`。
+独立审核确认以上原定 P1/P2 关闭；剩余非阻断 P2 是新套件对 review Attempt 的断言过弱，
+实际生产记录已由独立 probe 确认，后续顺手补强测试，不再为它单开封板轮次。
 功能 B（同目标 2–3 模型分工共建/集成）与完整角色计划尚未实现；READ fan-out 使用父容器与独立 child task，
 ALL-terminal 是聚合事实不是通过验收；PARALLEL_WRITE=CLOSED。
 
@@ -119,8 +133,7 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 ## 7. 真实缺口与后续边界
 
 1. DSH 缺逐请求选模型与恢复协议；要用 DSH 做多模型调配，必须先取得受支持的真实接口证据。
-2. B4.0a 已补有界顺序状态推进；须先给 LAYA complete 决策提供同任务验收条件与实际有界材料，
-   补原子计划边界及测试收口，才能认证 workflow 闭环。
+2. B4.0–B4.0b 的顺序工作流受控链路已独立封板；
    功能 B（同目标 2–3 模型分工共建与集成责任）、完整角色计划、prefer/角色默认仍缺，留后续切片。
 3. Skill/MCP 只有部分意图/原生支持，目录、授权、具体选择和实际调用核对未闭环。
 4. 动态免费资格、账户共享额度和全流程费用授权未验收；预算 units 不是 token/货币。
@@ -135,7 +148,53 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 
 ## 8. 最近独立证据与上传记录
 
-本轮 B4.0a 独立审核（2026-10-13）：**BLOCKED**。未修改生产代码或测试。
+本轮 B4.0b 独立审核（2026-10-13）：**PASS WITH P2**。Codex 仅更新文档，未修改代码或测试。
+独立实跑 typecheck PASS、b40a-cli-workflow 39/0、b40-workflow 41/0、decision 397/0、
+unified-review 130/0、review-loop 169/0、workbench 413/0、state-loop 169/0、handoff-production-round 312/0；
+isolation 守卫 5 opt-in/0 违规，命令 exit 均 0；diff check PASS，生产 runtime.run 边=1、新增 authority=0。
+
+- 目标/材料：截获请求包含原始目标及当前 to_verify 任务验收条件，att_0001/2/3 分别对应 STEP_OUT_1/2/3，
+  材料未混用其他步骤输出。成功 full=3 次执行、exit=0；不满足或空输出均仅 research 执行、exit=1、incomplete。
+- 有界/缺事实：3000+ 字符 fixture 输出在请求中为 2000 字符，两个截断标记为 true；
+  内存模拟缺当前执行关联时 attemptId=null、output=''、executionMissing=true，下游未启动，未挪用旧结果。
+- 原子计划：真实 planWithCandidates 的根 ID 冲突/null parent 回归拒绝前后 store 不变，同 ID 修正可提交（41/0）。
+- 审核：真实请求含三步材料，completed/pass，reviewEvidence.ok=true；att_0004 在 roundResult.machine.attempts 中
+  实际存在且 kind=review。无效 verdict 的正常回归仍拒绝，未把 fixture 当真实模型。
+- 隔离：独立 child 的 ORCH_HOME 指向本轮 owned sentinel，三种输出 case 都发布到各自 roundResultDir，
+  sentinel 内容保持不变；不依赖未关联的旁路文件来宣称隔离。
+- 非阻断 P2：tests/b40a-cli-workflow.test.ts 的 `(reviewEvidence ?? []) !== undefined` 恒真，
+  “已记录 review Attempt”断言只剩调用次数与目录存在检查。内存负控让 recordReviewEvidence 返回失败并不追加，
+  suite 仍 39/0、exit=0，证明该断言不承重。最小补强是断言 ok/attemptId，并解析到对应 kind=review 的实际记录。
+  实际正常记录已独立验证，不阻断本片；放入下一次相关测试修改，不单开治理框架或封板轮次。
+
+上述 probe 均受控，通过内存 hook 导出/替换测试 seam，未覆盖工作树；自身命名临时目录已清理。
+未跑 full suite、未调用真实 LAYA/模型、未读凭据、未改本机 Agent 配置；历史能力限制保持。
+
+B4.0b 实现方报告（与上文独立实跑区分）：`b40a-cli-workflow` **39/0**、`b40-workflow` **41/0**；
+decision 397/0、unified-review 130/0、review-loop 169/0、round-result 293/0、workbench 413/0、planner 189/0、
+orchestration 968/0、handoff-production-round 312/0、initial-assignment-decision 37/0、b14-selection 46/0、
+state-loop 169/0、assignment 235/0、execution-lifecycle 136/0、contract 248/0（2 skipped）、unit 92/0、
+resource-claim 192/0；isolation 守卫 5 opt-in/0 违规；以上命令 exit=0。
+typecheck PASS、`git diff --check` clean、`runtime.run` 生产调用边=1、新增 authority=0、owned 残留 0。
+清理失败负控实测：强制清理失败时 exit=1（39 passed/0 failed 也不放过），恢复后 exit=0。
+
+- 主 P1 关闭证据：材料请求只出现在 workflow opt-in；每个材料都带原始目标 `OBJECTIVE_SENTINEL_77`；
+  条目带自身 `deliverable:` 验收条件；待验证任务的材料含**自身** `STEP_OUT_n` 且不含其他步骤标记；
+  输出的 deliverable 不满足时 LAYA 不接受、下游不启动、报告 `no-progress` 且 incomplete；
+  输出为空时材料如实为空、不伪造通过。
+- P2-A：根 ID 冲突与首个候选 parent=null 均在任何写入前拒绝，store 条数不变、无残留根/孤儿任务，
+  修正后同一根 ID 可正常提交。
+- P2-B：合法 verdict 得 `unifiedReview.status=completed`、`verdict=pass`，真实 review Attempt 已记录，
+  审核请求含三步实际输出；缺 `reviewedAt`/`findings`/`recommendedAction` 的 verdict 被拒为
+  `reviewer-output-invalid`，不再出现「只断言 reviewer 被调用」。
+- P2-C：发布路径落在 owned 目录，调用者 sentinel 报告文件内容未变；默认解析器仍按 `$ORCH_HOME` 解析
+  （用显式 env 调用纯函数验证，未读写真实 home）。
+
+以上均为本轮 hermetic fixture 证据，不提升为真实模型兼容性证据；
+未跑 full suite、未调用真实模型、未读凭据、未改本机配置。
+本轮不扩展功能 B、Skill/MCP、费用或掉线恢复。新增非阻断 P2 记录后续，不扩成全面审核。
+
+上一轮 B4.0a 独立审核（2026-10-13）：**BLOCKED**。未修改生产代码或测试。
 独立实跑：typecheck PASS；b40a-cli-workflow 22/0、b40-workflow 31/0、resource-claim 192/0、
 orchestration 968/0、workbench 413/0、handoff-production-round 312/0、b14-selection 46/0、
 state-loop 169/0、planner 189/0、execution-lifecycle 136/0、contract 248/0（2 skipped）、unit 92/0；
@@ -207,5 +266,6 @@ W5 的 production admission、底层 stress、受控失败注入与真实 Agent 
 不重新沿用已关闭历史 P1，不把旧 full suite 或 fixture 成绩写成本轮结果。
 上一轮 10 份技术文档整合快照为 0b24cf93ba3b13e952e5c5a13322bb07161c09fc，分支 codex/backend-docs-next-b40。
 B4.0 BLOCKED 审核快照为 baab39e92dc7e115d974b2ee904b14aa7931700d，分支 codex/b40-review-blocked。
-本次 B4.0a 审核快照以 baab39e 为父，分支 codex/b40a-review-blocked，保留实现和两份文档纠偏；
-不合入 main，不宣布 B4.0a 完成；上传后的准确 commit 见会话交付。
+B4.0a BLOCKED 快照为 c7adbdc08493c3e27f8ec3e53ffde6ddb3f67460，分支 codex/b40a-review-blocked。
+本次 B4.0b PASS WITH P2 快照以 c7adbdc 为父，分支 codex/b40b-review-pass，包含实现与两份审核文档；
+不合入 main，不授权 B4.1/B2/B3/B5；上传后的准确 commit 见会话交付。

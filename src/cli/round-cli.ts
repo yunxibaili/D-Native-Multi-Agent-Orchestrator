@@ -105,6 +105,8 @@ import {
   WorkspaceManager,
   normalizeScopeForWorkspace,
   runDecisionCycle,
+  type AcceptanceMaterial,
+  type AcceptanceMaterialEntry,
   // TeamRun T3-a.1: READ-only fan-out vocabulary.
   FANOUT_MEMBER_TASK_TYPE,
   FANOUT_MAX_MEMBERS,
@@ -472,6 +474,19 @@ export interface RoundCliOverrides {
    * the probe source. `index.ts` passes nothing.
    */
   readonly probes?: QuotaProbe[];
+  /**
+   * B4.0b: publish `round-result.json` HERE instead of at the production default
+   * (`$ORCH_HOME/round-result.json`).
+   *
+   * The publish path already accepted a `dir`; nothing threaded it from here, so every
+   * caller - including tests driving the real CLI - wrote to the user's own report
+   * location. This is the SAME seam `provider`/`probes` use: the caller supplies the
+   * fact, production decides nothing, and `index.ts` still passes nothing.
+   *
+   * Only the report PUBLISH location. It does not move `--observe`, the store, or any
+   * other path, so it cannot quietly relocate a round's real artifacts.
+   */
+  readonly roundResultDir?: string;
   /**
    * TeamRun T2-a.3: a READ-ONLY observation seam, and an OBSERVATION seam only.
    *
@@ -1183,17 +1198,76 @@ export async function runRoundCli(
     },
   };
 
-  const runOneCycle = (): Promise<Awaited<ReturnType<typeof runDecisionCycle>>> => runDecisionCycle({
-    store: wb.store,
-    scheduler,
-    provider,
-    rootTaskId: rootId,
-    instructions:
-      'This is the first cycle of a single execution round. Choose the single next action ' +
-      'that best advances the stated objective, and give an explicit target wherever the ' +
-      'action requires one.',
-    capabilities: handoffCapabilities,
-  });
+  /*
+   * B4.0b: ACCEPTANCE MATERIAL for `complete`.
+   *
+   * Built here, once per cycle, ONLY when `--workflow sequential` opted in - every
+   * other round sends the byte-identical request it always sent.
+   *
+   * Three properties are the whole point, so they are enforced by construction:
+   *
+   *   1. SAME TASK, SAME RUN. `currentActualOf` is the existing correlated pair
+   *      (attempt record + the RunResult of THAT attempt). It returns `run: null`
+   *      rather than an older attempt's result, so a task with no result reports
+   *      `executionMissing` instead of inheriting a previous step's output.
+   *   2. AWAITING VERIFICATION ONLY. A material entry exists for a `to_verify` task
+   *      and nothing else, so this cannot grow into a context dump of the round.
+   *   3. BOUNDED + HONEST. The tail is capped here and `boundedForRequest` says so;
+   *      `outputTruncated` carries the runtime's own truncation. A reference
+   *      (`transcriptPath`) is given instead of the transcript itself.
+   */
+  const ACCEPTANCE_OUTPUT_MAX_CHARS = 2000;
+  const workflowAcceptanceMaterial = (): AcceptanceMaterial | undefined => {
+    if (o.workflow !== 'sequential') return undefined;
+    const entries: AcceptanceMaterialEntry[] = [];
+    for (const id of (planned?.children.map((c) => c.taskId) ?? [])) {
+      const task = wb.store.get(id);
+      if (task === null || task.status !== 'to_verify') continue;
+      const criteria = task.acceptanceCriteria;
+      const actual = currentActualOf(id);
+      const run = actual?.run ?? null;
+      const bounded = run === null ? '' : run.output.slice(0, ACCEPTANCE_OUTPUT_MAX_CHARS);
+      entries.push({
+        taskId: id,
+        taskType: task.taskType,
+        acceptanceCriteria: criteria,
+        attemptId: actual?.attemptId ?? null,
+        agentId: actual?.agentId ?? null,
+        modelId: actual?.modelId ?? null,
+        output: bounded,
+        outputTruncated: run?.outputTruncated === true || bounded.length < (run?.output.length ?? 0),
+        boundedForRequest: run !== null && bounded.length < run.output.length,
+        transcriptPath: run?.transcriptPath ?? null,
+        artifacts: task.artifacts.map((a) => `${a.name} (${a.kind}) ${a.path}`),
+        runState: run?.state ?? null,
+        exitCode: run?.exitCode ?? null,
+        runError: run?.error === null || run?.error === undefined ? null : { code: run.error.code, message: run.error.message },
+        executionMissing: actual === null || run === null,
+        acceptanceCriteriaMissing: criteria.trim() === '',
+      });
+    }
+    return { objective: o.objective, entries };
+  };
+
+  const runOneCycle = (): Promise<Awaited<ReturnType<typeof runDecisionCycle>>> => {
+    // Built ONCE per cycle: the material must describe the same store state the
+    // observation this cycle is taken from, not a re-read taken a moment later.
+    const acceptanceMaterial = workflowAcceptanceMaterial();
+    return runDecisionCycle({
+      store: wb.store,
+      scheduler,
+      provider,
+      rootTaskId: rootId,
+      instructions:
+        'This is the first cycle of a single execution round. Choose the single next action ' +
+        'that best advances the stated objective, and give an explicit target wherever the ' +
+        'action requires one. Accepting a task with `complete` requires the acceptance ' +
+        'material to show its own execution met its own criteria; if that material is ' +
+        'missing or does not show that, choose `wait` rather than accepting it.',
+      capabilities: handoffCapabilities,
+      ...(acceptanceMaterial === undefined ? {} : { acceptanceMaterial }),
+    });
+  };
 
   let outcome: Awaited<ReturnType<typeof runDecisionCycle>> = await runOneCycle();
   let workflowCycles = 1;
@@ -2125,6 +2199,8 @@ export async function runRoundCli(
   report.roundResultReport = renderRoundResult(roundResult);
   const published = publishRoundResult(roundResult, {
     onError: (message) => note(message),
+    // B4.0b: absent means the production default is used, unchanged.
+    ...(overrides.roundResultDir === undefined ? {} : { dir: overrides.roundResultDir }),
   });
   report.roundResultPublished = { ok: published.ok, path: published.path, code: published.code };
 

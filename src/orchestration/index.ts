@@ -373,6 +373,10 @@ export {
   orchestrationDecisionRequest,
   extractAction,
   runDecisionCycle,
+  // B4.0b: the acceptance material a `complete` decision is judged from.
+  ACCEPTANCE_MATERIAL_FIELD,
+  type AcceptanceMaterial,
+  type AcceptanceMaterialEntry,
   // P6-D1: the full eleven-action answer space, offered to the provider as criteria.
   ACTION_CRITERIA,
   type DecisionOutcome,

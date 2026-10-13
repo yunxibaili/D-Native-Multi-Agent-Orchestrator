@@ -510,6 +510,25 @@ unDecisionCycle can read a real TickResult. */
       if (this.store.has(c.taskId)) {
         throw new Error(`workbench could not commit workflow plan: task "${c.taskId}" already exists`);
       }
+      /*
+       * B4.0b, the two remaining write-before-reject boundaries. Both used to be caught
+       * only by `commitPlan`, i.e. AFTER `createRoot` had already written: the root was
+       * left behind and a corrected same-id retry was refused forever. A store is not a
+       * transaction log, so this is not made atomic in general - these two specific
+       * cases are simply rejected before the first write, reusing the same throw shape.
+       */
+      if (c.taskId === spec.taskId) {
+        throw new Error(
+          `workbench could not commit workflow plan: candidate "${c.taskId}" has the same id as the root about to be created`,
+        );
+      }
+    }
+    const first = candidates[0];
+    if (first !== undefined && first.parentTaskId === null) {
+      throw new Error(
+        `workbench could not commit workflow plan: first candidate "${first.taskId}" has no parent, ` +
+          'so it is not part of the root it would be committed under',
+      );
     }
     const existing = new Map(this.store.all().map((t) => [t.taskId, { taskId: t.taskId, dependencies: t.dependencies } as const]));
     existing.set(spec.taskId, { taskId: spec.taskId, dependencies: [] as string[] });
