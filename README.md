@@ -40,10 +40,10 @@ W5 与 B1.4a 的准确状态见唯一基线；B1 整体未封板，PARALLEL_WRIT
 DSH 当前不支持逐请求指定模型或 native session 恢复，不能声称已经通过 DSH 实现多模型调度。
 listed ≠ connected ≠ callable ≠ free；严格零新增费用尚未端到端验收。
 
-当前 **B4.5 独立 BLOCKED（剩1个P1，未封板）**：Git协作组的单worktree主链已实现并通过定向测试，
-但最后集成者停止未确认时，最终审核漏查运行期保留声明，仍可能误报成功。下一轮仅B4.5a收口；B4.4及更早已审核能力保持。
+当前 **B4.5/B4.5a独立PASS（受控最小Git顺序协作范围）**：组内单worktree交付、脏文件保护和实际成果审核已通过；
+停止未确认、no-review或scope重叠均阻止误报成功。下一候选B3.1待单独授权，B1/B4整体仍未封板。
 新草案要求的需求确认、阶段批准、监督、交付与恢复已重排；见 [交付计划](docs/BACKEND_DELIVERY_PLAN.md) 和 [下一任务](docs/NEXT_TASK.md)。
-完整后端目标粗估完成约一半；权重、证据和不确定区间见唯一基线，不能按测试数量计算进度。
+完整后端目标粗估完成约60%、剩约40%（工程估算，不含正式前端）；权重、证据和不确定区间见唯一基线，不能按测试数量计算进度。
 
 本机独立进度页：`project-progress/index.html`，不进入 Git，不接 Runtime 控制。
 本机存在时用 `node project-progress/refresh.mjs` 刷新，或加 `--serve` 只读实时预览；每次任务推进必须同步。

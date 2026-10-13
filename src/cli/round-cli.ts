@@ -104,6 +104,12 @@ import {
   TaskScheduler,
   WorkspaceManager,
   normalizeScopeForWorkspace,
+  // B4.5a: the SAME scope-overlap arithmetic the claim book uses, so a RUNTIME retained
+  // ResourceClaim is matched against the group's REAL physical workspace/scope — never by
+  // owner task id alone and never "any retained claim blocks every group".
+  scopesOverlap,
+  type ResourceClaim,
+  type ResourceScope,
   // B4.5 (P1-2): the SAME path-identity normalisation the workspace lock uses, so a
   // nested `--cwd` is detected regardless of case/separator on any platform.
   normalizeIdentityPath,
@@ -2334,7 +2340,46 @@ export async function runRoundCli(
     .map((id) => ({ taskId: id, status: wb.store.get(id)?.status ?? 'missing' }))
     .filter((m) => m.status !== 'succeeded');
   const workflowIncomplete = o.workflow !== undefined && workflowPending.length > 0;
-  const executionIncomplete = (fanoutGroups.length > 0 && !fanoutAllSettled) || workflowIncomplete;
+
+  // ---- B4.5a: the RUNTIME retained-protection check, scoped to THIS group --------
+  //
+  // The Git-CREATION check at the review below (`unconfirmedProtections`) covers the
+  // worktree-creation phase only. It does NOT see a ResourceClaim the ORCHESTRATOR
+  // retained AFTER an Agent execution whose tree stop was never confirmed
+  // (`WorkspaceManager.retainResourceProtection`). Those claims are keyed by the member /
+  // integrator task id — the actual holder, not the round root — and carry the SHARED owner
+  // workspace's `workspaceId` and scope.
+  //
+  // So they are matched here against the group's REAL physical workspace (the owner handle
+  // the report already reads), by `workspaceId` OR scope overlap. That is deliberately NOT
+  // "owner task id" (a runtime claim is never keyed by the root) and NOT "any retained claim
+  // blocks every group": an unrelated group's retention names a different workspaceId/root,
+  // so it does not match and cannot withhold an innocent group.
+  //
+  // The fact is folded into `executionIncomplete` — the SAME completion fact that already
+  // drives `report.ok`, the withheld review and the Human Gate — rather than a new status
+  // authority. A retained runtime protection means the round's physical workspace may still
+  // hold a writer, so the round is not a clean completion.
+  const groupRuntimeRetained: ResourceClaim | null = (() => {
+    if (o.workflow !== 'collaborate' || workspace === null) return null;
+    const owner = collaborationGroupOwner;
+    if (owner === null) return null;
+    const handle = workspace.get(owner);
+    if (handle === null) return null;
+    // The group's ONE physical workspace, as the claim book describes it for a group task.
+    // Built through the SAME normalizer the claim book itself uses, so the root is a
+    // canonical (separator/case-normalized) path and a scope-only `file` claim inside the
+    // worktree really overlaps it. Hand-building `{ root: handle.cwd }` left a native
+    // `C:\...` root, which `scopesOverlap`/`isUnder` could never match against the
+    // normalized `c:/...` paths the claims actually carry.
+    const groupScope: ResourceScope = normalizeScopeForWorkspace(handle.workspaceId, handle.cwd);
+    return workspace.retainedResourceProtections().find((c) =>
+      c.workspaceId === handle.workspaceId || scopesOverlap(c.scope, groupScope)) ?? null;
+  })();
+  const groupRuntimeIncomplete = groupRuntimeRetained !== null;
+
+  const executionIncomplete =
+    (fanoutGroups.length > 0 && !fanoutAllSettled) || workflowIncomplete || groupRuntimeIncomplete;
 
   report.fanoutDrain = {
     iterations: fanoutDrain.iterations,
@@ -2754,11 +2799,21 @@ export async function runRoundCli(
     //   - `failed`     would be a lie. The reviewer never ran, so it expressed no opinion.
     //   - `not_requested` would be indistinguishable from `--no-review`, hiding a real gap.
     // No verdict, no findings and no packet-derived opinion is synthesised for a skipped review.
+    // B4.5a: when the incomplete fact is a RUNTIME retained resource protection on THIS
+    // collaboration group's physical workspace (not a fan-out member that never ran), the
+    // reason says so. The WITHHELD status, code and "no review was run" outcome are the
+    // SAME existing shape — this only names the actual cause honestly.
     unifiedReview = {
       status: 'execution_incomplete',
       reviewer: o.reviewAgent,
       verdict: null,
-      reason: `the fan-out execution set is incomplete (${fanoutDrain.unresolvedAtStop.length} requested member(s) never reached an execution resolution), so no review was run; the round is unfinished rather than reviewed`,
+      reason: groupRuntimeRetained !== null
+        ? `the collaboration group's shared worktree still holds a RETAINED runtime resource protection ` +
+          `(task "${groupRuntimeRetained.taskId}" ${groupRuntimeRetained.mode}` +
+          `${groupRuntimeRetained.retentionReason === null ? '' : `: ${groupRuntimeRetained.retentionReason}`}), ` +
+          'because an execution entered the edge and its tree stop was never confirmed, so no review was run; ' +
+          'the round is unfinished rather than reviewed'
+        : `the fan-out execution set is incomplete (${fanoutDrain.unresolvedAtStop.length} requested member(s) never reached an execution resolution), so no review was run; the round is unfinished rather than reviewed`,
       findings: [],
       recommendations: [],
       outputTail: null,

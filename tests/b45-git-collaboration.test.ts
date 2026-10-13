@@ -31,12 +31,20 @@ import {
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve, sep } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { execFileSync, spawnSync } from 'node:child_process';
 
 import { runRoundCli } from '../src/cli/round-cli.ts';
 import { Orchestrator as RuntimeOrchestrator } from '../src/orchestrator/orchestrator.ts';
 import { Orchestrator as TaskOrchestrator } from '../src/orchestration/orchestrator.ts';
-import { WorkspaceManager, normalizeScopeForWorkspace } from '../src/orchestration/index.ts';
+import {
+  WorkspaceManager,
+  normalizeScope,
+  normalizeScopeForWorkspace,
+  type ResourceClaim,
+  type ResourceClaimMode,
+  type ResourceScope,
+} from '../src/orchestration/index.ts';
 import { BudgetManager, ModelRegistry } from '../src/quota/index.ts';
 import { createFakeAdapter } from './helpers.ts';
 import type { RunHandle, RunRequest, RunResult, ToolCall, AgentDescriptor } from '../src/core/types.ts';
@@ -159,6 +167,15 @@ interface Round {
   exitCode: number;
   before: RepoState | null;
   after: RepoState | null;
+  /**
+   * B4.5a: the ResourceClaims the PRODUCTION WorkspaceManager actually RETAINED this round,
+   * captured through its own `retainResourceProtection` / `retainedResourceProtections` API.
+   * Empty unless the caller opted in with `captureRetained`. This is the real book's contents,
+   * never a test-written flag.
+   */
+  retainedClaims: ResourceClaim[];
+  /** B4.5a: the production WorkspaceManager instance, once `captureRetained` was used. */
+  workspaceManager: WorkspaceManager | null;
 }
 
 function filesUnder(root: string, prefix = ''): string[] {
@@ -212,6 +229,17 @@ async function collabRound(opts: {
    * NOT the repo root. Used to prove a nested cwd is refused before anything runs.
    */
   cwdSubdir?: string;
+  /**
+   * B4.5a: FAULT INJECTION. The integration (last) run reports an UNCONFIRMED tree stop
+   * (`cleanup.treeStopConfirmed = false`); every earlier member reports a confirmed stop as
+   * normal. Its logical output and the real combined file are still produced, so the failure
+   * cannot be read as "the deliverable is missing" or "a prerequisite did not finish".
+   */
+  retainIntegratorStop?: boolean;
+  /** B4.5a: pass `--no-review` (the physical-stop exemption is being exercised). */
+  noReview?: boolean;
+  /** B4.5a: capture the production WorkspaceManager's real retained claims via its own API. */
+  captureRetained?: boolean;
 } = {}): Promise<Round> {
   const parent = ownDir();
   const repo = join(parent, 'repo');
@@ -314,6 +342,10 @@ async function collabRound(opts: {
       }
 
       const toolCalls: ToolCall[] = changedFiles.map((p, i) => ({ name: 'write', callId: `c${runIdx}-${i}`, status: 'ok', input: { filePath: p }, output: 'written' }));
+      // B4.5a: only the integration (last) run's physical stop is withheld when asked; every
+      // other run keeps the normal confirmed stop. The run still writes the combined file.
+      const integratorStopUnconfirmed =
+        opts.retainIntegratorStop === true && parsed !== null && parsed.kind === 'integration';
       const result: RunResult = {
         taskId: `t${runIdx}`, threadId: null, agentId: req.agentId,
         state: failed ? 'failed' : 'succeeded',
@@ -322,7 +354,7 @@ async function collabRound(opts: {
         output, outputTruncated: false, transcriptPath: null,
         usage: {}, toolCalls,
         error: failed ? { code: 'NONZERO_EXIT', message: 'fixture failure' } : null,
-        diagnostics: [], cleanup: { rootKilled: false, descendantsReaped: false, note: '', treeStopConfirmed: true, processStart: 'started' },
+        diagnostics: [], cleanup: { rootKilled: false, descendantsReaped: false, note: '', treeStopConfirmed: !integratorStopUnconfirmed, processStart: 'started' },
       };
       return {
         result: async () => {
@@ -400,8 +432,31 @@ async function collabRound(opts: {
     '--max-children', '4', '--max-concurrent', String(opts.maxConcurrent ?? 4),
     '--workflow', 'collaborate',
     ...(opts.planChoice !== undefined ? ['--workflow-choice', opts.planChoice] : []),
+    ...(opts.noReview === true ? ['--no-review'] : []),
   ];
   const probes = [['agent-a', 'agent-a/m1'], ['agent-a', 'agent-a/m2'], ['agent-b', 'agent-b/m1']].map(([a, m]) => probeFor(a!, m!));
+
+  // B4.5a: capture the PRODUCTION manager's real retained claims through its OWN API. This
+  // wraps the existing method (calling the real implementation), reads the real book with
+  // `retainedResourceProtections()`, and restores the prototype in `finally` — no fake flag.
+  const retainedClaims: ResourceClaim[] = [];
+  let workspaceManager: WorkspaceManager | null = null;
+  const origRetain = WorkspaceManager.prototype.retainResourceProtection;
+  let spied = false;
+  if (opts.captureRetained === true) {
+    spied = true;
+    WorkspaceManager.prototype.retainResourceProtection = function (
+      taskId: string, mode: ResourceClaimMode, scope: ResourceScope, reason: string,
+    ): number {
+      const n = origRetain.call(this, taskId, mode, scope, reason);
+      workspaceManager = this;
+      for (const cl of this.retainedResourceProtections()) {
+        if (!retainedClaims.some((s) => s.claimId === cl.claimId)) retainedClaims.push(cl);
+      }
+      return n;
+    };
+  }
+
   const before_ = process.stdout.write.bind(process.stdout);
   let captured = '';
   process.stdout.write = ((chunk: string | Uint8Array): boolean => { captured += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'); return true; }) as typeof process.stdout.write;
@@ -410,17 +465,45 @@ async function collabRound(opts: {
     exitCode = await runRoundCli(drivable as never, argv, { provider, probes, roundResultDir: reportDir });
   } finally {
     process.stdout.write = before_;
+    if (spied) WorkspaceManager.prototype.retainResourceProtection = origRetain;
   }
   const jsonStart = captured.indexOf('{');
   let report: Record<string, unknown> = {};
   if (jsonStart !== -1) { try { report = JSON.parse(captured.slice(jsonStart)); } catch { report = {}; } }
   const after = wantSnapshot ? snapshotRepo(repo, sentinelRel) : null;
-  return { report, requests, reviewRequests, decisionRequests, repo, parent, maxConcurrentRuns, exitCode, before, after };
+  return { report, requests, reviewRequests, decisionRequests, repo, parent, maxConcurrentRuns, exitCode, before, after, retainedClaims, workspaceManager };
 }
 
 const collabOf = (r: Round): CollabView =>
   (r.report.collaboration ?? { members: [], integrator: {} as never, distinctPairs: 0, pairIsDistinct: false, integratorReusesMemberPair: false, choice: '' }) as never;
 const wf = (r: Round): Record<string, unknown> => (r.report.workflow ?? {}) as Record<string, unknown>;
+
+// =========================================================================
+// B4.5a (E): NEGATIVE CONTROL entry point.
+//
+// The parent test spawns THIS file under a Node loader that removes the NEW runtime check
+// from `src/cli/round-cli.ts` in an isolated in-memory copy — the working tree is never
+// modified. Under that loader the same fault-injection scenario must DIVERGE: with the check
+// gone the round becomes ok and a review runs, which is exactly what the regression asserts
+// must NOT happen while the check is present.
+if (process.env.B45_NEGATIVE_CONTROL === '1') {
+  let diverged = false;
+  let detail = '';
+  try {
+    const r = await collabRound({
+      planChoice: 'duo',
+      pairs: [['agent-a', 'agent-a/m1'], ['agent-a', 'agent-a/m2']],
+      retainIntegratorStop: true,
+    });
+    diverged = r.report.ok === true && r.reviewRequests.length === 1;
+    detail = `ok=${String(r.report.ok)} reviews=${r.reviewRequests.length} incomplete=${String(r.report.executionIncomplete)} exit=${r.exitCode}`;
+  } catch (e) {
+    detail = `threw: ${(e as Error).message}`;
+  }
+  for (const d of tmpDirs) removeOwnedDir(d);
+  process.stdout.write(`NEGATIVE_CONTROL ${diverged ? 'DIVERGED' : 'STILL_BLOCKED'} ${detail}\n`);
+  process.exit(diverged && cleanupFailures.length === 0 ? 0 : 1);
+}
 
 // =========================================================================
 let fatal: unknown;
@@ -757,6 +840,283 @@ section('G: a NESTED --cwd (a real subdirectory, not the repo root) is refused b
   check('G: user repo .git/index bytes are unchanged', before.indexSha === after.indexSha, `${before.indexSha} -> ${after.indexSha}`);
   check('G: the tracked file content is unchanged', before.tracked === after.tracked, before.tracked);
   check('G: the untracked sentinel is unchanged', before.sentinel === after.sentinel);
+}
+
+// =========================================================================
+section('A2 (B4.5a): a NORMAL duo is unaffected — no runtime protection is retained');
+
+{
+  const r = await collabRound({
+    planChoice: 'duo',
+    pairs: [['agent-a', 'agent-a/m1'], ['agent-a', 'agent-a/m2']],
+    captureRetained: true,
+  });
+  const c = collabOf(r);
+  check('A2: the round is complete and ok', r.report.ok === true && r.report.executionIncomplete === false && r.exitCode === 0,
+    `ok=${String(r.report.ok)} incomplete=${String(r.report.executionIncomplete)} exit=${r.exitCode}`);
+  check('A2: the production manager retained NO runtime claim in a normal round', r.retainedClaims.length === 0,
+    JSON.stringify(r.retainedClaims.map((cl) => `${cl.taskId}/${cl.mode}`)));
+  check('A2: the review still runs against the group worktree (never the user checkout)',
+    r.reviewRequests.length === 1 && r.reviewRequests[0]!.cwd === c.workspace?.path && r.reviewRequests[0]!.cwd !== r.repo,
+    `n=${r.reviewRequests.length} reviewCwd=${String(r.reviewRequests[0]?.cwd)} wt=${String(c.workspace?.path)}`);
+}
+
+// =========================================================================
+section('B2 (B4.5a): the integration run\'s UNCONFIRMED stop retains a RUNTIME claim on the group workspace');
+
+{
+  const r = await collabRound({
+    planChoice: 'duo',
+    pairs: [['agent-a', 'agent-a/m1'], ['agent-a', 'agent-a/m2']],
+    retainIntegratorStop: true,
+    captureRetained: true,
+  });
+  const c = collabOf(r);
+  const wt = c.workspace?.path ?? null;
+  const rootId = String(r.report.rootTaskId);
+  const groupWorkspaceId = `task:${rootId}`;
+
+  // ---- the fault is a PHYSICAL stop, not a delivery gap ------------------
+  check('B2: every member and the integrator logically SUCCEEDED (not a missing deliverable)',
+    c.members.every((m) => m.status === 'succeeded') && c.integrator.status === 'succeeded',
+    JSON.stringify(c.members.map((m) => m.status)) + ` int=${c.integrator.status}`);
+  const combined = wt !== null && existsSync(join(wt, 'src/integration/combined.txt'))
+    ? readFileSync(join(wt, 'src/integration/combined.txt'), 'utf8') : '';
+  check('B2: the REAL combined file is complete on disk (the failure cannot be read as a missing artifact)',
+    combined.includes('DELIVERY member=1') && combined.includes('DELIVERY member=2'),
+    wt === null ? '(no worktree)' : combined.replace(/\n/g, ' | ').slice(0, 140));
+
+  // ---- the PRODUCTION manager really retained a claim, read via its own API --
+  check('B2: the production WorkspaceManager actually retained a runtime ResourceClaim',
+    r.retainedClaims.length >= 1, JSON.stringify(r.retainedClaims.map((cl) => `${cl.taskId}/${cl.mode}`)));
+  check('B2: the retained claim names THIS group\'s physical workspace (workspaceId), matched by workspace not by owner id',
+    r.retainedClaims.some((cl) => cl.workspaceId === groupWorkspaceId && cl.protectionRetained === true),
+    JSON.stringify(r.retainedClaims.map((cl) => `${cl.taskId}:${cl.workspaceId}`)));
+  check('B2: the retained claim is held by the INTEGRATOR (the real holder), keyed by its own task id — not the round root',
+    r.retainedClaims.some((cl) => cl.taskId === c.integrator.taskId && cl.taskId !== rootId && cl.protectionRetained === true),
+    JSON.stringify(r.retainedClaims.map((cl) => cl.taskId)));
+
+  // ---- the withheld review: zero calls, no fabricated pass ----------------
+  check('B2: NO review was invoked (reviewRequests = 0)', r.reviewRequests.length === 0, `n=${r.reviewRequests.length}`);
+  const ur = r.report.unifiedReview as { status?: string; verdict?: unknown } | undefined;
+  check('B2: the review is NOT a pass and carries no verdict', ur?.status !== 'completed' && ur?.verdict === null,
+    JSON.stringify(r.report.unifiedReview));
+
+  // ---- nothing reports completion ----------------------------------------
+  check('B2: report.ok is false and executionIncomplete is true',
+    r.report.ok === false && r.report.executionIncomplete === true,
+    `ok=${String(r.report.ok)} incomplete=${String(r.report.executionIncomplete)}`);
+  check('B2: the round exits non-zero', r.exitCode !== 0, String(r.exitCode));
+  const gate = (r.report.roundResult as { gate?: { roundComplete?: boolean; executionIncomplete?: boolean } } | undefined)?.gate;
+  check('B2: the final RoundResult / Human Gate does NOT report the round complete',
+    gate?.roundComplete === false && gate?.executionIncomplete === true, JSON.stringify(gate));
+}
+
+// =========================================================================
+section('C2 (B4.5a): --no-review is NOT a physical-stop exemption; a normal skip is unchanged');
+
+{
+  // C2a: same fault injection, `--no-review` given. The physical stop is unconfirmed, so it
+  // still may not be reported ok or exit 0 — `--no-review` is not an exemption.
+  const bad = await collabRound({
+    planChoice: 'duo',
+    pairs: [['agent-a', 'agent-a/m1'], ['agent-a', 'agent-a/m2']],
+    retainIntegratorStop: true,
+    noReview: true,
+  });
+  check('C2: with --no-review the retained runtime claim still blocks ok/exit0',
+    bad.report.ok === false && bad.report.executionIncomplete === true && bad.exitCode !== 0,
+    `ok=${String(bad.report.ok)} incomplete=${String(bad.report.executionIncomplete)} exit=${bad.exitCode}`);
+  check('C2: no review was requested either way', bad.reviewRequests.length === 0, `n=${bad.reviewRequests.length}`);
+
+  // C2b: a NORMAL `--no-review` round keeps the existing semantics exactly (not falsely blocked).
+  const ok = await collabRound({
+    planChoice: 'duo',
+    pairs: [['agent-a', 'agent-a/m1'], ['agent-a', 'agent-a/m2']],
+    noReview: true,
+  });
+  check('C2: a normal --no-review round is NOT falsely blocked (ok, exit 0, not incomplete)',
+    ok.report.ok === true && ok.report.executionIncomplete === false && ok.exitCode === 0,
+    `ok=${String(ok.report.ok)} incomplete=${String(ok.report.executionIncomplete)} exit=${ok.exitCode}`);
+  check('C2: a normal --no-review round reports not_requested (unchanged semantics)',
+    (ok.report.unifiedReview as { status?: string } | undefined)?.status === 'not_requested',
+    JSON.stringify(ok.report.unifiedReview));
+}
+
+// =========================================================================
+section('D2 (B4.5a): an UNRELATED group\'s retained runtime claim does not block THIS group');
+
+{
+  // Use the REAL resource API on the production manager: after its first `prepare`, register
+  // and RETAIN a claim on a DIFFERENT physical workspace (a different workspaceId/root). The
+  // current group's check must not match it, so the round is not falsely blocked. The seam
+  // wraps the existing `prepare` and is restored in `finally`.
+  const origPrepare = WorkspaceManager.prototype.prepare;
+  let mgr: WorkspaceManager | null = null;
+  let injected = false;
+  WorkspaceManager.prototype.prepare = async function (input: Parameters<WorkspaceManager['prepare']>[0]) {
+    const h = await origPrepare.call(this, input);
+    mgr = this;
+    if (!injected) {
+      injected = true;
+      const otherScope = normalizeScopeForWorkspace('task:unrelated-group', join(tmpdir(), 'b45-unrelated-root'));
+      this.claimResource({ taskId: 'unrelated-task', workspaceId: 'task:unrelated-group', mode: 'write', scope: otherScope });
+      this.retainResourceProtection('unrelated-task', 'write', otherScope, 'fault-injected unrelated retention');
+    }
+    return h;
+  };
+  let r: Round | null = null;
+  try {
+    r = await collabRound({
+      planChoice: 'duo',
+      pairs: [['agent-a', 'agent-a/m1'], ['agent-a', 'agent-a/m2']],
+    });
+  } finally {
+    WorkspaceManager.prototype.prepare = origPrepare;
+  }
+
+  const manager = mgr as WorkspaceManager | null;
+  check('D2: the unrelated retention was really registered and retained via the production API',
+    manager !== null && manager.retainedResourceProtections().some((cl) => cl.taskId === 'unrelated-task' && cl.protectionRetained === true),
+    manager === null ? '(no manager captured)' : JSON.stringify(manager.retainedResourceProtections().map((cl) => `${cl.taskId}/${cl.workspaceId}`)));
+  check('D2: the current group is NOT blocked — ok, exit 0, complete',
+    r !== null && r.report.ok === true && r.report.executionIncomplete === false && r.exitCode === 0,
+    r === null ? '(no round)' : `ok=${String(r.report.ok)} incomplete=${String(r.report.executionIncomplete)} exit=${r.exitCode}`);
+  check('D2: the group review still ran against its own worktree',
+    r !== null && r.reviewRequests.length === 1, `n=${String(r?.reviewRequests.length)}`);
+  const rootId = r === null ? '' : String(r.report.rootTaskId);
+  check('D2: NO retained claim names the current group\'s physical workspace',
+    manager !== null && !manager.retainedResourceProtections().some((cl) => cl.workspaceId === `task:${rootId}`),
+    manager === null ? '(no manager captured)' : JSON.stringify(manager.retainedResourceProtections().map((cl) => cl.workspaceId)));
+}
+
+// =========================================================================
+section('D3 (B4.5a): a SCOPE-ONLY overlapping retained claim (different workspaceId) blocks the group');
+
+{
+  // The regression Codex reproduced: the group's retained-claim check built its workspace
+  // scope by hand with a NATIVE root (`C:\...`), while a real retained claim carries a
+  // NORMALIZED `file` path (`c:/...`). `scopesOverlap`/`isUnder` therefore never saw the
+  // containment and an independent scope-only protection inside the group worktree was
+  // ignored.
+  //
+  // The seam wraps the EXISTING production manager — never a second claim book. Once the
+  // INTEGRATOR's own `releaseResourceClaimForScope` has run to completion (normal output on
+  // disk, confirmed tree stop, main execution done), it registers + retains a claim with a
+  // DIFFERENT workspaceId but a normalized `file` scope still inside the REAL worktree. Both
+  // methods are restored in `finally`.
+  const origPrepare = WorkspaceManager.prototype.prepare;
+  const origRelease = WorkspaceManager.prototype.releaseResourceClaimForScope;
+  const INJECTED_TASK_ID = 'independent-file-owner';
+  const INJECTED_WORKSPACE_ID = 'task:independent-file-owner';
+  const injectedScopes: ResourceScope[] = [];
+  let mgr: WorkspaceManager | null = null;
+  let groupCwd: string | null = null;
+  let groupWorkspaceId: string | null = null;
+  let injected = false;
+  WorkspaceManager.prototype.prepare = async function (input: Parameters<WorkspaceManager['prepare']>[0]) {
+    const h = await origPrepare.call(this, input);
+    mgr = this;
+    if (groupCwd === null) { groupCwd = h.cwd; groupWorkspaceId = h.workspaceId; }
+    return h;
+  };
+  WorkspaceManager.prototype.releaseResourceClaimForScope = function (
+    taskId: string, mode: ResourceClaimMode, scope: ResourceScope,
+  ): number {
+    const n = origRelease.call(this, taskId, mode, scope);
+    if (!injected && groupCwd !== null && taskId.endsWith('-int')) {
+      injected = true;
+      const fileScope = normalizeScope({ path: join(groupCwd, 'src', 'integration', 'combined.txt'), root: groupCwd, kind: 'file' });
+      injectedScopes.push(fileScope);
+      this.claimResource({ taskId: INJECTED_TASK_ID, workspaceId: INJECTED_WORKSPACE_ID, mode: 'write', scope: fileScope });
+      this.retainResourceProtection(INJECTED_TASK_ID, 'write', fileScope, 'fault-injected scope-only retention inside the group worktree');
+    }
+    return n;
+  };
+  let r: Round | null = null;
+  try {
+    r = await collabRound({
+      planChoice: 'duo',
+      pairs: [['agent-a', 'agent-a/m1'], ['agent-a', 'agent-a/m2']],
+      captureRetained: true,
+    });
+  } finally {
+    WorkspaceManager.prototype.prepare = origPrepare;
+    WorkspaceManager.prototype.releaseResourceClaimForScope = origRelease;
+  }
+
+  const manager = mgr as WorkspaceManager | null;
+  const round = r as Round | null;
+  const c3 = round === null ? null : collabOf(round);
+  const injectedScope = injectedScopes[0] ?? null;
+  const wt3 = c3?.workspace?.path ?? null;
+  const combined3 = wt3 !== null && existsSync(join(wt3, 'src/integration/combined.txt'))
+    ? readFileSync(join(wt3, 'src/integration/combined.txt'), 'utf8') : '';
+  const normGroup = groupCwd !== null && groupWorkspaceId !== null
+    ? normalizeScopeForWorkspace(groupWorkspaceId, groupCwd) : null;
+  const normGroupRoot = normGroup !== null && normGroup.kind === 'workspace' ? (normGroup.root ?? '') : '';
+
+  check('D3: the scope-only claim was really registered AND retained via the production API',
+    manager !== null && manager.retainedResourceProtections().some((cl) => cl.taskId === INJECTED_TASK_ID && cl.protectionRetained === true),
+    manager === null ? '(no manager captured)' : JSON.stringify(manager.retainedResourceProtections().map((cl) => `${cl.taskId}:${cl.workspaceId}`)));
+  check('D3: the retained claim\'s workspaceId is DIFFERENT from the group\'s physical workspace',
+    groupWorkspaceId !== null && round !== null &&
+      round.retainedClaims.some((cl) => cl.taskId === INJECTED_TASK_ID && cl.workspaceId === INJECTED_WORKSPACE_ID && cl.workspaceId !== groupWorkspaceId),
+    JSON.stringify({ groupWorkspaceId, retained: round?.retainedClaims.map((cl) => `${cl.taskId}:${cl.workspaceId}`) }));
+  check('D3: the injected file scope is NORMALIZED and really lies inside the REAL group worktree',
+    injectedScope !== null && injectedScope.kind === 'file' && normGroupRoot !== '' &&
+      injectedScope.path.startsWith(`${normGroupRoot}/`) && wt3 !== null && wt3 === groupCwd &&
+      existsSync(join(wt3, 'src/integration/combined.txt')),
+    JSON.stringify({ groupCwd, normGroupRoot, injectedScope }));
+  check('D3: every member and the integrator logically SUCCEEDED and the combined file is on disk (NOT a delivery failure)',
+    c3 !== null && c3.members.every((m) => m.status === 'succeeded') && c3.integrator.status === 'succeeded' && combined3.includes('COMBINED RESULT'),
+    c3 === null ? '(no round)' : JSON.stringify(c3.members.map((m) => m.status)) + ` int=${c3.integrator.status}`);
+  check('D3: the scope-only overlap BLOCKS the round — NOT ok and IS incomplete',
+    round !== null && round.report.ok === false && round.report.executionIncomplete === true,
+    round === null ? '(no round)' : `ok=${String(round.report.ok)} incomplete=${String(round.report.executionIncomplete)}`);
+  check('D3: the round exits non-zero', round !== null && round.exitCode !== 0, String(round?.exitCode));
+  check('D3: NO review ran (reviewRequests = 0)', round !== null && round.reviewRequests.length === 0, `n=${String(round?.reviewRequests.length)}`);
+  const gate3 = (round?.report.roundResult as { gate?: { roundComplete?: boolean; executionIncomplete?: boolean } } | undefined)?.gate;
+  check('D3: the final RoundResult / Human Gate does NOT report the round complete',
+    gate3?.roundComplete === false && gate3?.executionIncomplete === true, JSON.stringify(gate3));
+}
+
+// =========================================================================
+section('E2 (B4.5a): NEGATIVE CONTROL — removing the new check makes the same scenario ok + reviewed');
+
+{
+  const loaderDir = ownDir();
+  const hookPath = join(loaderDir, 'strip-runtime-check-hook.mjs');
+  const registerPath = join(loaderDir, 'register-strip-runtime-check.mjs');
+  writeFileSync(hookPath, [
+    'export async function load(url, context, nextLoad) {',
+    '  const result = await nextLoad(url, context);',
+    "  if (url.endsWith('/src/cli/round-cli.ts') && result.source != null) {",
+    "    const src = typeof result.source === 'string' ? result.source : Buffer.from(result.source).toString('utf8');",
+    "    const patched = src.replace('|| groupRuntimeIncomplete;', ';');",
+    "    if (patched === src) throw new Error('negative-control: runtime-completeness term not found');",
+    '    return { ...result, source: patched };',
+    '  }',
+    '  return result;',
+    '}',
+    '',
+  ].join('\n'), 'utf8');
+  writeFileSync(registerPath, [
+    "import { register } from 'node:module';",
+    "register('./strip-runtime-check-hook.mjs', import.meta.url);",
+    '',
+  ].join('\n'), 'utf8');
+
+  // `--import` requires a file:// URL on Windows (a bare `D:\...` path is read as a scheme).
+  const child = spawnSync(process.execPath, ['--import', pathToFileURL(registerPath).href, fileURLToPath(import.meta.url)], {
+    env: { ...process.env, B45_NEGATIVE_CONTROL: '1' },
+    encoding: 'utf8',
+    timeout: 180_000,
+  });
+  const out = `${child.stdout ?? ''}${child.stderr ?? ''}`;
+  check('E2: with the new runtime check REMOVED the same scenario DIVERGES (ok + review) — the check is load-bearing',
+    child.status === 0 && /NEGATIVE_CONTROL DIVERGED/.test(out),
+    `status=${String(child.status)} tail=${out.slice(-300).replace(/\n/g, ' | ')}`);
 }
 
 // =========================================================================

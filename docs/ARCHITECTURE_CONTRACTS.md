@@ -129,7 +129,8 @@ B4.0 顺序执行异构职责沿既有路径；B4.1 候选计划产生 N 个成�
 非Git协作组沿用共享顺序工作区。B4.5将Git协作组映射到由组root物理owner持有的单一隔离worktree，
 成员/集成者的task/session/pair不变；同物理workspaceId/scope继续由既有ResourceClaim准入与保留，
 不新造合并引擎、不自动并入用户检出。最终review也必须检查运行期retainedResourceProtections，
-不能只检查Git创建期unconfirmedProtections；当前剩余验收P1及未封板事实只见唯一基线。
+不能只检查Git创建期unconfirmedProtections。workspaceId或规范化scope命中保留声明时，
+同一executionIncomplete事实必须阻断review、ok/exit0及Human Gate完成；no-review不豁免。当前独立验收范围只见唯一基线。
 仓库子目录启动明确拒绝，用户脏文件不自动复制；最终人工集成保留。
 模型中断恢复后续复用停止确认与 handoff，不能借重试产生两个有效写入者。
 

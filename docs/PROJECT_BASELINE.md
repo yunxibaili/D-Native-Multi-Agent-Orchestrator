@@ -34,7 +34,7 @@ README 是导航。用户明确指令优先；发现源码、证据与基线不�
 | B4.3a | 独立 PASS；剩余 legacy 绑定 P1 已通过写前拒绝关闭，受控范围封板 |
 | B4 overall | NOT SEALED；功能 A/B 最小闭环 + 项目适配 + 阶段确认入口均已实现，真实模型兼容性未验收 |
 | B4.4 | 独立 PASS；最小有出处的交接/用户交付视图，声明/观察/未知分开，不等于产物或测试结果认证 |
-| B4.5 | 独立 BLOCKED；组 worktree 主链已实现，剩 1 个审核前资源保护 P1；未封板 |
+| B4.5 / B4.5a | 独立 PASS；Git根目录/committed base/单组隔离worktree顺序协作与审核保护的受控最小范围 |
 | B4.6+ / B2 / B3 / B5 | PLANNED；本轮未授权启动实现 |
 | PARALLEL_WRITE | CLOSED |
 | 本产品前端 | 本机独立进度页已授权且禁止入 Git；正式工作台 UI 需求仍待确认 |
@@ -106,7 +106,7 @@ B4.0b 留下的 review Attempt 弱断言已在 B4.1 测试修改中补强，独�
 
 B4.1 新增 opt-in `--workflow collaborate`，duo/trio 纯值计划包含 2/3 个顺序成员 child task，
 以及依赖全部成员的集成 task。计划指定组内成员承担集成，集成任务继承其初始 pair，独立 task/session。
-B4.1 原最小范围为非 Git 共享顺序工作区。B4.5 已实现 Git 组内单 worktree 顺序主链，但因最终审核漏查运行期资源保护而独立 BLOCKED，尚不能宣称 Git 协作已验收可用；子目录明确拒绝。
+B4.1 原最小范围为非 Git 共享顺序工作区。B4.5/B4.5a 的 Git 单组隔离worktree顺序主链与审核保护现已独立 PASS（受控最小范围）；子目录明确拒绝，真实多模型兼容性仍未认证。
 有效 fixed、可用 pair 不足也明确拒绝；文件范围只是声明，不等于强隔离。PARALLEL_WRITE=CLOSED。
 
 受控 provider 下，duo/trio 实际生成不同成员文件，集成任务读取文件字节生成 combined.txt，
@@ -206,20 +206,21 @@ B4.3a 独立复核 PASS：显式工作流绑定、材料交付与 legacy 入口�
 - gate、退出语义、调度、Assignment、Workspace/停止链不变；automaticPostRoundAction=NONE，PARALLEL_WRITE=CLOSED。
   真实模型、工具原生观测覆盖、产物物理认证与完整需求批准链不属于本片 PASS。
 
-### 5.6 B4.5：Git 项目的单组隔离 worktree（未封板）
+### 5.6 B4.5 / B4.5a：Git 单组隔离 worktree（受控最小范围独立 PASS）
 
-复用 WorkspaceManager 的 prepare/get、现有 WorkspaceLock/ResourceClaim 和唯一 executeTask：
-workspaceOwner 只选择物理 owner，成员/集成者仍保持独立 Task/Session/Agent×Model。Git collaborate 从仓库根启动，
-组 root 拥有一个 worktree，所有成员与指定集成者按依赖顺序执行；最终审核指向同一 worktree。
-报告给出 owner/path/branch/baseSha；只从 committed base 开始，不复制 staged/unstaged/untracked；
-用户原检出 HEAD/index/文件不变，成功也保留 worktree，最终集成仍由用户显式处理，不自动 commit/merge/reclaim。
-Git 子目录启动在任务提交/创建 worktree/runtime/review 之前明确拒绝；非 Git 与 sequential 原语义保持。
+复用 WorkspaceManager.prepare/get、WorkspaceLock/ResourceClaim 和唯一 executeTask：组root只拥有物理workspace，
+成员/集成者仍有独立Task/Session/Agent×Model；所有成员顺序共用同一真实worktree，集成与审核读取该处实际产物。
+报告给出owner/path/branch/baseSha；从committed base开始，不自动复制staged/unstaged/untracked，不改用户原检出HEAD/index/内容。
+工作区默认保留，最终人工集成；不自动commit/merge/reclaim，不开放并行写。Git子目录启动写前明确拒绝。
 
-**独立 BLOCKED（1 个 P1）**：review gate 只查 Git 创建期 unconfirmedProtections，未查 Agent 执行后
-retainedResourceProtections。最后集成者的 cleanup.treeStopConfirmed=false 时，ResourceClaim 仍保留，
-但无下一成员触发资源门，最终 review 直接启动并把 round 报为 ok/exit0。需要用既有物理 workspaceId/scope
-核对运行期 retained claim，并 withheld 审核/成功交付；不能只按 owner Task ID 过滤成员 Task 的声明。
-这项不是已经确认的 OS descendant 逃逸：本轮证据为真实 CLI/Git 路径中的受控故障注入。
+B4.5a在审核前读取既有retainedResourceProtections，用实际workspaceId或规范化scope重叠匹配，
+fold进同一executionIncomplete事实，统一控制report.ok/退出码、review与RoundResult/Human Gate。
+停止未确认时，即使最后集成者逻辑成功/文件完整，或给出--no-review，仍review0、非ok/非零、Human Gate未完成；
+无关组不误伤。scope比较复用normalizeScopeForWorkspace，不能用原生Windows路径去比较规范化文件路径。
+Git创建期保护和worktree缺失门保留，非Git/sequential/正常no-review原语义保持。
+
+仅证受控CLI/Git/文件与失败传播链路，不证明产品真实Agent兼容性、费用/Skill/MCP/自动接力。
+B1/B4整体仍未封板，PARALLEL_WRITE=CLOSED；当前下一候选B3.1待单独授权。
 
 ## 6. 不可绕过的契约
 
@@ -251,6 +252,22 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 不新增 provider 网关、群聊平台、第二个调度器或通用工作流引擎来掩盖协议缺口。
 
 ## 8. 最近独立证据与上传记录
+
+2026-10-14 B4.5a：**Codex独立PASS；B4.5受控最小Git顺序协作范围可封板，本轮停止，B3.1未启动**。
+
+- 本次为既有API的小型缺失接线，直接复用WorkspaceManager/ResourceClaim/scopesOverlap/路径normalizer与同一完成门，不新增外部框架、依赖或authority；未重复完整第三方调研。
+- 实际wrapper C:/Users/Admin/.codex/bin/opencode-agent，role=implement。首轮ses_ec9d044eaffestdBVNBFQK6iqg的61条assistant、唯一返工ses_ec9c26caaffezPv0zSbg28gmpy的39条assistant元数据均为opencode-go/deepseek-v4.1-flash；两次finish=stop、wrapper exit0。有完整报告，仍以Codex独立核验裁定。
+- worker严格改2文件：src/cli/round-cli.ts、tests/b45-git-collaboration.test.ts。CLI把当前组运行期保留声明fold进executionIncomplete，复用同一完成事实控制ok/exit、review和Human Gate；不按root taskId误匹配成员claim，不全局阻断无关组。
+- 首轮独立确认原P1已关闭（有无no-review均exit1/review0/ok=false/incomplete=true/gateComplete=false）；另复现scope-only声明已规范化而groupScope原生Windows路径未规范化，仍误报成功。唯一返工复用normalizeScopeForWorkspace(handle.workspaceId,handle.cwd)并补回归，未新造路径处理。
+- 最终独立3个probe：最后集成者stop-unconfirmed、同场景加no-review、不同workspaceId但真实scope重叠；全部retained>=1、exit1/reviews0/ok=false/incomplete=true/gateComplete=false。声明通过真实生产资源API保留；是受控故障注入，不是OS活进程/逃逸证明。正常duo/trio、非重叠声明、脏文件、创建失败、nested拒绝仍通过。
+- Codex本轮独立实跑全部exit0：typecheck；b45-git-collaboration 104/0（原74保留）；b41-collab-group 96/0；b43-stage-material 47/0；b40a-cli-workflow 42/0；resource-claim 192/0；unified-review 130/0；real-agent-isolation 5 opt-in/0违规。旧orchestration 968/0、execution-lifecycle 136/0为B4.5上一轮证据，本轮未重复计作实跑。
+- Codex独立内存loader负控：删完成保护→94通过/10失败、真实exit1；恢复原始groupScope→100通过/4失败、真实exit1。跑的是实际suite断言；两次源码/测试原始哈希前后一致，未修改工作树。生产AST runtime.run边仍1、新增authority/依赖0；diff check独立PASS，测试cleanup ledger无失败且当前b45前缀temp目录0。
+- 过程偏差如实记录：worker返工负控曾短暂把允许的CLI文件改回旧表达式后恢复，违反了本任务“负控不改工作树”的要求；最终恢复内容已独立核对、无额外差异。Codex没有接管修代码，最终负控证据采用自己的内存loader重新验证，不用该偏差冒称流程完全合规；不作为残留源码blocker。
+- 未跑full suite/产品真实Agent推理，worker推理单独记录；未读取凭据/安装依赖/改本机配置，不启动B3.1/B2/B5或正式前端。Git仅支持root启动和committed base的最小路线，最终集成由用户显式处理。
+- 规划估算：功能A/B与项目计划信用14→16/18（Git受控交付闭环补齐），整体56→58/100；页面按5%档显示完成约60%、剩约40%，合理剩余35–55%。这是按原100权重分母的工程判断，不是测试数量/工时/真实模型可用率。
+- 上传目标codex/b45a-review-pass，父b9b59e8ae4c78a8870a219a89d5c6fa64fc5c69e；准确commit/上传结果以本轮远程核对及会话交付为准。保留main、共享暂存区与dirty树；project-progress/全部不入Git。
+
+2026-10-14 B4.5a：用户明确授权继续审核前运行期保护单点。Codex重新核对现有retainedResourceProtections、物理workspaceId/scope、report.ok及executionIncomplete向RoundResult/Human Gate的传递；此为已有API的小型缺失接线，不重做外部框架调研。只委派CLI和本阶段测试改动，不推进其他阶段；当前实施中，不是PASS。
 
 2026-10-14 B4.5：**Codex 独立 BLOCKED，未封板；唯一返工已用完，本轮停止**。
 
@@ -687,18 +704,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-14T00:45:47+08:00",
+  "updatedAt": "2026-10-14T01:23:01+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "B4.5",
-    "name": "Git 项目中的顺序协作",
-    "status": "blocked",
-    "summary": "主链、脏文件保护、审核cwd和子目录拒绝均有独立证据；仍有1个P1：最后集成者停止未确认时，审核漏查运行期保留的ResourceClaim并误报成功。唯一返工已用完，未封板。"
+    "id": "B4.5a",
+    "name": "审核前运行期资源保护收口",
+    "status": "done",
+    "summary": "Codex独立PASS：Git顺序协作最小范围收口。最后集成者停止未确认、no-review与scope-only重叠都阻断审核/成功交付；无关组不误伤。首次实现+唯一返工后停止。"
   },
   "next": {
-    "id": "B4.5a",
-    "name": "审核前运行期资源保护单点收口（待下发）",
+    "id": "B3.1",
+    "name": "Skill/MCP 最小闭环",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -706,8 +723,8 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
   "estimate": {
     "method": "按十项能力加权的工程判断；不是测试数、工时或代码统计。不得用任务数直接计算。",
     "remainingRange": [
-      40,
-      60
+      35,
+      55
     ],
     "capabilities": [
       {
@@ -725,8 +742,8 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       {
         "name": "功能 A/B 与项目计划",
         "weight": 18,
-        "earned": 14,
-        "basis": "B4.2/B4.2a 独立受控 PASS WITH P2；Git 协作、阶段材料和真实验收仍缺"
+        "earned": 16,
+        "basis": "B4.0–B4.5a受控顺序计划、协作组和Git交付闭环独立通过；更广使用方式和真实模型验收仍缺"
       },
       {
         "name": "需求与阶段确认",
@@ -783,12 +800,11 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     },
     {
       "id": "GIT",
-      "severity": "P1",
-      "title": "Git 协作审核漏查运行期保护",
-      "detail": "最后集成者treeStopConfirmed=false，声明仍保留，但review仍调用且round ok/exit0。Git创建保护与运行期声明不是同一来源。",
-      "next": "B4.5a",
-      "kind": "已有事实",
-      "status": "已独立复现"
+      "severity": "范围限制",
+      "title": "Git协作的支持范围",
+      "detail": "只支持仓库根目录启动、从committed base开始、组内单worktree顺序执行；未提交内容不自动带入，最终人工集成。",
+      "next": "使用反馈后再扩展，不阻塞B3.1",
+      "kind": "最小已验收"
     },
     {
       "id": "APPROVAL",
@@ -882,16 +898,16 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     {
       "id": "B4.5",
       "title": "Git 项目顺序协作",
-      "status": "blocked",
+      "status": "done",
       "deliverable": "单组隔离worktree顺序共建与实际成果审核",
-      "evidence": "独立74/0与2处修复确认；最后集成者stop-unconfirmed仍可review/pass，剩1个P1"
+      "evidence": "与B4.5a一起独立PASS：真实Git/产物/脏文件保护/顺序写，限定root+committed base"
     },
     {
       "id": "B4.5a",
       "title": "审核前资源保护收口",
-      "status": "next",
+      "status": "done",
       "deliverable": "同组运行期声明仍保留时不审核、不成功交付",
-      "evidence": "沿用既有Claim/Review门；下一轮仅此单点，其他阶段不启动"
+      "evidence": "独立104/0 + 三故障probe + 两内存负控；审核与完成保护闭环"
     },
     {
       "id": "B3.1",
@@ -943,49 +959,44 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "source": "Codex本轮独立实跑"
     },
     {
-      "name": "B4.5 / 协作组",
-      "result": "74 / 96 · 全通过",
-      "source": "Codex独立实跑；不覆盖剩余故障probe"
+      "name": "B4.5a / 协作组",
+      "result": "104 / 96 · 全通过",
+      "source": "Codex独立实跑；既有74条断言保留"
     },
     {
-      "name": "计划 / 阶段 / CLI",
-      "result": "61 / 47 / 42 · 全通过",
+      "name": "阶段 / CLI / 资源 / 审核",
+      "result": "47 / 42 / 192 / 130 · 全通过",
       "source": "Codex独立实跑"
     },
     {
-      "name": "资源 / 生命周期 / 原编排",
-      "result": "192 / 136 / 968 · 全通过",
-      "source": "Codex独立实跑"
+      "name": "停止未确认 / no-review / scope-only",
+      "result": "PASS · review0、exit1、Human Gate未完成",
+      "source": "Codex独立真实CLI/Git受控故障注入，非OS逃逸证据"
     },
     {
-      "name": "统一审核 / opt-in守卫",
-      "result": "130通过 / 5入口0违规",
-      "source": "Codex独立实跑"
-    },
-    {
-      "name": "审核cwd / 子目录拒绝",
-      "result": "已独立确认修复",
-      "source": "真实CLI/Git路径；review指向组worktree，nested无task/run/review"
-    },
-    {
-      "name": "最后集成者停止未确认",
-      "result": "FAIL · 仍reviews=1、ok=true、exit0",
-      "source": "Codex受控故障注入；生产日志claimsRetained=1；非OS逃逸证据"
+      "name": "独立内存负控",
+      "result": "删保护10失败；原始路径4失败 · 均exit1",
+      "source": "实际suite失败；源码/测试原始哈希不变"
     },
     {
       "name": "实际worker模型 / 轮次",
       "result": "DeepSeek V4.1 Flash · 首轮+唯一返工",
-      "source": "84/61条session assistant元数据；返工末尾工具调用被拒绝"
+      "source": "61/39条session assistant元数据；两次finish stop/exit0"
     },
     {
-      "name": "runtime.run / 新增authority",
-      "result": "1 / 0",
-      "source": "AST及实际接线独立检查"
+      "name": "runtime.run / authority / diff",
+      "result": "1 / 0 / PASS",
+      "source": "AST、接线与diff独立检查"
+    },
+    {
+      "name": "real-agent-isolation",
+      "result": "5 opt-in / 0违规",
+      "source": "Codex本轮独立实跑"
     },
     {
       "name": "full suite / 产品真实模型",
       "result": "NOT RUN",
-      "source": "worker推理与产品Agent验收分开"
+      "source": "fixture不代替产品真机验收"
     }
   ],
   "sources": [
