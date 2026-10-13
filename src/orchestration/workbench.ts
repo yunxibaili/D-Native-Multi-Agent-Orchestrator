@@ -597,9 +597,31 @@ unDecisionCycle can read a real TickResult. */
    * Every child gets a record — including refusals — so `assignChildren` can fail a task
    * closed rather than quietly falling back to scoring.
    */
-  async selectInitialAssignment(rootTaskId: string, taskSelection?: SelectionSpec): Promise<readonly InitialSelectionOutcome[]> {
+  async selectInitialAssignment(
+    rootTaskId: string,
+    taskSelection?: SelectionSpec,
+    options: {
+      /**
+       * B4.1: ask LAYA for a pair that is NOT already taken by an earlier sibling in
+       * THIS call. The filter is applied to the CANDIDATE LIST, so LAYA is structurally
+       * unable to answer with a duplicate pair instead of being asked and then corrected.
+       * A run out of distinct pairs is a refusal (`no-distinct-pair`), never a reuse.
+       */
+      readonly distinctPairs?: boolean;
+      /**
+       * B4.1: task ids that must NOT be asked at all. The integration task is one of
+       * them — it reuses an already-selected member's pair (see `inheritInitialSelection`)
+       * and must never consume a fourth LAYA slot of its own.
+       */
+      readonly skipTaskIds?: readonly string[];
+    } = {},
+  ): Promise<readonly InitialSelectionOutcome[]> {
+    const skip = new Set(options.skipTaskIds ?? []);
+    // B4.1: pairs already handed to an earlier sibling in this call. Only populated in
+    // `distinctPairs` mode, so the default path is byte-identical to before.
+    const takenPairs = new Set<string>();
     // B1.4: task overrides project, else auto. A FIXED selection is recorded as the
-    // task's decision and Laya is NOT asked — the user's choice must never be re-decided.
+    // task's decision and LAYA is NOT asked — the user's choice must never be re-decided.
     const selection = resolveSelection(taskSelection, this.projectSelection);
     // B1.4a: record the ROOT's effective selection so a task created later under this
     // root still derives the fixed lock (or the absence of one for `auto`).
@@ -609,6 +631,9 @@ unDecisionCycle can read a real TickResult. */
     const outcomes: InitialSelectionOutcome[] = [];
     for (const child of this.store.children(rootTaskId)) {
       if (child.status === 'succeeded' || child.status === 'failed' || child.status === 'cancelled') continue;
+      // B4.1: a task excluded from the question (the integration task reuses an
+      // already-selected member pair) is left entirely to `inheritInitialSelection`.
+      if (skip.has(child.taskId)) continue;
       // T3-a.1: a child that ALREADY has a recorded Laya decision (a fan-out member whose
       // pair came from the topology decision) is not asked again — re-asking would override
       // Laya's own earlier choice. SOLO children have no record and behave exactly as before.
@@ -633,16 +658,25 @@ unDecisionCycle can read a real TickResult. */
         continue;
       }
       if (provider === null) continue;
-      const candidates: InitialAssignmentCandidate[] = this.registry.list().map((e) => ({
+      const allCandidates: InitialAssignmentCandidate[] = this.registry.list().map((e) => ({
         agentId: e.agentId,
         modelId: e.modelId ?? '',
         available: this.registry.isModelAvailable(e.agentId, e.modelId ?? ''),
         taskTypes: [...e.taskTypes],
       })).filter((c) => c.modelId !== '' && c.taskTypes.includes(child.taskType));
+      // B4.1: a collaboration group is not a collaboration if two members are the SAME
+      // pair. The already-taken pairs are removed from the OFFERED list, so LAYA cannot
+      // even name one; the distinctness is a property of the question, not a post-hoc
+      // check that quietly rewrites the answer.
+      const candidates = options.distinctPairs === true
+        ? allCandidates.filter((c) => !takenPairs.has(`${c.agentId}/${c.modelId}`))
+        : allCandidates;
       let outcome: InitialSelectionOutcome;
       try {
         if (candidates.length === 0) {
-          throw new Error(`no registered ${child.taskType} pair is available to choose from`);
+          throw new Error(allCandidates.length === 0
+            ? `no registered ${child.taskType} pair is available to choose from`
+            : `no ${child.taskType} pair is left that is distinct from the ${takenPairs.size} already chosen for this group`);
         }
         const raw = await decideInitialAssignment(provider, {
           task: {
@@ -659,6 +693,15 @@ unDecisionCycle can read a real TickResult. */
         // definition of a valid pair. A partial or malformed pair is refused here.
         const checked = validateAgentModelIntent(raw);
         if (!checked.ok) throw new Error(checked.reason);
+        if (options.distinctPairs === true) {
+          const key = `${checked.intent.agentId}/${checked.intent.modelId}`;
+          if (takenPairs.has(key)) {
+            // Unreachable through the filtered candidate list; kept so a future change to
+            // the filter cannot quietly reintroduce duplicate-pair groups.
+            throw new Error(`"${key}" was already chosen for another member of this group`);
+          }
+          takenPairs.add(key);
+        }
         outcome = { taskId: child.taskId, ok: true, intent: checked.intent, provider: provider.name };
       } catch (e) {
         // FAIL CLOSED. The decision being unavailable is not permission to let a heuristic
@@ -679,6 +722,62 @@ unDecisionCycle can read a real TickResult. */
   /** TeamRun T2-a.1: what Laya decided for each task, refusals included. */
   initialSelectionRecords(): readonly InitialSelectionOutcome[] {
     return [...this.initialSelections.values()];
+  }
+
+  /**
+   * B4.1: bind one task to a pair ANOTHER task already holds.
+   *
+   * This is how a collaboration group's integration task runs on its INTEGRATOR
+   * MEMBER'S pair instead of consuming a fresh LAYA slot: the group stays at 2–3
+   * models because the integrator is a member, and a fourth model is never invented
+   * "for integration".
+   *
+   * The recorded outcome goes through the SAME `initialSelections` authority, so
+   * `assignChildren` enforces it exactly like any other Laya decision — an unusable
+   * pair is refused there, never substituted. Fail-closed: a missing or refused
+   * source decision leaves the target with no record at all, which `assignChildren`
+   * then refuses (`assignment-invalid`) rather than falling back to scoring.
+   */
+  inheritInitialSelection(
+    sourceTaskId: string,
+    targetTaskId: string,
+  ): { ok: true; taskId: string; intent: AgentModelIntent; sourceTaskId: string } | { ok: false; taskId: string; code: string; reason: string } {
+    const source = this.initialSelections.get(sourceTaskId);
+    if (source === undefined) {
+      return {
+        ok: false,
+        taskId: targetTaskId,
+        code: 'collaboration-source-undecided',
+        reason: `task "${sourceTaskId}" has no recorded Agent x Model decision to inherit; ` +
+          'the integration task never gets a pair of its own',
+      };
+    }
+    if (!source.ok) {
+      return {
+        ok: false,
+        taskId: targetTaskId,
+        code: 'collaboration-source-refused',
+        reason: `the integrator member "${sourceTaskId}" has no usable pair (${source.reason}); ` +
+          'integration cannot run on a pair that was never chosen',
+      };
+    }
+    const checked = validateAgentModelIntent(source.intent);
+    if (!checked.ok) {
+      return {
+        ok: false,
+        taskId: targetTaskId,
+        code: 'collaboration-source-invalid',
+        reason: `the integrator member "${sourceTaskId}" recorded an invalid pair: ${checked.reason}`,
+      };
+    }
+    this.initialSelections.set(targetTaskId, {
+      taskId: targetTaskId,
+      ok: true,
+      intent: checked.intent,
+      // Provenance is explicit: this pair was NOT chosen for this task by Laya.
+      provider: `collaboration-integrator (inherited from ${sourceTaskId})`,
+    });
+    return { ok: true, taskId: targetTaskId, intent: checked.intent, sourceTaskId };
   }
 
   /**

@@ -28,8 +28,9 @@ README 是导航。用户明确指令优先；发现源码、证据与基线不�
 | B1.4a | 独立 PASS：动态 fixed 约束、CLI 缺值、DSH setup 清理收口 |
 | B1 overall | NOT SEALED |
 | B4.0 / B4.0a / B4.0b | 独立 PASS WITH P2；顺序工作流受控链路封板，非真实模型验收 |
-| B4 overall | NOT SEALED；功能 B 尚未实现 |
-| B4.1 / B2 / B3 / B5 | PLANNED；本轮未授权启动实现 |
+| B4.1 | 独立审核 BLOCKED：受控分工/文件集成可用，唯一剩余候选违反 LAYA provider 输入契约 |
+| B4 overall | NOT SEALED；功能 B 仍有 B4.1 输入契约阻塞，真实模型兼容性未验收 |
+| B4.2+ / B2 / B3 / B5 | PLANNED；本轮未授权启动实现 |
 | PARALLEL_WRITE | CLOSED |
 | 本产品前端 | 需求未确认；进入前端前提醒用户单独梳理 |
 
@@ -91,34 +92,28 @@ rootSelections 与 fixedLockFor 在现有 reassign 入口维护有效约束，�
 
 ### 5.4 任务与协作
 
-Planner/CandidateTask/commitPlan、TaskStore、Assignment、Scheduler 与依赖材料交接已经存在。
-B4.0 新增 opt-in `--workflow sequential`，full/lean 有界候选和 LAYA typed 计划选择已接线。
-B4.0a 补上 CLI 状态推进：`--workflow sequential` 现在运行**有界循环**（每轮一个 action：`continue` 派发就绪步骤，
-或既有 `complete` 经 `applyVerification` 接受 `to_verify` 步骤），下游只在**直接上游 `succeeded`**（既有
-Verification 明确接受）后才准入；循环在全部成功、终态失败、无进展、非 ok 轮或硬上限时停止，不无限调用 LAYA。
-成员未 `succeeded` 时 `report.ok=false`、`executionIncomplete=true`，并列出 pending 与停止原因；
-只跑 research 不再报告整个 workflow 完成。最终 Review 的请求确实包含各步实际输出与 Attempt。
-但循环发给 LAYA 的 next_action 请求只有状态：没有目标、验收条件、执行输出或材料引用。
-现有 completeTask 会把 LAYA 的 complete 直接交给 applyVerification(pass)；缺少判断材料时，
-不能把状态驱动的 fixture 自动 complete 提升成有依据的业务验收。独立 probe 要求先看到材料后接受，实际停在 research。
-`planWithCandidates` 对重复候选、悬空依赖、依赖环已做到写前拒绝和同 ID 重试；
-候选 ID 等于新根 ID、首候选 parent=null 仍在创建根后被 commitPlan 拒绝，留下根并阻止重试。
-顺序写准入适配：`hasParallelWorkBeside` 只把 RUNNING（存活写者）或依赖已满足的就绪任务算作并行工作，
-未就绪的下游不再误判；独立并行写与存活写者保护不变，资源门未关闭。
-B4.0b 给 `complete` 决策接入验收材料：新增 `acceptance_material` 请求字段，仅 `--workflow sequential` 发送，
-含原始目标，以及**仅**待验证任务的自身验收条件、自身 Attempt 配对的 RunResult 有界输出、transcript 引用，
-并如实标记 `executionMissing`/`acceptanceCriteriaMissing`/`outputTruncated`/`boundedForRequest`；
-材料取自既有 `currentActualOf` 配对（同任务同执行，缺失为 null 而非旧结果），不广播 transcript、不复制历史上下文，
-不新增 verifier/证据库/manager/第二 authority；LAYA 选择 `complete` 后仍走既有 `applyVerification`，
-Runtime exit=0 不等于接受。
-三个 P2 收口：`planWithCandidates` 在任何写入前拒绝候选 ID 等于根 ID、首个候选 parent=null
-（不再先建根再由 commitPlan 拒绝，修正后同 ID 可重试）；reviewer fixture 按 fake adapter 契约提供 `data.text`
-并满足 verdict 全字段，合法/非法 verdict 均有对照；`RoundCliOverrides.roundResultDir` 复用既有
-`publishRoundResult({dir})` 路径 seam 隔离报告发布目录，不改共享 `process.env`。
-独立审核确认以上原定 P1/P2 关闭；剩余非阻断 P2 是新套件对 review Attempt 的断言过弱，
-实际生产记录已由独立 probe 确认，后续顺手补强测试，不再为它单开封板轮次。
-功能 B（同目标 2–3 模型分工共建/集成）与完整角色计划尚未实现；READ fan-out 使用父容器与独立 child task，
-ALL-terminal 是聚合事实不是通过验收；PARALLEL_WRITE=CLOSED。
+B4.0–B4.0b 的有界 full/lean 顺序工作流在受控生产调用链范围独立封板。
+现有 CandidateTask/commitPlan、Assignment、SessionRegistry、Scheduler/executeTask、Attempt、
+Verification/Review/Result/Human Gate 继续复用。当前 workflow（sequential/collaborate）请求
+acceptance_material，携带目标、同任务验收条件、同次 Attempt 配对的有界 RunResult 材料；
+缺执行关联保持 null/missing，不用 Runtime exit=0 代替验收。非法计划已核验的写前边界保持。
+B4.0b 留下的 review Attempt 弱断言已在 B4.1 测试修改中补强，独立负控证明确实能发现记录丢失。
+
+B4.1 新增 opt-in `--workflow collaborate`，duo/trio 纯值计划包含 2/3 个顺序成员 child task，
+以及依赖全部成员的集成 task。计划指定组内成员承担集成，集成任务继承其初始 pair，独立 task/session。
+目前仅共享顺序工作区（非 Git cwd）；Git 隔离交付缺既有送入集成者工作区的路径，启动前明确拒绝。
+有效 fixed、可用 pair 不足也明确拒绝；文件范围只是声明，不等于强隔离。PARALLEL_WRITE=CLOSED。
+
+受控 provider 下，duo/trio 实际生成不同成员文件，集成任务读取文件字节生成 combined.txt，
+Assignment/RunRequest/Attempt/session 身份一致，最大执行并发=1；成员失败或缺交付时集成不运行。
+但 distinctPairs 逐次减去已选 pair，恰好 N 个可用 pair 的 N 人组最后只剩一个候选；
+仍调用 decideInitialAssignment 发单选 choice，真实 LAYA provider 的本地校验明确拒绝。
+所以不能把绕过该输入校验的 fixture 成功当作 B4.1 已闭环；当前独立结论 BLOCKED。
+
+另有非阻断 P2：report.collaboration 把未分配任务的占位 agent/null 拼成 pair，失败场景仍计满人数、
+pairIsDistinct=true；固定 note 还宣称成员已写入/集成已读取，即使相关任务从未运行。
+报告必须区分已知分配、执行和工作区支持模式，不用模板文字代替事实。
+完整角色计划、真实模型兼容性、Skill/MCP、费用与掉线恢复保持后续范围。
 
 ## 6. 不可绕过的契约
 
@@ -133,8 +128,8 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 ## 7. 真实缺口与后续边界
 
 1. DSH 缺逐请求选模型与恢复协议；要用 DSH 做多模型调配，必须先取得受支持的真实接口证据。
-2. B4.0–B4.0b 的顺序工作流受控链路已独立封板；
-   功能 B（同目标 2–3 模型分工共建与集成责任）、完整角色计划、prefer/角色默认仍缺，留后续切片。
+2. B4.0–B4.0b 的顺序工作流受控链路已独立封板；B4.1 先修唯一剩余候选的 provider 输入契约，再独立收口。
+   完整角色计划、prefer/角色默认、运行中改选、真实模型多模型兼容性仍缺，留后续切片。
 3. Skill/MCP 只有部分意图/原生支持，目录、授权、具体选择和实际调用核对未闭环。
 4. 动态免费资格、账户共享额度和全流程费用授权未验收；预算 units 不是 token/货币。
 5. 模型中途掉线恢复列后续计划：区分流中断、限流/额度/认证/崩溃与未知，静默不等于死亡；
@@ -148,7 +143,52 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 
 ## 8. 最近独立证据与上传记录
 
-本轮 B4.0b 独立审核（2026-10-13）：**PASS WITH P2**。Codex 仅更新文档，未修改代码或测试。
+本轮 B4.1 独立审核（2026-10-13）：**BLOCKED**。Codex 未修改生产代码或测试。
+独立实跑 typecheck PASS；b41-collab-group 62/0、b40a-cli-workflow 42/0、b40-workflow 41/0、
+initial-assignment-decision 37/0、workbench 413/0、assignment 235/0、handoff-production-round 312/0、
+state-loop 169/0、b14-selection 46/0、round-result 293/0；isolation 守卫 5 opt-in/0 违规，命令 exit 均 0。
+diff check PASS，生产 runtime.run 边=1，新增调度 authority=0。
+
+- P1：真实 CLI + 受控 runtime/provider，最后一个单候选问题交给实际 createLayaDecisionProvider 本地校验。
+  trio 恰好三个 pair：候选数 3→2→1，m3 assignment-invalid，前两成员运行后停止，exit=1，无集成。
+  duo 恰好两个 pair：2→1，m2 同样拒绝，exit=1。拒绝明确为 offers exactly one choice，未发送 HTTP/未调用模型。
+  当前 fixture provider 未执行这条真实输入校验，因此 62/0 不能覆盖此阻塞。
+- P2：上述 trio 仅两个成员有 model/session，报告却 distinctPairs=3、pairIsDistinct=true；
+  duo 仅一个成员有 pair 却计 2。note 在集成从未运行时仍称读了文件。最小修复是仅投影已知 pair，
+  全员未分配时不认证 distinct，并把支持模式与实际执行事实分开。
+- P2（测试覆盖）：名为 unverified delivery 的 case 实际调用正常成功路径，没有制造未验证/无交付。
+  独立内存注入 m2 不写文件且输出为空：2 次成员执行、m2=to_verify、集成 planned、无 combined.txt、exit=1。
+  当前行为可用，但应把该最小负例加入正式回归，不用标题冒充失败证据。
+- 正向：普通受控 duo=3 次执行、trio=4 次执行，最大并发=1；请求 cwd 与 owned cwd 一致，
+  成员 task/pair/session 与实际 execution Attempt 一致，combined.txt 含全部不同成员文件的实际字节，最终审核 completed/pass。
+  直接注入重复 pair 也被 offered-pair 校验拒绝，不替换、集成不运行。
+- B4.0b 旧 P2 关闭：不追加 review Attempt 的内存负控现为 38 passed/4 failed、exit=1；正常为 42/0。
+  断言覆盖 ok、attemptId、kind=review 和发布文件中的实际记录。
+
+只修一项核心输入契约及相邻报告/回归收口，不重写分工/集成，不进入 B4.2/B2/B3/B5。
+probe 仅内存导出/修改 fixture seam，工作树测试不变，命名 owned 目录均清理；未跑 full suite、未调用真实模型、
+未读凭据、未改本机 Agent 配置。Git 工作区拒绝是本片已声明的支持边界，不追加合并引擎作为封板条件。
+
+B4.1 实现方报告（非独立结论，不能覆盖上述阻塞）：`b41-collab-group` **62/0**（经真实 `runRoundCli` +
+受控 provider/runtime，集成任务真实读写 owned 工作区文件）；`b40a-cli-workflow` 42/0、
+`b40-workflow` 41/0、workbench 413/0、orchestration 968/0、handoff-production-round 312/0、
+state-loop 169/0、planner 189/0、assignment 235/0、resource-claim 192/0、decision 397/0、
+unified-review 130/0、review-loop 169/0、round-result 293/0、b14-selection 46/0、
+initial-assignment-decision 37/0、memory 445/0、worker-identity 37/0、contract 248/0（2 skipped）、
+unit 92/0；isolation 守卫 5 opt-in/0 违规；typecheck PASS、`git diff --check` clean；
+生产 `runtime.run` 调用边=1、新增调度 authority=0、owned 残留 0。
+- 2 成员（同 Agent、两个不同模型）：独立 task + 独立 session，pair 两两不同；3 成员跨不同 Agent，角色/
+  文件范围/pair 可追溯；全程严格顺序（最大并发 run=1）。
+- 真实集成：成员在各自声明范围写真实文件，集成任务读取这些文件并生成 `combined.txt`，其中含**每个成员
+  的实际字节**；集成任务运行在指定成员 pair 上、复用其 pair 但拥有自己的 task/session。
+- 失败阻断：成员失败 → 集成任务从不运行、报告列出阻塞成员、round 不 ok 且 incomplete。
+- 选择/身份：fixed 冲突、Git 隔离工作区、可用 pair 不足均在启动前拒绝（无运行）；LAYA 编造 pair 不替换，
+  该成员无 model/session 且不 succeeded；Assignment/RunRequest/Attempt 身份一致。
+- 最终证据：Review 请求含每个成员与集成任务的真实输出；`reviewEvidence.ok=true` 且 attemptId 解析到
+  实际 `kind=review` 记录（B4.0b 遗留弱断言已在本轮补强为 ok/attemptId/kind=review 实测）。
+上述为本轮 hermetic 证据；未跑 full suite、未调用真实模型、未读凭据、未改本机配置。
+
+上一轮 B4.0b 独立审核（2026-10-13）：**PASS WITH P2**。Codex 仅更新文档，未修改代码或测试。
 独立实跑 typecheck PASS、b40a-cli-workflow 39/0、b40-workflow 41/0、decision 397/0、
 unified-review 130/0、review-loop 169/0、workbench 413/0、state-loop 169/0、handoff-production-round 312/0；
 isolation 守卫 5 opt-in/0 违规，命令 exit 均 0；diff check PASS，生产 runtime.run 边=1、新增 authority=0。
@@ -267,5 +307,6 @@ W5 的 production admission、底层 stress、受控失败注入与真实 Agent 
 上一轮 10 份技术文档整合快照为 0b24cf93ba3b13e952e5c5a13322bb07161c09fc，分支 codex/backend-docs-next-b40。
 B4.0 BLOCKED 审核快照为 baab39e92dc7e115d974b2ee904b14aa7931700d，分支 codex/b40-review-blocked。
 B4.0a BLOCKED 快照为 c7adbdc08493c3e27f8ec3e53ffde6ddb3f67460，分支 codex/b40a-review-blocked。
-本次 B4.0b PASS WITH P2 快照以 c7adbdc 为父，分支 codex/b40b-review-pass，包含实现与两份审核文档；
-不合入 main，不授权 B4.1/B2/B3/B5；上传后的准确 commit 见会话交付。
+B4.0b PASS WITH P2 快照为 270668a191eb0fc72ef17bcfaead82244e28df07，分支 codex/b40b-review-pass。
+本次 B4.1 BLOCKED 快照以 270668a 为父，分支 codex/b41-review-blocked，保留实现与文档纠偏；
+不合入 main，不授权 B4.2/B2/B3/B5；上传后的准确 commit 见会话交付。

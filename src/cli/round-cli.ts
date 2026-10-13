@@ -144,6 +144,16 @@ import {
 } from '../orchestration/continuation.ts';
 import { buildHandoff } from '../orchestration/workbench-handoff.ts';
 import { WORKFLOW_PLAN_CHOICES, buildWorkflowCandidates, isWorkflowChoice, type HeterogeneousWorkflowChoice } from '../orchestration/workflow-plan.ts';
+import {
+  COLLABORATION_MAX_MEMBERS,
+  COLLABORATION_MIN_MEMBERS,
+  COLLABORATION_PLAN_CHOICES,
+  buildCollaborationCandidates,
+  collaborationPlanFor,
+  collaborationTaskIds,
+  isCollaborationChoice,
+  type CollaborationChoice,
+} from '../orchestration/collab-plan.ts';
 import { decideWorkflowPlan, type WorkflowPlanCandidate } from '../decision/plan-choice.ts';
 import { buildDispatchReceipt } from '../orchestration/dispatch-receipt.ts';
 import { projectDispatchTaskEvidence } from '../orchestration/dispatch-evidence.ts';
@@ -197,8 +207,14 @@ OPTIONS
   --model <id>           with --agent: the FIXED full model id; alone: prefer this model
   --workflow sequential  opt-in heterogeneous workflow (B4.0): research -> implementation
                          -> test as independent tasks run in dependency order. Absent = legacy.
-  --workflow-choice <c>  pin the workflow plan (full|lean); absent = LAYA picks among the
-                         bounded candidates (requires --workflow sequential).
+  --workflow collaborate
+                         opt-in collaboration group (B4.1): LAYA picks a bounded 2-3 model
+                         division, each member runs its own child task and session, and the
+                         designated integrator member runs a separate integration task that
+                         consumes every member's delivery. Sequential; PARALLEL_WRITE=CLOSED.
+  --workflow-choice <c>  pin the plan: full|lean (with --workflow sequential) or duo|trio
+                         (with --workflow collaborate); absent = LAYA picks among the
+                         bounded candidates.
   --laya-url <url>       laya-serve base URL (default: http://127.0.0.1:8077)
   --laya-timeout <ms>    decision timeout (default: 60000)
   --execution-timeout <ms>
@@ -265,7 +281,7 @@ interface RoundOptions {
   select?: string;
   /** B4.0: opt-in heterogeneous sequential workflow (`sequential`). Absent = legacy. */
   workflow?: string;
-  /** B4.0: pin a single workflow plan choice (`full`/`lean`); absent = LAYA picks. */
+  /** B4.0/B4.1: pin a single plan choice; absent = LAYA picks among the bounded candidates. */
   workflowChoice?: string;
   layaUrl: string;
   layaTimeoutMs: number;
@@ -376,17 +392,22 @@ function parse(argv: readonly string[]): RoundOptions | { error: string } {
     }
     // B4.0: opt-in heterogeneous sequential workflow. A bare flag is a usage error.
     const workflow = s('workflow');
-    if (flags.workflow === true) return { error: '--workflow requires a value: "sequential"' };
-    if (workflow !== undefined && workflow !== 'sequential') {
-      return { error: `--workflow must be "sequential" (got "${workflow}")` };
+    if (flags.workflow === true) return { error: '--workflow requires a value: "sequential" or "collaborate"' };
+    if (workflow !== undefined && workflow !== 'sequential' && workflow !== 'collaborate') {
+      return { error: `--workflow must be "sequential" or "collaborate" (got "${workflow}")` };
     }
     const workflowChoice = s('workflow-choice');
-    if (flags['workflow-choice'] === true) return { error: '--workflow-choice requires a value: "full" or "lean"' };
-    if (workflowChoice !== undefined && !isWorkflowChoice(workflowChoice)) {
-      return { error: `--workflow-choice must be one of full, lean (got "${workflowChoice}")` };
+    if (flags['workflow-choice'] === true) return { error: '--workflow-choice requires a value' };
+    // B4.1: the answer space is the MODE's own bounded list, so `--workflow-choice duo`
+    // with `--workflow sequential` is a usage error rather than a silent fallback.
+    const choiceSpace = workflow === 'collaborate'
+      ? { ok: isCollaborationChoice, known: 'duo, trio' }
+      : { ok: isWorkflowChoice, known: 'full, lean' };
+    if (workflowChoice !== undefined && !choiceSpace.ok(workflowChoice)) {
+      return { error: `--workflow-choice must be one of ${choiceSpace.known} for --workflow ${String(workflow)} (got "${workflowChoice}")` };
     }
     if (workflowChoice !== undefined && workflow === undefined) {
-      return { error: '--workflow-choice requires --workflow sequential' };
+      return { error: '--workflow-choice requires --workflow sequential or --workflow collaborate' };
     }
     const agentFlag = s('agent');
     const modelFlag = s('model');
@@ -899,8 +920,118 @@ export async function runRoundCli(
   // B4.0: which bounded workflow plan ran, and how it was chosen (for the report).
   let workflowChoiceUsed: HeterogeneousWorkflowChoice | null = null;
   let workflowPlanSource = '';
+  // B4.1: the collaboration group's shape, kept for the pair step and the report.
+  let collaborationIds: { memberIds: readonly string[]; integratorId: string; integratorIndex: number } | null = null;
+  let collaborationPlanUsed: CollaborationChoice | null = null;
   try {
-    if (o.workflow === 'sequential') {
+    if (o.workflow === 'collaborate') {
+      /*
+       * B4.1 (功能 B): ONE goal, 2–3 models, each with its own child task, and a
+       * designated integrator member. Every precondition below is a REFUSAL raised
+       * BEFORE the root or any child exists, because each of them is a fact that must
+       * not be papered over by silently degrading into a 1-model round.
+       */
+      const effective = resolveSelection(taskSelection, projectSelection);
+      if (fixedPairOf(effective) !== undefined) {
+        throw new Error(
+          'a FIXED Agent x Model selection pins ONE pair for the whole round, which cannot be a ' +
+            '2-3 model collaboration group; the fixed pair is not swapped, relaxed or widened — ' +
+            'run the round with --select auto (or without --select) to let Laya choose the members',
+        );
+      }
+      if (workspace !== null) {
+        /*
+         * The real workspace boundary, stated rather than assumed. In a git repository
+         * every writing task gets its OWN isolated worktree, so a member's files live in
+         * a directory the integrator's worktree cannot see. The one existing git path
+         * that moves a child's work (`mergeTaskBranch`) merges into the ROOT checkout,
+         * is human-triggered (`task merge --verified`) and never auto-merges — so there
+         * is NO existing verifiable path that delivers one member's branch into
+         * another member's worktree. Building one here would be a new merge engine,
+         * which this slice explicitly does not do. Refused, with the supported mode named.
+         */
+        throw new Error(
+          `collaboration groups need a SHARED sequential workspace so the integrator actually reads each ` +
+            `member's files; "${o.cwd}" is a git repository, so writing tasks are isolated into per-task ` +
+            `worktrees and a member's delivery would NOT be visible to the integrator. No automatic merge ` +
+            `into another task's worktree exists (task merge is human-triggered and merges into the root ` +
+            `checkout). Run the collaboration group in a non-git working directory`,
+        );
+      }
+      collaborationPlanUsed = (o.workflowChoice !== undefined && isCollaborationChoice(o.workflowChoice))
+        ? o.workflowChoice
+        : await (async () => {
+          const choices: WorkflowPlanCandidate[] = COLLABORATION_PLAN_CHOICES.map((c) => ({
+            choice: c.choice,
+            label: c.label,
+            // The integrator is part of what LAYA is choosing, so it is named in the
+            // criteria text rather than decided afterwards by the CLI.
+            roles: [...c.members.map((m) => m.role), `integration by collaborator ${c.integratorMember}`],
+          }));
+          if (provider === null) return COLLABORATION_PLAN_CHOICES[0]!.choice;
+          return (await decideWorkflowPlan(provider, {
+            task: { taskId: rootId, objective: o.objective },
+            candidates: choices,
+          })) as CollaborationChoice;
+        })();
+      collaborationPlanSource: {
+        if (o.workflowChoice !== undefined && isCollaborationChoice(o.workflowChoice)) {
+          workflowPlanSource = 'pinned (--workflow-choice)';
+        } else {
+          workflowPlanSource = provider === null ? 'no provider: first bounded plan' : 'Laya decision';
+        }
+      }
+      collaborationIds = collaborationTaskIds(collaborationPlanUsed, rootId);
+      const planSpec = collaborationPlanFor(collaborationPlanUsed);
+      // REQ-14's own bound, asserted against the plan itself rather than assumed: a plan
+      // outside 2-3 members is not a collaboration group and is refused, not run.
+      if (planSpec.members.length < COLLABORATION_MIN_MEMBERS || planSpec.members.length > COLLABORATION_MAX_MEMBERS) {
+        throw new Error(
+          `collaboration plan "${collaborationPlanUsed}" declares ${planSpec.members.length} members, outside the ` +
+            `${COLLABORATION_MIN_MEMBERS}-${COLLABORATION_MAX_MEMBERS} a collaboration group may have`,
+        );
+      }
+      // A group of 2–3 needs 2–3 DIFFERENT usable pairs. Checked here, before the root
+      // exists, so "there is only one model" is an upfront refusal and never a group
+      // that quietly reuses one pair twice (which would be function A wearing B's name).
+      const usablePairs = registry.list()
+        .filter((e) => (e.taskTypes.includes('implementation') || e.taskTypes.includes('test')) &&
+          e.modelId !== null && e.modelId !== '' && registry.isModelAvailable(e.agentId, e.modelId))
+        .map((e) => `${e.agentId}/${e.modelId}`);
+      const distinctPairs = [...new Set(usablePairs)];
+      if (distinctPairs.length < planSpec.members.length) {
+        throw new Error(
+          `a "${collaborationPlanUsed}" collaboration group needs ${planSpec.members.length} distinct available ` +
+            `Agent x Model pairs, but only ${distinctPairs.length} is registered and available ` +
+            `(${distinctPairs.length === 0 ? 'none' : distinctPairs.join(', ')}); no pair is duplicated to fill a seat`,
+        );
+      }
+      planned = wb.planWithCandidates(spec, buildCollaborationCandidates(collaborationPlanUsed, o.objective, rootId), [
+        `B4.1 collaboration group: ${collaborationPlanUsed} (${workflowPlanSource}); ` +
+          `${planSpec.members.length} members + 1 integration task by collaborator ${planSpec.integratorMember}`,
+      ]);
+      report.workflow = {
+        enabled: true,
+        mode: 'collaborate',
+        choice: collaborationPlanUsed,
+        source: workflowPlanSource,
+        members: planSpec.members.map((m, i) => ({
+          index: i + 1,
+          taskId: collaborationIds!.memberIds[i]!,
+          role: m.role,
+          taskType: m.taskType,
+          fileScope: m.fileScope,
+          deliverable: m.deliverable,
+        })),
+        integrator: {
+          index: planSpec.integratorMember,
+          taskId: collaborationIds.integratorId,
+          memberTaskId: collaborationIds.memberIds[planSpec.integratorMember - 1]!,
+          note: 'a selected member, reused pair: no fourth collaboration model is added for integration',
+        },
+        note: 'sequential: members run in order; integration depends on EVERY member and starts only when all are succeeded',
+      };
+    } else if (o.workflow === 'sequential') {
       /*
        * B4.0: a bounded heterogeneous plan (research -> implementation -> test). LAYA
        * picks among the OFFERED plans; it never invents a DAG. A pinned choice or a
@@ -934,21 +1065,22 @@ export async function runRoundCli(
       const plan = WORKFLOW_PLAN_CHOICES.find((c) => c.choice === workflowChoiceUsed);
       report.workflow = {
         enabled: true,
+        mode: 'sequential',
         choice: workflowChoiceUsed,
         source: workflowPlanSource,
         steps: (plan?.steps ?? []).map((s) => ({ role: s.role, taskType: s.taskType, deliverable: s.deliverable })),
         note: 'sequential: each step depends on the one before; PARALLEL_WRITE=CLOSED',
       };
-    } else {
+    } else if (o.workflow !== 'collaborate') {
       report.workflow = { enabled: false };
     }
     // TeamRun T3-a.1: Laya decides the execution TOPOLOGY. SOLO is the existing path and
     // the default; PARALLEL_READ materializes N independent READ member Tasks. A transport
     // failure returns null (no topology opinion -> SOLO); a MALFORMED PARALLEL_READ throws
     // a schema error and refuses the round — it must never silently become SOLO.
-    // B4.0: a workflow plan is already a sequential chain, so topology is left SOLO.
+    // B4.0/B4.1: a workflow plan is already a sequential chain, so topology is left SOLO.
     let topology: RawExecutionTopology | null = null;
-    if (o.workflow !== 'sequential' && provider !== null) {
+    if (o.workflow === undefined && provider !== null) {
       const readCandidates = registry.list()
         .filter((e) => e.modelId !== null && e.modelId !== '' && e.taskTypes.includes(FANOUT_MEMBER_TASK_TYPE))
         .map((e) => ({
@@ -992,7 +1124,26 @@ export async function runRoundCli(
     // Planner still only planned task decomposition and dependencies — it is not asked
     // for an agent, a model or a session. This call never dispatches, so the first
     // execution still happens only after Assignment has enforced the pair.
-    await wb.selectInitialAssignment(rootId, spec.selection);
+    // B4.1: a collaboration group asks for a pair PER MEMBER and the pairs must be
+    // DIFFERENT, so the already-taken pairs are removed from what LAYA is offered and
+    // the integration task is excluded entirely — it reuses its integrator member's own
+    // pair through `inheritInitialSelection`, which is how the group stays at 2–3 models
+    // instead of quietly becoming 2–3 models PLUS a fourth one chosen for integration.
+    if (collaborationIds !== null) {
+      await wb.selectInitialAssignment(rootId, spec.selection, {
+        distinctPairs: true,
+        skipTaskIds: [collaborationIds.integratorId],
+      });
+      const memberTaskId = collaborationIds.memberIds[collaborationIds.integratorIndex - 1]!;
+      const inherited = wb.inheritInitialSelection(memberTaskId, collaborationIds.integratorId);
+      if (!inherited.ok) {
+        throw new Error(
+          `collaboration integration is refused: ${inherited.reason} (blocked by member "${memberTaskId}")`,
+        );
+      }
+    } else {
+      await wb.selectInitialAssignment(rootId, spec.selection);
+    }
     assigned = wb.assignChildren(rootId, spec);
     // The gate needs THREE scopes to exist - global, task:<id> AND agent:<id> - and
     // `resolveBudgetHeadroom` deliberately refuses to auto-create a missing one
@@ -1218,7 +1369,7 @@ export async function runRoundCli(
    */
   const ACCEPTANCE_OUTPUT_MAX_CHARS = 2000;
   const workflowAcceptanceMaterial = (): AcceptanceMaterial | undefined => {
-    if (o.workflow !== 'sequential') return undefined;
+    if (o.workflow === undefined) return undefined;
     const entries: AcceptanceMaterialEntry[] = [];
     for (const id of (planned?.children.map((c) => c.taskId) ?? [])) {
       const task = wb.store.get(id);
@@ -1272,7 +1423,7 @@ export async function runRoundCli(
   let outcome: Awaited<ReturnType<typeof runDecisionCycle>> = await runOneCycle();
   let workflowCycles = 1;
   let workflowStop: string | null = null;
-  if (o.workflow === 'sequential') {
+  if (o.workflow === 'sequential' || o.workflow === 'collaborate') {
     /*
      * B4.0a: BOUNDED sequential progression. Each cycle applies ONE action — dispatch a
      * ready step, or the EXISTING `complete` action (which goes through
@@ -1781,13 +1932,13 @@ export async function runRoundCli(
   // `succeeded` (i.e. the existing verification accepted it). A member still `planned`
   // (never dispatched), `to_verify` (run but not verified) or missing makes the round
   // INCOMPLETE — running only research must never report the whole workflow as done.
-  const workflowMemberIds: string[] = o.workflow === 'sequential' && planned !== undefined
+  const workflowMemberIds: string[] = o.workflow !== undefined && planned !== undefined
     ? (planned.children as ReadonlyArray<{ taskId: string }>).map((c) => c.taskId)
     : [];
   const workflowPending = workflowMemberIds
     .map((id) => ({ taskId: id, status: wb.store.get(id)?.status ?? 'missing' }))
     .filter((m) => m.status !== 'succeeded');
-  const workflowIncomplete = o.workflow === 'sequential' && workflowPending.length > 0;
+  const workflowIncomplete = o.workflow !== undefined && workflowPending.length > 0;
   const executionIncomplete = (fanoutGroups.length > 0 && !fanoutAllSettled) || workflowIncomplete;
 
   report.fanoutDrain = {
@@ -1797,13 +1948,64 @@ export async function runRoundCli(
     fixpoint: fanoutDrain.fixpoint,
     unresolvedAtStop: [...fanoutDrain.unresolvedAtStop],
   };
-  if (o.workflow === 'sequential') {
+  if (o.workflow !== undefined) {
     report.workflow = {
       ...(report.workflow as Record<string, unknown>),
       cycles: workflowCycles,
       stop: workflowStop,
       pending: workflowPending,
     };
+    /*
+     * B4.1: the collaboration group's identity is reported FROM THE AUTHORITIES, after
+     * Assignment and execution, not from the plan: the task ids come from the plan, but
+     * the Agent x Model and the session each member actually ran under are read from
+     * the TaskStore / SessionRegistry. A member with no agent-confirmed model fact stays
+     * `unknown` — the plan's intent is never reported as an achieved identity.
+     */
+    if (collaborationIds !== null) {
+      const memberRows = collaborationIds.memberIds.map((taskId, i) => {
+        const task = wb.store.get(taskId);
+        const session = wb.sessionForTask(taskId);
+        const planSpecMember = collaborationPlanFor(collaborationPlanUsed!).members[i];
+        return {
+          index: i + 1,
+          taskId,
+          role: planSpecMember?.role ?? 'unknown',
+          fileScope: planSpecMember?.fileScope ?? 'unknown',
+          status: task?.status ?? 'missing',
+          agentId: task?.agentId ?? null,
+          modelId: task?.modelId ?? null,
+          sessionId: session?.sessionId ?? null,
+        };
+      });
+      const integratorTask = wb.store.get(collaborationIds.integratorId);
+      const integratorSession = wb.sessionForTask(collaborationIds.integratorId);
+      const integratorMemberTaskId = collaborationIds.memberIds[collaborationIds.integratorIndex - 1]!;
+      const pairs = memberRows.map((m) => `${String(m.agentId)}/${String(m.modelId)}`);
+      report.collaboration = {
+        enabled: true,
+        choice: collaborationPlanUsed,
+        members: memberRows,
+        integrator: {
+          index: collaborationIds.integratorIndex,
+          memberTaskId: integratorMemberTaskId,
+          taskId: collaborationIds.integratorId,
+          status: integratorTask?.status ?? 'missing',
+          agentId: integratorTask?.agentId ?? null,
+          modelId: integratorTask?.modelId ?? null,
+          sessionId: integratorSession?.sessionId ?? null,
+        },
+        distinctPairs: new Set(pairs).size,
+        pairIsDistinct: new Set(pairs).size === memberRows.length,
+        integratorReusesMemberPair:
+          integratorTask !== null && integratorTask !== undefined &&
+          wb.store.get(integratorMemberTaskId)?.agentId === integratorTask.agentId &&
+          wb.store.get(integratorMemberTaskId)?.modelId === integratorTask.modelId,
+        note:
+          'shared sequential workspace: each member wrote into the same working directory, so the integration ' +
+          'task read the actual member files; git-isolated worktrees are refused for this mode',
+      };
+    }
   }
 
   // `report.ok` must not contradict the Human Gate. An incomplete execution set is not a failure
@@ -2063,7 +2265,13 @@ export async function runRoundCli(
   //
   // This ADDS to execution evidence, never replaces it: a task whose review fails to
   // record keeps every execution attempt it already had.
-  report.reviewEvidence = { recorded: false, attemptId: null, code: null, reason: null };
+  // B4.1: `ok` is part of this shape in BOTH states. The placeholder used to carry only
+  // `recorded`, so a reader that checked `reviewEvidence.ok` on a round that never got
+  // that far saw `undefined` (falsy, but for the wrong reason) while a successful append
+  // replaced the whole object with the `{ok, attemptId, code, reason}` shape from
+  // `recordReviewEvidence`. Both keys are now always present, so "was it accepted?" has
+  // one answer rather than two shapes to remember.
+  report.reviewEvidence = { ok: false, recorded: false, attemptId: null, code: null, reason: null };
   // Typed local, because `report` is an untyped record: the round result below must not
   // have to re-read its own evidence outcome through `unknown`.
   let reviewEvidenceRecorded = false;
@@ -2213,6 +2421,16 @@ export async function runRoundCli(
     w(`  laya          work_kind=${classification.work_kind} complexity=${classification.complexity} review=${classification.review_required}`);
     w(`  probed        ${quotaProbed.length} agent(s) with real quota records`);
     w(`  workspace     ${workspace === null ? 'SHARED cwd - isolation unavailable (not a git repository)' : `isolated worktrees (repo ${repoRoot})`}`);
+    if (collaborationIds !== null) {
+      const planSpec = collaborationPlanFor(collaborationPlanUsed!);
+      w(`  collaboration ${collaborationPlanUsed} (${workflowPlanSource}); integration by collaborator ${planSpec.integratorMember}`);
+      for (const id of collaborationIds.memberIds) {
+        const t = wb.store.get(id);
+        w(`    member      ${id} (${t?.taskType ?? '?'}) ${t?.agentId ?? '?'}/${t?.modelId ?? '?'} session=${wb.sessionForTask(id)?.sessionId ?? 'none'}`);
+      }
+      const intTask = wb.store.get(collaborationIds.integratorId);
+      w(`    integrator  ${collaborationIds.integratorId} (reuses ${collaborationIds.memberIds[collaborationIds.integratorIndex - 1]}) ${intTask?.agentId ?? '?'}/${intTask?.modelId ?? '?'} session=${wb.sessionForTask(collaborationIds.integratorId)?.sessionId ?? 'none'}`);
+    }
     w();
     w(`DECISION  ${decisionPart.status}${decisionPart.action ? ` -> ${decisionPart.action}` : ''}`);
     w(`  applied      ${decisionPart.applied}`);

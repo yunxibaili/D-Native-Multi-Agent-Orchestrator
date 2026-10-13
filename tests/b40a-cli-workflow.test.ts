@@ -328,10 +328,41 @@ section('full: the CLI drives research -> implementation -> test to completion')
   check('full: the unified review COMPLETED with a real pass verdict',
     ur?.status === 'completed' && ur.verdict === 'pass',
     `status=${String(ur?.status)} verdict=${JSON.stringify(ur?.verdict)}`);
-  check('full: the review attempt is recorded as real evidence',
-    (r.report.reviewEvidence ?? []) as unknown[] !== undefined &&
-      r.reviewRequests.length === 1 && existsSync(r.reportDir),
-    `reviews=${r.reviewRequests.length}`);
+  /*
+   * B4.0b left-off P2 (closed here): the previous assertion read
+   * `(report.reviewEvidence ?? []) !== undefined`, which is CONSTANTLY TRUE — `[]`
+   * is not `undefined`, and so is any value. It therefore proved nothing about the
+   * review evidence and only the call count carried the check. These three
+   * assertions are the real ones:
+   *   1. `reviewEvidence.ok` is actually true (the append was accepted);
+   *   2. `attemptId` is a NON-EMPTY string (an id, not a null placeholder);
+   *   3. that exact id resolves to a REAL record in the published round result,
+   *      and that record's `kind` is `review` — not an execution attempt that
+   *      merely happens to sit at the same index.
+   */
+  const re = r.report.reviewEvidence as { recorded?: boolean; ok?: boolean; attemptId?: string | null } | undefined;
+  check('full: the review evidence append was ACCEPTED (reviewEvidence.ok)',
+    re?.ok === true,
+    `ok=${String(re?.ok)} recorded=${String(re?.recorded)}`);
+  check('full: the review evidence carries a NON-EMPTY attempt id',
+    typeof re?.attemptId === 'string' && re.attemptId.trim() !== '',
+    `attemptId=${JSON.stringify(re?.attemptId)}`);
+  const publishedAttempts = (((r.report.roundResult as Record<string, unknown> | undefined)?.machine as Record<string, unknown> | undefined)?.attempts ?? []) as Array<Record<string, unknown>>;
+  const reviewRecord = publishedAttempts.find((a) => a.attemptId === re?.attemptId);
+  check('full: that attempt id resolves to a REAL kind=review record in the round result',
+    reviewRecord !== undefined && reviewRecord.kind === 'review',
+    `found=${reviewRecord === undefined ? 'none' : JSON.stringify(reviewRecord)} total=${publishedAttempts.length}`);
+  // And the same record survives into the PUBLISHED artifact on disk, not just the
+  // in-memory object: the published JSON is what a later reader or the dashboard reads.
+  const publishedPath = (r.report.roundResultPublished as { path?: string } | undefined)?.path;
+  let publishedKinds: string[] = [];
+  if (typeof publishedPath === 'string' && existsSync(publishedPath)) {
+    const onDisk = JSON.parse(readFileSync(publishedPath, 'utf8')) as { machine?: { attempts?: Array<{ attemptId?: string; kind?: string }> } };
+    publishedKinds = (onDisk.machine?.attempts ?? []).map((a) => `${String(a.attemptId)}:${String(a.kind)}`);
+  }
+  check('full: the published report file really contains that kind=review attempt',
+    publishedKinds.includes(`${String(re?.attemptId)}:review`),
+    `path=${String(publishedPath)} kinds=${publishedKinds.join(',')}`);
   // B4.0b acceptance 5: each step's ACTUAL output reaches the review request.
   check('full: the review request carries EVERY step\'s actual output',
     r.reviewRequests.length === 1 &&

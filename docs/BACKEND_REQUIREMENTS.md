@@ -254,8 +254,9 @@ LAYA 可以选择同 Agent 的其他模型、其他 Agent 的相同模型或其�
 
 ## 16. 两层任务分配（功能 A / 功能 B）
 
-本节把用户确认的两层任务分配正式记为后端需求；下一任务先做 B4.0 顺序异构工作流，
-同目标协作组与完整 Skill/MCP 选择按后续切片推进。提示词/规划不代表已经实现。
+本节把用户确认的两层任务分配正式记为后端需求。
+两层功能的已验证范围、实现缺口与封板状态只见 [项目基线 §5.4](PROJECT_BASELINE.md)，不在需求文档重复宣布完成。
+完整 Skill/MCP 选择、角色计划与真实模型多模型兼容性按后续切片推进。提示词/规划不代表已经实现。
 两层都复用既有 Planner / Assignment / Scheduler / SessionRegistry / WorkerIdentity / Fan-out
 与 ResourceClaim / Workspace，**不新增拥有调度权的“主管 Agent”**，也不新增 TeamStore、WorkerManager、
 第二套 DAG 或第二套任务状态机。

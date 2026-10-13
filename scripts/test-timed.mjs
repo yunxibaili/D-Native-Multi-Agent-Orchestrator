@@ -62,6 +62,10 @@ const SUITES = [
   // B4.0a: the PRODUCTION round CLI drives the workflow to completion (bounded loop,
   // existing Verification via LAYA's `complete`, honest incomplete status). Hermetic.
   'b40a-cli-workflow',
+  // B4.1: same-goal 2–3 model collaboration groups (功能 B). Hermetic — the real
+  // Workbench/Assignment/Session/Scheduler/Verification/Review chain with fake adapters,
+  // and the integrator reads REAL member files written into the round's owned directory.
+  'b41-collab-group',
   'memory',
   'orchestration',
   'model-pool',
