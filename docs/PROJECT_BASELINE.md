@@ -236,7 +236,7 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 
 ## 8. 最近独立证据与上传记录
 
-2026-10-14 本机页面与上传维护（不推进阶段）：磁盘快照此前已是 B4.4，但实时预览服务未运行，先前仅核对数据不能证明用户看到的页面已同步。本轮恢复受控终端中的只读预览 http://127.0.0.1:4318，并实际打开浏览器核对 B4.4 done / B4.5 待授权。服务停止后自动刷新停止；离线文件须重新生成并重新加载。后台常驻启动被自动安全检查拒绝（blocked by policy），未绕过该拒绝。此前 GitHub 上传确实漏做；本轮核对相对 777702f 的 13 文件差异和已审核代码哈希，但 Git TLS 握手及 GitHub MCP 连接均失败，上传仍未完成。拟保存本地 codex/b44-review-pass 快照等待续传，不宣称远程成功；不修改 main/共享暂存区，project-progress/ 全部不入 Git。
+2026-10-14 本机页面与上传维护（不推进阶段）：磁盘快照此前已是 B4.4，但实时预览服务未运行，先前仅核对数据不能证明用户看到的页面已同步。本轮恢复受控终端中的只读预览 http://127.0.0.1:4318，并实际打开浏览器核对 B4.4 done / B4.5 待授权。服务停止后自动刷新停止；离线文件须重新生成并重新加载。后台常驻启动被自动安全检查拒绝（blocked by policy），未绕过该拒绝。此前 GitHub 上传确实漏做；本轮核对相对 777702f 的 13 文件差异和已审核代码哈希。初次 Git TLS 握手及 GitHub MCP 连接失败，随后 Git 连接恢复，实际 push 成功：codex/b44-review-pass 的代码快照 b5137113041f5a290c05f84df23715fa81ceac50，远程 ls-remote 已确认。快照包含 B4.3a 收口、model-catalog smoke、B4.4 及审核文档；后续仅补此上传记录。不修改 main/共享暂存区，远程 main 仍为 8b8add4250d64d2c9c78fe47ded208e7bc285aaf，project-progress/ 全部不入 Git。
 
 2026-10-13 B4.4：**Codex 独立 PASS（最小交付视图范围），本轮停止，B4.5 未启动**。
 
@@ -654,7 +654,7 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-14T00:05:17+08:00",
+  "updatedAt": "2026-10-14T00:06:39+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
@@ -943,8 +943,8 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     },
     {
       "name": "GitHub 上传",
-      "result": "PENDING · TLS / MCP 连接失败",
-      "source": "本轮真实远程请求失败；本地快照待续传，不宣称上传成功"
+      "result": "PUSH 成功 · codex/b44-review-pass",
+      "source": "实际 git push + ls-remote 确认 b513711；main 未变；进度页未入 Git"
     }
   ],
   "sources": [
