@@ -58,7 +58,13 @@ export interface TaskHandoff {
    * worker touched. Dependants need the second to reason about the first.
    */
   readonly changedFiles: readonly string[];
-  /** Test commands this run actually EXECUTED, from its own shell tool calls. */
+  /**
+   * Shell commands this run actually EXECUTED, from its own shell tool calls.
+   *
+   * The field keeps its historical name, and every shell command lands here. It is an
+   * OBSERVED COMMAND LIST, never test verdicts: no command is classified as a passing
+   * or failing test from its name, its prose, or an exit code.
+   */
   readonly testsRun: readonly string[];
   /**
    * Decisions the worker explicitly stated, when it stated any.
@@ -128,8 +134,9 @@ const WRITE_TOOLS = new Map<string, readonly string[]>([
   ['create_file', ['file_path', 'path', 'filePath']],
 ]);
 /**
- * Tool names that run a command, i.e. the ones a test would appear in. Includes
- * the `execute_*` family several agents use for the same thing.
+ * Tool names that run a command, i.e. where an observed shell command appears. Includes
+ * the `execute_*` family several agents use for the same thing. A command is recorded
+ * as OBSERVED, never labelled a test: nothing here can tell a test from any other command.
  */
 const SHELL_TOOLS = new Set([
   'bash', 'shell', 'powershell', 'run_terminal_cmd', 'execute_command',
@@ -261,7 +268,9 @@ export function buildTaskBrief(input: {
       for (const f of h.changedFiles) lines.push(`    ${f}`);
     }
     if (h.testsRun.length > 0) {
-      lines.push('- tests:');
+      // OBSERVED COMMANDS, not test verdicts: this list is every shell command the run
+      // executed, and nothing here is a pass/fail claim about a test.
+      lines.push('- observed commands (NOT test verdicts):');
       for (const t of h.testsRun) lines.push(`    ${t}`);
     }
     if (h.completedWork !== null) lines.push(`- completedWork: ${h.completedWork}`);

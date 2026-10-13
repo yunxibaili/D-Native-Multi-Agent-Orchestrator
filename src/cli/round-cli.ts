@@ -186,6 +186,7 @@ import {
 // then stops. Nothing here gives them a way to dispatch, decide, or move a task.
 import {
   buildRoundResult,
+  renderRoundDelivery,
   renderRoundResult,
   type RoundResult,
   type TaskEvidenceInput,
@@ -242,9 +243,12 @@ OPTIONS
                          Requires --workflow sequential|collaborate.
   --stage <file>         opt-in stage gate (B4.3): a JSON file describing the CURRENT
                          stage's material — stageId, scope, requirement, acceptance, and an
-                         optional planRef. The round REFUSES to start (no tasks, no model
-                         call) unless the material is present AND the user confirms it with
-                         --confirm <digest>. The material file cannot approve itself.
+                         optional planRef. REQUIRES --workflow sequential|collaborate, because
+                         the confirmation binds the plan that actually runs and the legacy
+                         shape-based plan cannot be bound. The round REFUSES to start (no
+                         tasks, no model call) unless the material is present AND the user
+                         confirms it with --confirm <digest>. The material file cannot approve
+                         itself.
   --confirm <digest>     the user's confirmation, bound to the stage material. It is the
                          material's digest (shown by --stage-check, and by the refusal
                          message). A changed stage/scope/requirement/acceptance invalidates
@@ -714,6 +718,14 @@ export async function runRoundCli(
       }
       return 2;
     };
+    // B4.3a: --stage requires an explicit supported --workflow because the legacy plan is
+    // chosen after confirmation and cannot yet be bound.
+    if (o.workflow !== 'sequential' && o.workflow !== 'collaborate') {
+      return refuse(
+        `--stage requires --workflow sequential or --workflow collaborate (got ${o.workflow === undefined ? 'none' : `"${o.workflow}"`}); a stage confirmation binds the plan that actually runs, and the legacy plan is not bound`,
+        ['re-run with --workflow sequential or --workflow collaborate'],
+      );
+    }
     if (!existsSync(stagePath) || !statSync(stagePath).isFile()) {
       return refuse(`--stage "${o.stage}" is not a readable file (resolved to "${stagePath}")`, ['provide an existing stage material file']);
     }
@@ -2859,6 +2871,11 @@ export async function runRoundCli(
     w('NEXT');
     w(`  ${report.nextStep}`);
     if (ranSomething) w('  The round is over. Run it again yourself if you want another round.');
+    // B4.4: the user DELIVERY view. It is the SAME pure renderer the published
+    // `roundResultReport` embeds, so the terminal and the JSON cannot disagree about
+    // what each task delivered. It reads nothing and starts nothing.
+    w();
+    w(renderRoundDelivery(roundResult));
     // R4: the gate is printed LAST on purpose. It is the last thing this process does,
     // and the report says so rather than implying there is more round to come.
     w();

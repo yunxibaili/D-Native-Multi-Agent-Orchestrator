@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前状态入口
 
-更新日期：2026-10-13
+更新日期：2026-10-14
 性质：当前事实、阶段状态、授权边界与证据索引；不是未来能力承诺。
 
 ## 1. 文档权责
@@ -30,10 +30,11 @@ README 是导航。用户明确指令优先；发现源码、证据与基线不�
 | B4.0 / B4.0a / B4.0b | 独立 PASS WITH P2；顺序工作流受控链路封板，非真实模型验收 |
 | B4.1 / B4.1a | 独立 PASS；共享顺序工作区的协作组受控闭环封板，原 1 个 P1 + 2 个 P2 关闭 |
 | B4.2 / B4.2a | 独立 PASS WITH P2；项目计划与多入口顺序执行受控闭环封板，保留等待/拒绝分类 P2 |
-| B4.3 | opt-in 阶段确认入口部分实现；显式工作流绑定与材料交付已独立验证，legacy 入口绑定仍有 P1 |
-| B4.3a | 独立 BLOCKED；原显式计划绑定与材料完整交付复现关闭，剩 stage + legacy 入口计划未绑定 P1 |
+| B4.3 | 最小 opt-in 阶段确认入口独立 PASS；仅显式 sequential/collaborate 工作流，不等于完整需求批准链 |
+| B4.3a | 独立 PASS；剩余 legacy 绑定 P1 已通过写前拒绝关闭，受控范围封板 |
 | B4 overall | NOT SEALED；功能 A/B 最小闭环 + 项目适配 + 阶段确认入口均已实现，真实模型兼容性未验收 |
-| B4.4+ / B2 / B3 / B5 | PLANNED；本轮未授权启动实现 |
+| B4.4 | 独立 PASS；最小有出处的交接/用户交付视图，声明/观察/未知分开，不等于产物或测试结果认证 |
+| B4.5+ / B2 / B3 / B5 | PLANNED；本轮未授权启动实现 |
 | PARALLEL_WRITE | CLOSED |
 | 本产品前端 | 本机独立进度页已授权且禁止入 Git；正式工作台 UI 需求仍待确认 |
 
@@ -158,12 +159,12 @@ B4.2a 独立审核确认原多入口 P1 关闭，原资源拒绝报告主场景�
   的 CR 误报为行尾空白；在 `.gitattributes` 为**该文件**声明 `whitespace=cr-at-eol`，只让真正的空白错误被报告，
   不改变行尾、不做全仓 renormalize。
 
-B4.3 新增的 opt-in 阶段确认入口已实现，但独立审核 BLOCKED；以下是实现形状，不等于确认边界已封板。
-入口为 `--stage <file>` + `--confirm <digest>`（`--stage-check` 为只读预检）：
+B4.3/B4.3a 最小 opt-in 阶段确认入口已独立 PASS，封板限以下显式工作流与受控链路，不等于完整需求批准流程或真实模型验收。
+入口为 `--workflow sequential|collaborate` + `--stage <file>` + `--confirm <digest>`（`--stage-check` 为只读预检）：
 - 阶段材料是 JSON，声明 `stageId`、`scope`、`requirement`、`acceptance`，可选 `planRef`；`parseStageMaterial`
   在写任务前拒绝缺字段、超长、超大小，并拒绝任何自我批准字段（`approved`/`confirmed`/…）。
 - 确认只来自用户本次调用 `--confirm <digest>`，digest 绑定材料、实际目标及显式工作流候选内容：改 stage/scope/requirement/
-  acceptance/planRef、显式计划内容或目标即失效；legacy 计划内容仍未绑定（见本轮独立结论）。文件自写 approved、模型输出或历史记忆都不能批准——gate 在**任何外部调用之前**（探测、
+  acceptance/planRef、显式计划内容或目标即失效；--stage 无受支持 --workflow 在写前拒绝（包括带 confirm/stage-check），不再允许 null 计划绑定。文件自写 approved、模型输出或历史记忆都不能批准——gate 在**任何外部调用之前**（探测、
   LAYA 分类、建任务之前）本地判定，失败时 `{ok:false, stage:'stage-gate', error, pending}`、runtime=0、无部分任务。
 - 信任边界如实声明：`--confirm` 是本地用户行为，不是身份认证，也不约束原生 Agent 进程内的动作。
 - 确认后，材料经**完整嵌入 + 来源标签**（`ref <file>@<digest12>`）拼入本轮 objective，超过 6000 字符的嵌入上限写前拒绝，从而进入既有 plan builder →
@@ -173,18 +174,36 @@ B4.3 新增的 opt-in 阶段确认入口已实现，但独立审核 BLOCKED；�
 - 附带 P2 修复：`applyDecision` 区分 Scheduler 的 `dependency-unmet`（等待）与真实准入拒绝；混合 receipt 主码取
   真实拒绝、并保留全部原因与等待项；`PlanFileStep.dependencies` 注释改为“显式 `[]` 不声明业务依赖、执行仍追加顺序链”。
 
-B4.3a 独立复核：原显式工作流复现与材料交付已关闭；计划绑定还缺 legacy 入口，整体 BLOCKED：
+B4.3a 独立复核 PASS：显式工作流绑定、材料交付与 legacy 入口单点均已关闭：
 - P1-1：确认曾只绑定材料字段，`planRef` 未与实际计划核对，改计划 id 或同 id 改交付仍沿用旧确认。现确认 digest 由
   `stageBindingDigest` 覆盖**材料 + 目标 objective + 工作流模式 + 有效计划内容（role/taskType/fileScope/deliverable/
   dependencies/集成责任）+ planRef**；计划文件在 gate 处**读取并冻结一次**，plan 块复用同一对象（不再二次读取）；
   `planRef` 必须命中有效计划的 id 或计划文件本身，否则写前拒绝；`stage-check` 显示有效计划/范围摘要与 digest。
   在 sequential/collaborate 显式工作流中，计划内容或目标变化使旧确认失效；仅改 JSON 键序/空白不改变标准化对象。
-  但没有 --workflow 时 planScope=null，仍未绑定后续分类生成的实际计划；不据上述通过认证所有入口。
+  对于无 --workflow 的阶段入口，新增 guard 复用现有 refuse，任何外部调用/任务创建之前拒绝；
+  无 --stage 的旧 legacy 执行保持，未建设 legacy 计划审批平台。
 - P1-2：材料摘要曾按字段截断（长 requirement 的关键尾部被截掉），且隔离 worktree 中相对引用不可达。现材料
   **完整嵌入**（`stageMaterialEmbed`，不再截断）进入 objective → 任务验收条件/brief/验收材料；超出可交付上限
   （`STAGE_EMBED_MAX_CHARS`）时在任何写执行前**明确拒绝**（`too-large-to-embed`），不静默截断；不依赖文件引用可达性，
   也不建设 ArtifactStore。
 完整角色计划、prefer/角色默认、运行中改选、真实模型兼容性、Skill/MCP、费用与掉线恢复保持后续范围。
+
+### 5.5 B4.4：有出处的交接和用户交付视图
+
+最小受控范围独立 PASS。复用既有 TaskStore/AttemptStore、Workbench 的同次 Attempt→RunResult 证据映射与 RoundResult，
+没有新增状态权威、ArtifactStore、报告平台、执行器或依赖。
+
+- TaskSummary 增加可选 stale/staleReason/blockedReason，直接读取 Task；AttemptSummary 增加可选 evidenceState，
+  区分本 Attempt 有空记录、无记录与旧报告未知。旧持久化字段缺失保持 unknown。
+- renderRoundDelivery 是既有 round-result.ts 的纯渲染函数，既被完整 RoundResult 报告复用，也进入真实非 JSON CLI。
+  每项可执行任务显示完整验收目标、任务/Attempt 来源、声明产物、观察到的写路径/命令、日志引用与过期/阻塞事实。
+  root 是容器；声明路径不证明已产出，观察到的 write/edit 也不证明文件当前存在或内容已验收。
+- 历史与最新工作 Attempt 分开；execution/rework 均保留各自文件/命令/日志并计入实际工作次数，review 不继承工作证据。
+  缺少后一次证据不从前次回填；缺少执行分类确认不被写成“从未执行”。task lifecycle、review verdict 与测试结果分开。
+- 兼容保留 testsRun 字段名，但交接 brief、机器报告和用户摘要均改称观察到的 shell 命令，不从名称/文本/exit 0 推断测试通过。
+  结构化测试结果未提供时明确 UNREPORTED；不新增测试识别器或产物文件系统校验。
+- gate、退出语义、调度、Assignment、Workspace/停止链不变；automaticPostRoundAction=NONE，PARALLEL_WRITE=CLOSED。
+  真实模型、工具原生观测覆盖、产物物理认证与完整需求批准链不属于本片 PASS。
 
 ## 6. 不可绕过的契约
 
@@ -202,7 +221,7 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 2. B4.0–B4.1a 的顺序工作流与协作组受控链路已独立封板；B4.1 输入契约、报告事实投影与未交付负例已收口。
    B4.2 提供项目适配的结构化计划文件入口（自定义 sequential/collaborate 候选）；B4.2a 收口合法多入口写计划的
    顺序执行与 `decision.note` 的真实 gate 拒绝投影；B4.3/B4.3a 提供 opt-in 阶段材料 + 用户确认入口，
-   显式工作流确认绑定与材料完整交付已验证；--stage + legacy 的实际计划绑定仍阻断本片。
+   显式工作流确认绑定与材料完整交付已验证；--stage + legacy 的未绑定入口写前拒绝，当前受控阶段已完成。
    完整角色计划、prefer/角色默认、运行中改选、真实模型多模型兼容性仍缺，留后续切片。
 3. Skill/MCP 只有部分意图/原生支持，目录、授权、具体选择和实际调用核对未闭环。
 4. 动态免费资格、账户共享额度和全流程费用授权未验收；预算 units 不是 token/货币。
@@ -217,7 +236,58 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 
 ## 8. 最近独立证据与上传记录
 
-2026-10-13 Codex B4.3a 独立审核：**BLOCKED**。不改生产代码/测试，不自动开始返工或 B4.4。
+2026-10-14 本机页面与上传维护（不推进阶段）：磁盘快照此前已是 B4.4，但实时预览服务未运行，先前仅核对数据不能证明用户看到的页面已同步。本轮恢复受控终端中的只读预览 http://127.0.0.1:4318，并实际打开浏览器核对 B4.4 done / B4.5 待授权。服务停止后自动刷新停止；离线文件须重新生成并重新加载。后台常驻启动被自动安全检查拒绝（blocked by policy），未绕过该拒绝。此前 GitHub 上传确实漏做；本轮核对相对 777702f 的 13 文件差异和已审核代码哈希，但 Git TLS 握手及 GitHub MCP 连接均失败，上传仍未完成。拟保存本地 codex/b44-review-pass 快照等待续传，不宣称远程成功；不修改 main/共享暂存区，project-progress/ 全部不入 Git。
+
+2026-10-13 B4.4：**Codex 独立 PASS（最小交付视图范围），本轮停止，B4.5 未启动**。
+
+- 调查：先读既有 round-result/workbench-handoff、CLI、Attempt→RunResult 与 Task 的过期/阻塞来源。
+  GitHub MCP repository search 本轮实际请求因传输错误失败；公开读取 [Spec Kit 官方 README](https://github.com/github/spec-kit)
+  核对结构化需求/成果的方法，仅参考方法，未安装/复制框架，未宣称 MCP 成功或完成第三方 Windows/安全审计。
+- 真实 wrapper 委派：C:/Users/Admin/.codex/bin/opencode-agent，role=implement，actual model
+  opencode-go/deepseek-v4.1-flash。首次 session ses_eca7b22f4ffe2wm6REL4rMVicJ 的 54 条 assistant 元数据确认模型；
+  该次运行在验证阶段被中断，末尾 finish=tool-calls，没有完整最终报告，不计为正常完成。
+  唯一 bounded rework session ses_eca184726ffeeaT49TOHX7Wa0N 的 29 条 assistant 同模型，最终 finish=stop、wrapper exit=0。
+- 中断后从首次 session step-start 的原树 cda409553eed744b3732a5763366b83aca516024 恢复审核对照，只读比较，不 checkout/reset。
+  worker 改动严格为 6 个既有文件：round-result.ts、workbench-handoff.ts、round-cli.ts 及 round-result/workbench/b43 测试。
+  其余源码、native、配置、依赖及先前 model-catalog smoke 保持字节/规范化 blob 不变。
+- 首次独立 probe 复现两处实质错误：W(kind=rework) 有 new.ts/cmd-new/new-log，却被过滤为空，仍标 evidence=available；
+  有实际 Attempt 但分类无确认的任务被写为 succeeded (never executed)。仅发放一次返工，在共享投影修正 execution/rework
+  的来源与工作次数，并把分类缺失写成未确认。最终独立 probe 验证 W 自己的文件/命令/日志保留，E 是历史，V(review)
+  不替代最新工作；W 缺失时不借 E，未分类不声称从未执行。
+- 最终 Codex 实跑：typecheck PASS；round-result 346/0、workbench 419/0、b43-stage-material 47/0、
+  b40a-cli-workflow 42/0、handoff-production-round 312/0、b42-plan-file 61/0、real-agent-isolation 5 opt-in / 0 违规，
+  全部 exit=0；git diff --check PASS。真实 CLI fixture 写 owned 文件并校对文件→任务→Attempt 与完整目标；
+  非 JSON CLI 确实输出同一交付视图、保持两次计划执行与最终 Human Gate NONE。
+- Codex 只维护 6 份既有文档与 ignored 本机派生/审核元数据，不代写生产代码或测试。无 commit/push/stash/reset/clean，
+  HEAD/共享暂存区不变；应用 turn-diffs 元数据与人工 Git 写流程分开。历史清理 P3 未绕过拒绝或冒称已清理。
+- 未跑 full suite/产品真实 Agent 推理；worker 委派推理单独记录。观察到的路径不认证磁盘现状，
+  命令列表不认证测试结果；未进 B4.5/B2/B3/B5/正式前端，B1/B4 overall 仍未封板。
+
+2026-10-13 B4.3a 剩余单点：**Codex 独立 PASS，受控范围封板**。用户明确选择当前下一任务，限定逐阶段推进；本轮到此停止，B4.4 未启动。
+
+- 真实委派：C:/Users/Admin/.codex/bin/opencode-agent，role=implement；首次 session
+  ses_eca909bd0ffetOHeg245V41no1 与唯一返工 session ses_eca8b8b92ffesoLk1d0zE9o8wb 均从本地 session assistant
+  元数据核实 provider/model 为 opencode-go/deepseek-v4.1-flash，分别 16/7 条 assistant，最终 finish=stop、进程 exit=0。
+  模型证据不只来自环境变量；Codex 自身模型不变。
+- OpenCode 只修改 src/cli/round-cli.ts 与 tests/b43-stage-material.test.ts。阶段门使用现有 refuse：
+  --stage 未配 sequential/collaborate 时，exit=2、stage=stage-gate、provider/runtime/review=0、无任务列表；
+  无确认、正确旧 legacy digest、stage-check 三类均拒绝，位置在文件读取与外部调用/任务创建之前。
+- 首次独立审核发现新兼容断言只证明 provider 被调用，未证明派发；仅发放一次 bounded rework。
+  最终断言要求无 --stage/--workflow 的旧入口 report.stage=complete、实际 requests=1、exit=0、prompt 无阶段上下文。
+  未扩建 planner/审批系统、未重写 B4.2，不新增 authority/依赖。
+- 独立内存负控（首次审核版本，未改磁盘代码）：关闭新增 guard 后，三个拒绝回归稳定失败，33/3、exit=1；
+  其中旧合法 digest 实际进入 complete、runtime=1，stage-check 错误产出成功 digest，证明回归承重。
+- 独立 helper probe：无阶段材料的 legacy 实际 requests=1、provider=4、exit=0；受支持 collaborate 的 stage-check
+  exit=0、provider/runtime=0。临时根按实际返回路径逐个验证边界后清理，无新 Git worktree。
+- 唯一返工后 Codex 实跑：typecheck PASS；b43-stage-material 36/0、b42-plan-file 61/0、b40a-cli-workflow 42/0、
+  b14-selection 46/0、round-result 293/0、real-agent-isolation 5 opt-in / 0 违规，全部 exit=0；git diff --check PASS。
+  原 model-catalog smoke 测试保留原字节；native/其他生产模块、配置、安装与凭据均未修改。
+- Codex 只维护 6 份既有文档和 ignored 本机派生快照，不代替 worker 改生产/测试。未 commit/push/stash/reset/clean；
+  HEAD、业务 refs 与共享暂存区保持；应用自身 turn-diffs 元数据更新与人工 Git 写流程分开。
+- 未跑 full suite、未通过产品调用真实 Agent 推理；worker 自身委派推理与产品真机验收分开。历史 reviewer worktree
+  的工具清理 P3 不在本轮删除。PARALLEL_WRITE=CLOSED，B1/B4 overall 仍 NOT SEALED。
+
+历史：上轮 Codex B4.3a 独立审核 **BLOCKED**；下列保留当时复现与修复建议，剩余单点已由上方本轮关闭。
 
 - 已关闭原显式计划复现：经真实 CLI stage-check 获取 digest 后，同 ID 改交付、改变 objective 均写前拒绝
   （exit=2、provider=0、runtime=0）；gate 后在受控 provider 首次调用时替换磁盘计划，执行仍用冻结的原计划
@@ -274,7 +344,7 @@ round-cli.ts 恢复核对：与父快照比较，排除明确的 B4.3 插入及 
 本轮 reviewer-owned probe：源临时目录按记录逐个清理；剩余 1 个真实 Git worktree（仅 .git/README.md 两个 fixture 文件），
 路径为 %TEMP%/.p4m-worktrees/b43-mlqsLd-round-mv6mspa4-w1。对确切目录的非递归清理亦被自动安全检查拒绝，
 返回 blocked by policy；未改用其他方式绕过。该工具限制记 P3，不能宣称本轮 reviewer 残留为 0，不属于生产 B4.3 根因。
-未跑 full suite/真实模型，未读取凭据/改本机配置。该轮提出的两项修复已由 B4.3a 复核；当前仅剩 legacy 计划绑定，不启动 B4.4 或正式前端。
+未跑 full suite/真实模型，未读取凭据/改本机配置。该轮提出的两项修复及后续 legacy 单点均已独立复核关闭；本轮不启动 B4.4 或正式前端。
 
 
 B4.3 实现方报告（独立结果以上文为准，2026-10-13，hermetic）：`b43-stage-material` **21/0**（经真实 `runRoundCli` +
@@ -575,7 +645,8 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 用户本轮授权根据草案整理计划、任务和独立进度页；没有授权实施新后端切片。
 路线见 [BACKEND_DELIVERY_PLAN.md](BACKEND_DELIVERY_PLAN.md)，下一任务见 [NEXT_TASK.md](NEXT_TASK.md)。
 进度页位于被 Git 忽略的 project-progress/，只派生下面的维护快照；不读取 Runtime 或凭据，不作为第二状态权威。
-完成度以新草案后端目标为分母：十项权重共 100、当前已实现信用 52，四舍五入报告约 50% 完成 / 约 50% 剩余。
+完成度以新草案后端目标为分母：十项权重共 100、当前已实现信用 56，按 5 点粒度报告约 55% 完成 / 约 45% 剩余。
+阶段确认信用为 3/12；本轮最小交付视图独立通过，成果/交接信用由 5 调为 7/10。产物认证、结构化测试结果与完整批准链仍缺。
 合理剩余区间 40–60%，属于工程规划估算，不是客观测试统计、承诺工时或正式前端完成度。
 每次任务推进更新事实和快照后运行 node project-progress/refresh.mjs；实时预览从本文读取，不伪造任务推进。
 
@@ -583,18 +654,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-13T20:48:17+08:00",
+  "updatedAt": "2026-10-14T00:05:17+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "B4.3a",
-    "name": "确认绑定实际计划与材料可达性收口",
-    "status": "blocked",
-    "summary": "Codex 独立 BLOCKED：显式计划绑定、冻结与完整材料交付通过；--stage 无 --workflow 时确认绑定的 planScope=null，同一确认可接受不同 legacy 实际计划。"
+    "id": "B4.4",
+    "name": "有出处的交接和用户交付视图",
+    "status": "done",
+    "summary": "Codex 独立 PASS：完整验收目标与同次任务/Attempt 证据进入 JSON 与实际命令行；声明、观察、未知/过期/阻塞分开，返工证据不丢失，命令不冒充测试结果。首次实现 + 一次返工后止于本阶段。"
   },
   "next": {
-    "id": "B4.3a",
-    "name": "剩余单点：拒绝未绑定的阶段 legacy 入口（待用户授权）",
+    "id": "B4.5",
+    "name": "Git 项目中的顺序协作（待单独授权）",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -627,14 +698,14 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       {
         "name": "需求与阶段确认",
         "weight": 12,
-        "earned": 1,
-        "basis": "显式工作流绑定和完整内联已独立验证；stage+legacy 仍缺计划绑定，完整批准链未验收，暂不增加信用"
+        "earned": 3,
+        "basis": "最小 opt-in 阶段确认/绑定/完整内联已独立 PASS；完整需求/总体计划/阶段批准链未验收"
       },
       {
         "name": "成果、交接与真实验证报告",
         "weight": 10,
-        "earned": 5,
-        "basis": "有 handoff/Attempt/RoundResult；本片长材料完整交付已验证，正式交付覆盖/历史仍缺"
+        "earned": 7,
+        "basis": "B4.4 最小有出处交付视图独立 PASS；声明/观察/未知分开，同 Attempt 的返工证据保留；产物物理认证和结构化测试覆盖仍缺"
       },
       {
         "name": "监督与用户纠偏",
@@ -670,14 +741,6 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
   },
   "blockers": [
     {
-      "id": "B43A-P1-LEGACY",
-      "severity": "P1",
-      "title": "阶段 legacy 入口的实际计划未绑定",
-      "detail": "--stage 无 --workflow 时 planScope=null；同一确认可接受 small 单任务和 moderate 三步骤计划，且均实际派发。",
-      "next": "B4.3a 剩余单点（待授权）",
-      "kind": "Codex 独立 CLI 复现"
-    },
-    {
       "id": "B43-P3-CLEANUP",
       "severity": "P3",
       "title": "独立 probe 的两文件目录待手动清理",
@@ -697,8 +760,8 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "id": "APPROVAL",
       "severity": "产品缺口",
       "title": "需求到阶段确认仅最小入口",
-      "detail": "显式工作流绑定与完整内联已验证；stage+legacy 入口仍有 P1，完整需求/计划/阶段批准链未验收。",
-      "next": "B4.3a / B4.4",
+      "detail": "最小阶段确认入口及有出处交付视图已通过；完整需求/总体计划/阶段批准链与用户流程未验收。",
+      "next": "后续需求闭环 / B4.6",
       "kind": "部分实现"
     },
     {
@@ -764,30 +827,30 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     {
       "id": "B4.3",
       "title": "需求与阶段材料确认",
-      "status": "partial",
+      "status": "done",
       "deliverable": "批准绑定材料、范围与阶段",
-      "evidence": "原显式计划与材料复现关闭；legacy 实际计划绑定仍缺"
+      "evidence": "最小 opt-in 入口独立 PASS；仅显式 sequential/collaborate，不等于完整批准链"
     },
     {
       "id": "B4.3a",
       "title": "阶段确认与材料交付收口",
-      "status": "blocked",
+      "status": "done",
       "deliverable": "实际计划/范围绑定；关键约束完整可达或写前明确拒绝",
-      "evidence": "独立 32/0 + 额外 probes；显式绑定/冻结/内联通过，legacy 单点 P1"
+      "evidence": "独立 36/0 + guard 负控 + 旧入口/协作预检 probes；一次返工补实际派发断言"
     },
     {
       "id": "B4.4",
       "title": "交接、成果与验证视图",
-      "status": "planned",
+      "status": "done",
       "deliverable": "可读交付与真实测试，未知不冒充通过",
-      "evidence": "先收口 B4.3a，再由用户授权进入"
+      "evidence": "独立 RoundResult 346/0、Workbench 419/0、阶段 CLI 47/0；两处证据问题经唯一返工关闭"
     },
     {
       "id": "B4.5",
       "title": "Git 项目顺序协作",
       "status": "planned",
       "deliverable": "成员真实差异可交集成，保护用户脏文件",
-      "evidence": "两条备选路线，仅实施一条"
+      "evidence": "下一候选，尚未启动；先比较现有工作区/合并路径再选最小路线"
     },
     {
       "id": "B3.1",
@@ -836,42 +899,52 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     {
       "name": "typecheck",
       "result": "PASS",
-      "source": "Codex 本轮实跑"
+      "source": "Codex 最终独立实跑"
     },
     {
-      "name": "b43-stage-material",
-      "result": "32 / 0",
-      "source": "Codex 本轮实跑；常规 suite 未覆盖 legacy P1"
+      "name": "round-result / workbench",
+      "result": "346 / 419 · 全通过",
+      "source": "Codex 最终独立实跑"
     },
     {
-      "name": "b42 / b40a / b14 / round-result",
-      "result": "61 / 42 / 46 / 293 · 全通过",
-      "source": "Codex 本轮实跑"
+      "name": "b43 / b40a / handoff / b42",
+      "result": "47 / 42 / 312 / 61 · 全通过",
+      "source": "Codex 最终独立实跑"
     },
     {
       "name": "real-agent-isolation",
       "result": "5 opt-in / 0 违规",
-      "source": "Codex 本轮实跑；未启用真实模型"
+      "source": "Codex 本轮实跑"
     },
     {
-      "name": "显式计划绑定 / gate 后文件替换",
-      "result": "PASS · 写前拒绝 / 冻结原计划",
-      "source": "独立 CLI stage-check 与受控调用时替换"
+      "name": "返工证据 / 缺失分类 / review 分离",
+      "result": "PASS · 不丢失、不借用、不伪造未执行",
+      "source": "独立真实聚合 helper probe"
     },
     {
-      "name": "完整长材料 / 超限",
-      "result": "PASS · 逐字交付 / 写前拒绝",
-      "source": "独立 RunRequest 与验收材料检查"
+      "name": "worker 模型 / 返工",
+      "result": "DeepSeek V4.1 Flash · 仅一次返工",
+      "source": "两次 session 元数据；首次验证中断，返工正常完成"
     },
     {
-      "name": "stage + legacy 实际计划",
-      "result": "BLOCKED · 同一确认接受两种计划",
-      "source": "独立 CLI probe：small / moderate"
+      "name": "git diff --check",
+      "result": "PASS",
+      "source": "Codex 本轮实跑"
     },
     {
-      "name": "full suite / 真实模型",
+      "name": "full suite / 产品真实模型",
       "result": "NOT RUN",
-      "source": "本轮范围外"
+      "source": "worker 委派推理不提升为产品验收"
+    },
+    {
+      "name": "本机实时进度页",
+      "result": "已恢复 · B4.4 done / B4.5 待授权",
+      "source": "实际浏览器显示核对；受控终端服务，停止后不自动刷新"
+    },
+    {
+      "name": "GitHub 上传",
+      "result": "PENDING · TLS / MCP 连接失败",
+      "source": "本轮真实远程请求失败；本地快照待续传，不宣称上传成功"
     }
   ],
   "sources": [

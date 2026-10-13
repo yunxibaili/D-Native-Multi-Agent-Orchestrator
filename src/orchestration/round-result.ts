@@ -131,6 +131,18 @@ export interface TaskSummary {
   readonly artifacts: readonly { readonly name: string; readonly path: string }[];
   readonly errorCode: string | null;
   readonly errorMessage: string | null;
+  /**
+   * P6-C: whether this task's dependencies no longer describe the current plan.
+   *
+   * OPTIONAL so an old persisted report (or a hand-typed fixture written before this
+   * field existed) still type-checks. `buildRoundResult` ALWAYS fills it for a new
+   * report, so `undefined` means "this report does not say", never "false".
+   */
+  readonly stale?: boolean;
+  /** Why the task is stale, or null when it is not. Absent on old reports. */
+  readonly staleReason?: string | null;
+  /** Why the task is blocked, or null when it is not. Absent on old reports. */
+  readonly blockedReason?: string | null;
 }
 
 /**
@@ -264,10 +276,29 @@ export interface AttemptSummary {
   readonly startedAt: number;
   readonly finishedAt: number | null;
   readonly previousAttemptId: string | null;
+  /** Files THIS attempt's own write/edit tool calls touched. Tool records, not proof. */
   readonly changedFiles: readonly string[];
+  /**
+   * Shell commands THIS attempt's own tool calls OBSERVED. The field keeps its
+   * historical name for compatibility, but it is a COMMAND LIST, not test verdicts:
+   * nothing here is classified as a passing or failing test.
+   */
   readonly testsRun: readonly string[];
   readonly artifacts: readonly { readonly name: string; readonly path: string }[];
   readonly transcriptPath: string | null;
+  /**
+   * Whether THIS attempt owns an entry in the per-attempt evidence map.
+   *
+   *   'available'   the round recorded execution evidence for this `attemptId`
+   *   'unavailable' no entry exists for this attempt (nothing was recorded)
+   *   (absent)      this report predates the field — genuinely unknown
+   *
+   * An EMPTY `changedFiles`/`testsRun` list is NOT the same as a missing entry: the
+   * first means the attempt ran and its own tool calls observed nothing, the second
+   * means no evidence was projected at all. A missing entry is NEVER filled from a
+   * sibling attempt. Optional so old persisted reports load unchanged.
+   */
+  readonly evidenceState?: 'available' | 'unavailable';
   /** Why THIS attempt handed off, when it did. `null` for a first, unhanded attempt. */
   readonly handoffReason: HandoffReason | null;
   /** Agents this task's chain used, in order. Shared per task, repeated per attempt. */
@@ -625,6 +656,19 @@ function toExecutionOutcome(value: string): ExecutionOutcomeKind | null {
   return (EXECUTION_OUTCOMES as readonly string[]).includes(value) ? (value as ExecutionOutcomeKind) : null;
 }
 
+/**
+ * True for an attempt that actually DID work on the task: an `execution` or a `rework`.
+ *
+ * A `rework` is a REAL run — the workbench records one only when a `RunResult` exists
+ * (workbench.ts dispatch), so its run-derived evidence belongs on the attempt exactly as
+ * an execution's does. A `review` judges work and never produces it. Sharing this one
+ * predicate is what stops the projection and the renderer from disagreeing about whether
+ * a rework is work.
+ */
+function isWorkAttemptKind(kind: AttemptKind): boolean {
+  return kind === 'execution' || kind === 'rework';
+}
+
 const NO_EVIDENCE: AttemptEvidenceInput = Object.freeze({
   changedFiles: [],
   testsRun: [],
@@ -665,14 +709,16 @@ export function buildRoundResult(input: BuildRoundResultInput): RoundResult {
   const taskSummaries: TaskSummary[] = input.tasks.map((t) => {
     const classified = outcomesByTask.get(t.taskId);
     const records = attemptsByTask.get(t.taskId) ?? [];
-    // Review attempts are evidence ABOUT the round, not executions OF the task, so
-    // counting them as attempts would overstate how much work was tried.
-    const executionAttempts = records.filter((r) => r.kind === 'execution');
-    // The task's error is the error of its MOST RECENT execution attempt, which is the one
+    // Review attempts are evidence ABOUT the round, not work ON the task, so counting
+    // them as attempts would overstate how much work was tried. A `rework` IS work — the
+    // workbench records it only when a real `RunResult` exists — so it counts, exactly as
+    // an execution does.
+    const workAttempts = records.filter((r) => isWorkAttemptKind(r.kind));
+    // The task's error is the error of its MOST RECENT WORK attempt, which is the one
     // that decided the task's fate. `UnifiedRoundReport.tasks` carries no error field, and
     // picking an arbitrary attempt among several would be a guess; "latest" is the only
     // choice that is both defined and true.
-    const latest = executionAttempts.length > 0 ? executionAttempts[executionAttempts.length - 1]! : undefined;
+    const latest = workAttempts.length > 0 ? workAttempts[workAttempts.length - 1]! : undefined;
     return {
       taskId: t.taskId,
       objective: t.acceptanceCriteria,
@@ -681,12 +727,18 @@ export function buildRoundResult(input: BuildRoundResultInput): RoundResult {
       depth: t.depth,
       agentId: t.agentId,
       modelId: t.modelId,
-      attemptCount: executionAttempts.length,
+      attemptCount: workAttempts.length,
       outcome: classified?.outcome ?? null,
       executed: classified?.executed ?? false,
       artifacts: t.artifacts.map((a) => ({ name: a.name, path: a.path })),
       errorCode: latest?.errorCode ?? null,
       errorMessage: latest?.errorMessage ?? null,
+      // P6-C: staleness and blocking are FACTS read straight off the store's Task. They
+      // are reported, never inferred: a stale task is kept for history but is not the
+      // current accepted delivery.
+      stale: t.stale,
+      staleReason: t.staleReason,
+      blockedReason: t.blockedReason,
     };
   });
 
@@ -706,7 +758,8 @@ export function buildRoundResult(input: BuildRoundResultInput): RoundResult {
       // which handed every attempt of a task the single latest run's evidence — so after
       // an A->B handoff, attempt A was reported as having written agent B's files. A
       // missing entry now yields empty evidence for THAT attempt only.
-      const own = evidence[r.attemptId] ?? NO_EVIDENCE;
+      const ownEntry = evidence[r.attemptId];
+      const own = ownEntry ?? NO_EVIDENCE;
       attemptSummaries.push({
         attemptId: r.attemptId,
         taskId: r.taskId,
@@ -723,14 +776,18 @@ export function buildRoundResult(input: BuildRoundResultInput): RoundResult {
         startedAt: r.startedAt,
         finishedAt: r.finishedAt ?? null,
         previousAttemptId: r.previousAttemptId ?? null,
-        // Run-derived evidence belongs to the execution that produced it. A review
-        // attempt did not write files, so it must not inherit an execution's list.
-        changedFiles: r.kind === 'execution' ? own.changedFiles : [],
-        testsRun: r.kind === 'execution' ? own.testsRun : [],
+        // Run-derived evidence belongs to the execution OR rework that produced it. A
+        // review attempt did not write files, so it must not inherit a work run's list.
+        changedFiles: isWorkAttemptKind(r.kind) ? own.changedFiles : [],
+        testsRun: isWorkAttemptKind(r.kind) ? own.testsRun : [],
         // Always empty for an attempt: artifacts are declared by the TASK, not produced by
         // one attempt. They are reported on `TaskSummary.artifacts`.
         artifacts: [],
-        transcriptPath: r.kind === 'execution' ? own.transcriptPath : null,
+        transcriptPath: isWorkAttemptKind(r.kind) ? own.transcriptPath : null,
+        // Availability of THIS attempt's own evidence entry. `unavailable` is an explicit
+        // fact (the map has no key for this attempt), which is different from an empty
+        // observed list and is never back-filled from a sibling.
+        evidenceState: ownEntry === undefined ? 'unavailable' : 'available',
         // Reasons are consumed in order, so attempt N carries the Nth handoff reason.
         handoffReason: r.kind === 'execution' ? reasons[index] ?? null : null,
         continuationChain: chain,
@@ -1234,7 +1291,9 @@ export function renderRoundResult(result: RoundResult): string {
     if (a.previousAttemptId !== null) lines.push(`    previous attempt: ${a.previousAttemptId}`);
     if (a.handoffReason !== null) lines.push(`    handed off because: ${a.handoffReason}`);
     if (a.changedFiles.length > 0) lines.push(`    wrote: ${a.changedFiles.join(', ')}`);
-    if (a.testsRun.length > 0) lines.push(`    tests: ${a.testsRun.join(' ; ')}`);
+    // OBSERVED COMMANDS, not test verdicts. The field is named `testsRun` for
+    // compatibility, but no command here was classified as a passing/failing test.
+    if (a.testsRun.length > 0) lines.push(`    observed commands (NOT test verdicts): ${a.testsRun.join(' ; ')}`);
     for (const art of a.artifacts) lines.push(`    artifact: ${art.name} -> ${art.path}`);
     if (a.transcriptPath !== null) lines.push(`    transcript: ${a.transcriptPath}`);
     if (a.errorCode !== null) lines.push(`    error: ${a.errorCode}${a.errorMessage === null ? '' : ` — ${a.errorMessage}`}`);
@@ -1261,6 +1320,11 @@ export function renderRoundResult(result: RoundResult): string {
     for (const u of result.machine.unfinished) lines.push(`- ${u.taskId}: ${u.status} — ${u.reason}`);
     lines.push('');
   }
+
+  // The SAME renderer the round CLI's plain output uses, so the reviewer's view and
+  // the operator's view of what was delivered can never disagree.
+  lines.push(renderRoundDelivery(result));
+  lines.push('');
 
   lines.push('## Review conclusion');
   lines.push('(an independent judgement. NOT machine evidence, and NOT applied automatically.)');
@@ -1319,6 +1383,134 @@ export function renderRoundResult(result: RoundResult): string {
   return lines.join('\n');
 }
 
+/** How one attempt's evidence availability reads to a human. Absent is unknown, not empty. */
+function evidenceAvailability(state: AttemptSummary['evidenceState']): string {
+  if (state === 'available') return 'available';
+  if (state === 'unavailable') return 'unavailable (no evidence entry exists for this attempt)';
+  return 'unknown (this report predates the field)';
+}
+
+/** Append one attempt's own evidence, under `indent`. Never borrows a sibling's list. */
+function appendAttemptEvidence(out: string[], a: AttemptSummary, indent: string): void {
+  out.push(`${indent}agent=${a.agentId} model=${a.modelId ?? 'unknown'} outcome=${a.outcome} evidence=${evidenceAvailability(a.evidenceState)}`);
+  // An empty list on an `available` attempt means "ran and observed nothing"; the same
+  // empty list on an unavailable/unknown attempt must stay UNKNOWN rather than read as
+  // "ran and did nothing".
+  const emptyNote = a.evidenceState === 'available'
+    ? '(none observed)'
+    : `unknown (no evidence entry for this attempt)`;
+  out.push(`${indent}observed writes (tool records; the files are NOT verified to exist): ` +
+    `${a.changedFiles.length > 0 ? a.changedFiles.join(', ') : emptyNote}`);
+  out.push(`${indent}observed shell commands (NOT test verdicts): ` +
+    `${a.testsRun.length > 0 ? a.testsRun.join(' ; ') : emptyNote}`);
+  out.push(`${indent}transcript: ` +
+    `${a.transcriptPath ?? (a.evidenceState === 'available' ? '(none recorded)' : 'unknown (no evidence entry for this attempt)')}`);
+  if (a.errorCode !== null) out.push(`${indent}error: ${a.errorCode}${a.errorMessage === null ? '' : ` — ${a.errorMessage}`}`);
+}
+
+/**
+ * A per-task DELIVERY VIEW for the user: what each EXECUTABLE task was asked for, and
+ * what the round actually OBSERVED it produce.
+ *
+ * WHAT THIS DELIBERATELY DOES NOT DO
+ * ----------------------------------
+ *   - It does NOT read the filesystem. A declared artifact is shown as DECLARED and
+ *     never as produced; an observed write is a TOOL RECORD, not proof the file exists
+ *     now.
+ *   - It does NOT classify any observed shell command as a passing or failing test.
+ *     There is no structured test result in this round, so the test/verification
+ *     outcome is reported as UNREPORTED.
+ *   - It NEVER copies one attempt's evidence onto a sibling. A missing evidence entry
+ *     is reported as unavailable/unknown.
+ *   - It treats the round's ROOT as a CONTAINER, not as unexecuted missing work, and it
+ *     never presents a STALE task as the current accepted delivery.
+ *
+ * It is the SAME renderer the round CLI's plain output uses, so the reviewer's report
+ * and the operator's terminal can never disagree about what was delivered.
+ */
+export function renderRoundDelivery(result: RoundResult): string {
+  const out: string[] = [];
+  out.push('## User delivery — per executable task (observed tool records, not verified files)');
+
+  for (const root of result.machine.tasks.filter((t) => !isExecutableTask(t))) {
+    out.push(`- ${root.taskId} is the round's container (the original request), not an executable unit of work`);
+  }
+
+  const executable = result.machine.tasks.filter(isExecutableTask);
+  if (executable.length === 0) {
+    out.push('- no executable task was created this round');
+    return out.join('\n');
+  }
+
+  for (const task of executable) {
+    out.push('');
+    out.push(`TASK ${task.taskId}`);
+    out.push(`  acceptance objective: ${task.objective}`);
+
+    // Only execution/rework attempts can be a delivery. A review judges work; it never
+    // produces it, so it is shown separately and inherits no execution evidence.
+    const attempts = result.machine.attempts.filter((a) => a.taskId === task.taskId);
+    const executions = attempts.filter((a) => a.kind === 'execution' || a.kind === 'rework');
+    const judgements = attempts.filter((a) => a.kind !== 'execution' && a.kind !== 'rework');
+
+    // The classifier's `executed` and the RECORDED attempts are two different facts. An
+    // absent classification is NOT proof the task never ran, so a task with recorded work
+    // attempts is source-qualified rather than labelled "never executed"; the recorded
+    // facts are printed below.
+    const executionNote = task.executed
+      ? ' (executed)'
+      : executions.length > 0
+        ? ' (execution not confirmed by the outcome classification; recorded work attempts below)'
+        : ' (no execution attempt recorded)';
+    out.push(`  status: ${task.status}${executionNote}`);
+    // A stale task is kept for history only. Presenting it as the current accepted
+    // delivery would claim the round is delivering work the plan already superseded.
+    if (task.stale === true) {
+      out.push('  STALE — this task is NOT a current accepted delivery' +
+        (task.staleReason === null || task.staleReason === undefined ? '' : `: ${task.staleReason}`));
+    } else if (task.stale === undefined) {
+      out.push('  stale: unknown (this report predates the field)');
+    }
+    if (task.blockedReason !== null && task.blockedReason !== undefined) {
+      out.push(`  blocked reason: ${task.blockedReason}`);
+    }
+    if (task.artifacts.length > 0) {
+      out.push('  declared artifacts (declared by the task, NOT verified to exist):');
+      for (const a of task.artifacts) out.push(`    - ${a.name}: ${a.path}`);
+    } else {
+      out.push('  declared artifacts: none declared');
+    }
+
+    if (executions.length === 0) {
+      out.push('  execution: no execution attempt was recorded — run and evidence are UNAVAILABLE');
+    } else {
+      const current = executions[executions.length - 1]!;
+      out.push(`  current execution (latest attempt): ${current.attemptId}`);
+      appendAttemptEvidence(out, current, '    ');
+      const history = executions.slice(0, -1);
+      if (history.length > 0) {
+        out.push('  historical attempts (superseded; NOT the current delivery):');
+        for (const h of history) {
+          out.push(`    - ${h.attemptId} [${h.kind}]`);
+          appendAttemptEvidence(out, h, '      ');
+        }
+      }
+    }
+
+    for (const j of judgements) {
+      out.push(`  separate ${j.kind} attempt (judges the work; inherits no execution evidence): ` +
+        `${j.attemptId} agent=${j.agentId} outcome=${j.outcome} evidence=${evidenceAvailability(j.evidenceState)}`);
+    }
+
+    // Separated from the task lifecycle / Verification status above on purpose: this line
+    // reports only that NO structured test result exists here, NOT that acceptance is
+    // unknown. The task's acceptance is the lifecycle/Verification status, not this line.
+    out.push('  structured test result: UNREPORTED (no structured test result exists; ' +
+      'the observed commands above are not test verdicts; task acceptance is the lifecycle/Verification status above)');
+  }
+  return out.join('\n');
+}
+
 // ---------------------------------------------------------------------------
 // 14. User-facing summary
 // ---------------------------------------------------------------------------
@@ -1357,7 +1549,8 @@ function buildUserFacingSummary(
     }
   }
   if (files.length > 0) userFacing.push(`Files changed (${files.length}): ${files.join(', ')}`);
-  if (tests.length > 0) userFacing.push(`Tests run (${tests.length}): ${tests.join(' ; ')}`);
+  // OBSERVED COMMANDS, not test verdicts — the field is named `testsRun` for compatibility.
+  if (tests.length > 0) userFacing.push(`Observed shell commands (${tests.length}; NOT test verdicts): ${tests.join(' ; ')}`);
   if (artifacts.length > 0) userFacing.push(`Artifacts (${artifacts.length}): ${artifacts.join(' ; ')}`);
   userFacing.push(`Codex review: ${review.status}` +
     `${review.verdict === null ? ' (no verdict — not a pass)' : ` — ${review.verdict}`}` +

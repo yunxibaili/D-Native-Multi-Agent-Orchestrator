@@ -372,6 +372,43 @@ section('doctor: default runs ZERO catalogue queries; --models is explicit (herm
   const d4 = await orch.doctor({ modelCatalog: { agentId: 'codex', runner } });
   check('opt-in for a non-OpenCode agent is unsupported and starts nothing new', d4.modelCatalog?.status === 'unsupported' && calls.length === 1,
     `${d4.modelCatalog?.status}/${calls.length}`);
+
+  const baselineAgents = JSON.stringify(d1.agents);
+  const sentinel = 'MC_CATALOG_SENTINEL_9f3c1a: injected catalogue command rejected';
+  let rejectCalls = 0;
+  const failingRunner: CmdRunner = async () => {
+    rejectCalls++;
+    throw new Error(sentinel);
+  };
+
+  const dFail = await orch.doctor({ modelCatalog: { agentId: 'opencode', runner: failingRunner } });
+  check('exception doctor: an asynchronously rejecting runner RESOLVES (doctor never throws)',
+    dFail.modelCatalog !== undefined, String(dFail.modelCatalog === undefined));
+  check('exception doctor: status is failed with zero models',
+    dFail.modelCatalog?.status === 'failed' && dFail.modelCatalog.models.length === 0,
+    `${dFail.modelCatalog?.status}/${dFail.modelCatalog?.models.length}`);
+  check('exception doctor: the note carries the sentinel and reports a command exception, not a discovery failure',
+    (dFail.modelCatalog?.note ?? '').includes(sentinel) && /threw/.test(dFail.modelCatalog?.note ?? '') &&
+      !/could not resolve/.test(dFail.modelCatalog?.note ?? ''),
+    dFail.modelCatalog?.note);
+  check('exception doctor: the injected runner was called exactly once', rejectCalls === 1, String(rejectCalls));
+  check('exception doctor: the complete agent report equals the fake baseline report',
+    JSON.stringify(dFail.agents) === baselineAgents, 'agents diverged from baseline');
+
+  const dAfterFail = await orch.doctor();
+  check('recovery: a subsequent default doctor attaches no catalogue and adds NO calls to the failing runner',
+    dAfterFail.modelCatalog === undefined && rejectCalls === 1,
+    `modelCatalog=${String(dAfterFail.modelCatalog)} rejectCalls=${rejectCalls}`);
+
+  const dRecovered = await orch.doctor({ modelCatalog: { agentId: 'opencode', runner } });
+  check('recovery: the SAME orchestrator still collects ok with the success runner',
+    dRecovered.modelCatalog?.status === 'ok' &&
+      dRecovered.modelCatalog.models.map((m) => m.modelId).join(',') ===
+        'anthropic/claude-sonnet-4-5,openai/gpt-5.1-codex,opencode/gpt-5.1-codex,openrouter/anthropic/claude-sonnet-4.5',
+    dRecovered.modelCatalog?.status);
+  check('recovery: the success runner gained exactly one additional call', calls.length === 2, String(calls.length));
+  check('recovery: agent diagnostics are preserved across the failure and recovery',
+    JSON.stringify(dRecovered.agents) === baselineAgents, 'agents diverged after recovery');
 }
 
 // =========================================================================

@@ -58,6 +58,7 @@ import {
   deriveHumanGate,
   gateWithUserDecision,
   isBlockingStatus,
+  renderRoundDelivery,
   renderRoundResult,
   sealNextRoundInput,
   type BuildRoundResultInput,
@@ -354,8 +355,25 @@ function aggregate(over: {
   });
 }
 
-/** Drive a real task to a real status through the store's own transition table. */
-function withStatus(task: Task, status: Task['status']): Task {
+/**
+ * Drive a real task to a real status through the store's own transition table.
+ *
+ * B4.4 added the optional third argument so a fixture can ALSO declare artifacts and/or
+ * a stale/blocked fact through the store's own API — never by hand-shaping a Task, which
+ * would let the test assert its own fiction.
+ */
+function withStatus(
+  task: Task,
+  status: Task['status'],
+  extra: {
+    /** Declared artifacts, added via the store's own `addArtifact`. */
+    artifacts?: readonly { readonly name: string; readonly path: string }[];
+    /** Mark the task stale with this reason (only for a not-yet-started task). */
+    stale?: string;
+    /** The reason used for the `blocked` transition. Defaults to `'fixture'`. */
+    blockedReason?: string;
+  } = {},
+): Task {
   const store = new TaskStore();
   // Depth is capped at 1, so a child needs exactly its parent to exist first. The gate
   // is fail-closed on a missing parent, and that refusal is correct behaviour.
@@ -378,6 +396,10 @@ function withStatus(task: Task, status: Task['status']): Task {
     agentId: task.agentId,
     modelId: task.modelId,
   }, NOW);
+  for (const a of extra.artifacts ?? []) {
+    const added = store.addArtifact(task.taskId, { name: a.name, path: a.path, kind: 'file', producedAt: NOW });
+    if (!added.ok) throw new Error(`fixture could not add artifact ${a.name}: ${added.reason}`);
+  }
   // `planned -> queued -> running -> to_verify -> terminal` is the real path, so the
   // status under test is reached through the same guards production uses.
   const path: Task['status'][] = status === 'planned' ? []
@@ -391,8 +413,13 @@ function withStatus(task: Task, status: Task['status']): Task {
     : status === 'rework' ? ['queued', 'running', 'to_verify', 'rework']
     : ['queued', 'running', 'cancelled'];
   for (const step of path) {
-    const moved = store.transition(task.taskId, step, NOW, 'fixture');
+    const reason = step === 'blocked' ? (extra.blockedReason ?? 'fixture') : 'fixture';
+    const moved = store.transition(task.taskId, step, NOW, reason);
     if (!moved.ok) throw new Error(`fixture could not move ${task.taskId} to ${step}: ${moved.reason ?? moved.code}`);
+  }
+  if (extra.stale !== undefined) {
+    const marked = store.markStale(task.taskId, extra.stale);
+    if (!marked.ok) throw new Error(`fixture could not mark ${task.taskId} stale: ${marked.reason ?? marked.code}`);
   }
   return store.get(task.taskId)!;
 }
@@ -1185,6 +1212,247 @@ section('P1-2b: the workbench binds each attempt id to its own run (real dispatc
   check('and their evidence is distinct per attempt',
     new Set(rows.map((a) => a.changedFiles.join(','))).size === rows.length);
   rmSync(dir, { recursive: true, force: true });
+}
+
+// ===========================================================================
+// B4.4: evidence-backed delivery view + stale/blocked/availability projection
+// ===========================================================================
+section('B4.4-a: declared vs observed — the delivery view never invents a verdict');
+
+{
+  const root = realTask({ taskId: 'r', acceptanceCriteria: 'the round objective' });
+  // A succeeded task that DECLARED an artifact, reached through the store's own API.
+  const t = withStatus(
+    realTask({ taskId: 'c1', parentTaskId: 'r', acceptanceCriteria: 'produce the report file' }),
+    'succeeded',
+    { artifacts: [{ name: 'report', path: 'out/report.md' }] },
+  );
+
+  const result = aggregate({
+    tasks: [root, t],
+    attempts: [realAttempt({ attemptId: 'att_0001', taskId: 'c1' })],
+    evidence: {
+      att_0001: {
+        changedFiles: ['out/report.md'],
+        // An ORDINARY shell command — not a test, and not classified as one.
+        testsRun: ['node scripts/render.mjs'],
+        artifacts: [],
+        transcriptPath: '/tmp/t.jsonl',
+        errorCode: null,
+        errorMessage: null,
+      },
+    },
+  });
+
+  const summary = result.machine.tasks.find((x) => x.taskId === 'c1')!;
+  // --- actual JSON fields -------------------------------------------------
+  check('the task keeps its full acceptance objective', summary.objective === 'produce the report file');
+  check('the declared artifact is projected as name + path',
+    summary.artifacts.length === 1 && summary.artifacts[0]!.name === 'report' && summary.artifacts[0]!.path === 'out/report.md');
+  check('the attempt reports its own evidence entry as AVAILABLE', result.machine.attempts[0]!.evidenceState === 'available');
+  check('the observed write is attributed to the attempt', result.machine.attempts[0]!.changedFiles.join(',') === 'out/report.md');
+  check('the ordinary shell command is kept as an observed command', result.machine.attempts[0]!.testsRun.join(';') === 'node scripts/render.mjs');
+  check('execution success is NOT turned into a test verdict', result.machine.attempts[0]!.outcome === 'success');
+
+  // --- rendered delivery contents ----------------------------------------
+  const text = renderRoundDelivery(result);
+  check('the delivery view names the task and its full acceptance objective',
+    text.includes('TASK c1') && text.includes('acceptance objective: produce the report file'));
+  check('the delivery view shows the observed write path', text.includes('out/report.md'));
+  check('the delivery view shows the observed shell command', text.includes('node scripts/render.mjs'));
+  check('the delivery view labels commands as NOT test verdicts',
+    text.includes('observed shell commands (NOT test verdicts)'));
+  check('the delivery view reports the test/verification outcome as UNREPORTED',
+    text.includes('structured test result: UNREPORTED'));
+  check('the delivery view marks the artifact declared and NOT verified',
+    text.includes('declared artifacts (declared by the task, NOT verified to exist)'));
+  check('the delivery view marks observed writes as tool records, not proof',
+    text.includes('the files are NOT verified to exist'));
+  check('the root is a container, never presented as unexecuted executable work',
+    text.includes("is the round's container") && !text.includes('TASK r'));
+  check('the full report embeds the same delivery view',
+    renderRoundResult(result).includes('out/report.md') && renderRoundResult(result).includes('structured test result: UNREPORTED'));
+}
+
+section('B4.4-b: missing / stale / blocked facts stay honest (no sibling back-fill)');
+
+{
+  const root = realTask({ taskId: 'r' });
+  const t = succeeded(realTask({ taskId: 'c1', parentTaskId: 'r' }));
+
+  // Two attempts of ONE task; only attempt A has its own evidence entry. B must stay
+  // UNKNOWN rather than inheriting A's file/command.
+  const result = aggregate({
+    tasks: [root, t],
+    attempts: realAttemptChain([
+      { taskId: 'c1', attemptId: 'A', agentId: 'agent-A', outcome: 'failure', errorCode: 'AGENT_UNAVAILABLE' },
+      { taskId: 'c1', attemptId: 'B', agentId: 'agent-B', leaseVersion: 2 },
+    ]),
+    evidence: {
+      A: { changedFiles: ['a.ts'], testsRun: ['cmd-a'], artifacts: [], transcriptPath: 'ta', errorCode: null, errorMessage: null },
+    },
+  });
+
+  const a = result.machine.attempts.find((x) => x.attemptId === 'A')!;
+  const b = result.machine.attempts.find((x) => x.attemptId === 'B')!;
+  check('attempt A has its own evidence entry', a.evidenceState === 'available');
+  check('attempt A keeps its own file and command', a.changedFiles.join(',') === 'a.ts' && a.testsRun.join(',') === 'cmd-a');
+  check('attempt B has NO evidence entry', b.evidenceState === 'unavailable');
+  check('attempt B does not inherit A\'s file', b.changedFiles.length === 0 && !b.changedFiles.includes('a.ts'));
+  check('attempt B does not inherit A\'s command', b.testsRun.length === 0 && !b.testsRun.includes('cmd-a'));
+
+  const text = renderRoundDelivery(result);
+  check('the latest attempt is marked as the current execution',
+    text.includes('current execution (latest attempt): B'));
+  check('the earlier attempt is marked as history, not current',
+    text.includes('historical attempts (superseded; NOT the current delivery)') && text.includes('- A [execution]'));
+  const bSection = text.slice(text.indexOf('current execution (latest attempt): B'), text.indexOf('historical attempts'));
+  check('B (current) shows no invented write from A', text.includes('unknown (no evidence entry for this attempt)') && !bSection.includes('a.ts'));
+
+  // A STALE task: kept for history, NEVER the current accepted delivery.
+  const stale = withStatus(
+    realTask({ taskId: 's1', parentTaskId: 'r', acceptanceCriteria: 'an old plan step' }),
+    'planned',
+    { stale: 'superseded by planner generation 2' },
+  );
+  const staleResult = aggregate({ tasks: [root, stale] });
+  const staleRow = staleResult.machine.tasks.find((x) => x.taskId === 's1')!;
+  check('the stale flag is projected from the store', staleRow.stale === true);
+  check('the stale reason is projected verbatim', staleRow.staleReason === 'superseded by planner generation 2');
+  const staleText = renderRoundDelivery(staleResult);
+  check('the delivery view refuses to present a stale task as the current delivery',
+    staleText.includes('STALE — this task is NOT a current accepted delivery') &&
+    staleText.includes('superseded by planner generation 2'));
+
+  // A BLOCKED task: the reason is the real fact about why it stopped.
+  const blocked = withStatus(
+    realTask({ taskId: 'b1', parentTaskId: 'r', acceptanceCriteria: 'blocked step' }),
+    'blocked',
+    { blockedReason: 'dependency-unmet: waiting on c1' },
+  );
+  const blockedResult = aggregate({ tasks: [root, blocked] });
+  check('the blocked reason is projected from the store',
+    blockedResult.machine.tasks.find((x) => x.taskId === 'b1')!.blockedReason === 'dependency-unmet: waiting on c1');
+  check('the delivery view shows the blocked reason',
+    renderRoundDelivery(blockedResult).includes('blocked reason: dependency-unmet: waiting on c1'));
+
+  // A DECLARED artifact on a task that NEVER RAN must not become "produced".
+  const never = withStatus(
+    realTask({ taskId: 'n1', parentTaskId: 'r', acceptanceCriteria: 'declared only' }),
+    'planned',
+    { artifacts: [{ name: 'plan', path: 'out/plan.md' }] },
+  );
+  const neverText = renderRoundDelivery(aggregate({ tasks: [root, never] }));
+  check('a declared-but-never-run artifact stays under "declared"',
+    neverText.includes('declared artifacts (declared by the task, NOT verified to exist)') && neverText.includes('out/plan.md'));
+  check('a never-run task reports run/evidence as UNAVAILABLE',
+    neverText.includes('run and evidence are UNAVAILABLE'));
+  check('a never-run task has no observed-write line claiming production',
+    !neverText.includes('observed writes (tool records; the files are NOT verified to exist): out/plan.md'));
+
+  // A review attempt judges the work and inherits NO execution evidence.
+  const withReview = aggregate({
+    tasks: [root, t],
+    attempts: realAttemptChain([
+      { taskId: 'c1', attemptId: 'E', kind: 'execution' },
+      { taskId: 'c1', attemptId: 'V', kind: 'review', agentId: 'codex', modelId: null },
+    ]),
+    evidence: { E: { changedFiles: ['e.ts'], testsRun: ['cmd-e'], artifacts: [], transcriptPath: 'te', errorCode: null, errorMessage: null } },
+  });
+  const reviewAttempt = withReview.machine.attempts.find((x) => x.attemptId === 'V')!;
+  check('a review attempt carries no execution files or commands',
+    reviewAttempt.changedFiles.length === 0 && reviewAttempt.testsRun.length === 0);
+  const reviewText = renderRoundDelivery(withReview);
+  check('the delivery view shows the review separately and inherits nothing',
+    reviewText.includes('separate review attempt') && reviewText.includes('inherits no execution evidence'));
+
+  // An OLD persisted report (written before the new fields existed) stays UNKNOWN.
+  const modern = aggregate({ tasks: [root, t], attempts: [realAttempt({ attemptId: 'att_old', taskId: 'c1' })] });
+  const oldSnapshot = JSON.parse(JSON.stringify(modern)) as { machine: { tasks: Record<string, unknown>[]; attempts: Record<string, unknown>[] } };
+  for (const tsk of oldSnapshot.machine.tasks) { delete tsk.stale; delete tsk.staleReason; delete tsk.blockedReason; }
+  for (const at of oldSnapshot.machine.attempts) { delete at.evidenceState; }
+  const oldText = renderRoundDelivery(oldSnapshot as unknown as RoundResult);
+  check('an old snapshot reports stale as unknown, never as false',
+    oldText.includes('stale: unknown (this report predates the field)'));
+  check('an old snapshot reports attempt evidence as unknown',
+    oldText.includes('unknown (this report predates the field)'));
+}
+
+section('B4.4-c: rework is REAL work — its own evidence survives, never a false "never executed"');
+
+{
+  const root = realTask({ taskId: 'r', acceptanceCriteria: 'the round objective' });
+  const t = succeeded(realTask({ taskId: 'c1', parentTaskId: 'r', acceptanceCriteria: 'do the reworkable work' }));
+
+  // The real chain a bounded rework produces: an execution E, then a rework re-entry W
+  // BECAUSE a reviewer asked, then the review record V. The workbench records W only when
+  // a real RunResult exists, so W's run-derived evidence is real evidence, not consent.
+  const chain = realAttemptChain([
+    { taskId: 'c1', attemptId: 'E', kind: 'execution', outcome: 'success' },
+    { taskId: 'c1', attemptId: 'W', kind: 'rework', outcome: 'success', leaseVersion: 2 },
+    { taskId: 'c1', attemptId: 'V', kind: 'review', agentId: 'codex', modelId: null },
+  ]);
+  const result = aggregate({
+    tasks: [root, t],
+    attempts: chain,
+    evidence: {
+      E: { changedFiles: ['old.ts'], testsRun: ['cmd-old'], artifacts: [], transcriptPath: 'old-log', errorCode: null, errorMessage: null },
+      W: { changedFiles: ['new.ts'], testsRun: ['cmd-new'], artifacts: [], transcriptPath: 'new-log', errorCode: null, errorMessage: null },
+    },
+  });
+
+  const e = result.machine.attempts.find((a) => a.attemptId === 'E')!;
+  const w = result.machine.attempts.find((a) => a.attemptId === 'W')!;
+  const v = result.machine.attempts.find((a) => a.attemptId === 'V')!;
+  const c1 = result.machine.tasks.find((x) => x.taskId === 'c1')!;
+
+  check('the rework keeps its OWN changed files (not stripped as non-execution)', w.changedFiles.join(',') === 'new.ts');
+  check('the rework keeps its OWN observed command', w.testsRun.join(',') === 'cmd-new');
+  check('the rework keeps its OWN transcript', w.transcriptPath === 'new-log');
+  check('the rework evidence entry reads available', w.evidenceState === 'available');
+  check('the rework is counted as a work attempt', c1.attemptCount === 2);
+  check('the earlier execution keeps its OWN evidence', e.changedFiles.join(',') === 'old.ts' && e.transcriptPath === 'old-log');
+  check('the review attempt inherits no work evidence', v.changedFiles.length === 0 && v.transcriptPath === null);
+
+  const text = renderRoundDelivery(result);
+  check('the rework is presented as the CURRENT execution', text.includes('current execution (latest attempt): W'));
+  check('the rework\'s own file is displayed under W', text.includes('new.ts'));
+  check('the earlier execution is kept as history, not current',
+    text.includes('historical attempts (superseded; NOT the current delivery)') && text.includes('- E [execution]'));
+  check('the review is shown separately and does not replace the current real run',
+    text.includes('separate review attempt') && text.includes('V agent=codex') &&
+    text.indexOf('current execution (latest attempt): W') < text.indexOf('V agent=codex'));
+
+  // The real aggregate fixture: task succeeded + recorded execution/rework records, yet the
+  // unified classification carries run:null, so `executed` is false. Absence of
+  // classification confirmation must NOT be promoted to proof the task never ran.
+  check('the classifier did not confirm execution in this fixture', c1.executed === false);
+  check('the delivery view never says "never executed" when attempts are recorded', !text.includes('never executed'));
+  check('the status is source-qualified instead',
+    text.includes('execution not confirmed by the outcome classification; recorded work attempts below'));
+
+  // A missing W evidence entry must NOT borrow E's.
+  const partial = aggregate({
+    tasks: [root, t],
+    attempts: realAttemptChain([
+      { taskId: 'c1', attemptId: 'E2', kind: 'execution' },
+      { taskId: 'c1', attemptId: 'W2', kind: 'rework', leaseVersion: 2 },
+    ]),
+    evidence: {
+      E2: { changedFiles: ['old.ts'], testsRun: ['cmd-old'], artifacts: [], transcriptPath: 'old-log', errorCode: null, errorMessage: null },
+    },
+  });
+  const w2 = partial.machine.attempts.find((a) => a.attemptId === 'W2')!;
+  check('a rework with no evidence entry reports unavailable', w2.evidenceState === 'unavailable');
+  check('a rework with no evidence entry reports no files', w2.changedFiles.length === 0 && !w2.changedFiles.includes('old.ts'));
+  check('a rework with no evidence entry reports no transcript', w2.transcriptPath === null);
+  const partialText = renderRoundDelivery(partial);
+  const w2Section = partialText.slice(
+    partialText.indexOf('current execution (latest attempt): W2'),
+    partialText.indexOf('historical attempts'),
+  );
+  check('the current W2 evidence block stays unknown and never borrows E2',
+    w2Section.includes('unknown (no evidence entry for this attempt)') && !w2Section.includes('old.ts'));
 }
 
 section('R4-12b: an unfinished round is not_ready, not waiting');

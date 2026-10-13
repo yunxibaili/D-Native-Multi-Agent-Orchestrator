@@ -277,6 +277,36 @@ function section2b(): void {
   check('prose that merely sounds like a decision is NOT lifted as one', vague.decisions === null, String(vague.decisions));
 }
 
+// --- B4.4: a shell command is an OBSERVED COMMAND, never a test verdict ---
+
+section2c();
+function section2c(): void {
+  process.stdout.write('\n== WB 2c. Handoff: shell commands are observed, not test verdicts ==\n');
+
+  const h = buildHandoff(
+    { taskId: 't', acceptanceCriteria: 'o', taskType: impl, status: 'succeeded', artifacts: [] } as never,
+    {
+      ...runResult('succeeded'),
+      toolCalls: [
+        { name: 'write', input: { filePath: '/repo/out.txt' } },
+        { name: 'bash', input: { command: 'printf hello' } },
+      ],
+    } as RunResult,
+  );
+  // Existing extraction is unchanged: every shell command still lands in `testsRun`.
+  check('an ordinary shell command is captured as an observed command',
+    h.testsRun.join('|') === 'printf hello', JSON.stringify(h.testsRun));
+  check('the write tool is still extracted', h.changedFiles.join('|') === '/repo/out.txt', JSON.stringify(h.changedFiles));
+
+  const brief = buildTaskBrief({ objective: 'next', handoffs: [h] });
+  check('the brief renders the command as OBSERVED COMMANDS, not tests',
+    brief.includes('observed commands (NOT test verdicts):'));
+  check('the brief no longer renders a "tests:" verdict section', !brief.includes('- tests:'));
+  check('the brief carries the command verbatim', brief.includes('printf hello'));
+  // The whole point: nothing here may be read as a passing test.
+  check('the brief makes no test-pass claim', !/tests? passed|all tests pass|test verdict: pass/i.test(brief), brief);
+}
+
 // ---------------------------------------------------------------- 3. planning
 
 section3();

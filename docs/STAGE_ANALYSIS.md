@@ -18,13 +18,13 @@ P0/P1 按实际影响处理；非阻断 P2 登记，不反复重审所有历史 
 ## 2. 依新草案重排
 
 当前状态仍只在唯一基线维护；完整任务顺序见 [后端交付计划](BACKEND_DELIVERY_PLAN.md)，
-B4.2/B4.2a 已独立 PASS WITH P2；B4.3a 独立 BLOCKED：原显式计划绑定/材料交付复现已关闭，剩 legacy 入口实际计划未绑定（见 [剩余单点](NEXT_TASK.md)）。旧“先真实多模型/角色默认”的宽泛 B4.3 建议由本计划替代。
+B4.2/B4.2a 已独立 PASS WITH P2；B4.3a 最小阶段确认入口已独立 PASS：剩余 legacy 单点通过写前拒绝关闭（见 [下一任务候选](NEXT_TASK.md)，B4.4 未启动）。旧“先真实多模型/角色默认”的宽泛 B4.3 建议由本计划替代。
 
 B4.2a 合法依赖收口（独立 PASS WITH P2）→ B4.3 需求/阶段确认（已实现）→ B4.3a 确认绑定/材料可达收口（已实现）→ B4.4 有据交付 → B4.5 Git 顺序协作 →
 B3.1 最小 Skill/MCP → B2.1 模型池/费用 → B4.6 检查点监督 → B5.1 中断接力 → B4.7 代表性真实验收。
 F0 正式前端需求另行确认；本机进度页已授权，不表示正式前端已开始。
 
-本轮独立复核 B4.3a，保留 legacy 计划绑定 P1；角色默认/prefer、运行中改选和全面实时监督后置。
+B4.3a 已独立通过；本轮通过真实 wrapper 委派完成 B4.4 最小有出处交付视图，独立验证 PASS；角色默认/prefer、运行中改选和全面实时监督后置。
 草案新增目标纳入路线，具体实施仍逐阶段确认；不以整份草案作为全部代码实现授权。
 
 ## 3. B4.0 整合任务范围
@@ -128,25 +128,34 @@ DSH 缺逐请求模型支持、Skill/MCP 未闭环与费用未知必须列明，
 
 ### 3.4 B4.3/B4.3a：阶段确认入口与绑定收口
 
-**状态：B4.3a 独立 BLOCKED；显式工作流绑定/冻结与完整材料交付已验证，剩 --stage 无 --workflow 的 legacy 计划绑定 P1。常规 b43 32/0。**
+**状态：B4.3/B4.3a 最小 opt-in 阶段入口独立 PASS；legacy 单点已关闭，b43 36/0。完整产品批准链及真实模型未验收。**
 
 问题：用户需要一个入口说明“当前确认的需求/预期效果、当前阶段范围与验收材料”，只执行本阶段；材料存在、
 JSON 可解析、LAYA 选中计划都不能代替用户确认。最小修复是显式 opt-in 的材料 + 用户确认入口，复用既有链。
 
 - 入口：`--stage <file>`（JSON：`stageId`/`scope`/`requirement`/`acceptance`，可选 `planRef`）+ `--confirm <digest>`；
-  `--stage-check` 为只读预检（打印有效计划/范围摘要与 digest，不建任务、不调用）。
+  `--stage-check` 为只读预检（打印有效计划/范围摘要与 digest，不建任务、不调用）；阶段入口必须带受支持的 --workflow。
 - 自我批准拒绝：`parseStageMaterial` 拒绝任何 `approved`/`confirmed`/… 字段；确认只来自用户本次调用；
   gate 在任何外部调用前本地判定。
 - B4.3a 绑定：确认 digest（`stageBindingDigest`）覆盖材料 + objective + 工作流模式 + **有效计划内容**
   （role/taskType/fileScope/deliverable/dependencies/集成责任）+ planRef；计划文件在 gate 处读取并冻结一次，
   plan 块复用同一对象；`planRef` 必须命中有效计划 id 或计划文件本身。计划内容/目标/范围变化使旧确认失效；
-  仅键序/空白变化不改变标准化对象。此结论限显式 sequential/collaborate；legacy 的 planScope=null。
+  仅键序/空白变化不改变标准化对象。此结论限显式 sequential/collaborate；无受支持 workflow 的 stage 入口写前拒绝，无 stage 的旧入口实际执行保持。
 - B4.3a 材料交付：材料**完整嵌入**（`stageMaterialEmbed`，不截断）进入 objective → 任务验收条件/brief/验收材料；
   超出 `STAGE_EMBED_MAX_CHARS` 时写前明确拒绝（`too-large-to-embed`），不静默截断、不依赖引用可达性。
 - 复用同一 plan-file/planWithCandidates/Assignment/Scheduler/Verification/Review；结束 `automaticPostRoundAction=NONE`；
   旧入口不变；附带关闭 B4.2a 的等待/拒绝分类 P2。
 - 未包含：完整需求访谈/审批平台、跨阶段自主规划、真实模型、实时监督、Git 合并、角色默认/prefer、Skill/MCP、
   费用、掉线恢复、前端、并行写。
+
+### 3.5 B4.4：有出处的交接和用户交付视图
+
+最小受控范围独立 PASS。复用现有 RoundResult、Task/Attempt 和 Workbench 的同次 RunResult 映射。
+同一纯 renderRoundDelivery 进入完整报告与实际非 JSON CLI，不新建报告/材料仓库或状态权威。
+任务完整验收目标、声明产物、观察到的写入/命令、日志与未知/过期/阻塞各有来源；命令不被当作测试 verdict。
+首次独立审查发现 rework 证据被剔除、分类缺失被写成从未执行；唯一返工在共享投影修正，独立 probe 和定向回归通过。
+具体数量/真实模型/中断与完成证据只在唯一基线维护；不把 fixture 提升为产品真实 Agent 或产物物理认证。
+本阶段到此停止，下一候选 B4.5 待单独授权。
 
 ## 4. 两层功能、免费与能力的后续连接
 
@@ -213,10 +222,16 @@ ClawChat 存在多个同名公开仓库，当前没有唯一确认的目标地�
 
 ## 本轮 B4.3a 独立结论
 
-原显式计划绑定、gate 后冻结和完整内联/超限拒绝均经独立 CLI probe 通过；typecheck 与 b43 32/0、
-b42 61/0、b40a 42/0、b14 46/0、round-result 293/0、isolation 守卫均通过。
-剩余 P1：带 --stage 不带 --workflow 时 digest 绑定 planScope=null，后续分类才确定实际计划。
-同一确认接受 small 的单任务与 moderate 的三步骤计划，两次均已派发并 exit=0；不据 suite 通过封板。
-最小建议是在 gate 写前拒绝该组合、保留无 --stage 的旧入口；不扩建审批系统、不重写 planner。
-只维护文档/本机页并上传审核快照；返工待用户明确下发，不自动开启 B4.4 或第三轮实现。
-历史 B4.3 的 reviewer worktree 清理拒绝仍保留在基线，本轮没有新增该类 worktree。
+Codex 先确定范围，再以 opencode-agent implement 委派；两次 worker 的真实 session 元数据均确认
+opencode-go/deepseek-v4.1-flash。首次实现 guard 正确；一次 bounded rework 加强旧入口兼容断言到实际 requests=1/exit=0。
+独立最终 typecheck PASS，b43 36/0、b42 61/0、b40a 42/0、b14 46/0、round-result 293/0、isolation 守卫通过。
+独立内存负控关闭 guard 时 3 项新拒绝回归失败（33/3、exit=1），未改磁盘源码。
+最小阶段确认入口受控范围独立 PASS；B4.4 仅下一候选，不自动开始。
+源码/测试由 OpenCode 修改，Codex 只维护既有文档和本机进度页；未 Git 写流程、full suite 或产品真实模型调用。
+历史 B4.3 reviewer worktree 清理限制保留，不为本片绕过工具拒绝。
+
+## 本轮 B4.4 独立结论
+
+最小有出处交付视图独立 PASS；首次实现验证中断后核对现有 patch，没有重复启动整个任务。
+仅一次 bounded rework 关闭两处已复现投影问题；最终独立 typecheck、全部选定定向 suite 与 diff check 通过。
+PARALLEL_WRITE=CLOSED，未进入 B4.5 或正式前端；本机进度页与唯一基线同步。

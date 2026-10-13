@@ -116,6 +116,8 @@ interface Round {
   reportDir: string;
   cwd: string;
   exitCode: number;
+  /** Everything the CLI wrote to stdout (JSON or plain text). */
+  stdout: string;
   /** How many times the decision provider was asked ANYTHING (0 = never called). */
   providerCalls: number;
 }
@@ -133,6 +135,21 @@ const digestOf = (material: unknown, planFileJson?: unknown): string => {
     planScope: normalizedPlanScope('sequential', planFileJson === undefined ? null : parsePlanFile(planFileJson)),
   });
 };
+/**
+ * The digest the OLD (buggy) bypass produced for an unsupported-workflow stage: workflow
+ * `legacy` and `planScope = normalizedPlanScope(undefined, null) = null`. Computed with the
+ * REAL `stageBindingDigest`, so it is a valid old-style binding — not a bogus value.
+ */
+const legacyDigestOf = (material: unknown): string => {
+  const m = parseStageMaterial(material);
+  return stageBindingDigest({
+    material: m,
+    objective: OBJECTIVE,
+    workflow: 'legacy',
+    planRef: m.planRef ?? null,
+    planScope: normalizedPlanScope(undefined, null),
+  });
+};
 
 async function stageRound(opts: {
   material?: unknown;
@@ -145,6 +162,10 @@ async function stageRound(opts: {
   planFile?: unknown;
   objective?: string;
   fixed?: { agentId: string; modelId: string };
+  /** `false` omits `--workflow` entirely (the legacy / unsupported-workflow entry). */
+  workflow?: string | false;
+  /** `false` omits `--json`, so the CLI prints its PLAIN operator report. Default true. */
+  json?: boolean;
 } = {}): Promise<Round> {
   const cwd = ownDir();
   const reportDir = join(ownDir(), 'reports');
@@ -246,9 +267,9 @@ async function stageRound(opts: {
 
   const argv = [
     opts.objective ?? 'add authentication to the users API',
-    '--json', '--cwd', cwd,
+    ...(opts.json === false ? [] : ['--json']), '--cwd', cwd,
     '--max-children', '4', '--max-concurrent', '2',
-    '--workflow', 'sequential',
+    ...(opts.workflow === false ? [] : ['--workflow', opts.workflow ?? 'sequential']),
     ...(opts.planFile !== undefined ? ['--workflow-plan', 'plans.json'] : []),
     ...(opts.noStage === true ? [] : ['--stage', opts.stageArg ?? 'stage.json']),
     ...(opts.confirm !== undefined ? ['--confirm', opts.confirm] : []),
@@ -267,7 +288,7 @@ async function stageRound(opts: {
   const jsonStart = captured.indexOf('{');
   let report: Record<string, unknown> = {};
   if (jsonStart !== -1) { try { report = JSON.parse(captured.slice(jsonStart)); } catch { report = {}; } }
-  return { report, requests, reviewRequests, decisionRequests, reportDir, cwd, exitCode, providerCalls };
+  return { report, requests, reviewRequests, decisionRequests, reportDir, cwd, exitCode, stdout: captured, providerCalls };
 }
 
 const materialsOf = (r: Round): Array<{ objective: string }> => r.decisionRequests.map((req) => {
@@ -512,6 +533,111 @@ section('11: P1-2 — a material too large to deliver is REFUSED before any writ
     r.report.stage === 'stage-gate' && /too-large-to-embed/.test(String(r.report.error)) &&
       r.requests.length === 0 && r.providerCalls === 0 && r.exitCode === 2,
     `error=${String(r.report.error)} req=${r.requests.length}`);
+}
+
+// =========================================================================
+section('12: B4.3a — --stage without a supported --workflow is refused before ANY work');
+
+{
+  // A well-formed material with NO planRef — the exact shape Codex used to reproduce the
+  // legacy bypass: small accepted a single task, moderate accepted a three-step chain, and
+  // the same material/objective/confirmation approved both because planScope was null.
+  const noRefStage = { stageId: 'stage-1-api', scope: STAGE.scope, requirement: STAGE.requirement, acceptance: STAGE.acceptance };
+
+  const noWorkflow = await stageRound({ material: noRefStage, workflow: false });
+  check('B4.3a: --stage without --workflow is refused at the stage gate, before any call or task',
+    noWorkflow.report.stage === 'stage-gate' && noWorkflow.exitCode === 2 &&
+      noWorkflow.providerCalls === 0 && noWorkflow.requests.length === 0 &&
+      noWorkflow.reviewRequests.length === 0 && noWorkflow.report.tasks === undefined &&
+      /--workflow sequential or --workflow collaborate/.test(String(noWorkflow.report.error)),
+    `stage=${String(noWorkflow.report.stage)} exit=${noWorkflow.exitCode} provider=${noWorkflow.providerCalls} req=${noWorkflow.requests.length} error=${String(noWorkflow.report.error)}`);
+
+  // The EXACT old bypass: a correctly computed legacy binding digest (material + objective +
+  // workflow 'legacy' + planScope=null). It is a VALID old-style confirmation, not a bogus
+  // digest, so the refusal cannot be attributed to a digest mismatch.
+  const legacyConfirm = legacyDigestOf(noRefStage);
+  const legacyBypass = await stageRound({ material: noRefStage, workflow: false, confirm: legacyConfirm });
+  check('B4.3a: the OLD legacy binding digest (planScope=null) does NOT bypass the refusal',
+    legacyBypass.report.stage === 'stage-gate' && legacyBypass.exitCode === 2 &&
+      legacyBypass.providerCalls === 0 && legacyBypass.requests.length === 0 &&
+      legacyBypass.reviewRequests.length === 0 && legacyBypass.report.tasks === undefined,
+    `stage=${String(legacyBypass.report.stage)} exit=${legacyBypass.exitCode} provider=${legacyBypass.providerCalls} req=${legacyBypass.requests.length}`);
+
+  const stageCheckNoWorkflow = await stageRound({ material: noRefStage, workflow: false, stageCheck: true });
+  check('B4.3a: --stage-check without --workflow is refused too — no digest success, no work',
+    stageCheckNoWorkflow.report.stage === 'stage-gate' && stageCheckNoWorkflow.exitCode === 2 &&
+      stageCheckNoWorkflow.report.digest === undefined && stageCheckNoWorkflow.report.ok !== true &&
+      stageCheckNoWorkflow.providerCalls === 0 && stageCheckNoWorkflow.requests.length === 0 &&
+      stageCheckNoWorkflow.report.tasks === undefined,
+    `stage=${String(stageCheckNoWorkflow.report.stage)} digest=${String(stageCheckNoWorkflow.report.digest)} provider=${stageCheckNoWorkflow.providerCalls}`);
+
+  // The no-stage legacy entry is UNCHANGED: no --stage AND no --workflow still reaches the
+  // existing shape-based execution (not a stage refusal). We deliberately do NOT assert a
+  // full sequential workflow here — the legacy path is what it always was.
+  const legacy = await stageRound({ noStage: true, writeMaterial: false, workflow: false });
+  check('B4.3a: without --stage and without --workflow the legacy entry still runs (unchanged)',
+    legacy.report.stage === 'complete' && legacy.exitCode === 0 && legacy.requests.length === 1 &&
+      legacy.requests.every((q) => !q.prompt.includes('[stage ')) &&
+      legacy.providerCalls > 0 &&
+      (legacy.report.workflow as { enabled?: boolean } | undefined)?.enabled === false,
+    `stage=${String(legacy.report.stage)} exit=${legacy.exitCode} req=${legacy.requests.length} provider=${legacy.providerCalls} workflow=${JSON.stringify(legacy.report.workflow)}`);
+}
+
+// =========================================================================
+section('13: B4.4 — the delivery view links a real file to its task/attempt and full objective');
+
+{
+  const r = await stageRound({ material: STAGE, confirm: digestOf(STAGE, SEQUENTIAL_PLAN), planFile: SEQUENTIAL_PLAN });
+  type RRTask = { taskId: string; objective: string; artifacts: Array<{ name: string; path: string }> };
+  type RRAttempt = { attemptId: string; taskId: string; changedFiles: string[] };
+  const rr = (r.report.roundResult ?? {}) as { machine?: { tasks?: RRTask[]; attempts?: RRAttempt[] } };
+  const tasks = rr.machine?.tasks ?? [];
+  const attempts = rr.machine?.attempts ?? [];
+  const view = String(r.report.roundResultReport ?? '');
+  const apiAttempt = attempts.find((a) => a.changedFiles.includes('docs/api/api-research.txt'));
+  const apiTask = tasks.find((t) => t.taskId === apiAttempt?.taskId);
+
+  check('B4.4: the runtime really wrote the api file this assertion is about',
+    existsSync(join(r.cwd, 'docs/api/api-research.txt')), filesUnder(r.cwd).join(','));
+  check('B4.4: exactly one api-research execution attempt and its task exist',
+    apiAttempt !== undefined && apiTask !== undefined,
+    JSON.stringify({ attempt: apiAttempt?.attemptId, task: apiTask?.taskId }));
+
+  if (apiAttempt !== undefined && apiTask !== undefined) {
+    const start = view.indexOf(`TASK ${apiTask.taskId}`);
+    const next = start < 0 ? -1 : view.indexOf('TASK ', start + 1);
+    const taskSection = view.slice(start, next < 0 ? undefined : next);
+    check('B4.4: the actual owned path is linked to ITS task section',
+      start >= 0 && taskSection.includes('docs/api/api-research.txt'), taskSection);
+    check('B4.4: the delivery section names the attempt that produced it',
+      taskSection.includes(apiAttempt.attemptId), taskSection);
+    check('B4.4: the full acceptance objective is carried (objective + role + deliverable)',
+      taskSection.includes('add authentication to the users API') &&
+      taskSection.includes('api-research') && taskSection.includes('the api findings note'),
+      taskSection);
+    check('B4.4: the file is shown as an observed write (tool record, not verified)',
+      taskSection.includes('observed writes (tool records; the files are NOT verified to exist)'));
+  }
+
+  check('B4.4: the report never claims a test verdict',
+    view.includes('structured test result: UNREPORTED') && !/tests? passed/i.test(view));
+}
+
+// =========================================================================
+section('14: B4.4 — the SAME view reaches the operator on the real non-JSON CLI path');
+
+{
+  const r = await stageRound({ material: STAGE, confirm: digestOf(STAGE, SEQUENTIAL_PLAN), planFile: SEQUENTIAL_PLAN, json: false });
+  check('non-JSON: the confirmed plan still ran exactly twice — the view adds no execution',
+    r.requests.length === 2 && r.exitCode === 0, `req=${r.requests.length} exit=${r.exitCode}`);
+  check('non-JSON: the delivery view is printed to the operator stdout',
+    r.stdout.includes('User delivery') && r.stdout.includes('docs/api/api-research.txt') &&
+    r.stdout.includes('acceptance objective:'), `chars=${r.stdout.length}`);
+  check('non-JSON: the view keeps commands as observed, never as test verdicts',
+    r.stdout.includes('observed shell commands (NOT test verdicts)') &&
+    r.stdout.includes('structured test result: UNREPORTED'));
+  check('non-JSON: the human gate is still printed and still authorises NO automatic action',
+    r.stdout.includes('HUMAN GATE') && /auto action\s+NONE/.test(r.stdout));
 }
 
 // =========================================================================
