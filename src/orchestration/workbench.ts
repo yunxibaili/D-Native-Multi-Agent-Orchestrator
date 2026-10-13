@@ -117,6 +117,15 @@ export interface DispatchExecutionFacts {
  */
 export const DEFAULT_ROOT_AGENT_ID = 'opencode';
 
+/**
+ * B4.1a: the provenance recorded when a collaboration group's LAST member has exactly one
+ * legal distinct pair left, so the pair is bound by a CONSTRAINT RULE rather than by a
+ * LAYA answer. Deliberately distinct from the provider name and from `user-fixed`, so the
+ * audit trail can never read it as a LAYA comparison, a probability, a confidence, or a
+ * user-pinned pair.
+ */
+export const COLLABORATION_CONSTRAINT_PROVENANCE = 'collaboration-constraint';
+
 export interface WorkbenchOptions {
   /** The orchestration orchestrator (task lifecycle + execution edge). */
   readonly orchestrator: Orchestrator;
@@ -671,6 +680,48 @@ unDecisionCycle can read a real TickResult. */
       const candidates = options.distinctPairs === true
         ? allCandidates.filter((c) => !takenPairs.has(`${c.agentId}/${c.modelId}`))
         : allCandidates;
+      /*
+       * B4.1a (P1): the collaboration path must not ask LAYA a question it cannot answer.
+       *
+       * When exactly ONE legal distinct pair is left, a `choice` question has a single
+       * option — and the REAL provider refuses that BEFORE sending it, because "the answer
+       * would be the same for every input at full confidence, so it carries no
+       * information". The old code still called `decideInitialAssignment`, so the last
+       * member of an exact-2 `duo` / exact-3 `trio` was refused by the real provider while
+       * the fixture (which did not enforce that contract) stayed green.
+       *
+       * So the single remaining candidate is bound by an EXPLICIT CONSTRAINT RULE, not by
+       * a fabricated LAYA answer: no probability, no confidence, no comparison, no second
+       * invented option, and a provenance that cannot be mistaken for a LAYA decision or a
+       * user-fixed pair. It still goes through the SAME `validateAgentModelIntent` here,
+       * the SAME `initialSelections` record, and the SAME Assignment admission as any
+       * other pair — so availability, capability, cost and fixed constraints are untouched.
+       */
+      if (options.distinctPairs === true && candidates.length === 1) {
+        const only = candidates[0]!;
+        const checked = validateAgentModelIntent({ agentId: only.agentId, modelId: only.modelId });
+        if (!checked.ok) {
+          const refusal: InitialSelectionOutcome = {
+            taskId: child.taskId,
+            ok: false,
+            reason: `the only remaining distinct ${child.taskType} pair is invalid: ${checked.reason}`,
+            provider: COLLABORATION_CONSTRAINT_PROVENANCE,
+          };
+          this.initialSelections.set(child.taskId, refusal);
+          outcomes.push(refusal);
+          continue;
+        }
+        takenPairs.add(`${checked.intent.agentId}/${checked.intent.modelId}`);
+        const byRule: InitialSelectionOutcome = {
+          taskId: child.taskId,
+          ok: true,
+          intent: checked.intent,
+          provider: `${COLLABORATION_CONSTRAINT_PROVENANCE} (only remaining distinct pair)`,
+        };
+        this.initialSelections.set(child.taskId, byRule);
+        outcomes.push(byRule);
+        continue;
+      }
       let outcome: InitialSelectionOutcome;
       try {
         if (candidates.length === 0) {

@@ -1957,31 +1957,65 @@ export async function runRoundCli(
     };
     /*
      * B4.1: the collaboration group's identity is reported FROM THE AUTHORITIES, after
-     * Assignment and execution, not from the plan: the task ids come from the plan, but
-     * the Agent x Model and the session each member actually ran under are read from
-     * the TaskStore / SessionRegistry. A member with no agent-confirmed model fact stays
-     * `unknown` — the plan's intent is never reported as an achieved identity.
+     * Assignment and execution. B4.1a (P2) fixes what this projection may CLAIM:
+     *
+     *   - an unassigned member is still LISTED (the plan's headcount is never hidden),
+     *     with its real status, and it is NOT counted as a selected pair — the plan-era
+     *     `agentId` on a task that Assignment refused is not a chosen Agent x Model, and
+     *     an `agent/null` placeholder is not a pair;
+     *   - `distinctPairs` counts only KNOWN, ASSIGNED pairs, and `pairIsDistinct` is only
+     *     true when every member is assigned and those pairs are actually distinct;
+     *   - what the MODE supports and what ACTUALLY RAN are separate fields, so an
+     *     integration task that never ran cannot be read as "it wrote a file / read the
+     *     deliveries / integrated them".
+     *
+     * Every fact here comes from the existing `assigned` outcomes, the TaskStore and the
+     * AttemptStore — no report-side state store and no fact inference is introduced.
      */
     if (collaborationIds !== null) {
+      const assignedOk = (taskId: string): boolean => assigned.find((a) => a.taskId === taskId)?.ok === true;
+      const ran = (taskId: string): boolean => wb.evidence.history(taskId).length > 0;
+      // B4.1a: the RECORDED provenance of each pair, from the existing `initialSelections`
+      // authority — so a pair bound by the collaboration constraint rule is auditable and
+      // can never be read as a LAYA comparison, a probability, or a user-fixed pair.
+      const selectionProvider = (taskId: string): string | null =>
+        wb.initialSelectionRecords().find((s) => s.taskId === taskId)?.provider ?? null;
+      const knownPair = (agentId: string | null, modelId: string | null): string | null =>
+        typeof agentId === 'string' && agentId !== '' && typeof modelId === 'string' && modelId !== ''
+          ? `${agentId}/${modelId}`
+          : null;
       const memberRows = collaborationIds.memberIds.map((taskId, i) => {
         const task = wb.store.get(taskId);
         const session = wb.sessionForTask(taskId);
         const planSpecMember = collaborationPlanFor(collaborationPlanUsed!).members[i];
+        const isAssigned = assignedOk(taskId);
+        const agentId = task?.agentId ?? null;
+        const modelId = task?.modelId ?? null;
         return {
           index: i + 1,
           taskId,
           role: planSpecMember?.role ?? 'unknown',
           fileScope: planSpecMember?.fileScope ?? 'unknown',
           status: task?.status ?? 'missing',
-          agentId: task?.agentId ?? null,
-          modelId: task?.modelId ?? null,
+          assigned: isAssigned,
+          ran: ran(taskId),
+          agentId,
+          modelId,
+          // Only an ASSIGNED member can carry a known pair; an unassigned task keeps its
+          // plan-era agentId but that is intent, not a selected pair.
+          pair: isAssigned ? knownPair(agentId, modelId) : null,
+          selectionProvider: selectionProvider(taskId),
           sessionId: session?.sessionId ?? null,
         };
       });
       const integratorTask = wb.store.get(collaborationIds.integratorId);
       const integratorSession = wb.sessionForTask(collaborationIds.integratorId);
       const integratorMemberTaskId = collaborationIds.memberIds[collaborationIds.integratorIndex - 1]!;
-      const pairs = memberRows.map((m) => `${String(m.agentId)}/${String(m.modelId)}`);
+      const integratorAssigned = assignedOk(collaborationIds.integratorId);
+      const integratorMember = memberRows.find((m) => m.taskId === integratorMemberTaskId);
+      const knownPairs = memberRows.map((m) => m.pair).filter((p): p is string => p !== null);
+      const distinctKnown = new Set(knownPairs).size;
+      const everyMemberAssigned = memberRows.every((m) => m.assigned);
       report.collaboration = {
         enabled: true,
         choice: collaborationPlanUsed,
@@ -1991,19 +2025,33 @@ export async function runRoundCli(
           memberTaskId: integratorMemberTaskId,
           taskId: collaborationIds.integratorId,
           status: integratorTask?.status ?? 'missing',
+          assigned: integratorAssigned,
+          ran: ran(collaborationIds.integratorId),
           agentId: integratorTask?.agentId ?? null,
           modelId: integratorTask?.modelId ?? null,
+          pair: integratorAssigned ? knownPair(integratorTask?.agentId ?? null, integratorTask?.modelId ?? null) : null,
+          selectionProvider: selectionProvider(collaborationIds.integratorId),
           sessionId: integratorSession?.sessionId ?? null,
         },
-        distinctPairs: new Set(pairs).size,
-        pairIsDistinct: new Set(pairs).size === memberRows.length,
+        // Only KNOWN, ASSIGNED pairs are counted; an agent/null placeholder is not a pair.
+        distinctPairs: distinctKnown,
+        pairIsDistinct: everyMemberAssigned && knownPairs.length === memberRows.length && distinctKnown === memberRows.length,
         integratorReusesMemberPair:
-          integratorTask !== null && integratorTask !== undefined &&
-          wb.store.get(integratorMemberTaskId)?.agentId === integratorTask.agentId &&
-          wb.store.get(integratorMemberTaskId)?.modelId === integratorTask.modelId,
-        note:
-          'shared sequential workspace: each member wrote into the same working directory, so the integration ' +
-          'task read the actual member files; git-isolated worktrees are refused for this mode',
+          integratorAssigned && integratorMember !== undefined && integratorMember.assigned &&
+          integratorMember.agentId === (integratorTask?.agentId ?? null) &&
+          integratorMember.modelId === (integratorTask?.modelId ?? null),
+        // WHAT THE MODE SUPPORTS — a property of the plan, not a claim about this run.
+        supportedWorkspace:
+          'shared sequential workspace (non-git cwd): members write into the same working directory in order, ' +
+          'so the integration task can read their files; git-isolated worktrees are refused for this mode',
+        // WHAT ACTUALLY HAPPENED — derived from the Assignment outcomes and the AttemptStore.
+        execution: {
+          membersAssigned: memberRows.filter((m) => m.assigned).length,
+          membersRan: memberRows.filter((m) => m.ran).length,
+          integrationAssigned: integratorAssigned,
+          integrationRan: ran(collaborationIds.integratorId),
+          allMembersSucceeded: memberRows.every((m) => m.status === 'succeeded'),
+        },
       };
     }
   }
