@@ -113,6 +113,34 @@ export function isPlanFileError(value: unknown): value is PlanFileError {
   return value instanceof PlanFileError;
 }
 
+/**
+ * The EFFECTIVE role dependencies of a plan, in step order.
+ *
+ * B4.2a: a plan-file step list is a SEQUENTIAL workflow, so every step after the first
+ * carries the step before it as a dependency. This is what makes `PARALLEL_WRITE=CLOSED`
+ * true for a user plan: two steps that declare `dependencies: []` (independent BUSINESS
+ * work) are still ordered for EXECUTION, so only one writer is ever ready and the
+ * resource gate can admit it. Without this, both steps are ready in the same tick, the
+ * shared non-git workspace cannot isolate two writers, and both are refused with
+ * `resource-unavailable` — parsed, committed and assigned, then nothing runs.
+ *
+ * A step's DECLARED `dependencies` are ADDITIONAL forward edges layered on top of the
+ * chain; they are preserved, never removed. The chain edge is added to the graph BEFORE
+ * validation, so a declared backward edge that would close a loop through the chain
+ * (e.g. step 1 depending on step 2) is refused as a cycle before anything is written.
+ */
+export function chainDependencies(steps: readonly PlanFileStep[]): readonly (readonly string[])[] {
+  const out: string[][] = [];
+  for (let i = 0; i < steps.length; i++) {
+    const declared = steps[i]!.dependencies ?? [];
+    if (i === 0) { out.push([...declared]); continue; }
+    // Deduplicate so a step that also declares the previous one explicitly does not
+    // list it twice.
+    out.push([...new Set([steps[i - 1]!.role, ...declared])]);
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Parsing + validation (total: every rejection names the offending field)
 // ---------------------------------------------------------------------------
@@ -166,6 +194,10 @@ function parseStep(raw: unknown, where: string): PlanFileStep {
  * Reject a role graph that cannot be committed: a dependency on a role that does not
  * exist, a self-dependency, or a cycle. This runs BEFORE any task is written, and the
  * same graph is re-checked by `validateCandidateDag` after ids are assigned.
+ *
+ * B4.2a: the CYCLE check runs on the EFFECTIVE graph (`chainDependencies`), not on the
+ * declared edges alone — otherwise an explicit backward edge that only loops once the
+ * sequential chain is added would pass here and fail later (or, worse, be dispatched).
  */
 function validateStepGraph(steps: readonly PlanFileStep[], where: string): void {
   const roles = new Set(steps.map((s) => s.role));
@@ -184,17 +216,18 @@ function validateStepGraph(steps: readonly PlanFileStep[], where: string): void 
       }
     }
   }
-  // Cycle detection over the role graph.
+  // Cycle detection over the EFFECTIVE role graph (declared edges + the sequential chain).
+  const effective = chainDependencies(steps);
+  const byRole = new Map(steps.map((s, i) => [s.role, effective[i]!]));
   const visiting = new Set<string>();
   const done = new Set<string>();
-  const byRole = new Map(steps.map((s) => [s.role, s]));
   const visit = (role: string, path: string[]): void => {
     if (done.has(role)) return;
     if (visiting.has(role)) {
       throw new PlanFileError('dependency-cycle', `${where}: cycle ${[...path, role].join(' -> ')}`);
     }
     visiting.add(role);
-    for (const dep of byRole.get(role)?.dependencies ?? []) visit(dep, [...path, role]);
+    for (const dep of byRole.get(role) ?? []) visit(dep, [...path, role]);
     visiting.delete(role);
     done.add(role);
   };
@@ -304,13 +337,11 @@ export function collaborationTaskIds(rootTaskId: string, memberCount: number, in
   };
 }
 
-/** Resolve each step's dependencies to task ids (roles -> ids), defaulting to a chain. */
+/** Resolve each step's EFFECTIVE dependencies to task ids (roles -> ids). */
 function dependenciesFor(steps: readonly PlanFileStep[], ids: readonly string[]): readonly string[][] {
   const roleIndex = new Map(steps.map((s, i) => [s.role, i]));
-  return steps.map((s, i) => {
-    if (s.dependencies !== undefined) return s.dependencies.map((r) => ids[roleIndex.get(r)!]!);
-    return i === 0 ? [] : [ids[i - 1]!];
-  });
+  const effective = chainDependencies(steps);
+  return effective.map((deps) => deps.map((r) => ids[roleIndex.get(r)!]!));
 }
 
 /**

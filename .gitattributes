@@ -11,3 +11,10 @@
 *.png binary
 *.jpg binary
 *.ico binary
+
+# B4.2a: `decision.ts` is a legacy CRLF file whose committed blob predates the
+# `* text=auto` policy above (its blob still holds CR). Editing it therefore used to
+# make `git diff --check` report every added line as trailing whitespace, purely because
+# of the CR. `cr-at-eol` says the CR is part of the line terminator, so the check reports
+# REAL whitespace errors only. The line ending itself is left untouched.
+src/orchestration/decision.ts whitespace=cr-at-eol

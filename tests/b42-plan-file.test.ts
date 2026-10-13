@@ -33,7 +33,7 @@ import { WORKFLOW_PLAN_ID } from '../src/decision/plan-choice.ts';
 import { ACCEPTANCE_MATERIAL_FIELD, ORCHESTRATION_ACTION_ID } from '../src/orchestration/decision-loop.ts';
 import {
   PLAN_FILE_MAX_PLANS, PLAN_FILE_MAX_STEPS, PLAN_FILE_MAX_TEXT,
-  PlanFileError, parsePlanFile,
+  PlanFileError, chainDependencies, parsePlanFile,
 } from '../src/orchestration/plan-file.ts';
 import type { QuotaProbe } from '../src/quota/index.ts';
 
@@ -571,6 +571,147 @@ section('6: compatibility — the built-in entry and fixed constraints are untou
   check('compat: an unknown pinned id is refused, never silently replaced',
     badPin.report.stage === 'plan' && /is not one of the offered plans/.test(String(badPin.report.error)) && badPin.requests.length === 0,
     String(badPin.report.error));
+}
+
+// =========================================================================
+section('7: explicit dependencies:[] is a SEQUENTIAL workflow — independent writes run, not stall');
+
+{
+  // B4.2a: the exact shape the audit found. Two steps with `dependencies: []` used to be
+  // BOTH ready in one tick, so the shared non-git workspace could not isolate two writers
+  // and both were refused `resource-unavailable` after being committed and assigned.
+  const independent = {
+    kind: 'sequential',
+    plans: [{
+      id: 'independent', label: 'two independent writes',
+      steps: [
+        { role: 'one', taskType: 'implementation', fileScope: 'src/one', deliverable: 'one file', dependencies: [] },
+        { role: 'two', taskType: 'implementation', fileScope: 'src/two', deliverable: 'two file', dependencies: [] },
+      ],
+    }],
+  };
+  // The chain rule, checked directly: step 2 carries step 1 as an EXECUTION dependency even
+  // though the user declared none. Business deps are preserved, execution order is added.
+  const chained = chainDependencies((parsePlanFile(independent).plans[0] as unknown as { steps: never }).steps);
+  check('indep: the effective graph chains step 2 behind step 1 (declared [] preserved, order added)',
+    chained.length === 2 && chained[0]!.length === 0 && chained[1]!.length === 1 && chained[1]![0] === 'one',
+    JSON.stringify(chained));
+
+  const r = await planRound({
+    mode: 'sequential', planFile: independent,
+    roles: [{ role: 'one', scope: 'src/one' }, { role: 'two', scope: 'src/two' }],
+  });
+  check('indep: both independent writes RAN (no stall)', r.requests.length === 2, `n=${r.requests.length}`);
+  check('indep: only ONE writer ran at a time (max effective writers=1)', r.maxConcurrentRuns === 1, `max=${r.maxConcurrentRuns}`);
+  check('indep: step 2\'s brief carries step 1\'s ACTUAL output', r.requests[1]!.prompt.includes('OUT_one'), r.requests[1]!.prompt.slice(0, 200));
+  check('indep: both owned files were written',
+    existsSync(join(r.cwd, 'src/one/one.txt')) && existsSync(join(r.cwd, 'src/two/two.txt')), filesUnder(r.cwd).join(','));
+  check('indep: the round completed, ok, exit 0', r.report.ok === true && r.report.executionIncomplete === false && r.exitCode === 0,
+    `ok=${String(r.report.ok)} incomplete=${String(r.report.executionIncomplete)} exit=${r.exitCode} stop=${String(wf(r).stop)}`);
+}
+
+// =========================================================================
+section('8: explicit dependencies:[] members in a collaboration plan also run in order');
+
+{
+  const indepDuo = {
+    kind: 'collaborate',
+    plans: [{
+      id: 'indep-widget', label: 'two independent members, the first integrates',
+      members: [
+        { role: 'left', taskType: 'implementation', fileScope: 'src/left', deliverable: 'left', dependencies: [] },
+        { role: 'right', taskType: 'implementation', fileScope: 'src/right', deliverable: 'right', dependencies: [] },
+      ],
+      integratorMember: 1,
+    }],
+  };
+  const r = await planRound({
+    mode: 'collaborate', planFile: indepDuo,
+    roles: [{ role: 'left', scope: 'src/left' }, { role: 'right', scope: 'src/right' }],
+  });
+  const c = collab(r);
+  check('indep-duo: both members ran and succeeded',
+    (c.members as Array<{ status: string }>).every((m) => m.status === 'succeeded') && (c.integrator as { status: string }).status === 'succeeded',
+    JSON.stringify((c.members as Array<{ status: string }>).map((m) => m.status)));
+  const combined = existsSync(join(r.cwd, 'src/integration/combined.txt')) ? readFileSync(join(r.cwd, 'src/integration/combined.txt'), 'utf8') : '';
+  check('indep-duo: the integration consumed BOTH members\' actual bytes',
+    combined.includes(readFileSync(join(r.cwd, 'src/left/left.txt'), 'utf8').trim()) &&
+      combined.includes(readFileSync(join(r.cwd, 'src/right/right.txt'), 'utf8').trim()),
+    combined.replace(/\n/g, ' | '));
+  check('indep-duo: sequential, ok, exit 0', r.maxConcurrentRuns === 1 && r.report.ok === true && r.exitCode === 0,
+    `max=${r.maxConcurrentRuns} ok=${String(r.report.ok)} exit=${r.exitCode}`);
+}
+
+// =========================================================================
+section('9: forward legal dependencies run; a mixed explicit+default cycle is refused before any write');
+
+{
+  // A forward edge (step 3 also depends on step 1) is legal and preserved on top of the chain.
+  const forward = {
+    kind: 'sequential',
+    plans: [{
+      id: 'forward', label: 'a -> b -> c, c also depends on a',
+      steps: [
+        { role: 'a', taskType: 'implementation', fileScope: 'src/a', deliverable: 'a' },
+        { role: 'b', taskType: 'implementation', fileScope: 'src/b', deliverable: 'b' },
+        { role: 'c', taskType: 'implementation', fileScope: 'src/c', deliverable: 'c', dependencies: ['a'] },
+      ],
+    }],
+  };
+  const r = await planRound({ mode: 'sequential', planFile: forward, roles: [{ role: 'a', scope: 'src/a' }, { role: 'b', scope: 'src/b' }, { role: 'c', scope: 'src/c' }] });
+  check('forward: a legal forward dependency is handled and the chain completes',
+    r.requests.length === 3 && r.report.ok === true && r.exitCode === 0, `n=${r.requests.length} ok=${String(r.report.ok)}`);
+
+  // A backward edge (step 1 depends on step 2) only closes a loop ONCE the chain is added.
+  const mixedCycle = {
+    kind: 'sequential',
+    plans: [{
+      id: 'loop', label: 'step 1 depends on step 2 (a cycle through the chain)',
+      steps: [
+        { role: 's1', taskType: 'implementation', fileScope: 'src/s1', deliverable: 's1', dependencies: ['s2'] },
+        { role: 's2', taskType: 'implementation', fileScope: 'src/s2', deliverable: 's2' },
+      ],
+    }],
+  };
+  let cycleErr: unknown = null;
+  try { parsePlanFile(mixedCycle); } catch (e) { cycleErr = e; }
+  check('mixed-cycle: rejected as a cycle BEFORE write (chain-aware)',
+    cycleErr instanceof PlanFileError && cycleErr.code === 'dependency-cycle', cycleErr instanceof PlanFileError ? cycleErr.code : String(cycleErr));
+  const refused = await planRound({ mode: 'sequential', planFile: mixedCycle, roles: [{ role: 's1', scope: 'src/s1' }, { role: 's2', scope: 'src/s2' }] });
+  check('mixed-cycle: end-to-end refusal with NO partial commit',
+    refused.report.stage === 'plan' && refused.requests.length === 0 && refused.report.tasks === undefined && refused.exitCode !== 0,
+    `stage=${String(refused.report.stage)} requests=${refused.requests.length} exit=${refused.exitCode}`);
+}
+
+// =========================================================================
+section('10: the decision note preserves the ACTUAL gate refusal, not a generic claim');
+
+{
+  const { applyDecision } = await import('../src/orchestration/decision.ts');
+  const { buildDispatchReceipt } = await import('../src/orchestration/dispatch-receipt.ts');
+  const apply = async (tick: { admitted: string[]; waiting: string[]; skipped: Array<{ taskId: string; code: string; reason: string }> }) => {
+    const receipt = buildDispatchReceipt({ tick: { ...tick, outcomes: [] }, dispatchedAt: Date.now() });
+    return applyDecision({ action: 'continue' }, { observation: { allTerminal: false } as never, dispatch: async () => receipt });
+  };
+
+  const refused = await apply({ admitted: [], waiting: [], skipped: [{ taskId: 'round-x-w2', code: 'resource-unavailable', reason: 'no isolated workspace for a second writer' }] });
+  check('note: a real gate refusal is NAMED (task + code + reason), never erased',
+    refused.applied === true && (refused as { code?: string }).code === 'resource-unavailable' &&
+      (refused as { note: string }).note.includes('resource-unavailable') && (refused as { note: string }).note.includes('round-x-w2'),
+    JSON.stringify(refused));
+  check('note: the old "nothing was denied by the gate" wording is GONE when something was denied',
+    !(refused as { note: string }).note.includes('nothing was denied by the gate'), (refused as { note: string }).note);
+
+  const waiting = await apply({ admitted: [], waiting: ['round-x-w3'], skipped: [] });
+  check('note: "waiting for capacity" is distinguished from a refusal',
+    (waiting as { code?: string }).code === 'no-free-slot' && (waiting as { note: string }).note.includes('no free slot'), JSON.stringify(waiting));
+
+  const idle = await apply({ admitted: [], waiting: [], skipped: [] });
+  check('note: only when NOTHING was denied does it say so',
+    (idle as { code?: string }).code === undefined && (idle as { note: string }).note.includes('nothing was denied by the gate'), JSON.stringify(idle));
+
+  const admitted = await apply({ admitted: ['round-x-w1'], waiting: [], skipped: [] });
+  check('note: an admitted dispatch still reports a dispatch', (admitted as { dispatched: boolean }).dispatched === true, JSON.stringify(admitted));
 }
 
 // =========================================================================

@@ -317,6 +317,14 @@ export type DecisionApplication =
        * exactly the kind of implicit coupling that breaks when a stage adds an action.
        */
       readonly via?: string;
+      /**
+       * B4.2a: the machine-readable reason a `continue` admitted NOTHING this tick — the
+       * scheduler/gate code (`resource-unavailable`, `resource-conflict`, `no-free-slot`,
+       * `tick-in-progress`, …). Absent when the decision was applied without a refusal.
+       * Present so a report can preserve the ACTUAL gate refusal instead of a generic
+       * "nothing was denied" claim.
+       */
+      readonly code?: string;
     }
   /**
    * Valid decision, but nothing to act on. Not an error.
@@ -1143,11 +1151,40 @@ export async function applyDecision(
   }
   const receipt = await context.dispatch();
   const dispatched = receipt.admitted.length > 0;
-  return {
-    applied: true,
-    dispatched,
-    note: dispatched
-      ? 'the scheduler dispatched at least one task'
-      : 'the scheduler had no free slot or no ready task this tick; nothing was denied by the gate',
-  };
+  if (dispatched) {
+    return { applied: true, dispatched, note: 'the scheduler dispatched at least one task' };
+  }
+  /*
+   * B4.2a: nothing was admitted — say WHY, from the receipt's own facts.
+   *
+   * The old note claimed "no free slot or no ready task; nothing was denied by the gate"
+   * unconditionally, so a real refusal (`resource-unavailable` on a non-git workspace, or a
+   * `resource-conflict`) was reported as if the gate had denied nothing. That erased the one
+   * fact an operator needs. The receipt already carries the scheduler's `skipped` entries
+   * (code + reason) and `waiting`; this reports them instead of guessing, and separates
+   * "waiting for a dependency / capacity" from "refused by the gate".
+   */
+  const refusals = receipt.skipped.filter((s) => s.taskId !== '*');
+  if (refusals.length > 0) {
+    const detail = refusals.map((s) => `${s.taskId}: ${s.code} (${s.reason})`).join('; ');
+    return {
+      applied: true,
+      dispatched: false,
+      code: refusals[0]!.code,
+      note: `the scheduler admitted nothing this tick; the gate refused: ${detail}`,
+    };
+  }
+  const reentrant = receipt.skipped.find((s) => s.taskId === '*');
+  if (reentrant !== undefined) {
+    return { applied: true, dispatched: false, code: reentrant.code, note: `the scheduler admitted nothing this tick: ${reentrant.reason}` };
+  }
+  if (receipt.waiting.length > 0) {
+    return {
+      applied: true,
+      dispatched: false,
+      code: 'no-free-slot',
+      note: `the scheduler admitted nothing this tick: ${receipt.waiting.length} task(s) are ready but there is no free slot`,
+    };
+  }
+  return { applied: true, dispatched: false, note: 'the scheduler admitted nothing this tick: no ready task, and nothing was denied by the gate' };
 }

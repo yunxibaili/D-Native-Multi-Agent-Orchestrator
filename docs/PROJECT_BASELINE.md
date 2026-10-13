@@ -29,9 +29,9 @@ README 是导航。用户明确指令优先；发现源码、证据与基线不�
 | B1 overall | NOT SEALED |
 | B4.0 / B4.0a / B4.0b | 独立 PASS WITH P2；顺序工作流受控链路封板，非真实模型验收 |
 | B4.1 / B4.1a | 独立 PASS；共享顺序工作区的协作组受控闭环封板，原 1 个 P1 + 2 个 P2 关闭 |
-| B4.2 | 默认链式入口定向通过；独立 probe 发现合法多入口写计划零执行，P1 待 B4.2a 收口；整体暂不封板 |
+| B4.2 / B4.2a | 独立 PASS WITH P2；项目计划与多入口顺序执行受控闭环封板，保留等待/拒绝分类 P2 |
 | B4 overall | NOT SEALED；功能 A/B 最小闭环 + 项目适配入口均已实现，真实模型兼容性未验收 |
-| B4.2a / B4.3+ / B2 / B3 / B5 | 依新草案重排；详见交付计划与下一任务，本轮只授权文档/本机进度页 |
+| B4.3+ / B2 / B3 / B5 | PLANNED；本轮未授权启动实现 |
 | PARALLEL_WRITE | CLOSED |
 | 本产品前端 | 本机独立进度页已授权且禁止入 Git；正式工作台 UI 需求仍待确认 |
 
@@ -141,6 +141,20 @@ B4.2 新增显式 opt-in 的结构化**计划文件入口** `--workflow-plan <fi
   每任务 Agent×Model 仍由既有 LAYA + Assignment 决定，不绕过 fixed/能力/额度/费用准入。
 - 内置与文件计划共用同一候选构造规则（`plan-file.ts` 的 builder），所以二者不会漂移；顺序执行、
   最大有效写执行数=1、文件范围只是声明、成员未交付时集成不运行等边界不变。未补 Git 隔离合并，保留拒绝。
+
+B4.2a 独立审核确认原多入口 P1 关闭，原资源拒绝报告主场景关闭；保留非阻断 skipped 分类 P2，不重写调度/工作区/合并：
+- P1：文件计划里显式 `dependencies: []` 的多个写步骤（或协作成员）曾被解析、提交、分配，但同一 tick 都就绪，
+  共享非 Git 工作区无法隔离两个写者 → 全部 `resource-unavailable`、runtime 请求=0、no-progress。
+  现把计划文件的步骤按**顺序链**执行（这是 sequential 工作流的既定契约，`PARALLEL_WRITE=CLOSED`）：
+  用户声明的 `dependencies` 作为**额外前向边**保留，链边在**校验前**加入，所以“显式依赖 + 默认链”形成的环
+  在写前按 `dependency-cycle` 拒绝、无部分任务。这样同一 CLI 链真实写出 owned 文件、最大有效写者=1、
+  协作集成消费所有成员实际字节；不是靠去掉 resource gate 或伪造 dependencies 过测。
+- P2：`continue` 未准入任何任务时，`decision.note` 曾无条件称“没有 free slot/ready task，没有被 gate 拒绝”，
+  把真实 `resource-unavailable` 抹掉。现从 receipt 的 `skipped`/`waiting` 如实投影：拒绝显示任务+码+原因
+  （`report.decision.code` 也带上），并区分“等依赖/容量”与“被 gate 拒绝”；只有确实没有被拒时才说没被拒。
+- 附带：`decision.ts` 是遗留 CRLF 文件（其 blob 早于 `* text=auto`），编辑它会让 `git diff --check` 把每个新增行
+  的 CR 误报为行尾空白；在 `.gitattributes` 为**该文件**声明 `whitespace=cr-at-eol`，只让真正的空白错误被报告，
+  不改变行尾、不做全仓 renormalize。
 完整角色计划、prefer/角色默认、运行中改选、真实模型兼容性、Skill/MCP、费用与掉线恢复保持后续范围。
 
 ## 6. 不可绕过的契约
@@ -157,7 +171,8 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 
 1. DSH 缺逐请求选模型与恢复协议；要用 DSH 做多模型调配，必须先取得受支持的真实接口证据。
 2. B4.0–B4.1a 的顺序工作流与协作组受控链路已独立封板；B4.1 输入契约、报告事实投影与未交付负例已收口。
-   B4.2 提供项目适配的结构化计划文件入口（自定义 sequential/collaborate 候选）。
+   B4.2 提供项目适配的结构化计划文件入口（自定义 sequential/collaborate 候选）；B4.2a 收口合法多入口写计划的
+   顺序执行与 `decision.note` 的真实 gate 拒绝投影。
    完整角色计划、prefer/角色默认、运行中改选、真实模型多模型兼容性仍缺，留后续切片。
 3. Skill/MCP 只有部分意图/原生支持，目录、授权、具体选择和实际调用核对未闭环。
 4. 动态免费资格、账户共享额度和全流程费用授权未验收；预算 units 不是 token/货币。
@@ -172,7 +187,41 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 
 ## 8. 最近独立证据与上传记录
 
-2026-10-13 Codex 本轮：typecheck PASS；b42-plan-file 44/0、b41-collab-group 91/0、b40a-cli-workflow 42/0。
+2026-10-13 Codex B4.2a 独立审核：**PASS WITH P2**。受控顺序计划/协作组范围封板，B4 整体仍未封板。
+独立实跑：typecheck PASS；b42-plan-file 61/0、b41-collab-group 91/0、b40a-cli-workflow 42/0、
+resource-claim 192/0、decision 397/0、planner 189/0、state-loop 169/0；isolation 守卫 5 opt-in/0 违规，均 exit=0。
+独立 CLI probe（真实编排链、受控 provider/runtime）：显式 [] 两步骤执行 2 次、duo 执行 3 次，max effective writers=1；
+集成消费两成员实际字节、复用成员 2 的 pair 且 session 独立；混合依赖环写前拒绝，requests=0、无部分 tasks。
+内存负控仅退回旧依赖规则，复现 requests=0/exit=1/no-progress；新 report.decision.code=resource-unavailable 且 note 保留实际拒绝。
+CRLF 属性负控使用临时独立 index：真正尾部空格仍被 git diff --check 检出，共享 index/生产源码未变。
+
+剩余 P2（不阻断后续）：decision.ts 把所有 taskId!='*' 的 skipped 都当 gate refusal；真实 Scheduler 的 dependency-unmet
+只是等待前置。独立 receipt probe：只有依赖等待也显示 gate refused；[dependency-unmet,resource-unavailable] 混合时主 code
+取 dependency-unmet，虽然 note 仍列出实际资源拒绝。这是报告分类/主码问题，不影响准入、停止或顺序执行。
+随 B4.3 接线附带修正并补两个小回归，不另开 P2-only 封板轮次。PlanFileStep 的 [] 注释仍是旧语义，随同维护；
+实际生效规则为声明依赖加顺序链，后项依赖更后项形成的环写前拒绝，不承诺任意顺序 DAG 自动重排。
+
+Codex 本轮只更新文档和本机派生快照，未改生产代码/测试。下一任务 B4.3 材料与阶段确认待用户下发，不自动开始。
+未跑 full suite、未调用真实 Agent 推理；Git 协作合并、费用/工具/恢复和正式前端继续保持未验证/未实现边界。
+
+
+本轮 B4.2a（2026-10-13，实现方实跑，hermetic）：`b42-plan-file` **61/0**（经真实 `runRoundCli` + 真实
+`parsePlanFile`/链式候选构造 + 受控 provider/runtime，运行时真实读写 owned 工作区文件）；`b41-collab-group` 91/0、
+`b40a-cli-workflow` 42/0、`b40-workflow` 41/0、planner 189/0、workbench 413/0、resource-claim 192/0、
+decision 397/0、state-loop 169/0、handoff-production-round 312/0、b14-selection 46/0、assignment 235/0、
+initial-assignment-decision 37/0、contract 248/0（2 skipped）、unit 92/0；isolation 守卫 5 opt-in/0 违规；
+typecheck PASS、`git diff --check` clean；生产 `runtime.run` 调用边=1、新增调度 authority=0、owned 残留 0。
+- P1 关闭：显式 `dependencies: []` 的多入口写计划（sequential 两写步骤 / collaborate 两成员）现在**按序执行**：
+  同一 CLI 链真实写出各自 owned 文件、最大有效写者=1、协作集成消费所有成员实际字节、ok/exit=0。
+  链规则（`chainDependencies`）已直接断言：声明 `[]` 保留、执行顺序以链边加入；前向合法依赖（step3 额外依赖 step1）
+  正常完成；显式后向边 + 默认链形成的环在**写前**按 `dependency-cycle` 拒绝、requests=0、无 tasks。
+- P2 关闭：`applyDecision` 的 `continue` 未准入时从 receipt 的 `skipped`/`waiting` 如实投影——真实 gate 拒绝
+  （任务+`resource-unavailable`+原因）被命名，`report.decision.code` 带上码；"waiting for capacity" 与"被拒"分开；
+  旧的 "nothing was denied by the gate" 措辞在确有拒绝时不再出现（负控断言）。
+- 附带：`.gitattributes` 为遗留 CRLF 文件 `decision.ts` 声明 `whitespace=cr-at-eol`，使 `git diff --check` 只报真实空白错误。
+上述为本轮 hermetic 证据；未跑 full suite、未调用真实模型、未读凭据、未改本机配置、未开放并行写。
+
+上一轮 B4.2 独立审核（已由本轮关闭原 P1）：typecheck PASS；b42-plan-file 44/0、b41-collab-group 91/0、b40a-cli-workflow 42/0。
 独立 CLI probe 使用真实编排链 + 受控 provider/runtime：多候选选中 second 且只问一次；显式/默认依赖混合的环写前拒绝、requests=0。
 新 P1：合法 sequential 的两个写步骤均 dependencies:[]（collaborate 成员亦同）被接受和分配，
 但 Scheduler 实际两项均 resource-unavailable，runtime requests=0、exit=1、workflow.stop=no-progress。
@@ -420,7 +469,7 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 用户本轮授权根据草案整理计划、任务和独立进度页；没有授权实施新后端切片。
 路线见 [BACKEND_DELIVERY_PLAN.md](BACKEND_DELIVERY_PLAN.md)，下一任务见 [NEXT_TASK.md](NEXT_TASK.md)。
 进度页位于被 Git 忽略的 project-progress/，只派生下面的维护快照；不读取 Runtime 或凭据，不作为第二状态权威。
-完成度以新草案后端目标为分母：十项权重共 100、当前已实现信用 51，四舍五入报告约 50% 完成 / 约 50% 剩余。
+完成度以新草案后端目标为分母：十项权重共 100、当前已实现信用 52，四舍五入报告约 50% 完成 / 约 50% 剩余。
 合理剩余区间 40–60%，属于工程规划估算，不是客观测试统计、承诺工时或正式前端完成度。
 每次任务推进更新事实和快照后运行 node project-progress/refresh.mjs；实时预览从本文读取，不伪造任务推进。
 
@@ -428,18 +477,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-13T16:28:16+08:00",
+  "updatedAt": "2026-10-13T19:11:14+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "B4.2",
-    "name": "结构化项目计划 · 独立收口",
-    "status": "blocked",
-    "summary": "默认链式计划已通过；合法多入口写计划出现零执行 no-progress，先做 B4.2a。"
+    "id": "B4.2a",
+    "name": "多入口顺序执行 · 独立审核完成",
+    "status": "done",
+    "summary": "PASS WITH P2：原零执行 P1 关闭，显式空依赖顺序运行并真实集成；等待/拒绝分类 P2 随 B4.3 小修。"
   },
   "next": {
-    "id": "B4.2a",
-    "name": "合法依赖与顺序执行收口",
+    "id": "B4.3",
+    "name": "需求与当前阶段材料确认",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -466,8 +515,8 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       {
         "name": "功能 A/B 与项目计划",
         "weight": 18,
-        "earned": 13,
-        "basis": "受控链路已建立；B4.2 多入口收口及 Git 协作仍缺"
+        "earned": 14,
+        "basis": "B4.2/B4.2a 独立受控 PASS WITH P2；Git 协作、阶段材料和真实验收仍缺"
       },
       {
         "name": "需求与阶段确认",
@@ -515,12 +564,12 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
   },
   "blockers": [
     {
-      "id": "B42-P1",
-      "severity": "P1",
-      "title": "合法多入口写计划无法推进",
-      "detail": "显式 dependencies:[] 的两写任务可提交和分配，但 gate=resource-unavailable；requests=0、exit=1、stop=no-progress。保护未失效。",
-      "next": "B4.2a",
-      "kind": "已复现"
+      "id": "B42-P2",
+      "severity": "P2",
+      "title": "等待依赖与 gate 拒绝分类仍需小修",
+      "detail": "dependency-unmet 被显示为 gate refused；混合 receipt 以首项等待码覆盖主资源拒绝码。note 仍保留完整事实，不影响安全执行。",
+      "next": "B4.3 附带修正，不单开封板轮次",
+      "kind": "非阻断 · 独立复现"
     },
     {
       "id": "GIT",
@@ -587,23 +636,23 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     {
       "id": "B4.2",
       "title": "项目适配的计划文件",
-      "status": "blocked",
+      "status": "done",
       "deliverable": "自定义职责、路径、交付和依赖",
-      "evidence": "本轮 44/0；多入口独立 probe 暴露 P1"
+      "evidence": "与 B4.2a 一起独立 PASS WITH P2；受控链路范围"
     },
     {
       "id": "B4.2a",
       "title": "合法依赖与顺序执行收口",
-      "status": "next",
-      "deliverable": "合法输入推进或写前明确拒绝，准确 gate 报告",
-      "evidence": "下一实施任务，待用户下发"
+      "status": "done",
+      "deliverable": "合法输入按序推进或写前明确拒绝，准确 gate 报告",
+      "evidence": "独立 61/0 + CLI probe；max writers=1；报告分类留 P2"
     },
     {
       "id": "B4.3",
       "title": "需求与阶段材料确认",
-      "status": "planned",
+      "status": "next",
       "deliverable": "批准绑定材料、范围与阶段",
-      "evidence": "草案重排；尚未授权实施"
+      "evidence": "下一实施任务，待用户下发；附带报告分类小修"
     },
     {
       "id": "B4.4",
@@ -670,28 +719,33 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     },
     {
       "name": "b42-plan-file",
-      "result": "44 / 0",
+      "result": "61 / 0",
       "source": "Codex 本轮实跑"
     },
     {
-      "name": "b41-collab-group",
-      "result": "91 / 0",
+      "name": "b41 / b40a",
+      "result": "91 / 0 · 42 / 0",
       "source": "Codex 本轮实跑"
     },
     {
-      "name": "b40a-cli-workflow",
-      "result": "42 / 0",
-      "source": "Codex 本轮实跑"
+      "name": "resource / decision / planner / state-loop",
+      "result": "192 / 397 / 189 / 169 · 全通过",
+      "source": "Codex 本轮定向实跑"
     },
     {
-      "name": "多候选选择 / 混合依赖环",
-      "result": "选中 second / 写前拒绝",
-      "source": "独立内存 probe，受控 provider/runtime"
+      "name": "显式 [] / duo / 混合环",
+      "result": "2 / 3 次顺序运行 · 环写前拒绝",
+      "source": "独立 CLI probe，受控 provider/runtime"
     },
     {
-      "name": "无依赖多写入口",
-      "result": "零执行 · P1",
-      "source": "sequential/collaborate 独立 probe"
+      "name": "旧依赖规则内存负控",
+      "result": "复现零执行 · 新报告保留拒绝",
+      "source": "不修改生产文件"
+    },
+    {
+      "name": "skipped 混合分类",
+      "result": "P2 · 不阻断",
+      "source": "独立 receipt probe"
     },
     {
       "name": "full suite / 真实模型",
@@ -728,3 +782,6 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 本轮上传说明：计划重排与 B4.2 独立发现保存为 codex/b42-plan-realignment-blocked 快照，父提交 9980db2；
 包含现有 B4.2 实现与审核事实、草案、计划、任务和维护规则，不宣称 B4.2 封板。
 project-progress/ 全目录及旧 temporary-dashboard/ 均忽略、不进入快照；主分支与共享暂存区不动。准确提交见会话交付。
+
+本轮 B4.2a 独立 PASS WITH P2 上传快照：父 b751ffe，分支 codex/b42a-review-pass-with-p2。
+只保存当前修复与独立审核/下一任务文档；project-progress/ 不入 Git，主分支和共享暂存区不改。

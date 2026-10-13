@@ -1962,7 +1962,9 @@ export async function runRoundCli(
           via: outcome.application.via ?? null,
           // `note` on success, `reason` on a refusal - the union names them
           // differently on purpose, so both are read rather than guessed.
-          code: outcome.application.applied ? null : outcome.application.code,
+          // B4.2a: an APPLIED `continue` that admitted nothing still carries the
+          // scheduler/gate refusal code, so it is read here instead of dropped.
+          code: outcome.application.applied ? (outcome.application.code ?? null) : outcome.application.code,
           note: outcome.application.applied ? outcome.application.note : outcome.application.reason,
           dispatchedTasks: ranTasks,
         }
