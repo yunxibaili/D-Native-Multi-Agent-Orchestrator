@@ -260,9 +260,14 @@ LAYA 可以选择同 Agent 的其他模型、其他 Agent 的相同模型或其�
 结构化计划文件（`--workflow-plan <file>`，JSON，`kind` 为 `sequential|collaborate`，含 role/taskType/可选
 fileScope/deliverable/可选 dependencies 与协作的 integratorMember）替换内置候选。文件不命名 taskId/agent/model，
 只描述有界候选；非法输入在写入前拒绝。完整 Skill/MCP 选择、角色计划与真实模型多模型兼容性按后续切片推进。
-阶段确认契约（B4.3）：opt-in 的 `--stage <file>` 声明当前阶段材料（stageId/scope/requirement/acceptance，可选
-planRef），`--confirm <digest>` 是用户对**该材料**的确认（digest 绑定，材料变更即失效）；材料文件不得自我批准。
-材料缺失/未确认/别阶段/自我批准时，入口在任何外部调用与建任务前拒绝。完整需求/计划/阶段批准链仍属后续。
+阶段确认契约（B4.3/B4.3a）：opt-in 的 `--stage <file>` 声明当前阶段材料（stageId/scope/requirement/acceptance，可选
+planRef），`--confirm <digest>` 是用户对**该材料与实际计划**的确认——digest 覆盖材料字段、目标 objective、工作流模式与
+有效计划内容（role/taskType/fileScope/deliverable/dependencies/集成责任）及 planRef，任一变化即使 plan id 不变也失效；
+计划文件在确认处读取并冻结，`planRef` 必须命中有效计划 id 或计划文件本身。材料文件不得自我批准。材料缺失/未确认/
+别阶段/自我批准/planRef 不匹配/材料超出可交付上限时，入口在任何外部调用与建任务前拒绝（不静默截断）。材料**完整嵌入**
+任务验收条件/brief/验收材料，不依赖不可达的文件引用。完整需求/计划/阶段批准链仍属后续。
+实现边界：以上确认绑定目前仅在显式 sequential/collaborate 工作流独立验证；--stage 与 legacy 的组合仍有实际计划未绑定 P1。
+要求不放宽；最小建议在阶段门拒绝未支持组合，保留不带 --stage 的旧入口。当前状态以唯一基线为准。
 提示词/规划不代表已经实现。
 两层都复用既有 Planner / Assignment / Scheduler / SessionRegistry / WorkerIdentity / Fan-out
 与 ResourceClaim / Workspace，**不新增拥有调度权的“主管 Agent”**，也不新增 TeamStore、WorkerManager、

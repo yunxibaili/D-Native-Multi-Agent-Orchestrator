@@ -18,7 +18,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 
-import { runRoundCli } from '../src/cli/round-cli.ts';
+import { runRoundCli, normalizedPlanScope } from '../src/cli/round-cli.ts';
 import { Orchestrator as RuntimeOrchestrator } from '../src/orchestrator/orchestrator.ts';
 import { createFakeAdapter } from './helpers.ts';
 import type { RunHandle, RunRequest, RunResult, ToolCall } from '../src/core/types.ts';
@@ -26,7 +26,8 @@ import type { DecisionProvider, DecisionRequest } from '../src/decision/types.ts
 import { INITIAL_AGENT_MODEL_ID, initialCandidateKey } from '../src/decision/initial-assignment.ts';
 import { WORKFLOW_PLAN_ID } from '../src/decision/plan-choice.ts';
 import { ACCEPTANCE_MATERIAL_FIELD, ORCHESTRATION_ACTION_ID } from '../src/orchestration/decision-loop.ts';
-import { parseStageMaterial, stageMaterialDigest } from '../src/orchestration/stage-material.ts';
+import { parsePlanFile } from '../src/orchestration/plan-file.ts';
+import { parseStageMaterial, stageBindingDigest } from '../src/orchestration/stage-material.ts';
 import type { QuotaProbe } from '../src/quota/index.ts';
 
 let passed = 0;
@@ -120,7 +121,18 @@ interface Round {
 }
 
 const STAGE = { stageId: 'stage-1-api', scope: 'only the users API', requirement: 'the API must authenticate requests', acceptance: 'a request without a token is 401', planRef: 'stage-flow' };
-const digestOf = (material: unknown): string => stageMaterialDigest(parseStageMaterial(material));
+const OBJECTIVE = 'add authentication to the users API';
+/** The digest the user would pass: bound to the material AND the plan that actually runs. */
+const digestOf = (material: unknown, planFileJson?: unknown): string => {
+  const m = parseStageMaterial(material);
+  return stageBindingDigest({
+    material: m,
+    objective: OBJECTIVE,
+    workflow: 'sequential',
+    planRef: m.planRef ?? null,
+    planScope: normalizedPlanScope('sequential', planFileJson === undefined ? null : parsePlanFile(planFileJson)),
+  });
+};
 
 async function stageRound(opts: {
   material?: unknown;
@@ -276,21 +288,21 @@ section('1: the gate refuses BEFORE any call or task — missing material / conf
     noMaterial.report.stage === 'stage-gate' && noMaterial.requests.length === 0 && noMaterial.providerCalls === 0 && noMaterial.exitCode === 2,
     `stage=${String(noMaterial.report.stage)} req=${noMaterial.requests.length} provider=${noMaterial.providerCalls} exit=${noMaterial.exitCode}`);
 
-  const noConfirm = await stageRound({ material: STAGE });
+  const noConfirm = await stageRound({ material: STAGE, planFile: SEQUENTIAL_PLAN });
   check('missing confirmation: refused, nothing ran, provider never called',
     noConfirm.report.stage === 'stage-gate' && /NOT confirmed/.test(String(noConfirm.report.error)) &&
       noConfirm.requests.length === 0 && noConfirm.providerCalls === 0 && noConfirm.exitCode === 2,
     `error=${String(noConfirm.report.error)} provider=${noConfirm.providerCalls}`);
   check('missing confirmation: the refusal names the pending item (the exact --confirm)',
-    JSON.stringify(noConfirm.report.pending).includes(`--confirm ${digestOf(STAGE)}`), JSON.stringify(noConfirm.report.pending));
+    JSON.stringify(noConfirm.report.pending).includes(`--confirm ${digestOf(STAGE, SEQUENTIAL_PLAN)}`), JSON.stringify(noConfirm.report.pending));
 
-  const wrongConfirm = await stageRound({ material: STAGE, confirm: digestOf({ ...STAGE, stageId: 'stage-2-other' }) });
+  const wrongConfirm = await stageRound({ material: STAGE, confirm: digestOf({ ...STAGE, stageId: 'stage-2-other' }, SEQUENTIAL_PLAN), planFile: SEQUENTIAL_PLAN });
   check('confirmation for a DIFFERENT stage: refused, nothing ran',
     wrongConfirm.report.stage === 'stage-gate' && /does not match/.test(String(wrongConfirm.report.error)) &&
       wrongConfirm.requests.length === 0 && wrongConfirm.providerCalls === 0 && wrongConfirm.exitCode === 2,
     `error=${String(wrongConfirm.report.error)}`);
 
-  const noTasks = await stageRound({ material: STAGE });
+  const noTasks = await stageRound({ material: STAGE, planFile: SEQUENTIAL_PLAN });
   check('refusal creates NO task list and does not mark the product complete',
     noTasks.report.tasks === undefined && noTasks.report.ok !== true, `tasks=${String(noTasks.report.tasks)} ok=${String(noTasks.report.ok)}`);
 }
@@ -299,7 +311,7 @@ section('1: the gate refuses BEFORE any call or task — missing material / conf
 section('2: a material cannot approve itself, and a model cannot approve it');
 
 {
-  const selfApproved = await stageRound({ material: { ...STAGE, approved: true }, confirm: digestOf(STAGE) });
+  const selfApproved = await stageRound({ material: { ...STAGE, approved: true }, confirm: digestOf(STAGE, SEQUENTIAL_PLAN), planFile: SEQUENTIAL_PLAN });
   check('self-approval: a material carrying "approved" is refused with a specific reason',
     selfApproved.report.stage === 'stage-gate' && /self-approval/.test(String(selfApproved.report.error)) &&
       selfApproved.requests.length === 0 && selfApproved.providerCalls === 0,
@@ -307,7 +319,7 @@ section('2: a material cannot approve itself, and a model cannot approve it');
 
   // The provider is a MODEL stand-in; it is never consulted when the gate fails, so a model
   // (or any tool output) cannot grant approval.
-  const modelClaim = await stageRound({ material: STAGE });
+  const modelClaim = await stageRound({ material: STAGE, planFile: SEQUENTIAL_PLAN });
   check('a model/tool cannot approve: the provider is never called without a user confirmation',
     modelClaim.providerCalls === 0 && modelClaim.requests.length === 0, `provider=${modelClaim.providerCalls}`);
 }
@@ -316,9 +328,9 @@ section('2: a material cannot approve itself, and a model cannot approve it');
 section('3: --stage-check validates and prints the digest WITHOUT running anything');
 
 {
-  const r = await stageRound({ material: STAGE, stageCheck: true });
+  const r = await stageRound({ material: STAGE, planFile: SEQUENTIAL_PLAN, stageCheck: true });
   check('stage-check: reports ok + the digest, and runs nothing',
-    r.report.stage === 'stage-check' && r.report.ok === true && r.report.digest === digestOf(STAGE) &&
+    r.report.stage === 'stage-check' && r.report.ok === true && r.report.digest === digestOf(STAGE, SEQUENTIAL_PLAN) &&
       r.requests.length === 0 && r.providerCalls === 0 && r.exitCode === 0,
     `stage=${String(r.report.stage)} digest=${String(r.report.digest)} exit=${r.exitCode}`);
 }
@@ -327,7 +339,7 @@ section('3: --stage-check validates and prints the digest WITHOUT running anythi
 section('4: a confirmed stage runs the REAL chain, and the material reaches the brief + acceptance');
 
 {
-  const r = await stageRound({ material: STAGE, confirm: digestOf(STAGE), planFile: SEQUENTIAL_PLAN });
+  const r = await stageRound({ material: STAGE, confirm: digestOf(STAGE, SEQUENTIAL_PLAN), planFile: SEQUENTIAL_PLAN });
   check('confirmed: the plan executed and the round completed ok',
     r.requests.length === 2 && r.report.ok === true && r.report.executionIncomplete === false && r.exitCode === 0,
     `req=${r.requests.length} ok=${String(r.report.ok)} exit=${r.exitCode}`);
@@ -351,7 +363,7 @@ section('4: a confirmed stage runs the REAL chain, and the material reaches the 
 section('5: a changed scope invalidates an old confirmation; the next stage does not auto-start');
 
 {
-  const oldDigest = digestOf(STAGE);
+  const oldDigest = digestOf(STAGE, SEQUENTIAL_PLAN);
   const changed = await stageRound({ material: { ...STAGE, scope: 'the whole service, not just the API' }, confirm: oldDigest });
   check('scope change: the OLD confirmation no longer matches the new material',
     changed.report.stage === 'stage-gate' && /does not match/.test(String(changed.report.error)) && changed.requests.length === 0,
@@ -376,7 +388,7 @@ section('6: the stage gate is opt-in — the built-in entry and fixed stay compa
       plain.requests.every((q) => !q.prompt.includes('[stage ')),
     `stage=${String(plain.report.stage)} req=${plain.requests.length} exit=${plain.exitCode}`);
 
-  const fixed = await stageRound({ material: STAGE, confirm: digestOf(STAGE), planFile: SEQUENTIAL_PLAN, fixed: { agentId: AGENT_A, modelId: 'agent-a/m1' } });
+  const fixed = await stageRound({ material: STAGE, confirm: digestOf(STAGE, SEQUENTIAL_PLAN), planFile: SEQUENTIAL_PLAN, fixed: { agentId: AGENT_A, modelId: 'agent-a/m1' } });
   check('fixed selection still enforced alongside a confirmed stage',
     fixed.requests.length === 2 && fixed.requests.every((q) => q.agentId === AGENT_A && q.model === 'agent-a/m1') && fixed.report.ok === true,
     fixed.requests.map((q) => `${q.agentId}/${q.model}`).join(','));
@@ -414,6 +426,92 @@ section('7: P2 — the decision note keeps dependency-waiting, capacity and refu
   check('P2 capacity: still distinguished from a refusal',
     (capacity as { code?: string }).code === 'no-free-slot' && /no free slot/.test((capacity as { note: string }).note),
     JSON.stringify(capacity));
+}
+
+// =========================================================================
+section('8: P1-1 — a confirmation is bound to the ACTUAL plan and scope');
+
+{
+  const digestA = digestOf(STAGE, SEQUENTIAL_PLAN);
+  const otherPlan = {
+    kind: 'sequential',
+    plans: [{ id: 'unapproved-plan', label: 'research then implement', steps: SEQUENTIAL_PLAN.plans[0]!.steps }],
+  };
+  const changedDeliverable = {
+    kind: 'sequential',
+    plans: [{ id: 'stage-flow', label: 'research then implement', steps: [SEQUENTIAL_PLAN.plans[0]!.steps[0], { ...SEQUENTIAL_PLAN.plans[0]!.steps[1]!, deliverable: 'a DIFFERENT server change' }] }],
+  };
+
+  const otherId = await stageRound({ material: STAGE, confirm: digestA, planFile: otherPlan });
+  check('P1-1: a confirmation for plan A does not run a DIFFERENT plan id',
+    otherId.report.stage === 'stage-gate' && otherId.requests.length === 0 && otherId.exitCode === 2,
+    `stage=${String(otherId.report.stage)} req=${otherId.requests.length}`);
+
+  const changed = await stageRound({ material: STAGE, confirm: digestA, planFile: changedDeliverable });
+  check('P1-1: the SAME plan id with a changed deliverable invalidates the old confirmation',
+    changed.report.stage === 'stage-gate' && changed.requests.length === 0 && changed.exitCode === 2,
+    `error=${String(changed.report.error)}`);
+
+  const changedObjective = await stageRound({ material: STAGE, confirm: digestA, planFile: SEQUENTIAL_PLAN, objective: 'a DIFFERENT objective' });
+  check('P1-1: a changed objective invalidates the old confirmation',
+    changedObjective.report.stage === 'stage-gate' && changedObjective.requests.length === 0,
+    String(changedObjective.report.error));
+
+  // No planRef: the digest alone must still reject a different plan.
+  const noRefMaterial = { stageId: 'stage-1-api', scope: STAGE.scope, requirement: STAGE.requirement, acceptance: STAGE.acceptance };
+  const noRefDigest = digestOf(noRefMaterial, SEQUENTIAL_PLAN);
+  const noRefOther = await stageRound({ material: noRefMaterial, confirm: noRefDigest, planFile: otherPlan });
+  check('P1-1: without a planRef, the plan content is still bound by the digest',
+    noRefOther.report.stage === 'stage-gate' && noRefOther.requests.length === 0, String(noRefOther.report.error));
+
+  const ok = await stageRound({ material: STAGE, confirm: digestA, planFile: SEQUENTIAL_PLAN });
+  check('P1-1: the CONFIRMED plan A runs normally', ok.requests.length === 2 && ok.report.ok === true && ok.exitCode === 0,
+    `req=${ok.requests.length} ok=${String(ok.report.ok)}`);
+}
+
+// =========================================================================
+section('9: P1-1 — a non-semantic format change does NOT change the confirmation object');
+
+{
+  // Key order and whitespace are irrelevant: both are parsed into the SAME typed plan.
+  const reordered = { plans: SEQUENTIAL_PLAN.plans, kind: 'sequential' };
+  check('P1-1: reordering JSON keys keeps the same digest',
+    digestOf(STAGE, reordered) === digestOf(STAGE, SEQUENTIAL_PLAN), 'digest changed on key reorder');
+  // stage-check shows the plan/scope summary and the same digest.
+  const sc = await stageRound({ material: STAGE, planFile: SEQUENTIAL_PLAN, stageCheck: true });
+  check('P1-1: stage-check shows the effective plan/scope and the binding digest',
+    sc.report.stage === 'stage-check' && sc.report.digest === digestOf(STAGE, SEQUENTIAL_PLAN) &&
+      JSON.stringify(sc.report.plan).includes('stage-flow') && sc.requests.length === 0,
+    JSON.stringify(sc.report.plan));
+}
+
+// =========================================================================
+section('10: P1-2 — a long material is delivered IN FULL (its critical tail is not truncated)');
+
+{
+  const CRITICAL = 'CRITICAL_DO_NOT_CHANGE_DATABASE_SCHEMA';
+  const longRequirement = `${'preamble '.repeat(120)}${CRITICAL}`; // ~1000+ chars, tail is the constraint
+  const material = { ...STAGE, requirement: longRequirement };
+  const r = await stageRound({ material, confirm: digestOf(material, SEQUENTIAL_PLAN), planFile: SEQUENTIAL_PLAN });
+  check('P1-2: the FULL requirement (including its tail) reaches every task brief',
+    r.requests.length === 2 && r.requests.every((q) => q.prompt.includes(CRITICAL)),
+    r.requests.map((q) => q.prompt.includes(CRITICAL)).join(','));
+  check('P1-2: the full requirement also reaches the acceptance-material request',
+    materialsOf(r).some((m) => m.objective.includes(CRITICAL)), 'tail missing from acceptance material');
+  check('P1-2: the long material still completed the round', r.report.ok === true && r.exitCode === 0, `ok=${String(r.report.ok)}`);
+}
+
+// =========================================================================
+section('11: P1-2 — a material too large to deliver is REFUSED before any write (no silent truncation)');
+
+{
+  // Each field is within the per-field limit, but the total exceeds what can be embedded.
+  const big = { ...STAGE, requirement: 'a'.repeat(3500), acceptance: 'b'.repeat(3500) };
+  const r = await stageRound({ material: big, confirm: 'irrelevant', planFile: SEQUENTIAL_PLAN });
+  check('P1-2: an oversized material is refused with a specific reason and runtime=0',
+    r.report.stage === 'stage-gate' && /too-large-to-embed/.test(String(r.report.error)) &&
+      r.requests.length === 0 && r.providerCalls === 0 && r.exitCode === 2,
+    `error=${String(r.report.error)} req=${r.requests.length}`);
 }
 
 // =========================================================================

@@ -78,7 +78,7 @@
  */
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 
 import { Orchestrator as RuntimeOrchestrator } from '../orchestrator/orchestrator.ts';
 import type { AgentConfig } from '../orchestrator/config.ts';
@@ -167,9 +167,9 @@ import {
 import {
   STAGE_MATERIAL_MAX_BYTES,
   StageMaterialError,
-  boundedStageContext,
   parseStageMaterial,
-  stageMaterialDigest,
+  stageBindingDigest,
+  stageMaterialEmbed,
   stageMaterialRef,
   type StageMaterial,
 } from '../orchestration/stage-material.ts';
@@ -598,6 +598,72 @@ export interface RoundCliOverrides {
   readonly onWorkbenchSnapshot?: (snapshot: RoundWorkbenchObservation) => void;
 }
 
+/**
+ * B4.3a (P1-1): a NORMALIZED, plain-data projection of the plan(s) a round may run.
+ *
+ * It is the CONTENT that a stage confirmation binds — roles, task types, file scopes,
+ * deliverables, dependencies and integration responsibility — not a file name or a plan id.
+ * A plan whose id stays the same but whose deliverable changes therefore produces a
+ * different scope and invalidates an old confirmation. Built-ins and plan files are
+ * projected into the SAME shape, so a user plan and a built-in cannot be confused.
+ *
+ * It is derived from the ALREADY-TYPED plan modules (`WORKFLOW_PLAN_CHOICES`,
+ * `COLLABORATION_PLAN_CHOICES`, `parsePlanFile`), so there is no second plan parser and no
+ * re-parse of the file after it is frozen.
+ */
+export function normalizedPlanScope(mode: string | undefined, planFile: PlanFile | null): unknown {
+  const stepScope = (s: { role: string; taskType: string; fileScope?: string; deliverable: string; dependencies?: readonly string[] }) => ({
+    role: s.role, taskType: s.taskType, fileScope: s.fileScope ?? null,
+    deliverable: s.deliverable, dependencies: [...(s.dependencies ?? [])],
+  });
+  if (mode === 'sequential') {
+    return planFile !== null
+      ? planFile.plans.filter(isSequentialPlan).map((p) => ({ id: p.id, label: p.label, steps: p.steps.map(stepScope) }))
+      : WORKFLOW_PLAN_CHOICES.map((c) => ({ id: c.choice, label: c.label, steps: c.steps.map((s) => stepScope({ role: s.role, taskType: s.taskType, deliverable: s.deliverable })) }));
+  }
+  if (mode === 'collaborate') {
+    return planFile !== null
+      ? planFile.plans.filter(isCollaborationPlan).map((p) => ({ id: p.id, label: p.label, integratorMember: p.integratorMember, members: p.members.map(stepScope) }))
+      : COLLABORATION_PLAN_CHOICES.map((c) => ({ id: c.choice, label: c.label, integratorMember: c.integratorMember, members: c.members.map((m) => stepScope({ role: m.role, taskType: m.taskType, fileScope: m.fileScope, deliverable: m.deliverable })) }));
+  }
+  // The legacy (shape-based) path has no explicit plan; the objective + workflow still bind.
+  return null;
+}
+
+/** The plan ids a stage's `planRef` may name for the effective plan source. */
+function offeredPlanIds(mode: string | undefined, planFile: PlanFile | null): readonly string[] {
+  if (mode === 'sequential') return planFile !== null ? planFile.plans.filter(isSequentialPlan).map((p) => p.id) : WORKFLOW_PLAN_CHOICES.map((c) => c.choice);
+  if (mode === 'collaborate') return planFile !== null ? planFile.plans.filter(isCollaborationPlan).map((p) => p.id) : COLLABORATION_PLAN_CHOICES.map((c) => c.choice);
+  return [];
+}
+
+/**
+ * Read + validate a plan file. The ONE reader, used both by the stage gate (so the
+ * confirmation binds the ACTUAL plan) and by the plan block (so the file is not re-read
+ * between the two — a confirmation must not cover a file that then changes on disk).
+ */
+function readPlanFileForRound(cwd: string, workflowPlan: string, workflow: string | undefined): PlanFile {
+  const planPath = resolve(cwd, workflowPlan);
+  if (!existsSync(planPath) || !statSync(planPath).isFile()) {
+    throw new Error(`--workflow-plan "${workflowPlan}" is not a readable file (resolved to "${planPath}")`);
+  }
+  const size = statSync(planPath).size;
+  if (size > PLAN_FILE_MAX_BYTES) {
+    throw new Error(`--workflow-plan "${workflowPlan}" is ${size} bytes, over the ${PLAN_FILE_MAX_BYTES} byte limit`);
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(planPath, 'utf8'));
+  } catch (e) {
+    throw new Error(`--workflow-plan "${workflowPlan}" is not valid JSON: ${(e as Error).message}`);
+  }
+  const planFile = parsePlanFile(raw);
+  if (planFile.kind !== workflow) {
+    throw new Error(`--workflow-plan declares kind "${planFile.kind}" but --workflow is "${String(workflow)}"; they must match`);
+  }
+  return planFile;
+}
+
 export async function runRoundCli(
   runtime: RuntimeOrchestrator,
   argv: readonly string[],
@@ -623,16 +689,21 @@ export async function runRoundCli(
   };
 
   /*
-   * B4.3: the OPT-IN stage gate. It is purely LOCAL — a file plus a flag — and it runs
+   * B4.3/B4.3a: the OPT-IN stage gate. It is purely LOCAL — files plus a flag — and it runs
    * BEFORE the quota probes, before LAYA classification and before any task exists, so a
    * missing or unconfirmed stage costs NO external call and creates NOTHING.
    *
    * The material is DATA and cannot approve itself (see `parseStageMaterial`); approval is
-   * the user's own `--confirm <digest>`, BOUND to this material. That is a deliberate LOCAL
-   * act, not identity or authentication, and it does not constrain a native agent's own
-   * internal actions — it only decides whether THIS entry starts the stage at all.
+   * the user's own `--confirm <digest>`, BOUND to the material AND to the plan that will
+   * actually run (see `stageBindingDigest`). That is a deliberate LOCAL act, not identity or
+   * authentication, and it does not constrain a native agent's own internal actions — it only
+   * decides whether THIS entry starts the stage at all.
    */
   let stage: { material: StageMaterial; digest: string; ref: string; context: string } | null = null;
+  // B4.3a: the plan file is read + FROZEN here (once) when a stage is confirmed, so the
+  // confirmation covers the ACTUAL plan and the plan block below cannot see a different file.
+  let frozenPlanFile: PlanFile | null = null;
+  let planFileFrozen = false;
   if (o.stage !== undefined) {
     const stagePath = resolve(o.cwd, o.stage);
     const refuse = (error: string, pending: readonly string[]): number => {
@@ -663,14 +734,61 @@ export async function runRoundCli(
       const detail = e instanceof StageMaterialError ? `${e.code}: ${e.detail}` : (e as Error).message;
       return refuse(detail, ['fix the material; a material file cannot approve itself']);
     }
-    const digest = stageMaterialDigest(material);
+    // Freeze the ACTUAL plan (if any) before binding the confirmation to it.
+    if (o.workflowPlan !== undefined) {
+      try {
+        frozenPlanFile = readPlanFileForRound(o.cwd, o.workflowPlan, o.workflow);
+        planFileFrozen = true;
+      } catch (e) {
+        return refuse((e as Error).message, ['fix the plan file; a stage confirmation must cover the plan it runs']);
+      }
+    } else {
+      planFileFrozen = true; // frozen as "no plan file" — the built-in candidates apply
+    }
+    // The material must be deliverable IN FULL into the brief/acceptance. A material too
+    // large to embed is refused HERE, before any write — never silently truncated.
+    let context: string;
     const ref = stageMaterialRef(material, o.stage);
+    try {
+      context = stageMaterialEmbed(material, ref);
+    } catch (e) {
+      const detail = e instanceof StageMaterialError ? `${e.code}: ${e.detail}` : (e as Error).message;
+      return refuse(detail, ['shorten the material or split the stage; long-material delivery is not supported yet']);
+    }
+    // planRef must name the EFFECTIVE plan: an offered plan id, or the plan file itself.
+    const planRef = material.planRef ?? null;
+    if (planRef !== null) {
+      const ids = offeredPlanIds(o.workflow, frozenPlanFile);
+      const matchesId = ids.includes(planRef);
+      const matchesFile = o.workflowPlan !== undefined && (planRef === o.workflowPlan || planRef === basename(o.workflowPlan));
+      if (!matchesId && !matchesFile) {
+        return refuse(`the material's planRef "${planRef}" does not match the effective plan`, [
+          `offered plan ids: [${ids.join(', ')}]`,
+          ...(o.workflowPlan === undefined ? [] : [`or the plan file "${o.workflowPlan}"`]),
+        ]);
+      }
+    }
+    // The confirmation binds the material AND the actual objective / workflow / plan content.
+    const digest = stageBindingDigest({
+      material,
+      objective: o.objective,
+      workflow: o.workflow ?? 'legacy',
+      planRef,
+      planScope: normalizedPlanScope(o.workflow, frozenPlanFile),
+    });
     const confirmHint = `--confirm ${digest}`;
+    const planSummary = {
+      workflow: o.workflow ?? 'legacy',
+      planFile: o.workflowPlan ?? null,
+      offeredPlanIds: offeredPlanIds(o.workflow, frozenPlanFile),
+      planRef,
+    };
     if (o.stageCheck === true) {
       if (o.json) {
-        w(JSON.stringify({ ok: true, stage: 'stage-check', stageId: material.stageId, digest, ref, planRef: material.planRef ?? null, pending: [`to run this stage, pass ${confirmHint}`] }, null, 2));
+        w(JSON.stringify({ ok: true, stage: 'stage-check', stageId: material.stageId, digest, ref, plan: planSummary, pending: [`to run this stage, pass ${confirmHint}`] }, null, 2));
       } else {
         w(`stage material OK: ${material.stageId} (${ref})`);
+        w(`  plan          ${planSummary.workflow}; file=${planSummary.planFile ?? '(built-in)'}; ids=[${planSummary.offeredPlanIds.join(', ')}]; planRef=${planSummary.planRef ?? '(none)'}`);
         w(`  confirm with: ${confirmHint}`);
         w('  nothing was created or run');
       }
@@ -682,12 +800,12 @@ export async function runRoundCli(
       ]);
     }
     if (o.confirm !== digest) {
-      return refuse('the confirmation does not match this material', [
+      return refuse('the confirmation does not match this material AND plan', [
         `the material is stage "${material.stageId}"; re-confirm with ${confirmHint}`,
-        'a changed stage/scope/requirement/acceptance invalidates an old confirmation',
+        'a changed stage/scope/requirement/acceptance/planRef, a changed plan (id or content), or a changed objective/workflow invalidates an old confirmation',
       ]);
     }
-    stage = { material, digest, ref, context: boundedStageContext(material, ref) };
+    stage = { material, digest, ref, context };
   }
   // The objective that ACTUALLY reaches classification, the plan and every task's
   // acceptance criteria / brief. Without a confirmed stage it is the user's own text,
@@ -1077,29 +1195,16 @@ export async function runRoundCli(
      * oversized, malformed or wrong-kind file is a REFUSAL with a reason — never a silent
      * fallback to a built-in plan, and never a partial write. The file names no task ids and
      * no agents/models; it only describes bounded candidate plans.
+     *
+     * B4.3a: when a stage was confirmed, the file was already read and FROZEN by the gate, and
+     * this block REUSES that exact object — so the plan a confirmation covered and the plan
+     * that actually runs cannot differ (no re-read between the gate and here).
      */
     let planFile: PlanFile | null = null;
-    if (o.workflowPlan !== undefined) {
-      const planPath = resolve(o.cwd, o.workflowPlan);
-      if (!existsSync(planPath) || !statSync(planPath).isFile()) {
-        throw new Error(`--workflow-plan "${o.workflowPlan}" is not a readable file (resolved to "${planPath}")`);
-      }
-      const size = statSync(planPath).size;
-      if (size > PLAN_FILE_MAX_BYTES) {
-        throw new Error(`--workflow-plan "${o.workflowPlan}" is ${size} bytes, over the ${PLAN_FILE_MAX_BYTES} byte limit`);
-      }
-      let raw: unknown;
-      try {
-        raw = JSON.parse(readFileSync(planPath, 'utf8'));
-      } catch (e) {
-        throw new Error(`--workflow-plan "${o.workflowPlan}" is not valid JSON: ${(e as Error).message}`);
-      }
-      planFile = parsePlanFile(raw);
-      if (planFile.kind !== o.workflow) {
-        throw new Error(
-          `--workflow-plan declares kind "${planFile.kind}" but --workflow is "${String(o.workflow)}"; they must match`,
-        );
-      }
+    if (planFileFrozen) {
+      planFile = frozenPlanFile;
+    } else if (o.workflowPlan !== undefined) {
+      planFile = readPlanFileForRound(o.cwd, o.workflowPlan, o.workflow);
     }
 
     /*

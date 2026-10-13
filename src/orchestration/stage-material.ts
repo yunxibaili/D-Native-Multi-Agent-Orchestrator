@@ -38,8 +38,8 @@ import { createHash } from 'node:crypto';
 export const STAGE_MATERIAL_MAX_BYTES = 64 * 1024;
 /** Any single free-text field is capped so the material cannot smuggle an essay. */
 export const STAGE_MATERIAL_MAX_TEXT = 4000;
-/** How much of the material is embedded into task acceptance criteria / briefs. */
-export const STAGE_CONTEXT_MAX_CHARS = 600;
+/** How much of the material can be delivered inline into task acceptance criteria / briefs. */
+export const STAGE_EMBED_MAX_CHARS = 6000;
 
 export interface StageMaterial {
   /** The current stage's identity. The confirmation is bound to it. */
@@ -144,19 +144,62 @@ export function stageMaterialRef(material: StageMaterial, fileName: string): str
   return `${fileName}@${stageMaterialDigest(material).slice(0, 12)}`;
 }
 
-function clamp(s: string): string {
-  const oneLine = s.replace(/\s+/g, ' ').trim();
-  return oneLine.length <= STAGE_CONTEXT_MAX_CHARS ? oneLine : `${oneLine.slice(0, STAGE_CONTEXT_MAX_CHARS)}…`;
+/**
+ * B4.3a (P1-1): the digest the CONFIRMATION is actually bound to.
+ *
+ * The material alone is NOT enough. A confirmation must cover what will ACTUALLY run:
+ * the objective, the workflow mode, the effective plan's CONTENT (roles, task types, file
+ * scopes, deliverables, dependencies, integration responsibility), and the planRef. So a
+ * confirmation made against one plan no longer matches a different plan id, a plan whose
+ * content changed, or a changed objective/workflow scope — even if the material file is
+ * byte-identical. `planScope` is a NORMALIZED, plain-data projection (built by the caller
+ * from the existing typed plans), so reordering JSON keys or whitespace does not change it.
+ */
+export function stageBindingDigest(input: {
+  readonly material: StageMaterial;
+  readonly objective: string;
+  readonly workflow: string;
+  readonly planRef: string | null;
+  readonly planScope: unknown;
+}): string {
+  const canonical = JSON.stringify({
+    material: {
+      stageId: input.material.stageId,
+      scope: input.material.scope,
+      requirement: input.material.requirement,
+      acceptance: input.material.acceptance,
+      planRef: input.material.planRef ?? null,
+    },
+    objective: input.objective,
+    workflow: input.workflow,
+    planRef: input.planRef,
+    planScope: input.planScope,
+  });
+  return createHash('sha256').update(canonical, 'utf8').digest('hex');
 }
 
 /**
- * The BOUNDED context embedded into a round's objective, so the confirmed material reaches
- * the real acceptance criteria / briefs (via the existing plan builders) without pasting
- * the whole file. The `ref` lets a worker open the file for the full text.
+ * B4.3a (P1-2): the material context embedded into the round objective, so the confirmed
+ * requirement/acceptance reach the REAL acceptance criteria and brief.
+ *
+ * The material is embedded IN FULL — never truncated — because a summary that cuts off the
+ * tail can drop a load-bearing constraint (the audit's `CRITICAL_DO_NOT_CHANGE_…` sat at the
+ * end of a long requirement). When the material is too large to deliver this way, it is
+ * REFUSED before any write rather than silently shortened; a reachable, content-bound
+ * reference is future work, not a label pretending to be one.
  */
-export function boundedStageContext(material: StageMaterial, ref: string): string {
-  return (
-    `[stage ${material.stageId} · ref ${ref}] scope: ${clamp(material.scope)}; ` +
-    `requirement: ${clamp(material.requirement)}; acceptance: ${clamp(material.acceptance)}`
-  );
+export function stageMaterialEmbed(material: StageMaterial, ref: string): string {
+  const text =
+    `[stage ${material.stageId} · ref ${ref}]\n` +
+    `scope: ${material.scope}\n` +
+    `requirement: ${material.requirement}\n` +
+    `acceptance: ${material.acceptance}`;
+  if (text.length > STAGE_EMBED_MAX_CHARS) {
+    throw new StageMaterialError(
+      'too-large-to-embed',
+      `the stage material is ${text.length} chars, over the ${STAGE_EMBED_MAX_CHARS} that can be delivered in a ` +
+        'task brief / acceptance; shorten it or split the stage. It is NOT silently truncated',
+    );
+  }
+  return text;
 }
