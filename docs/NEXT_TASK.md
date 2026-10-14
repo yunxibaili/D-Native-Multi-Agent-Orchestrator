@@ -21,3 +21,7 @@
 
 OpenCode目标仍为`opencode-go/deepseek-v4.1-flash`；用户已将DSH第二目标改为`GLM-5.3-FLASH`，替代Hy3。GLM的provider ID、内部model ID及免费资格尚未确认，不从显示名猜机器ID，不沿用Hy3截图的限免信息，不发送API Key。开发委派worker仍使用DeepSeek V4.1 Flash；本次只更新验收目标，不修改DSH桌面默认或用户配置。
 本机Desktop公开包0.2.0-rc.2与项目使用的npm CLI0.1.5-rc.2不同；生产adapter当前拒绝指定model，必须先证明headless同源且任务绑定可靠。复用既有DSH adapter，研究profile/overlay及settings优先级；不能只加--model、只加patch、打开capability或猜Desktop默认。没有充分协议/反馈则明确unsupported/unknown，避免误调收费档。未经另行明确范围不改安装/用户profile/桌面默认/凭据，不启动真实推理；免费资格、截止与新增费用仍按用户声明与真实证据分开。
+
+## 本轮离线验证与下一动作
+
+用户明确本轮不调用模型，并指明WorkBuddy组GLM-5.3-Flash x0.06。离线9项断言通过：生产指定模型拒绝、已安装headless --model语法拒绝、已安装默认模型服务settings覆盖启动selection；DSH受控suite64/0。均不证明实际GLM机器ID/可调用/免费，未修改生产或用户配置。下一步仅获取非敏感Provider ID/Model ID并核实可靠绑定；没有协议依据不启用modelSelection，真实验收暂不授权。

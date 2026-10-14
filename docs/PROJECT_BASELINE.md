@@ -319,6 +319,8 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 
 ## 8. 最近独立证据与上传记录
 
+2026-10-14 B4.7 GLM离线接入验证完成（未接通真实模型）：用户进一步指定截图WorkBuddy组的`GLM-5.3-Flash · x0.06`，并明确本轮只做不调用模型的验证。x0.06是界面倍率，不能解释为货币价格或免费证明。独立执行9项断言：真实生产adapter validateRequest拒绝指定GLM；直接调用本机0.1.5-rc.2 headless启动解析器（未挂载runner）确认普通任务可解析、--model被拒；直接实例化已安装默认模型服务，以受控settings source证明其可覆盖composition selection。此项为真实安装代码+受控服务边界证据，不证明真实provider可调用、桌面与CLI配置同源或GLM实际机器ID。定向`node tests/dsh-adapter.test.ts`实跑64/0、exit=0；不调用真实Agent/模型、不读取现有凭据/用户设置、不改src/tests/native/安装配置。官方GitHub MCP读取provider文档成功，SHA 773ff6722a8558720a458f7574940972cf976958；不将上游master能力提升为本机能力。离线产物`project-progress/b47-glm-offline-contract.json`含安装源码hash，保持ignored。当前仍需内部provider/model ID及可验证的任务绑定，B4.7真实验收NOT RUN，PARALLEL_WRITE仍CLOSED，完成估算不增加。
+
 2026-10-14 用户更新B4.7第二目标：DSH改用`GLM-5.3-FLASH`，替代下述Hy3限免目标；OpenCode仍为`opencode-go/deepseek-v4.1-flash`。这是验收目标选择更新，不是实际Agent默认配置变更或真实推理验收。GLM显示名不证明内部provider/model ID、可调用或免费；Hy3截图限免信息不沿用。开发委派worker仍使用DeepSeek V4.1 Flash。
 
 2026-10-14 B4.7模型目标补充（只读可行性核对，真实推理0）：用户选OpenCode DeepSeek V4.1 Flash及DSH里WorkBuddy分组的“Hy3 · x0.00 · 限时免费”；不能替换成截图另列的Hy3 x0.05。现有OpenCode实例完整请求ID为`opencode-go/deepseek-v4.1-flash`，B5.1原生委派元数据105/90条已验证，属于开发委派历史证据，不是产品B4.7真实验收。
@@ -865,18 +867,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-14T19:33:26+08:00",
+  "updatedAt": "2026-10-14T19:40:30+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
     "id": "B4.7",
     "name": "真实Agent代表验收：调用前准备",
     "status": "blocked",
-    "summary": "用户已将第二目标从DSH Hy3改为DSH GLM-5.3-FLASH；OpenCode保持opencode-go/deepseek-v4.1-flash。GLM内部provider/model ID、headless任务绑定与费用尚未验证，Hy3截图的限免不沿用；真实推理0。"
+    "summary": "GLM-5.3-Flash x0.06离线接入验证完成：9项安装代码/生产拒绝断言及DSH受控suite64/0。用户本轮仅授权不调用模型；内部provider/model ID与任务级绑定仍待确认，真实推理0。"
   },
   "next": {
     "id": "B4.7 DSH binding",
-    "name": "确认DSH GLM-5.3-FLASH机器ID、原生绑定与费用，再做小样本",
+    "name": "获取GLM内部ID，确认DSH任务级绑定最小路线（暂不调用模型）",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -955,8 +957,8 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "id": "B47-CALL-SCOPE",
       "severity": "待用户信息",
       "title": "DSH GLM-5.3-FLASH机器ID/原生绑定及费用待确认",
-      "detail": "用户已指定显示名；不猜provider或内部model ID。当前DSH adapter拒绝指定model，桌面与headless配置未认证同源；GLM免费资格、OpenCode费用及原生会话数仍待确认，Hy3限免证据已不适用于当前目标。",
-      "next": "确认GLM实际provider/model ID及费用范围；复用既有DSH接入核实任务绑定，不擅改桌面默认或安装配置",
+      "detail": "截图明确WorkBuddy组GLM-5.3-Flash x0.06，但未给内部ID，倍率不证明免费。本机headless拒绝--model，settings可覆盖启动配置，生产adapter仍拒绝指定模型；用户仅授权离线验证，真实费用及调用范围未授权。",
+      "next": "提供非敏感provider/model ID后确认绑定方式；无原生证据不启用modelSelection，不改用户桌面默认",
       "kind": "授权边界 / 非代码缺陷"
     },
     {
