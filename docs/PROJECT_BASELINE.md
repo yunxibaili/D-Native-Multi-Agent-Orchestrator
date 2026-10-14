@@ -319,6 +319,8 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 
 ## 8. 最近独立证据与上传记录
 
+2026-10-14 用户更新B4.7第二目标：DSH改用`GLM-5.3-FLASH`，替代下述Hy3限免目标；OpenCode仍为`opencode-go/deepseek-v4.1-flash`。这是验收目标选择更新，不是实际Agent默认配置变更或真实推理验收。GLM显示名不证明内部provider/model ID、可调用或免费；Hy3截图限免信息不沿用。开发委派worker仍使用DeepSeek V4.1 Flash。
+
 2026-10-14 B4.7模型目标补充（只读可行性核对，真实推理0）：用户选OpenCode DeepSeek V4.1 Flash及DSH里WorkBuddy分组的“Hy3 · x0.00 · 限时免费”；不能替换成截图另列的Hy3 x0.05。现有OpenCode实例完整请求ID为`opencode-go/deepseek-v4.1-flash`，B5.1原生委派元数据105/90条已验证，属于开发委派历史证据，不是产品B4.7真实验收。
 
 本机npm DSH安装包0.1.5-rc.2的headless启动语法只有任务位置参数，runner读取`agentDefaultModel.currentSelection()`；现有项目adapter modelSelection=false，独立直接调用生产validateRequest确认model=hy3以UNSUPPORTED_OPTION拒绝，未创建transport/未启动Agent。发现桌面应用公开app.asar根包为`@deepseek-ai/dsh-desktop@0.2.0-rc.2`，其中headless已含JSON/session选项，仍从默认model服务取selection；它与当前npm CLI、desktop/headless profile不是同一已验证配置。未读取用户profile/settings/凭据，只读安装包公开源码及asar清单。
@@ -863,18 +865,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-14T19:23:22+08:00",
+  "updatedAt": "2026-10-14T19:33:26+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
     "id": "B4.7",
     "name": "真实Agent代表验收：调用前准备",
     "status": "blocked",
-    "summary": "用户已选OpenCode Flash + DSH WorkBuddy Hy3限时免费档。OpenCode请求支持已有；DSH桌面0.2与npm CLI0.1.5不同，现有adapter拒绝指定hy3。等待免费档内部ID/headless绑定及费用范围，真实推理0。"
+    "summary": "用户已将第二目标从DSH Hy3改为DSH GLM-5.3-FLASH；OpenCode保持opencode-go/deepseek-v4.1-flash。GLM内部provider/model ID、headless任务绑定与费用尚未验证，Hy3截图的限免不沿用；真实推理0。"
   },
   "next": {
     "id": "B4.7 DSH binding",
-    "name": "确认Hy3免费档provider/model与原生绑定，再做小样本",
+    "name": "确认DSH GLM-5.3-FLASH机器ID、原生绑定与费用，再做小样本",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -952,9 +954,9 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     {
       "id": "B47-CALL-SCOPE",
       "severity": "待用户信息",
-      "title": "DSH Hy3免费档的机器ID/原生绑定待确认",
-      "detail": "目标已选；截图未给内部provider/model ID或优惠期限。当前DSH adapter拒绝model，桌面与headless配置未认证同源；OpenCode费用/原生会话数仍需明确。",
-      "next": "用户给免费档provider ID/model ID；只补已有DSH接入的绑定，不换收费档",
+      "title": "DSH GLM-5.3-FLASH机器ID/原生绑定及费用待确认",
+      "detail": "用户已指定显示名；不猜provider或内部model ID。当前DSH adapter拒绝指定model，桌面与headless配置未认证同源；GLM免费资格、OpenCode费用及原生会话数仍待确认，Hy3限免证据已不适用于当前目标。",
+      "next": "确认GLM实际provider/model ID及费用范围；复用既有DSH接入核实任务绑定，不擅改桌面默认或安装配置",
       "kind": "授权边界 / 非代码缺陷"
     },
     {
