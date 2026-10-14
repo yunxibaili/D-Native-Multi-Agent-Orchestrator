@@ -207,6 +207,16 @@ import {
   type McpReportEntry,
   type McpToolTuple,
 } from '../orchestration/mcp-catalog.ts';
+// B2.1: the bounded user-declared no-additional-charge model pool, its ONE pure
+// admission predicate (shared with Assignment and the Spawn Gate), and its reader.
+import {
+  USER_MODEL_POOL_MAX_BYTES,
+  UserModelPoolError,
+  admitUserModelPoolPair,
+  isUserModelPoolError,
+  parseUserModelPoolText,
+  type UserModelPool,
+} from '../orchestration/model-pool.ts';
 import { buildDispatchReceipt } from '../orchestration/dispatch-receipt.ts';
 import { projectDispatchTaskEvidence } from '../orchestration/dispatch-evidence.ts';
 import { buildExecutionSnapshot } from '../orchestration/execution-monitor.ts';
@@ -292,6 +302,22 @@ OPTIONS
                          brief as a REQUEST only. It never connects/installs/authorizes an MCP
                          server, never reroutes an agent/model, and is not proof the tool
                          exists, is MCP, or ran. Requires --workflow sequential|collaborate;
+                         absent = byte-identical behaviour to before.
+  --model-pool <file>
+                         opt-in USER-DECLARED model pool (B2.1). A JSON file
+                         {policy:"no-additional-charge", models:[{agentId, modelId,
+                         billing:"free"|"included"|"paid"|"unknown", source, observedAt,
+                         expiresAt}]} you declare. Around every initially selected task the
+                         pool is the ONLY thing offered and enforced: a pair not declared, or
+                         expired, or future-dated, or paid/unknown, is refused (never
+                         substituted). The declaration is YOUR statement with provenance and
+                         an expiry — it is NOT verified free entitlement, pricing or account
+                         eligibility, and it authorizes NO paid use (paid stays refused).
+                         It constrains only the orchestrator-managed runs of THIS round; it
+                         does not constrain a native agent's own internal/auxiliary calls,
+                         the reviewer, or any model the orchestrator did not select, and it
+                         never promises the whole workflow is free. Requires --workflow
+                         sequential|collaborate; cannot combine with --classify-only;
                          absent = byte-identical behaviour to before.
   --stage <file>         opt-in stage gate (B4.3): a JSON file describing the CURRENT
                          stage's material — stageId, scope, requirement, acceptance, and an
@@ -382,6 +408,8 @@ interface RoundOptions {
   skillCatalog?: string;
   /** B3.2: opt-in, user-declared native MCP tool CANDIDATES for ONE agent (`--mcp-catalog`). */
   mcpCatalog?: string;
+  /** B2.1: opt-in, user-declared no-additional-charge model pool (`--model-pool`). */
+  modelPool?: string;
   /** B4.3: the current stage's material file (opt-in stage gate). */
   stage?: string;
   /** B4.3: the user's confirmation, bound to the stage material's digest. */
@@ -534,6 +562,18 @@ function parse(argv: readonly string[]): RoundOptions | { error: string } {
     if (mcpCatalog !== undefined && flags['classify-only'] === true) {
       return { error: '--mcp-catalog cannot be combined with --classify-only' };
     }
+    // B2.1: the user-declared model pool is only meaningful where the initial Assignment
+    // path runs. The legacy shape-based plan and `--classify-only` have no initially
+    // assigned task, so the combination is a usage error raised HERE — before any file
+    // read, provider call, quota probe or task write. A bare flag is likewise a usage error.
+    const modelPool = s('model-pool');
+    if (flags['model-pool'] === true) return { error: '--model-pool requires a file path' };
+    if (modelPool !== undefined && workflow !== 'sequential' && workflow !== 'collaborate') {
+      return { error: '--model-pool requires --workflow sequential or --workflow collaborate' };
+    }
+    if (modelPool !== undefined && flags['classify-only'] === true) {
+      return { error: '--model-pool cannot be combined with --classify-only' };
+    }
     // B4.1: the answer space is the MODE's own bounded list, so `--workflow-choice duo`
     // with `--workflow sequential` is a usage error rather than a silent fallback.
     const choiceSpace = workflow === 'collaborate'
@@ -577,6 +617,7 @@ function parse(argv: readonly string[]): RoundOptions | { error: string } {
       ...(workflowPlan !== undefined ? { workflowPlan } : {}),
       ...(skillCatalog !== undefined ? { skillCatalog } : {}),
       ...(mcpCatalog !== undefined ? { mcpCatalog } : {}),
+      ...(modelPool !== undefined ? { modelPool } : {}),
       ...(stage !== undefined ? { stage } : {}),
       ...(confirm !== undefined ? { confirm } : {}),
       ...(stageCheck ? { stageCheck } : {}),
@@ -795,6 +836,32 @@ function readMcpCatalogForRound(cwd: string, file: string): McpCatalog {
   return parseMcpCatalog(raw);
 }
 
+/**
+ * B2.1: read + validate the user-declared model pool. The ONE reader, run ONCE before
+ * the stage gate, before the provider is configured, and before any quota probe,
+ * classification or task write. A missing / unreadable / oversized / malformed file is
+ * a clear refusal (never a silent empty pool). The returned pool is frozen.
+ */
+function readUserModelPoolForRound(cwd: string, file: string): UserModelPool {
+  const path = resolve(cwd, file);
+  if (!existsSync(path) || !statSync(path).isFile()) {
+    throw new UserModelPoolError('user-pool-file-unreadable', `--model-pool "${file}" is not a readable file (resolved to "${path}")`);
+  }
+  const size = statSync(path).size;
+  if (size > USER_MODEL_POOL_MAX_BYTES) {
+    throw new UserModelPoolError('user-pool-raw-too-large', `--model-pool "${file}" is ${size} bytes, over the ${USER_MODEL_POOL_MAX_BYTES} byte limit`);
+  }
+  let text: string;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch (e) {
+    throw new UserModelPoolError('user-pool-file-unreadable', `--model-pool "${file}" could not be read: ${(e as Error).message}`);
+  }
+  const parsed = parseUserModelPoolText(text);
+  if (!parsed.ok) throw new UserModelPoolError(parsed.code, parsed.detail);
+  return parsed.pool;
+}
+
 export async function runRoundCli(
   runtime: RuntimeOrchestrator,
   argv: readonly string[],
@@ -855,6 +922,28 @@ export async function runRoundCli(
       if (o.json) w(JSON.stringify({ ok: false, stage: 'mcp-catalog', error: detail }, null, 2));
       else {
         note(`mcp catalog refused: ${detail}`);
+        note('nothing was created or run.');
+      }
+      return 2;
+    }
+  }
+
+  /*
+   * B2.1: the OPT-IN user-declared model pool is read + validated ONCE here, alongside
+   * the skill / MCP catalogues, before the stage gate, the provider, any quota probe,
+   * classification or task. A missing / unreadable / oversized / malformed file is a
+   * clear refusal (exit 2); nothing is created, called or connected. Reading it here
+   * (before the provider) is what makes a bad file cost ZERO external calls.
+   */
+  let modelPool: UserModelPool | null = null;
+  if (o.modelPool !== undefined) {
+    try {
+      modelPool = readUserModelPoolForRound(o.cwd, o.modelPool);
+    } catch (e) {
+      const detail = isUserModelPoolError(e) ? `[${e.code}] ${e.detail}` : (e as Error).message;
+      if (o.json) w(JSON.stringify({ ok: false, stage: 'model-pool', error: detail }, null, 2));
+      else {
+        note(`model pool refused: ${detail}`);
         note('nothing was created or run.');
       }
       return 2;
@@ -1091,6 +1180,10 @@ export async function runRoundCli(
     maxChildren: o.maxChildren,
     maxConcurrentAgents: o.maxConcurrent,
     taskPolicyAllows: true,
+    // B2.1: the FROZEN user pool is carried on the gate sources, so the SAME value is
+    // re-evaluated at the REAL dispatch time (buildSpawnGateInput uses `Date.now()`),
+    // not just at assignment. Absent, the field is not added at all.
+    ...(modelPool !== null ? { userModelPool: modelPool } : {}),
   };
 
   // ---- R2-1: Workspace / Resource Safety -----------------------------------
@@ -1227,6 +1320,9 @@ export async function runRoundCli(
     // B1.4: the PROJECT default selection from orchestrator.json. The task-level
     // selection on the spec overrides it; `auto`/absent falls back to Laya.
     ...(projectSelection !== undefined ? { projectSelection } : {}),
+    // B2.1: the SAME frozen user pool drives the initial candidate question and the
+    // Assignment intersection. Absent, the workbench is byte-identical to before.
+    ...(modelPool !== null ? { modelPool } : {}),
     // TeamRun T2-a.1: the PRODUCTION initial path is Laya-controlled. The workbench
     // reuses the provider this command already builds for classification — no second
     // provider, no second planner. A round whose Laya selection cannot be obtained now
@@ -1550,6 +1646,11 @@ export async function runRoundCli(
       const usablePairs = registry.list()
         .filter((e) => (e.taskTypes.includes('implementation') || e.taskTypes.includes('test')) &&
           e.modelId !== null && e.modelId !== '' && registry.isModelAvailable(e.agentId, e.modelId))
+        // B2.1: when the user supplied a pool, only pairs it admits can fill a seat, so
+        // "there are not enough distinct pairs" is an UPFRONT refusal rather than a group
+        // whose later members cannot be assigned. Absent, this filter is a no-op.
+        .filter((e) => modelPool === null ||
+          admitUserModelPoolPair(modelPool, { agentId: e.agentId, modelId: e.modelId }, Date.now()).allowed)
         .map((e) => `${e.agentId}/${e.modelId}`);
       const distinctPairs = [...new Set(usablePairs)];
       if (distinctPairs.length < collaborationMembers.length) {
@@ -3038,6 +3139,44 @@ export async function runRoundCli(
         });
       });
   }
+  /*
+   * B2.1: the user model pool report is OPT-IN and truthful. It is built ONLY when
+   * `--model-pool` was given, so a round without the flag has a byte-identical report.
+   *
+   * It states the POLICY, the SCOPE (orchestrator-managed runs of THIS round only) and
+   * the guarantees this slice does NOT make (no verified free/account eligibility, no
+   * USD budget, no paid authorization), plus each declaration's provenance, timestamps
+   * and its CURRENT eligibility with the exact predicate reason code. A declaration is
+   * NEVER reported as "free" — only as the user's `billing` claim, judged admissibly.
+   */
+  if (modelPool !== null) {
+    const poolNow = Date.now();
+    report.modelPool = {
+      policy: modelPool.policy,
+      source: o.modelPool,
+      scope: 'constrains only the orchestrator-managed execution requests of THIS round; it does not constrain a native agent\'s own internal/auxiliary calls, the reviewer, or any model the orchestrator did not select',
+      unsupported: {
+        paid: 'this flag authorizes NO paid use: a `paid` (or `unknown`) declaration is refused, and a self-declared approval cannot buy one',
+        cost: 'a `free`/`included` declaration is the USER\'s statement with provenance and an expiry, NOT verified free entitlement, pricing or account eligibility; no USD budget or pricing check exists here',
+        wholeWorkflow: 'this says nothing about native auxiliary spend (e.g. a small_model) or the reviewer, so it must never be read as "the whole workflow is free"',
+      },
+      entries: modelPool.models.map((e) => {
+        const verdict = admitUserModelPoolPair(modelPool!, { agentId: e.agentId, modelId: e.modelId }, poolNow);
+        return {
+          agentId: e.agentId,
+          modelId: e.modelId,
+          billing: e.billing,
+          source: e.source,
+          observedAt: e.observedAt,
+          expiresAt: e.expiresAt,
+          eligibility: verdict.allowed
+            ? { allowed: true, code: null, detail: null }
+            : { allowed: false, code: verdict.code, detail: verdict.detail },
+        };
+      }),
+      note: 'USER DECLARATIONS only; not verified free/account eligibility, and not a paid authorization',
+    };
+  }
   // Null unless `--observe` was given. This reports WHERE the observation went and
   // what the dashboard would have shown, not an instruction to read it.
   report.observation = observationPaths === null || observedFinal === null
@@ -3572,6 +3711,30 @@ export async function runRoundCli(
             w(`      ORIGIN MISMATCH: the observed run is agent ${s.observation.runtime.agentId ?? '(unknown)'}, but this request was assigned to ${s.assignedAgentId}; the observation is NOT this request being honoured`);
           }
         }
+      }
+    }
+    // B2.1: the user model pool projection, printed only when the flag opted in. It is
+    // deliberately explicit that a declaration is NOT verified and does NOT authorize
+    // paid use, and that it covers only this round's orchestrator-managed runs.
+    if (o.modelPool !== undefined) {
+      const pool = report.modelPool as {
+        policy: string;
+        scope: string;
+        unsupported: Record<string, string>;
+        entries: Array<{ agentId: string; modelId: string; billing: string; source: string; observedAt: number; expiresAt: number; eligibility: { allowed: boolean; code: string | null } }>;
+      };
+      w();
+      w('MODEL POOL (user declaration only; NOT verified free/account eligibility; authorizes NO paid use)');
+      w(`  policy       ${pool.policy}`);
+      w(`  scope        ${pool.scope}`);
+      w(`  paid         ${pool.unsupported.paid}`);
+      w(`  cost         ${pool.unsupported.cost}`);
+      if (pool.entries.length === 0) {
+        w('  (no model declared: the pool is deny-all)');
+      }
+      for (const e of pool.entries) {
+        w(`  ${e.agentId}/${e.modelId}  billing=${e.billing}  eligibility=${e.eligibility.allowed ? 'allowed' : `refused (${e.eligibility.code})`}`);
+        w(`      source=${e.source}  observedAt=${e.observedAt}  expiresAt=${e.expiresAt}`);
       }
     }
     w();

@@ -141,3 +141,8 @@ B4.0 顺序执行异构职责沿既有路径；B4.1 候选计划产生 N 个成�
 模型中断恢复后续复用停止确认与 handoff，不能借重试产生两个有效写入者。
 
 旧设计细节和历史审核在 [归档提交](STAGE_ANALYSIS.md#历史备份) 按原路径可查。
+
+## B2.1 用户声明池的准入边界（实施，待单点收口）
+
+用户池是冻结纯值，复用ModelRegistry身份与同一admitUserModelPoolPair；不建立第二registry/路由器。不同字段组合的复合键文本可能碰撞，声明准入须逐项精确匹配agentId/modelId。Assignment仍accept-or-refuse，不替换fixed，不越过quota或资源门。
+既有Spawn Gate已复用该谓词；独立probe表明最后workspace.prepare之后尚缺检查，不能宣称启动时有效期完整保证。B2.1a需在preRunTask已取得、状态提交/resolveSession/runtime之前保持同步检查，不破坏T1冻结或资源finally。当前provenance会新增无池诊断行，默认不启用新限制不等于所有报告字节完全相同。

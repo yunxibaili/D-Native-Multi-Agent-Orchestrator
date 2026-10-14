@@ -42,7 +42,7 @@ listed ≠ connected ≠ callable ≠ free；严格零新增费用尚未端到�
 
 当前 **B4.5/B4.5a独立PASS（受控最小Git顺序协作范围）**：组内单worktree交付、脏文件保护和实际成果审核已通过；
 停止未确认、no-review或scope重叠均阻止误报成功。B1/B4整体仍未封板。
-B3.1任务级原生Skill有界闭环独立PASS：显式 `--skill-catalog skills.json` 配合sequential/collaborate，LAYA至多选一个advisory请求或none，报告分开请求/绑定/工具观察。候选不证明已安装，绑定不证明已加载；MCP和真实加载/token收益未认证。B3.2亦已独立PASS（具体Server/Tool的advisory选择与名称匹配观察）：`--mcp-catalog mcp-tools.json`，只支持OpenCode目录声明，不自动连接/配置MCP，也不裁剪原生工具定义。下一候选B2.1模型池与费用策略待单独授权。
+B3.1任务级原生Skill有界闭环独立PASS：显式 `--skill-catalog skills.json` 配合sequential/collaborate，LAYA至多选一个advisory请求或none，报告分开请求/绑定/工具观察。候选不证明已安装，绑定不证明已加载；MCP和真实加载/token收益未认证。B3.2亦已独立PASS（具体Server/Tool的advisory选择与名称匹配观察）：`--mcp-catalog mcp-tools.json`，只支持OpenCode目录声明，不自动连接/配置MCP，也不裁剪原生工具定义。B2.1模型池/费用声明已实施但独立BLOCKED（工作区准备期间到期仍可启动），下一片B2.1a只收口最终同步检查。
 新草案要求的需求确认、阶段批准、监督、交付与恢复已重排；见 [交付计划](docs/BACKEND_DELIVERY_PLAN.md) 和 [下一任务](docs/NEXT_TASK.md)。
 完整后端目标粗估完成约60%、剩约40%（工程估算，不含正式前端）；权重、证据和不确定区间见唯一基线，不能按测试数量计算进度。
 
@@ -85,3 +85,5 @@ Human Gate 后 automaticPostRoundAction=NONE。停止未确认不提前释放保
 文档维护只检查差异、链接和一致性；运行验证结果统一记录在项目基线，并标明执行日期与证据范围。
 真实 Agent 测试保持 opt-in，默认测试不得消费真实模型额度。
 旧需求、规划和审核明细保留在 [Git 历史](docs/STAGE_ANALYSIS.md#历史备份)，当前目录不复制报告。
+
+B2.1：`--model-pool <file>` 为显式用户声明策略，限制编排执行pair；并非实际免费或全流程费用保证，付费声明继续拒绝。当前最终启动检查P1未关闭，暂不把该功能当严格有效期保护。状态/证据及下一片见唯一基线和NEXT_TASK。

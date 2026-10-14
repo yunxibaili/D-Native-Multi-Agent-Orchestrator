@@ -38,7 +38,8 @@ README 是导航。用户明确指令优先；发现源码、证据与基线不�
 | B3.1 | 独立 PASS：用户声明候选→LAYA任务级原生Skill请求→有来源的工具观察；仅受控最小范围 |
 | B3.2 | 独立 PASS：仅OpenCode用户声明Server/Tool候选→advisory请求→名称匹配事件观察；非真实MCP调用认证 |
 | B3 overall | 整体未封板；真实工具调用、强制限制与Skill加载尚未验收 |
-| B4.6+ / B2 / B3 后续 / B5 | PLANNED；本轮未授权启动实现 |
+| B2.1 | 独立 BLOCKED：用户模型池/费用声明接线和155条测试通过，但工作区准备后缺最终过期检查；1个P1未关闭 |
+| B4.6+ / B2 后续 / B3 后续 / B5 | PLANNED；本轮未授权启动实现 |
 | PARALLEL_WRITE | CLOSED |
 | 本产品前端 | 本机独立进度页已授权且禁止入 Git；正式工作台 UI 需求仍待确认 |
 
@@ -223,7 +224,7 @@ fold进同一executionIncomplete事实，统一控制report.ok/退出码、revie
 Git创建期保护和worktree缺失门保留，非Git/sequential/正常no-review原语义保持。
 
 仅证受控CLI/Git/文件与失败传播链路，不证明产品真实Agent兼容性、费用/Skill/MCP/自动接力。
-B1/B4整体仍未封板，PARALLEL_WRITE=CLOSED；B3.1原生Skill有界切片现已独立通过，B3.2原生MCP选择与观察有界切片亦已独立通过；下一候选B2.1待单独授权。
+B1/B4整体仍未封板，PARALLEL_WRITE=CLOSED；B3.1原生Skill有界切片现已独立通过，B3.2原生MCP选择与观察有界切片亦已独立通过；B2.1有界模型池/费用声明切片已独立审核，因最终启动检查P1未关闭而BLOCKED；下一片B2.1a只收口该单点，不等同付费预算或真实免费资格验收。
 
 ### 5.7 B3.1 任务级原生 Skill 最小闭环
 
@@ -260,6 +261,14 @@ orchestrator round "review the API" --cwd . --workflow sequential --mcp-catalog 
 ```
 默认无标志保持旧路径；未连接/安装MCP，未读取或改写Agent配置/凭据，未新增SDK/网关/执行器。此advisory请求不会裁剪原生工具定义，也不构成调用或费用授权；真实MCP与Skill加载/Token收益留后续opt-in验收。
 
+### 5.9 B2.1 用户模型池与费用声明（实施已有，独立 BLOCKED）
+
+显式 `--model-pool <file>` 只配合sequential/collaborate，不支持legacy/classify-only；无标志不启用新费用限制。只声明允许的具体Agent×Model，不注册新模型或修改availability/quota。保留旧静态池作兼容，历史名字带free/一次cost0不作为当前免费资格。
+文件最多32KiB/32项，空池deny-all；格式为 `policy="no-additional-charge"` 与 `models` 数组，每项仅有agentId/modelId/billing/source/observedAt/expiresAt。billing可声明free/included/paid/unknown；source与期限随声明保留，paid/unknown/未来观察/过期/错Agent/未列pair拒绝。free/included仍只是用户声明，不认证账户额度、价格或免费资格，不承诺全流程零费用。Agent内部辅助模型、LAYA/审核及付费工具没有被本片完整约束；USD硬预算与付费授权未实现。
+同一纯值谓词用于初始候选、Assignment、reassign和既有Spawn Gate，fixed不替换且不构成支出授权；单候选按规则绑定，不向真实provider发单选问题。原始复合键碰撞可误放行不同pair的P1已修为逐项精确比较，registry身份定义未全局改写。
+**当前未关闭P1**：gate在异步workspace.prepare之前检查；若声明在prepare期间到期，prepare结束后冻结的执行仍可进入runtime。Codex受控时间/工作区准备probe独立复现runtime=1、启动时间晚于expiresAt。本片不具备“最终启动时仍有效”的完整契约，不推荐将其当严格费用或有效期保护。下一片B2.1a在已有最终同步freeze前复用同一准入规则，不新建费用平台。
+报告中的eligibility是报告时对声明的判断，不是实际费用或过去启动时有效性的认证。默认入口仍不保证免费；新增无池provenance诊断行也意味着不能宣称所有输出字节完全不变。
+
 ## 6. 不可绕过的契约
 
 WorkerIdentity={taskId,agentId,modelId,sessionId}；不以模型品牌替代 Agent 能力事实。
@@ -290,6 +299,16 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 不新增 provider 网关、群聊平台、第二个调度器或通用工作流引擎来掩盖协议缺口。
 
 ## 8. 最近独立证据与上传记录
+
+2026-10-14 B2.1：**Codex独立 BLOCKED，1个最终启动检查P1未关闭；测试全绿不等于费用准入完整。**
+- 调查复用仓内ModelPool/modelKey、SelectionSpec、Assignment、Workbench和Spawn Gate。GitHub MCP成功读取[LiteLLM allowed-model admission](https://github.com/BerriAI/litellm/blob/main/litellm/proxy/auth/auth_checks.py)与LICENSE/维护状态；非enterprise代码MIT，Python/Rust网关不符合本地最小接线成本，未复制/安装。只参考白名单+拒绝方法。OpenCode[模型身份](https://opencode.ai/docs/models/)与[small_model官方说明](https://opencode.ai/docs/config/#models)核对后，不把主模型选择当内部所有费用限制。
+- 实际调用opencode-agent implement：首调用仅调查/部分基线测试，项目外日志重定向遭工具权限拒绝，无实现；下一调用写入限定源代码后被中断，无完成报告；随后有界续作/一次代码返工关闭配对碰撞并补测试。最终session `ses_ec7470ebcffetc5C6suVmZJzlE` 导出81条assistant元数据，全部opencode-go/deepseek-v4.1-flash、finish=stop、wrapper exit0。未换Codex模型，Codex未代写产品实现。
+- 独立实跑：typecheck、b14-selection **155/0**、model-pool **95/0**、Assignment **235/0**、Spawn Gate **50/0**、Workbench **419/0**、协作 **96/0**、Skill/MCP **119/0**、阶段 **47/0**、contract **248/0（2 skipped）**、isolation守卫5 opt-in/0违规、diff check均exit0。AST确认原46个check条件全保留，生产runtime.run边1（orchestration/orchestrator.ts:1365）、新增authority0。
+- 两个独立内存负控：恢复复合键查找→153/2、忽略expiresAt→147/8，均exit1。后者实际进入runtime=1/onStart/sessionTouched=1/Attempt=1，证明新启动门断言承重；源码/测试哈希未改。
+- 受控逻辑race补充probe：声明有效时分配并通过既有execution gate；真实executeTask随后await工作区准备，受控prepare将时钟推进5s（expiry在1s后）；runtime请求仍1、无skipped。这是生产调用链+受控workspace/runtime/时间的逻辑证据，不是真实Git耗时、Agent收费或Job物理证据。原suite只覆盖tick前过期，未覆盖这个窗口。P1必须下一片关闭。
+- 仅5个既有产品源文件+既有测试1文件变化；无新模块/runner/依赖/manager，runtime/adapters/native/生产配置不改；无full suite、产品真实模型/费用/账户查询。开发worker推理单列。PARALLEL_WRITE=CLOSED，B2及其他overall不封板。
+- 本轮审核结果拟上传 `codex/b21-model-pool-review-blocked`，明确包含未关闭P1，不合入main；远端hash核验后再报告上传成功。保持共享index、HEAD、dirty tree；本机进度页全部排除。
+
 
 2026-10-14 B3.2：**Codex独立PASS；具体Server/Tool的advisory请求与名称匹配观察闭环，不是原生MCP实际调用认证**。
 - 先调查仓内B3.1、TaskIntent/brief、DecisionProvider及OpenCode adapter既有tool_use映射；GitHub MCP本轮成功读取[同版本MCP catalog](https://github.com/anomalyco/opencode/blob/v1.18.35/packages/opencode/src/mcp/catalog.ts)和MCP index。已安装包metadata仍为1.18.35；源码tag不冒充本机MCP实跑。该源码的isError结果抛错；[官方MCP说明](https://opencode.ai/docs/mcp-servers/)明确启用工具会增加上下文，因此本轮不声称prompt选择能裁剪定义或节省Token。沿用上轮已核实MIT/活跃/Windows分发的OpenCode，不安装/迁移框架。
@@ -764,18 +783,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-14T12:17:49+08:00",
+  "updatedAt": "2026-10-14T13:10:06+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "B3.2",
-    "name": "原生 MCP 任务级选择与观察",
-    "status": "done",
-    "summary": "Codex独立PASS（受控有界范围）：具体Server/Tool候选→advisory请求→名称匹配事件观察。未认证真实MCP调用、权限或Token收益。"
+    "id": "B2.1",
+    "name": "用户模型池与费用声明准入",
+    "status": "blocked",
+    "summary": "独立BLOCKED：155条测试全绿且配对碰撞已关闭；仍可在工作区准备期间到期后启动，缺最终同步准入检查（1个P1）。"
   },
   "next": {
-    "id": "B2.1",
-    "name": "用户模型池与费用策略最小闭环",
+    "id": "B2.1a",
+    "name": "最终启动前的费用声明检查单点",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -850,6 +869,14 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     ]
   },
   "blockers": [
+    {
+      "id": "b21-final-admission",
+      "severity": "P1",
+      "title": "准备工作区后缺最终费用声明检查",
+      "detail": "execution gate通过后prepare期间到期仍可runtime.run；独立受控逻辑probe复现。",
+      "next": "B2.1a：在最终同步freeze前复用既有准入规则与实际pair",
+      "kind": "已复现 / 待关闭"
+    },
     {
       "id": "B43-P3-CLEANUP",
       "severity": "P3",
@@ -993,10 +1020,10 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     },
     {
       "id": "B2.1",
-      "title": "模型池与费用策略",
-      "status": "planned",
-      "deliverable": "免费优先/已授权付费、共享额度与覆盖",
-      "evidence": "未知费用不默认为零"
+      "title": "模型池与费用声明准入",
+      "status": "blocked",
+      "deliverable": "用户限定pair，未知/付费拒绝，声明有来源和期限",
+      "evidence": "独立155/0与定向全绿；补充prepare期间到期probe复现runtime=1，1个P1未关闭"
     },
     {
       "id": "B4.6",
@@ -1029,49 +1056,44 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
   ],
   "checks": [
     {
+      "name": "独立结论",
+      "result": "BLOCKED（1个P1）",
+      "source": "测试全绿后补充检查真实executeTask异步窗口"
+    },
+    {
       "name": "typecheck / diff",
       "result": "PASS / PASS",
       "source": "Codex本轮独立实跑"
     },
     {
-      "name": "Skill/MCP既有套件",
-      "result": "119/0（原64条保留）",
-      "source": "AST确认旧check调用点及条件未变；无新suite/runner"
+      "name": "选择/模型池/Assignment/Gate",
+      "result": "155 / 95 / 235 / 50 · 全通过",
+      "source": "旧46个check条件保留；fixture不认证实际免费"
     },
     {
-      "name": "Workbench / handoff / 阶段 / 协作 / Git",
-      "result": "419 / 312 / 47 / 96 / 104 · 全通过",
-      "source": "Codex本轮独立实跑"
+      "name": "Workbench / 协作 / Skill-MCP / 阶段",
+      "result": "419 / 96 / 119 / 47 · 全通过",
+      "source": "Codex独立实跑"
     },
     {
-      "name": "contract / isolation守卫",
+      "name": "contract / isolation",
       "result": "248/0（2 skipped）/ 5 opt-in 0违规",
-      "source": "Codex独立实跑；未真实调用Agent"
+      "source": "本轮未真实调用产品Agent"
     },
     {
-      "name": "独立CLI probes",
-      "result": "MCP-only duo / 写前碰撞拒绝 / 跨Agent来源 · PASS",
-      "source": "真实CLI+受控Runtime，不是MCP服务实跑"
+      "name": "独立内存负控",
+      "result": "153/2、147/8 · 均exit1",
+      "source": "工作树源码/测试哈希未变"
     },
     {
-      "name": "两组内存负控",
-      "result": "118/1、116/3；均exit1",
-      "source": "源码/测试原始哈希未变"
+      "name": "工作区准备窗口probe",
+      "result": "启动时间晚于expiry，runtime=1",
+      "source": "生产executeTask+受控prepare/Runtime/时间；非真实收费"
     },
     {
-      "name": "实际worker模型 / 轮次",
-      "result": "DeepSeek V4.1 Flash · 首轮完成",
-      "source": "原生session98条assistant元数据，finish stop / wrapper exit0"
-    },
-    {
-      "name": "runtime.run / authority",
-      "result": "1 / 0",
-      "source": "AST与实际接线审核"
-    },
-    {
-      "name": "真实MCP / full suite / Token收益",
-      "result": "NOT RUN / 未认证",
-      "source": "名称匹配不能证明MCP协议/权限；prompt选择不裁剪工具定义"
+      "name": "实际worker / 生产edge",
+      "result": "DeepSeek V4.1 Flash / run=1 authority=0",
+      "source": "session81条assistant元数据finish stop；AST核对"
     }
   ],
   "sources": [

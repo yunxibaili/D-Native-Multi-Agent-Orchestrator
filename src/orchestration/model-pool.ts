@@ -198,3 +198,323 @@ export function intersectWithFreePool<T extends { agentId: string; modelId: stri
 export function listFreeModelPool(): readonly FreeModelPoolEntry[] {
   return ACTIVE_FREE_MODEL_POOL;
 }
+
+// ===========================================================================
+// B2.1 — USER-DECLARED NO-ADDITIONAL-CHARGE MODEL POOL (opt-in, minimum slice)
+// ===========================================================================
+//
+// WHAT THIS IS, AND WHAT IT IS NOT
+// --------------------------------
+// A B2.1 declaration is the USER's own statement, in a bounded JSON file, that a
+// concrete `(agentId, modelId)` pair should incur NO ADDITIONAL CHARGE for the
+// orchestrator-managed runs of ONE round. It is ADMISSION, not evidence:
+//
+//   * it is NOT independently verified free entitlement, pricing, or account
+//     eligibility, and no USD budget exists here to check it against;
+//   * `source` is retained verbatim as provenance and is NEVER claimed to be
+//     verified;
+//   * `paid` and `unknown` declarations are FAIL-CLOSED — this slice performs NO
+//     paid execution and a self-declared approval cannot authorize one;
+//   * it constrains only the orchestrator-managed execution requests of the round
+//     that supplied it. It does NOT constrain a native agent's own internal or
+//     auxiliary calls (see the OpenCode `small_model`), the reviewer, or any model
+//     the orchestrator did not select. It never promises a whole workflow is free.
+//
+// The legacy `ACTIVE_FREE_MODEL_POOL` above is a HISTORICAL static list. Its
+// `-free` suffix and one old cost-0 run do NOT prove a CURRENT free entitlement, so
+// the new declarations are a SEPARATE axis and deliberately do not promote, merge
+// with, or re-derive from that list. `isAllowedModel` and its exports are unchanged
+// and keep their exact previous meaning.
+
+/** The one policy string this slice understands. Anything else is refused. */
+export const USER_MODEL_POOL_POLICY = 'no-additional-charge';
+
+/** The bounded byte size of the raw declaration file. */
+export const USER_MODEL_POOL_MAX_BYTES = 32 * 1024;
+
+/** The bounded number of declarations a pool may hold. */
+export const USER_MODEL_POOL_MAX_ENTRIES = 32;
+
+/** What the USER claims about a pair's billing. Never treated as verified. */
+export type UserModelPoolBilling = 'free' | 'included' | 'paid' | 'unknown';
+
+/** One user declaration. A frozen value; never mutated after parsing. */
+export interface UserModelPoolEntry {
+  /** Registry agent id — the same identity `modelKey` keys on. */
+  readonly agentId: string;
+  /** Exact model id, preserved byte-for-byte; never normalised or free-name-guessed. */
+  readonly modelId: string;
+  readonly billing: UserModelPoolBilling;
+  /** Provenance text supplied by the user. NOT verified. */
+  readonly source: string;
+  /** Safe integer epoch ms the declaration was made. */
+  readonly observedAt: number;
+  /** Safe integer epoch ms the declaration stops applying. Must exceed `observedAt`. */
+  readonly expiresAt: number;
+}
+
+/** A parsed, frozen user model pool. An empty `models` array is deny-all, not "no opinion". */
+export interface UserModelPool {
+  readonly policy: typeof USER_MODEL_POOL_POLICY;
+  readonly models: readonly UserModelPoolEntry[];
+}
+
+/** A refusal from the parser or the reader, with a code that names the rule. */
+export class UserModelPoolError extends Error {
+  readonly code: string;
+  readonly detail: string;
+  constructor(code: string, detail: string) {
+    super(`${code}: ${detail}`);
+    this.name = 'UserModelPoolError';
+    this.code = code;
+    this.detail = detail;
+  }
+}
+
+export function isUserModelPoolError(e: unknown): e is UserModelPoolError {
+  return e instanceof UserModelPoolError;
+}
+
+export type UserModelPoolParseResult =
+  | { readonly ok: true; readonly pool: UserModelPool }
+  | { readonly ok: false; readonly code: string; readonly detail: string };
+
+/** Distinct, understandable predicate reason codes. */
+export const USER_MODEL_POOL_REFUSAL_CODES = [
+  'user-pool-now-invalid',
+  'user-pool-model-unselected',
+  'user-pool-empty',
+  'user-pool-model-not-declared',
+  'user-pool-agent-mismatch',
+  'user-pool-billing-paid',
+  'user-pool-billing-unknown',
+  'user-pool-not-yet-observed',
+  'user-pool-expired',
+] as const;
+
+const USER_POOL_ENTRY_KEYS: ReadonlySet<string> = new Set([
+  'agentId', 'modelId', 'billing', 'source', 'observedAt', 'expiresAt',
+]);
+const USER_POOL_TOP_KEYS: ReadonlySet<string> = new Set(['policy', 'models']);
+const USER_POOL_BILLING: ReadonlySet<string> = new Set(['free', 'included', 'paid', 'unknown']);
+/** C0 controls and DEL, which no honest identifier needs. */
+const C0_OR_DEL = /[\u0000-\u001f\u007f]/;
+
+function safePoolId(value: unknown): value is string {
+  // Nonblank, bounded, and free of C0/DEL. The EXACT string is preserved; nothing
+  // here trims, lowercases, or guesses a suffix. `trim() !== ''` only rejects a
+  // value that is nothing but whitespace.
+  return typeof value === 'string'
+    && value.length >= 1
+    && value.trim() !== ''
+    && !C0_OR_DEL.test(value);
+}
+
+function safePoolTimestamp(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+/**
+ * Parse an ALREADY-JSON-parsed declaration. Strict: unknown fields at either level
+ * are refused (there is deliberately no place for `approved`, `allowPaid`, `cost0`
+ * or URLs to ride along), as are wrong types, duplicates, and a bad expiry ordering.
+ *
+ * Pure and total: it never throws, never reads I/O, and never touches the registry.
+ */
+export function parseUserModelPool(raw: unknown): UserModelPoolParseResult {
+  const fail = (code: string, detail: string): UserModelPoolParseResult => ({ ok: false, code, detail });
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return fail('user-pool-not-object', `the declaration must be a JSON object, got ${Array.isArray(raw) ? 'an array' : typeof raw}`);
+  }
+  const record = raw as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    if (!USER_POOL_TOP_KEYS.has(key)) {
+      return fail('user-pool-unknown-field', `unknown top-level field "${key}"; only "policy" and "models" are accepted`);
+    }
+  }
+  if (record.policy !== USER_MODEL_POOL_POLICY) {
+    return fail('user-pool-policy-invalid', `policy must be "${USER_MODEL_POOL_POLICY}", got ${JSON.stringify(record.policy)}`);
+  }
+  if (!Array.isArray(record.models)) {
+    return fail('user-pool-models-invalid', `models must be an array, got ${typeof record.models}`);
+  }
+  if (record.models.length > USER_MODEL_POOL_MAX_ENTRIES) {
+    return fail('user-pool-too-many-entries', `models declares ${record.models.length} entries, over the ${USER_MODEL_POOL_MAX_ENTRIES} limit`);
+  }
+  const seen = new Set<string>();
+  const entries: UserModelPoolEntry[] = [];
+  for (let i = 0; i < record.models.length; i++) {
+    const rawEntry = record.models[i];
+    if (typeof rawEntry !== 'object' || rawEntry === null || Array.isArray(rawEntry)) {
+      return fail('user-pool-entry-not-object', `models[${i}] must be an object`);
+    }
+    const entry = rawEntry as Record<string, unknown>;
+    for (const key of Object.keys(entry)) {
+      if (!USER_POOL_ENTRY_KEYS.has(key)) {
+        return fail('user-pool-entry-unknown-field', `models[${i}] has unknown field "${key}"`);
+      }
+    }
+    if (!safePoolId(entry.agentId) || (entry.agentId as string).length > 256) {
+      return fail('user-pool-agent-invalid', `models[${i}].agentId must be a non-blank string of 1..256 characters with no control characters`);
+    }
+    if (!safePoolId(entry.modelId) || (entry.modelId as string).length > 256) {
+      return fail('user-pool-model-invalid', `models[${i}].modelId must be a non-blank string of 1..256 characters with no control characters`);
+    }
+    if (typeof entry.billing !== 'string' || !USER_POOL_BILLING.has(entry.billing)) {
+      return fail('user-pool-billing-invalid', `models[${i}].billing must be one of free|included|paid|unknown, got ${JSON.stringify(entry.billing)}`);
+    }
+    if (!safePoolId(entry.source) || (entry.source as string).length > 512) {
+      return fail('user-pool-source-invalid', `models[${i}].source must be a non-blank string of 1..512 characters with no control characters`);
+    }
+    if (!safePoolTimestamp(entry.observedAt)) {
+      return fail('user-pool-observed-at-invalid', `models[${i}].observedAt must be a safe integer epochMs >= 0`);
+    }
+    if (!safePoolTimestamp(entry.expiresAt)) {
+      return fail('user-pool-expires-at-invalid', `models[${i}].expiresAt must be a safe integer epochMs >= 0`);
+    }
+    if (entry.expiresAt <= entry.observedAt) {
+      return fail('user-pool-expiry-not-after-observed', `models[${i}].expiresAt (${entry.expiresAt}) must be strictly after observedAt (${entry.observedAt})`);
+    }
+    const key = modelKey(entry.agentId as string, entry.modelId as string);
+    if (seen.has(key)) {
+      return fail('user-pool-duplicate-pair', `the pair "${key}" is declared more than once; a pair has one atomic declaration`);
+    }
+    seen.add(key);
+    entries.push(Object.freeze({
+      agentId: entry.agentId as string,
+      modelId: entry.modelId as string,
+      billing: entry.billing as UserModelPoolBilling,
+      source: entry.source as string,
+      observedAt: entry.observedAt,
+      expiresAt: entry.expiresAt,
+    }));
+  }
+  return { ok: true, pool: Object.freeze({ policy: USER_MODEL_POOL_POLICY, models: Object.freeze(entries) }) };
+}
+
+/**
+ * Parse the RAW declaration TEXT. The byte bound is enforced BEFORE JSON.parse, so
+ * an oversized file is refused without ever being decoded.
+ */
+export function parseUserModelPoolText(text: string): UserModelPoolParseResult {
+  const bytes = Buffer.byteLength(text, 'utf8');
+  if (bytes > USER_MODEL_POOL_MAX_BYTES) {
+    return {
+      ok: false,
+      code: 'user-pool-raw-too-large',
+      detail: `the declaration is ${bytes} bytes, over the ${USER_MODEL_POOL_MAX_BYTES} byte limit`,
+    };
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch (e) {
+    return { ok: false, code: 'user-pool-json-invalid', detail: `the declaration is not valid JSON: ${(e as Error).message}` };
+  }
+  return parseUserModelPool(raw);
+}
+
+export type UserModelPoolVerdict =
+  | { readonly allowed: true; readonly entry: UserModelPoolEntry }
+  | { readonly allowed: false; readonly code: string; readonly detail: string };
+
+/**
+ * The ONE pure admission predicate for the user model pool.
+ *
+ * Fail-closed and total. `now` is an EXPLICIT argument: there is no hidden clock
+ * read, no I/O, and no registry mutation, so the same (pool, pair, now) always
+ * yields the same verdict and a pair can never be admitted on a guess.
+ */
+export function admitUserModelPoolPair(
+  pool: UserModelPool,
+  input: { agentId: string; modelId: string | null | undefined },
+  now: number,
+): UserModelPoolVerdict {
+  if (typeof now !== 'number' || !Number.isFinite(now)) {
+    return { allowed: false, code: 'user-pool-now-invalid', detail: `the evaluation time must be a finite number, got ${String(now)}` };
+  }
+  const modelId = input.modelId ?? '';
+  if (modelId === '') {
+    return {
+      allowed: false,
+      code: 'user-pool-model-unselected',
+      detail: `no model was selected for agent "${input.agentId}"; the user model pool is fail-closed, so an empty selection is not a pass`,
+    };
+  }
+  if (pool.models.length === 0) {
+    return {
+      allowed: false,
+      code: 'user-pool-empty',
+      detail: 'the user model pool declares no models, so every pair is refused (deny-all, not "no opinion")',
+    };
+  }
+  // P1: compare BOTH fields EXACTLY. `modelKey` concatenates (`agent::model`), so a
+  // declaration {agentId:'a::b', modelId:'m'} and a request {agentId:'a', modelId:'b::m'}
+  // share the SAME modelKey text and would otherwise be admitted as if identical. Model
+  // ids MAY contain ':' (they are preserved verbatim), so the identity of a declaration
+  // is the PAIR of its two fields, never the concatenation. `modelKey` is still the
+  // registry's identity and is untouched; only this admission lookup stops trusting it.
+  const key = modelKey(input.agentId, modelId);
+  const entry = pool.models.find((e) => e.agentId === input.agentId && e.modelId === modelId);
+  if (entry === undefined) {
+    const other = pool.models.find((e) => e.modelId === modelId && e.agentId !== input.agentId);
+    if (other !== undefined) {
+      return {
+        allowed: false,
+        code: 'user-pool-agent-mismatch',
+        detail: `model "${modelId}" is declared for agent "${other.agentId}", not for "${input.agentId}"; refusing rather than using another agent's declaration`,
+      };
+    }
+    return { allowed: false, code: 'user-pool-model-not-declared', detail: `"${input.agentId}/${modelId}" is not declared in the user model pool` };
+  }
+  if (entry.billing === 'paid') {
+    return {
+      allowed: false,
+      code: 'user-pool-billing-paid',
+      detail: `"${key}" is declared billing "paid"; this slice performs no paid execution and never authorizes it`,
+    };
+  }
+  if (entry.billing === 'unknown') {
+    return {
+      allowed: false,
+      code: 'user-pool-billing-unknown',
+      detail: `"${key}" is declared billing "unknown"; only free/included declarations are admitted`,
+    };
+  }
+  if (entry.observedAt > now) {
+    return {
+      allowed: false,
+      code: 'user-pool-not-yet-observed',
+      detail: `"${key}" was declared observedAt ${entry.observedAt}, which is after now (${now}); a future observation is not evidence`,
+    };
+  }
+  if (entry.expiresAt <= now) {
+    return {
+      allowed: false,
+      code: 'user-pool-expired',
+      detail: `"${key}" expires at ${entry.expiresAt}, which is not after now (${now}); an expired declaration no longer applies`,
+    };
+  }
+  return { allowed: true, entry };
+}
+
+/** Convenience over `admitUserModelPoolPair`. */
+export function isUserModelPoolAllowed(
+  pool: UserModelPool,
+  input: { agentId: string; modelId: string | null | undefined },
+  now: number,
+): boolean {
+  return admitUserModelPoolPair(pool, input, now).allowed;
+}
+
+/**
+ * Filter candidates to those the user pool admits at `now`. Pure: it narrows a
+ * list and never invents a candidate. An empty result is a legitimate refusal.
+ */
+export function filterWithUserModelPool<T extends { agentId: string; modelId: string | null | undefined }>(
+  pool: UserModelPool,
+  candidates: readonly T[],
+  now: number,
+): T[] {
+  return candidates.filter((c) => admitUserModelPoolPair(pool, c, now).allowed);
+}

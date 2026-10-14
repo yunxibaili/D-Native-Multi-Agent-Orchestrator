@@ -54,7 +54,7 @@ import type { ModelRegistry } from '../quota/registry.ts';
 import type { ModelEntry, PolicyState, QuotaRecord, TaskType } from '../quota/types.ts';
 import { resolveQuotaStatus } from './spawn-gate-input.ts';
 import { evaluateSpawnGate } from '../quota/spawn-gate.ts';
-import { isAllowedModel } from './model-pool.ts';
+import { admitUserModelPoolPair, isAllowedModel, type UserModelPool } from './model-pool.ts';
 import type { AttemptStore } from './attempt-store.ts';
 import type { AttemptRecord } from './attempt-record.ts';
 
@@ -77,7 +77,9 @@ export type CandidateRejection =
   | { readonly code: 'availability-unknown' | 'availability-unavailable'; readonly detail: string }
   | { readonly code: 'policy-blocked'; readonly detail: string }
   | { readonly code: 'quota-blocked'; readonly detail: string }
-  | { readonly code: 'outside-free-pool'; readonly detail: string };
+  | { readonly code: 'outside-free-pool'; readonly detail: string }
+  /** B2.1: the user-declared no-additional-charge pool does not admit this pair. */
+  | { readonly code: 'outside-user-pool'; readonly detail: string };
 
 /** One (agent, model) pair that survived the hard filters. */
 export interface AssignmentCandidate {
@@ -151,6 +153,21 @@ export interface AssignmentInput {
   readonly evidence: AttemptStore | null;
   /** Honour P6-F's free-pool constraint. Off by default, like the gate's own. */
   readonly enforceFreeModelPool?: boolean;
+  /**
+   * B2.1: an OPTIONAL user-declared no-additional-charge pool. When supplied, every
+   * candidate must ALSO be admitted by the SAME pure predicate the Workbench and the
+   * Spawn Gate use, so a pair the user did not declare (or that has expired, is paid,
+   * unknown, or observed in the future) is never proposed. It is INTERSECTED with —
+   * never a substitute for — the existing availability / quota / policy filters and
+   * the optional `enforceFreeModelPool` intersection. Absent = existing behaviour.
+   */
+  readonly userModelPool?: UserModelPool;
+  /**
+   * B2.1: the time the pool is judged at. Supplied by the Workbench's own clock so
+   * assignment stays deterministic and testable; defaults to `Date.now()` only when a
+   * pool is present.
+   */
+  readonly now?: number;
   /**
    * Workbench: the planner's (Laya's) PREFERENCE. Not a competing brain — the
    * preference runs through the SAME hard filters as every other candidate, and is
@@ -524,6 +541,28 @@ export function assignWorker(input: AssignmentInput): AssignmentOutcome {
       continue;
     }
 
+    // 5. USER MODEL POOL (B2.1) — the SAME pure predicate the Workbench offers
+    //    candidates with and the Spawn Gate re-checks at dispatch. INTERSECTED with
+    //    everything above (both pools may be enabled; neither overrides the other).
+    if (input.userModelPool !== undefined) {
+      const verdict = admitUserModelPoolPair(
+        input.userModelPool,
+        { agentId: entry.agentId, modelId: entry.modelId },
+        // `now` is REQUIRED whenever a pool is supplied; the Workbench always passes its
+        // own clock. An omitted time is refused by the predicate (`user-pool-now-invalid`)
+        // rather than silently read from a hidden clock, keeping this module free of
+        // `Date.now()` and therefore deterministic.
+        input.now ?? Number.NaN,
+      );
+      if (!verdict.allowed) {
+        rejectedList.push(rejected(entry.agentId, entry.modelId, {
+          code: 'outside-user-pool',
+          detail: `${verdict.code}: ${verdict.detail}`,
+        }));
+        continue;
+      }
+    }
+
     survived.push(Object.freeze({
       agentId: entry.agentId,
       modelId: entry.modelId,
@@ -545,9 +584,9 @@ export function assignWorker(input: AssignmentInput): AssignmentOutcome {
     if (hasAny && rejectedList.every((r) => r.code === 'not-capable')) {
       code = 'no-capable-agent';
       reason = `no registered model offers [${required.join(', ')}] for task "${input.taskId}"`;
-    } else if (hasAny && rejectedList.every((r) => r.code === 'outside-free-pool')) {
+    } else if (hasAny && rejectedList.every((r) => r.code === 'outside-free-pool' || r.code === 'outside-user-pool')) {
       code = 'no-model-available';
-      reason = `no capable model is inside the ACTIVE free pool for task "${input.taskId}"`;
+      reason = `no capable model is inside every enabled model pool for task "${input.taskId}"`;
     } else if (hasAny && rejectedList.every((r) => r.code === 'quota-blocked' || r.code === 'policy-blocked')) {
       code = 'quota-blocked';
       reason = `every capable candidate for task "${input.taskId}" is blocked by quota or policy`;

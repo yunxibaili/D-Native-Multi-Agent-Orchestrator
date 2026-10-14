@@ -52,6 +52,7 @@ import { applyReviewVerdict, prepareRework, DEFAULT_REWORK_POLICY, type ReworkPo
 import type { DecisionApplicationContext } from './decision.ts';
 import type { ReviewEvidence, ReviewVerdict } from './review-verdict.ts';
 import { assignWorker, validateAgentModelIntent, type AgentModelIntent, type AssignmentOutcome } from './assignment.ts';
+import { admitUserModelPoolPair, type UserModelPool } from './model-pool.ts';
 import {
   SessionRegistry,
   SessionRegistryError,
@@ -126,6 +127,14 @@ export const DEFAULT_ROOT_AGENT_ID = 'opencode';
  */
 export const COLLABORATION_CONSTRAINT_PROVENANCE = 'collaboration-constraint';
 
+/**
+ * B2.1: the provenance recorded when the USER-DECLARED model pool leaves exactly ONE
+ * admissible pair, so the pair is bound by the POOL CONSTRAINT rather than by a LAYA
+ * answer. Deliberately distinct from the provider name, from `user-fixed`, and from
+ * `collaboration-constraint`, so the audit trail cannot read it as a semantic decision.
+ */
+export const MODEL_POOL_CONSTRAINT_PROVENANCE = 'model-pool-constraint';
+
 export interface WorkbenchOptions {
   /** The orchestration orchestrator (task lifecycle + execution edge). */
   readonly orchestrator: Orchestrator;
@@ -189,6 +198,12 @@ export interface WorkbenchOptions {
    * spec overrides it; when neither is set the existing auto behaviour applies.
    */
   readonly projectSelection?: SelectionSpec;
+  /**
+   * B2.1: an OPTIONAL user-declared no-additional-charge model pool. When supplied,
+   * initial selection offers LAYA only pairs the pool admits at `now`, and Assignment
+   * enforces the same predicate. Absent (the default) = the existing behaviour exactly.
+   */
+  readonly modelPool?: UserModelPool | null;
 }
 
 export interface PlanOutcome {
@@ -409,6 +424,8 @@ unDecisionCycle can read a real TickResult. */
    * no project default. Read-only for the life of this workbench.
    */
   private readonly projectSelection: SelectionSpec | undefined;
+  /** B2.1: the optional user-declared model pool; `null` = not supplied. */
+  private readonly modelPool: UserModelPool | null;
   /**
    * B1.4: tasks whose pair was pinned by a USER selection (project or task). Used by
    * `reassignTask` to refuse an automatic handoff that would silently swap a pinned
@@ -443,6 +460,7 @@ unDecisionCycle can read a real TickResult. */
     this.rootAgentId = options.rootAgentId ?? DEFAULT_ROOT_AGENT_ID;
     this.nowFn = options.now ?? Date.now;
     this.projectSelection = options.projectSelection;
+    this.modelPool = options.modelPool ?? null;
   }
 
   /**
@@ -680,13 +698,22 @@ unDecisionCycle can read a real TickResult. */
         available: this.registry.isModelAvailable(e.agentId, e.modelId ?? ''),
         taskTypes: [...e.taskTypes],
       })).filter((c) => c.modelId !== '' && c.taskTypes.includes(child.taskType));
+      // B2.1: when the user supplied a model pool, LAYA is offered ONLY the pairs the
+      // SAME pure predicate admits at the workbench's OWN clock. The existing
+      // availability / capability restrictions above are untouched, and a pair the pool
+      // excludes (outside / expired / future / paid / unknown / wrong agent) is removed
+      // from the QUESTION rather than asked and then corrected.
+      const poolCandidates = this.modelPool === null
+        ? allCandidates
+        : allCandidates.filter((c) =>
+            admitUserModelPoolPair(this.modelPool!, { agentId: c.agentId, modelId: c.modelId }, this.nowFn()).allowed);
       // B4.1: a collaboration group is not a collaboration if two members are the SAME
       // pair. The already-taken pairs are removed from the OFFERED list, so LAYA cannot
       // even name one; the distinctness is a property of the question, not a post-hoc
       // check that quietly rewrites the answer.
       const candidates = options.distinctPairs === true
-        ? allCandidates.filter((c) => !takenPairs.has(`${c.agentId}/${c.modelId}`))
-        : allCandidates;
+        ? poolCandidates.filter((c) => !takenPairs.has(`${c.agentId}/${c.modelId}`))
+        : poolCandidates;
       /*
        * B4.1a (P1): the collaboration path must not ask LAYA a question it cannot answer.
        *
@@ -729,12 +756,48 @@ unDecisionCycle can read a real TickResult. */
         outcomes.push(byRule);
         continue;
       }
+      /*
+       * B2.1: when the user model pool narrows the offered list to EXACTLY ONE pair,
+       * asking a single-option `choice` question is refused by the real provider (it
+       * carries no information). The pair is therefore bound by the POOL CONSTRAINT
+       * with a distinct provenance, still validated by the SAME `validateAgentModelIntent`
+       * and still enforced by the SAME Assignment admission as any other pair. This is
+       * an OPT-P-IN path: with no pool supplied, behaviour is unchanged.
+       */
+      if (this.modelPool !== null && candidates.length === 1) {
+        const only = candidates[0]!;
+        const checked = validateAgentModelIntent({ agentId: only.agentId, modelId: only.modelId });
+        if (!checked.ok) {
+          const refusal: InitialSelectionOutcome = {
+            taskId: child.taskId,
+            ok: false,
+            reason: `the only model-pool-admitted ${child.taskType} pair is invalid: ${checked.reason}`,
+            provider: MODEL_POOL_CONSTRAINT_PROVENANCE,
+          };
+          this.initialSelections.set(child.taskId, refusal);
+          outcomes.push(refusal);
+          continue;
+        }
+        takenPairs.add(`${checked.intent.agentId}/${checked.intent.modelId}`);
+        const byRule: InitialSelectionOutcome = {
+          taskId: child.taskId,
+          ok: true,
+          intent: checked.intent,
+          provider: `${MODEL_POOL_CONSTRAINT_PROVENANCE} (only model-pool-admitted pair)`,
+        };
+        this.initialSelections.set(child.taskId, byRule);
+        outcomes.push(byRule);
+        continue;
+      }
       let outcome: InitialSelectionOutcome;
       try {
         if (candidates.length === 0) {
-          throw new Error(allCandidates.length === 0
-            ? `no registered ${child.taskType} pair is available to choose from`
-            : `no ${child.taskType} pair is left that is distinct from the ${takenPairs.size} already chosen for this group`);
+          const poolExcluded = this.modelPool !== null && allCandidates.length > 0 && poolCandidates.length === 0;
+          throw new Error(poolExcluded
+            ? `the user model pool admits none of the registered ${child.taskType} pairs`
+            : (allCandidates.length === 0
+              ? `no registered ${child.taskType} pair is available to choose from`
+              : `no ${child.taskType} pair is left that is distinct from the ${takenPairs.size} already chosen for this group`));
         }
         const raw = await decideInitialAssignment(provider, {
           task: {
@@ -992,6 +1055,7 @@ unDecisionCycle can read a real TickResult. */
         quotaRecords: this.quotaRecords,
         evidence: this.evidence,
         enforceFreeModelPool: this.enforceFreeModelPool,
+        ...(this.modelPool !== null ? { userModelPool: this.modelPool, now: this.nowFn() } : {}),
         ...(explicitPairCheck !== undefined && explicitPairCheck.ok ? { explicitPair: explicitPairCheck.intent } : {}),
         preferredAgent,
         preferredModel,
@@ -1250,6 +1314,7 @@ unDecisionCycle can read a real TickResult. */
       quotaRecords: this.quotaRecords,
       evidence: this.evidence,
       enforceFreeModelPool: this.enforceFreeModelPool,
+      ...(this.modelPool !== null ? { userModelPool: this.modelPool, now: this.nowFn() } : {}),
       ...(reassignsExplicitPair ? { explicitPair: { agentId: agentId!, modelId: modelId! } } : {}),
       ...(agentId !== undefined && !reassignsExplicitPair ? { preferredAgent: agentId } : {}),
       ...(modelId !== undefined && !reassignsExplicitPair ? { preferredModel: modelId } : {}),

@@ -33,7 +33,7 @@ import type {
 } from '../quota/types.ts';
 import type { AgentDescriptor, WorkspaceMode } from '../core/types.ts';
 import { modelKey } from '../quota/registry.ts';
-import { isAllowedModel } from './model-pool.ts';
+import { admitUserModelPoolPair, isAllowedModel, type UserModelPool } from './model-pool.ts';
 
 /** A signal we could not read, with the reason it is unusable. */
 export interface MissingSignal {
@@ -114,6 +114,17 @@ export interface SpawnGateSources {
    * P6-B assignment turns this on for free-worker candidates.
    */
   enforceFreeModelPool?: boolean;
+  /**
+   * B2.1: an OPTIONAL user-declared no-additional-charge model pool, carried as a
+   * FROZEN value (never a mutable lookup, never an await). When present, the gate
+   * re-evaluates it at the REAL dispatch time with the SAME pure predicate the
+   * Workbench offered candidates with, so a declaration that expired (or stopped
+   * being admissible) between assignment and execution refuses the spawn — even when
+   * this gate's caller did not create the task. Its denial rides the existing
+   * missing-signal + `modelAvailable: false` path; existing options / `taskPolicyAllows`
+   * cannot override it. Absent = existing behaviour, byte for byte.
+   */
+  userModelPool?: UserModelPool;
 }
 
 /** What the builder learned, whether or not the gate allowed the spawn. */
@@ -331,6 +342,28 @@ export function resolveFreeModelPoolAdmission(
 }
 
 /**
+ * B2.1: is this pair admitted by the supplied USER-DECLARED model pool at `now`?
+ *
+ * Pure: no I/O, no registry, no clock read — the caller passes `now` explicitly, so
+ * the same (pool, pair, now) always yields the same verdict. Fail-closed by
+ * construction, and its distinct codes (`user-pool-expired`, `user-pool-billing-paid`,
+ * …) make the exact rule that fired attributable instead of a generic denial.
+ */
+export function resolveUserModelPoolAdmission(
+  sources: { agentId: string; modelId: string | null; userModelPool: UserModelPool; now: number },
+): Signal<boolean> {
+  const verdict = admitUserModelPoolPair(
+    sources.userModelPool,
+    { agentId: sources.agentId, modelId: sources.modelId },
+    sources.now,
+  );
+  if (verdict.allowed) return ok(true);
+  // The predicate's own code names the rule ("user-pool-expired", ...), so it is
+  // used verbatim: a denial says WHICH declaration rule refused, not just "no".
+  return missing(verdict.code, verdict.detail);
+}
+
+/**
  * The agent's real quota status.
  *
  * A quota record that exists but is `not_fetched` / `unavailable` / `unknown`
@@ -533,6 +566,25 @@ export function buildSpawnGateInput(req: BuildSpawnGateInput): SpawnGateDecision
       : 'freeModelPoolAllows=true (pool consulted but NOT enforced for this spawn)',
   );
 
+  // ---- B2.1: user-declared no-additional-charge pool ---------------------
+  // Evaluated at the REAL dispatch time (`Date.now()`), on the FROZEN value carried
+  // on the sources — no await and no mutable lookup, so a declaration that expired
+  // since assignment is caught here even when this gate was not the creator. The
+  // denial is expressed through the SAME missing-signal + `modelAvailable: false`
+  // path the free pool uses; `taskPolicyAllows` and other options cannot override it.
+  const userModelPoolAllows = s.userModelPool !== undefined
+    ? collect(
+        resolveUserModelPoolAdmission({ agentId: req.agentId, modelId: req.modelId, userModelPool: s.userModelPool, now: Date.now() }),
+        'userModelPoolAllows',
+      )
+    : ok(true);
+  const userPoolDenied = userModelPoolAllows === null;
+  provenance.push(
+    s.userModelPool !== undefined
+      ? `userModelPoolAllows=${userModelPoolAllows ?? 'DENIED (missing -> denied)'}`
+      : 'userModelPoolAllows=true (no user model pool was supplied)',
+  );
+
   // ---- quota -------------------------------------------------------------
   const quota = collect(resolveQuotaStatus({ quotaRecords: s.quotaRecords, agentId: req.agentId }), 'quota.status');
   provenance.push(`quota.status=${quota ?? 'unavailable (missing -> denied)'}`);
@@ -581,9 +633,9 @@ export function buildSpawnGateInput(req: BuildSpawnGateInput): SpawnGateDecision
     capabilitySatisfied: capability ?? false,
     agentAvailable: agentAvailable ?? false,
     // A pool denial forces the model signal false even when the registry says the
-    // model is available: "available" and "allowed as a free worker" are different
-    // questions, and only the second one is what this pool decides.
-    modelAvailable: poolDenied ? false : modelAvailable ?? false,
+    // model is available: "available" and "allowed by the enabled model pool(s)"
+    // are different questions, and only the latter is what these pools decide.
+    modelAvailable: poolDenied || userPoolDenied ? false : modelAvailable ?? false,
     quota: { status: quota ?? 'unknown' },
     // `remaining: 0` with `requested: 0` would satisfy `requested > remaining`
     // as false and read as ALLOWED — that is the fail-open this guards. When the
