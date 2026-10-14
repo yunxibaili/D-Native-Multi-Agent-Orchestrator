@@ -319,6 +319,14 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 
 ## 8. 最近独立证据与上传记录
 
+2026-10-14 B4.7免费池与成熟实现调查（用户要求先网上调查，不随机试跑）：源码旧ACTIVE_FREE_MODEL_POOL为opencode/space-bunny-free、opencode/mimo-v2.6-flash-free、workbuddy-intl/hy3，来自9月30日历史证据；B2.1已明确旧池不是当前免费账户事实，用户声明池独立准入。GitHub MCP本轮可用：9Router公开provider registry动态读取OpenCode官方models目录，accountFallback实现模型/账户冷却、有界退避，executor说明会话标识需保持；MIT、未归档、活跃，但不把README无限免费承诺当事实。不复制其协议指纹/工具注入，不引入第二网关。CLIProxyAPI亦MIT、未归档、release workflow明确windows-amd64/arm64；config.example已有路由/会话亲和/重试/冷却，适合作为以后统一API的可选外部能力，不负责现有Task/Session/Job/Verification。无需现在安装任何项目。
+
+官方公开目录GET及models.dev元数据首次读取成功（不登录、不读凭据、不发推理），后一次补齐保存请求15秒超时如实保留，不循环重试。优先首组候选opencode/space-bunny-free + opencode/mimo-v2.6-flash-free：项目已有pair，官方当前价格页仍列Free；额外公开候选cat-jam-free、step-5-preview-free、longcat-2.5-preview-free、ling-3.1-flash-free、nemotron-3.5-lightning-free、muse-spark-1.3-contributor-free仅为目录/价格研究，不写registry或放宽池。官方部分促销模型可能收集数据，Space Bunny/Step5/LongCat标明零留存；使用效果/角色适配不靠模型名推断。OpenCode价目中GLM5.3Flash及DeepSeekV4.1Flash为付费路线，不将其价格迁移到WorkBuddy或Go订阅；x0.06不是免费证明。
+
+最小建议路线：保留用户DSH GLM目标为独立绑定待办，先复用已有OpenCode多模型、--model-pool、Assignment和B5.1停止安全接力做首个免费代表验收；无新selector/router/manager/service。不能绕过用户fixed锁；自动模式才在合格池内选下一pair，停止未知不接力、额度尽或无免费候选就等待，不转收费。OpenRouter官方已有优先models fallback及openrouter/free随机路由，前者可参考，但后者不适用于要求特定模型的任务；API回退不等于已执行工具任务的安全重放。尚未授权真实模型运行，不声称本机当前callable或全流程零费；开发worker仍DeepSeekV4.1Flash。未跑任何测试或真实Agent，本轮仅研究和文档，估算保持67/100。
+
+来源：[OpenCode官方当前价格/免费与数据政策](https://opencode.ai/v2/docs/console/models/)、[公开模型目录](https://opencode.ai/zen/v1/models)、[9Router provider源码](https://github.com/decolua/9router/blob/ce4460ef79382bfddb4aa5fc0ff9f3cb0d5f95a8/open-sse/providers/registry/opencode.js)、[9Router冷却源码](https://github.com/decolua/9router/blob/ce4460ef79382bfddb4aa5fc0ff9f3cb0d5f95a8/open-sse/services/accountFallback.js)、[CLIProxyAPI配置](https://github.com/router-for-me/CLIProxyAPI/blob/main/config.example.yaml)、[OpenRouter模型回退](https://openrouter.ai/docs/guides/routing/model-fallbacks)。详细只读研究产物project-progress/b47-free-pool-research.json保持ignored；不用它作为调度权威。
+
 2026-10-14 B4.7 GLM离线接入验证完成（未接通真实模型）：用户进一步指定截图WorkBuddy组的`GLM-5.3-Flash · x0.06`，并明确本轮只做不调用模型的验证。x0.06是界面倍率，不能解释为货币价格或免费证明。独立执行9项断言：真实生产adapter validateRequest拒绝指定GLM；直接调用本机0.1.5-rc.2 headless启动解析器（未挂载runner）确认普通任务可解析、--model被拒；直接实例化已安装默认模型服务，以受控settings source证明其可覆盖composition selection。此项为真实安装代码+受控服务边界证据，不证明真实provider可调用、桌面与CLI配置同源或GLM实际机器ID。定向`node tests/dsh-adapter.test.ts`实跑64/0、exit=0；不调用真实Agent/模型、不读取现有凭据/用户设置、不改src/tests/native/安装配置。官方GitHub MCP读取provider文档成功，SHA 773ff6722a8558720a458f7574940972cf976958；不将上游master能力提升为本机能力。离线产物`project-progress/b47-glm-offline-contract.json`含安装源码hash，保持ignored。当前仍需内部provider/model ID及可验证的任务绑定，B4.7真实验收NOT RUN，PARALLEL_WRITE仍CLOSED，完成估算不增加。
 
 2026-10-14 用户更新B4.7第二目标：DSH改用`GLM-5.3-FLASH`，替代下述Hy3限免目标；OpenCode仍为`opencode-go/deepseek-v4.1-flash`。这是验收目标选择更新，不是实际Agent默认配置变更或真实推理验收。GLM显示名不证明内部provider/model ID、可调用或免费；Hy3截图限免信息不沿用。开发委派worker仍使用DeepSeek V4.1 Flash。
@@ -867,18 +875,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-14T19:40:30+08:00",
+  "updatedAt": "2026-10-14T19:47:01+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
     "id": "B4.7",
     "name": "真实Agent代表验收：调用前准备",
     "status": "blocked",
-    "summary": "GLM-5.3-Flash x0.06离线接入验证完成：9项安装代码/生产拒绝断言及DSH受控suite64/0。用户本轮仅授权不调用模型；内部provider/model ID与任务级绑定仍待确认，真实推理0。"
+    "summary": "免费池/成熟实现调查完成：优先已有OpenCode Space Bunny Free + MiMo V2.6 Flash Free（官方仍列免费；当前可调用未知）。复用B2.1池/B5.1接力，DSH GLM绑定单列，不挡首个两模型路线；本轮真实推理0。"
   },
   "next": {
-    "id": "B4.7 DSH binding",
-    "name": "获取GLM内部ID，确认DSH任务级绑定最小路线（暂不调用模型）",
+    "id": "B4.7 OpenCode free pair",
+    "name": "确认首组免费候选的有界真实验收范围；DSH绑定另行推进",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -956,9 +964,9 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     {
       "id": "B47-CALL-SCOPE",
       "severity": "待用户信息",
-      "title": "DSH GLM-5.3-FLASH机器ID/原生绑定及费用待确认",
-      "detail": "截图明确WorkBuddy组GLM-5.3-Flash x0.06，但未给内部ID，倍率不证明免费。本机headless拒绝--model，settings可覆盖启动配置，生产adapter仍拒绝指定模型；用户仅授权离线验证，真实费用及调用范围未授权。",
-      "next": "提供非敏感provider/model ID后确认绑定方式；无原生证据不启用modelSelection，不改用户桌面默认",
+      "title": "真实调用尚未授权；DSH绑定仅阻塞DSH路线",
+      "detail": "用户本轮仅允许不调用模型与联网调查。推荐OpenCode Space Bunny/MiMo已有选模路径，无需DSH先接通；公开免费价格/目录不证明账户当前额度或全流程零费。DSH GLM内部ID和任务绑定仍unknown，不把其x0.06当免费。",
+      "next": "先确认仅新建demo、少量native会话、无新增费用的真实范围；复用已有OpenCode路径，不引入代理服务或随机试跑",
       "kind": "授权边界 / 非代码缺陷"
     },
     {

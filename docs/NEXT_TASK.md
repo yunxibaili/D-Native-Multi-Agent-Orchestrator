@@ -25,3 +25,9 @@ OpenCode目标仍为`opencode-go/deepseek-v4.1-flash`；用户已将DSH第二目
 ## 本轮离线验证与下一动作
 
 用户明确本轮不调用模型，并指明WorkBuddy组GLM-5.3-Flash x0.06。离线9项断言通过：生产指定模型拒绝、已安装headless --model语法拒绝、已安装默认模型服务settings覆盖启动selection；DSH受控suite64/0。均不证明实际GLM机器ID/可调用/免费，未修改生产或用户配置。下一步仅获取非敏感Provider ID/Model ID并核实可靠绑定；没有协议依据不启用modelSelection，真实验收暂不授权。
+
+## 最新调查建议：已有免费pair先验，DSH不作整轮前置
+
+优先候选为opencode/space-bunny-free及opencode/mimo-v2.6-flash-free，项目已有历史池，官方2026-10-14仍列免费。只代表已知协议路径/公开目录/价格，今日实际可调用和账户额度unknown；尚无真实调用授权。DSH GLM-5.3-Flash x0.06保持用户指定待办，不必等其逐请求绑定才验证OpenCode两模型。
+已有B2.1用户池、fixed/auto、Assignment及B5.1停止安全接力直接复用；不重写路由器。9Router动态目录/冷却与CLIProxyAPI配置可参考（均MIT，GitHub MCP实读成功），现阶段不安装代理网关、不复制协议指纹或凭据层。OpenRouter的随机free路由不替代LAYA明确模型选择。
+下一实施片若获授权：先有界只读本机目录确认这两个完整ID，再在生成隔离demo上验真实duo；免费池耗尽就停止，fixed不得替换，实际native模型无证据保持unknown，辅助标题/review费用单列；不将公共价格或旧cost0视为全流程零费。具体来源及调查限制只见唯一基线。
