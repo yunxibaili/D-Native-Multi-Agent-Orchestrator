@@ -307,7 +307,7 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 - 两个独立内存负控：恢复复合键查找→153/2、忽略expiresAt→147/8，均exit1。后者实际进入runtime=1/onStart/sessionTouched=1/Attempt=1，证明新启动门断言承重；源码/测试哈希未改。
 - 受控逻辑race补充probe：声明有效时分配并通过既有execution gate；真实executeTask随后await工作区准备，受控prepare将时钟推进5s（expiry在1s后）；runtime请求仍1、无skipped。这是生产调用链+受控workspace/runtime/时间的逻辑证据，不是真实Git耗时、Agent收费或Job物理证据。原suite只覆盖tick前过期，未覆盖这个窗口。P1必须下一片关闭。
 - 仅5个既有产品源文件+既有测试1文件变化；无新模块/runner/依赖/manager，runtime/adapters/native/生产配置不改；无full suite、产品真实模型/费用/账户查询。开发worker推理单列。PARALLEL_WRITE=CLOSED，B2及其他overall不封板。
-- 本轮审核结果拟上传 `codex/b21-model-pool-review-blocked`，明确包含未关闭P1，不合入main；远端hash核验后再报告上传成功。保持共享index、HEAD、dirty tree；本机进度页全部排除。
+- 本轮审核快照已上传并核验远端：`codex/b21-model-pool-review-blocked`，源代码/审核证据提交 [2486869](https://github.com/yunxibaili/D-Native-Multi-Agent-Orchestrator/commit/2486869171b31fd9ea5f5bdd8e5e2fc0cb6e781d)。明确包含未关闭P1，不合入main。共享index、HEAD、dirty tree保持；本机进度页全部排除。本行上传事实记录随后单独同步，代码不变。
 
 
 2026-10-14 B3.2：**Codex独立PASS；具体Server/Tool的advisory请求与名称匹配观察闭环，不是原生MCP实际调用认证**。
@@ -783,7 +783,7 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-14T13:10:06+08:00",
+  "updatedAt": "2026-10-14T13:13:23+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
@@ -1094,6 +1094,11 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "name": "实际worker / 生产edge",
       "result": "DeepSeek V4.1 Flash / run=1 authority=0",
       "source": "session81条assistant元数据finish stop；AST核对"
+    },
+    {
+      "name": "GitHub审核快照",
+      "result": "已上传 2486869 · BLOCKED",
+      "source": "codex/b21-model-pool-review-blocked；远端hash核验，main/index未改；网页excluded"
     }
   ],
   "sources": [
