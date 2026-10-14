@@ -310,7 +310,7 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 - 两组内存负控：跳过最终检查→168/11，跳过实际claim释放→176/3，均exit1；分别证明到期/actual pair的阻断和真实claim释放断言承重，工作树代码/测试原始哈希不变。未为演示制造bug或强行返工。
 - 无full suite、产品真实模型/账户/费用查询；free/included仍是用户声明，paid/unknown仍拒绝，默认无池不承诺免费。PARALLEL_WRITE=CLOSED，B1/B4/B3/B2整体不封板，正式前端未启动。
 - 后端规划估算固定100分母：发现/用户模型池信用8→9，费用声明准入信用1→2，合计63/100，展示约65%完成/35%剩余（区间30–50%）；增量来自已交付的约束闭环，不来自测试数量。真实资格/硬预算/共享额度/内部辅助费用仍不足。
-- 本轮审后上传独立codex/b21a-final-admission-review-pass分支；远端hash核验后才报告成功。main/共享index/dirty tree保持，project-progress全部excluded。下一候选B4.6先调查已有检查点/用户纠偏入口，未自动授权。
+- 本轮独立审核快照已上传并核验远端：`codex/b21a-final-admission-review-pass`，代码/审核证据提交 [580dbc4](https://github.com/yunxibaili/D-Native-Multi-Agent-Orchestrator/commit/580dbc48f7555fea8b328422408e7034d8a5d742)。main/共享index/dirty tree保持，project-progress全部excluded。本上传事实随后单独同步，产品代码不变。下一候选B4.6待用户下发。
 
 
 2026-10-14 B2.1：**Codex独立 BLOCKED，1个最终启动检查P1未关闭；测试全绿不等于费用准入完整。**
@@ -796,7 +796,7 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-14T13:37:17+08:00",
+  "updatedAt": "2026-10-14T13:42:23+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
@@ -1114,6 +1114,11 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "name": "真实费用 / 完整suite",
       "result": "未执行 / 未执行",
       "source": "用户声明不是账户事实；保持费用和数据边界"
+    },
+    {
+      "name": "GitHub审核快照",
+      "result": "已上传 580dbc4 · PASS",
+      "source": "codex/b21a-final-admission-review-pass；远端hash核验，main/index保持，网页excluded"
     }
   ],
   "sources": [
