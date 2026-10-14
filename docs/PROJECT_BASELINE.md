@@ -8,7 +8,7 @@
 **本文是唯一当前项目状态与阶段基准。**
 [后端需求](BACKEND_REQUIREMENTS.md) 管目标及验收，[阶段分析](STAGE_ANALYSIS.md) 管建议顺序和下一任务范围。
 架构、LAYA、协作、Round、执行证据与 native 文档只细化相应契约，不另行宣布阶段封板。
-README 是导航。用户明确指令优先；发现源码、证据与基线不一致时核验并修正，不能以文档覆盖事实。
+README 是导航。本机 `project-progress/audit/` 是用户指定的只读第三方观察日志；每任务开始读取一次，不修改、不上传，不强制采纳，也不取代本基准或独立证据。用户明确指令优先；发现源码、证据与基线不一致时核验并修正，不能以文档覆盖事实。
 
 工作流：OpenCode 主要开发，Codex 独立审核；没有明确实现授权时 Codex 不接管开发。
 个人本地项目优先最小可用闭环与现有复用；不会因企业级框架、全面治理或轻微 P2 停止所有推进。
@@ -40,8 +40,10 @@ README 是导航。用户明确指令优先；发现源码、证据与基线不�
 | B3 overall | 整体未封板；真实工具调用、强制限制与Skill加载尚未验收 |
 | B2.1 / B2.1a | 独立 PASS：用户声明池的候选/分配/最终同步启动准入受控闭环；两个历史P1已关闭 |
 | B2 overall | NOT SEALED；账户资格/硬金额预算/付费与全流程费用未验收 |
-| B4.6a | 独立 PASS WITH P2：同进程用户单步检查点；不等于完整监督/纠偏恢复 |
-| B4.6 后续 / B2 后续 / B3 后续 / B5 | PLANNED；未授权扩大 |
+| B4.6a | 最小同进程用户检查点独立通过；原报告文案P2在B5.1关闭，不等于完整监督/纠偏恢复 |
+| B5.1 | 独立 PASS WITH P2：已知session_failure的停止安全/具体model有界接力；仅受控当前链 |
+| B5 overall | NOT SEALED；真实协议掉线、完整工作流恢复及更广错误分类未验收 |
+| B4.6 后续 / B2 后续 / B3 后续 / B5 后续 | PLANNED；未授权扩大 |
 | PARALLEL_WRITE | CLOSED |
 | 本产品前端 | 本机独立进度页已授权且禁止入 Git；正式工作台 UI 需求仍待确认 |
 
@@ -271,14 +273,20 @@ orchestrator round "review the API" --cwd . --workflow sequential --mcp-catalog 
 **最终启动检查P1已在B2.1a独立关闭**：最后workspace.prepare await之后，取得实际preRunTask，再复用既有buildSpawnGateInput检查当前pair、费用声明有效期及原有条件；发生在session/thread解析和queued/running/lease/onStart/runtime状态提交之前。无新await或第二权威；拒绝携带真正denying gate，任务/issued lease不假运行，既有finally释放已取的pre-start claim。有效声明正常启动；无池旧入口不启用额外检查。该有效期是最终准入时的声明判断，不认证真实账户资格/实际费用，不做运行中到期杀停。
 报告中的eligibility是报告时对声明的判断，不是实际费用或过去启动时有效性的认证。默认入口仍不保证免费；新增无池provenance诊断行也意味着不能宣称所有输出字节完全不变。
 
-### 5.10 B4.6a：同进程用户检查点（最小范围独立 PASS WITH P2）
+### 5.10 B4.6a：同进程用户检查点（原文案P2已收口）
 
 `round "目标" --workflow sequential|collaborate --checkpoint` 在成员本次真实运行进入to_verify后、原有LAYA验收/下一次派工前展示只读材料。仅独立开关有效，带值写法写前exit2；legacy/classify-only/stage-check不支持。默认不读取stdin、不添加checkpoints字段。生产输入要求TTY，60秒无答复、EOF、输入错误或非法答复都停止，不默认继续；提示走stderr，JSON stdout完整。
 
 - 输入 `continue` 只允许原有Verification/Scheduler继续，不直接标记成功或豁免费用/fixed/stage/resource门；空/不满足验收输出继续保持to_verify。检查点期间声明过期的独立probe：第一步已验收、第二步model-unavailable/user-pool-expired且无新Attempt。
 - 输入 `stop <reason>` 留下当前to_verify、停止后续任务/集成/接力，本轮incomplete/非零；此前succeeded状态与已有文件/证据保留。snapshot是冻结平值，本次Attempt与RunResult关联，声明角色/验收/请求pair与有界输出、截断/停止事实分别呈现，非实际模型或产物认证。
 - 同一Attempt只询问一次；仅覆盖有界workflow循环中的检查点，不给后续continuation新Attempt承诺检查点。无额外监督模型；运行中强制暂停、改计划/改选、跨进程恢复和完整自动监督均未实现。新的范围仍须现有阶段确认，不能拿旧用户continue批准新范围。
-- P2：现有通用未完成Review原因仍写作fan-out(0成员)，未区分顺序用户停止；checkpoints.stop、handoff.user-stop、executionIncomplete/ok=false/非零及Human Gate事实正确，不出现假PASS。文案单点后续收口，不为此重开架构。
+- 原P2已在B5.1关闭：Review原因按保留资源、停止未确认、用户检查点停止、workflow未完成、fan-out分支如实投影；实际first/second checkpoint-stop独立probe确认原因，不放宽任何完成门。
+
+### 5.11 B5.1：已知会话失败的停止安全与具体模型接力
+
+仅对已有 `TRANSPORT_ERROR → session_failure` 分支补当前链路：已执行的旧Attempt必须有同次RunResult的 `cleanup.treeStopConfirmed === true`；false/absent在请求接力选择及reassign迁移之前拒绝，报告stop-unconfirmed、incomplete和非零。纯准入拒绝沿用旧语义，不按文本或静默猜死亡，不把NONZERO_EXIT、timeout、cancel纳入新接力类别。
+同Agent不同已知model是新请求worker；pair逐字段比较、未知model保守，保留绝对handoff-max和已有显式原因/重复规则。沿唯一reassign/Assignment/dispatch执行，同Task新Attempt/新Session，来源取关联的Attempt与RunResult；保留部分输出/工具事实、截断与停止事实，提示核对已有成果，不保证外部副作用可重放。请求pair不认证Agent内部实际model，也不构成付费授权。
+workflow在该失败边界让出给既有canonical continuation，避免generic reassign预迁移/假来源；恢复成功仅进入to_verify，整个workflow仍待原Verification与下游，保持incomplete/非零，不自动完成或跨进程续跑。fixed、用户声明池、最终启动、stage及资源门继续适用。B5整体不封板，PARALLEL_WRITE=CLOSED。
 
 ## 6. 不可绕过的契约
 
@@ -300,8 +308,7 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
    完整角色计划、prefer/角色默认、运行中改选、真实模型多模型兼容性仍缺，留后续切片。
 3. B3.1/B3.2已补用户声明Skill/MCP候选、任务级advisory选择和有来源的事件观察。MCP只按OpenCode同版本规则前向映射/拒绝碰撞，事件名称匹配不认证MCP协议或服务身份。自动发现、真实加载/调用、权限限制、工具定义裁剪和Token收益仍缺。
 4. 动态免费资格、账户共享额度和全流程费用授权未验收；预算 units 不是 token/货币。
-5. 模型中途掉线恢复列后续计划：区分流中断、限流/额度/认证/崩溃与未知，静默不等于死亡；
-   有界重试考虑重复写入，旧执行停止确认后才接力，fixed 不偷换，无免费候选不静默付费。
+5. B5.1只完成已有明确session_failure的停止安全/pair接力受控链；真实服务掉线如何上报、限流/认证/崩溃分类、跨进程和完整workflow续跑仍待验证。静默不等于死亡，固定模型不偷换，无合格声明池不转付费。
 6. 多 Agent 真实兼容性、同 Agent 多模型隔离、总 token 收益需各自实证；fixture 不替代这些证据。
 7. W4 真实 Agent 环境限制、旧 full-suite 证据时效与 native reconciliation 无法取得退出事实时的
    fail-closed 可用性限制继续保留；本轮未重测或解除这些历史 P2，细节见既有审核快照。
@@ -310,6 +317,19 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 不新增 provider 网关、群聊平台、第二个调度器或通用工作流引擎来掩盖协议缺口。
 
 ## 8. 最近独立证据与上传记录
+
+2026-10-14 B5.1：**Codex独立 PASS WITH P2，仅已知session_failure的停止安全/具体model有界接力。**
+
+- 开始只读读取audit三文件；调查现有continuation、唯一reassign、Runtime错误分类和原子执行证据。GitHub MCP实际检索BerriAI/litellm并核对MIT范围、活跃未归档及官方reliability方法；只参考有限模型fallback，不引入Python/Rust网关、manager、依赖或第二执行权威。
+- 实际opencode-agent implement首次+唯一返工，session分别 `ses_ec631e473ffev5CQsndWBGV2th` / `ses_ec618341affeAHF042Z4KfvjOq`；原生export的105/90条assistant元数据全部 `opencode-go/deepseek-v4.1-flash`，finish=stop。两次外层exec提前exit1且wrapperExit未知，未据此重复派工或宣称wrapper成功；确认首次原生进程不在、会话完成；返工持原process handle确认原生退出exit0。这是委派监测P2，原因未确定，不能将原生完成冒充wrapper exit0。
+- 首版绿测试遗漏workflow路径：独立复现handoffPolicy TDZ；仅内存hoist后暴露stop未确认提前迁移、实际requests=[m1,m3]却fromModel=m2/previousAttempt=att1的P1。返工已初始化policy、全CLI reassign检查同次停止事实、workflow失败边界转交canonical driver，并从packet关联Attempt取fromModel；独立原探针现requests=[m1,m2,m3]、来源对应，未停确认探针仅m1且身份保持。
+- 独立实跑全部exit0：typecheck、continuation **170/0**、handoff-production-round **416/0**、b14-selection **179/0**、b40a-cli-workflow **93/0**、b46-workflow-checkpoint **42/0**、execution-lifecycle **136/0**、resource-claim **192/0**、isolation守卫5 opt-in/0违规、diff check。Codex验证脚本曾把b46套件名称误替换为不存在的b51，真实命令exit1后立即更正；不是产品失败，也未称该错误命令通过。
+- 独立CLI池接力probe：有效声明m1→m2为runtime2；paid/unknown/expired/池外/未注册target均runtime1、旧m1不迁移、非零。first/second checkpoint-stop probe原因明确用户停止、不泛称fan-out。实际owned部分文件字节保留/新会话/停止未知时仍活着的受控Node writer由suite验证；fixture不提升为真实Agent/Job逃逸证据。
+- 两内存负控不改源码：退回Agent-only move→391/22、exit1；去workflow boundary→399/13、exit1。AST确认原continuation120和handoff312个check条件全部保留。production runtime.run边1、新authority0。OpenCode只修改4个限定源/测试文件；native/runtime/adapters/config及其它源码保持。Codex更新文档与ignored派生页；audit三文件hash未变。
+- P0/P1：本片已关闭。P2：外层委派监测异常；真实Agent的服务故障分类、停止事实取得与实际model未证明，恢复后workflow仍待验证/下游。原B4.6a报告文案P2已关闭。P3：Codex最初两个TDZ探针在返回owner前抛错，未记录创建的temp目录路径，不能证明其残留为0或安全定点删除；没有扫描批删。后续所有独立probe记录精确owned路径并finally清理；harness异常路径也走同一清理ledger。两份before JSON曾被复跑覆盖为after，不作为不可变修复前证据；首次工具输出/hoisted日志与报告分开。
+- 本机进度数据已刷新并与唯一基准比对；浏览器安全策略此前拒绝本地视觉检查，未换通道绕过，不能宣称页面视觉核验通过。后端能力估算65→67/100，来自安全接力信用1→3/6；页面按5%档仍显示65%完成/35%剩余，分母不含产品前端，不是测试数或工时比例。完整后端仍有真实模型/费用、工具和用户需求闭环缺口。
+- 本轮不跑fullsuite，不调用产品真实Agent/模型或查账户，不读凭据/改配置；Codex不代写产品实现。下一候选B4.7先明确模型、费用和数据范围，再做小型真实验收；尚未授权推理。审核快照上传事实以远端hash核对后追加，main/共享index/dirty树保留，project-progress全部excluded。
+
 
 2026-10-14 B4.6a：**Codex独立 PASS WITH P2，仅同进程任务边界用户检查点。**
 - 先调查HumanGate/NextRoundInput、RoundResult、既有Verification/continue、CLI有界循环、fixed/stage/model-pool与资源保护。GitHub MCP成功查阅[LangGraph仓库](https://github.com/langchain-ai/langgraph)与MIT LICENSE（未归档、活跃）；[官方interrupt说明](https://docs.langchain.com/oss/python/langgraph/interrupts)明确持久化与节点重启/副作用重放依赖。只参考外部输入与验收分离，不引入Python框架/检查器/新状态权威。
@@ -818,18 +838,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-14T17:19:44+08:00",
+  "updatedAt": "2026-10-14T18:38:51+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "B4.6a",
-    "name": "单步用户检查点",
+    "id": "B5.1",
+    "name": "已知会话失败的安全模型接力",
     "status": "done",
-    "summary": "独立PASS WITH P2：继续仍走原验收，停止阻断下游/接力且保留已验收成果；93/0与42/0独立通过。完整自动监督/纠偏恢复未实现。"
+    "summary": "Codex独立PASS WITH P2；首次+唯一返工关闭workflow TDZ/提前迁移/假来源。仅受控有界接力，恢复任务to_verify、全workflow仍待验收；B5未整体封板。"
   },
   "next": {
-    "id": "B5.1",
-    "name": "模型中断的有界接力最小切片",
+    "id": "B4.7",
+    "name": "先确认模型/费用/数据的真实代表验收",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -892,8 +912,8 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       {
         "name": "中断接力与最小历史",
         "weight": 6,
-        "earned": 1,
-        "basis": "已有停止与 continuation；自动恢复边界未闭环"
+        "earned": 3,
+        "basis": "B5.1已知session_failure停止安全、具体pair/fresh session/部分成果接力受控通过；真实协议分类、全workflow及跨进程恢复未验收"
       },
       {
         "name": "代表性真实用户验收",
@@ -961,12 +981,28 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "kind": "部分实现 / 未验收"
     },
     {
-      "id": "B46-REVIEW-WORDING",
+      "id": "B51-WRAPPER",
       "severity": "P2",
-      "title": "未完成Review原因未区分用户停止",
-      "detail": "现有reason泛称fan-out(0成员)；实际checkpoints/handoff/状态/非零正确，无假PASS。",
-      "next": "后续边界一并收口报告文案，不新增监督框架",
-      "kind": "报告文案"
+      "title": "委派外层监测提前返回",
+      "detail": "两次outer exec exit1，wrapperExit未知；原生会话正确模型且完成，返工持handle证exit0。原因未确定，未重复并发派工。",
+      "next": "下一次相关委派定位监测问题，保留原生事实",
+      "kind": "工具观察"
+    },
+    {
+      "id": "B51-RECOVERY",
+      "severity": "范围限制",
+      "title": "有界接力不等于完整工作流恢复",
+      "detail": "仅现有TRANSPORT_ERROR/session_failure受控通过；恢复任务to_verify，全workflow未完成；真实Agent协议和实际模型未知。",
+      "next": "真实模型范围明确后B4.7补代表证据",
+      "kind": "部分实现 / 未验证"
+    },
+    {
+      "id": "B51-PROBE-OWNERSHIP",
+      "severity": "P3",
+      "title": "最初两个异常探针的临时路径未记录",
+      "detail": "owner返回前TDZ抛错；不具备可靠定点清理路径，未扫描批删，不能称零残留。后续probe和harness已补异常清理。",
+      "next": "保留观察，不影响生产正确性；不按前缀删除foreign目录",
+      "kind": "独立探针卫生"
     }
   ],
   "tasks": [
@@ -1085,9 +1121,9 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     {
       "id": "B5.1",
       "title": "模型掉线的有界接力",
-      "status": "planned",
+      "status": "done",
       "deliverable": "保留部分成果，停旧执行后再接手",
-      "evidence": "不盲重放写任务或自动跨阶段"
+      "evidence": "独立170/416+CLI原探针/6池接力/2负控/AST；只受控known session_failure，保留P2/P3"
     },
     {
       "id": "B4.7",
@@ -1108,44 +1144,24 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "title": "同进程单步用户检查点",
       "deliverable": "显式任务结果检查与继续/停止；不做跨进程恢复",
       "status": "done",
-      "evidence": "Codex独立93/0+42/0、真实TTY reader/内存负控/等待后期限拒绝；仅最小同进程范围，P2 Review原因文案待收口"
+      "evidence": "独立93/42及历史TTY证据；原Review文案P2在B5.1经两次真实CLI停止probe关闭"
     }
   ],
   "checks": [
     {
-      "name": "独立验证",
-      "result": "PASS：typecheck；顺序93/0、检查点42/0及相关7套",
-      "source": "Codex实跑，非实现方自述；未跑full suite/产品真实模型"
+      "name": "B5.1独立验证",
+      "result": "PASS WITH P2 / typecheck + 170/416/179/93/42/136/192 + isolation + diff",
+      "source": "Codex本轮实跑；fixture≠产品真实Agent"
     },
     {
-      "name": "承重负控",
-      "result": "两组真实非零退出",
-      "source": "跳过用户gate 47/10+fatal；跳过flag校验36/6；工作源文件不变"
+      "name": "独立探针/负控",
+      "result": "6池用例 / workflow原探针 / checkpoint2例通过；2负控真实非零",
+      "source": "原生产CLI与内存变异；源码未回退"
     },
     {
-      "name": "门禁兼容",
-      "result": "用户continue不能豁免过期声明",
-      "source": "实际CLI链+受控clock：runtime仅1、下游user-pool-expired无Attempt"
-    },
-    {
-      "name": "终端输入",
-      "result": "真实Windows TTY收到continue并自然exit0",
-      "source": "reader-only controlled snapshot；未调用产品Agent"
-    },
-    {
-      "name": "委派模型",
-      "result": "DeepSeek V4.1 Flash：实现+1返工",
-      "source": "原生会话78/44条assistant元数据；返工最终报告缺失，独立验证另列"
-    },
-    {
-      "name": "本机页面",
-      "result": "数据已刷新；视觉未验证",
-      "source": "浏览器安全策略拒绝本地URL；没有绕过"
-    },
-    {
-      "name": "GitHub",
-      "result": "已上传 fec5d18 / 核验通过",
-      "source": "审核分支 codex/b46a-user-checkpoint-review-pass；main/index保持，页面excluded"
+      "name": "进度/上传",
+      "result": "页面数据核对；上传远端核对后记录",
+      "source": "本机页不入Git；视觉受策略限制"
     }
   ],
   "sources": [

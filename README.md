@@ -42,7 +42,7 @@ listed ≠ connected ≠ callable ≠ free；严格零新增费用尚未端到�
 
 当前 **B4.5/B4.5a独立PASS（受控最小Git顺序协作范围）**：组内单worktree交付、脏文件保护和实际成果审核已通过；
 停止未确认、no-review或scope重叠均阻止误报成功。B1/B4整体仍未封板。
-B3.1任务级原生Skill有界闭环独立PASS：显式 `--skill-catalog skills.json` 配合sequential/collaborate，LAYA至多选一个advisory请求或none，报告分开请求/绑定/工具观察。候选不证明已安装，绑定不证明已加载；MCP和真实加载/token收益未认证。B3.2亦已独立PASS（具体Server/Tool的advisory选择与名称匹配观察）：`--mcp-catalog mcp-tools.json`，只支持OpenCode目录声明，不自动连接/配置MCP，也不裁剪原生工具定义。B2.1/B2.1a用户声明池与最终同步启动准入已受控独立PASS；B4.6a最小同进程用户检查点已独立PASS WITH P2：`--checkpoint`在单步运行后、验收前允许用户继续/停止；完整监督/纠偏恢复仍缺。下一候选B5.1待下发。
+B3.1任务级原生Skill有界闭环独立PASS：显式 `--skill-catalog skills.json` 配合sequential/collaborate，LAYA至多选一个advisory请求或none，报告分开请求/绑定/工具观察。候选不证明已安装，绑定不证明已加载；MCP和真实加载/token收益未认证。B3.2亦已独立PASS（具体Server/Tool的advisory选择与名称匹配观察）：`--mcp-catalog mcp-tools.json`，只支持OpenCode目录声明，不自动连接/配置MCP，也不裁剪原生工具定义。B2.1/B2.1a用户声明池与最终同步启动准入已受控独立PASS；B4.6a最小同进程用户检查点已独立PASS WITH P2：`--checkpoint`在单步运行后、验收前允许用户继续/停止；完整监督/纠偏恢复仍缺。B5.1现已受控独立PASS WITH P2：仅明确session_failure、确认旧树停止后才由LAYA换具体pair，新Session接手部分成果；workflow恢复任务仍待验收，真实协议及完整恢复未认证。下一候选B4.7需先明确模型/费用/数据。
 新草案要求的需求确认、阶段批准、监督、交付与恢复已重排；见 [交付计划](docs/BACKEND_DELIVERY_PLAN.md) 和 [下一任务](docs/NEXT_TASK.md)。
 后端规划估算只在唯一基线维护（固定能力权重，不含正式前端）；不能按测试数量计算进度。
 

@@ -44,7 +44,7 @@ cancel/deadline 先触发既有停止协议，等物理停止事实得到确认�
 用户暂停应区分停止后续调度、协作保存检查点和取消；
 现状不承诺任意进程原地暂停恢复。
 
-执行中模型掉线恢复为后续计划：静默不直接判死亡，真实流/额度/认证/服务故障与未知分开。
+B5.1仅覆盖已有明确TRANSPORT_ERROR/session_failure的受控安全接力；真实流/额度/认证/服务故障分类和完整恢复仍后续，静默不直接判死亡。
 有界重试考虑部分写入和重复工具调用；fixed 失效不自动换 pair，缺合格免费候选不转付费。
 
 ## 5. Review、结果与用户
@@ -65,3 +65,7 @@ sequential/collaborate及计划文件复用既有任务/验证/调度链，按�
 [协作契约](R2_COORDINATION_CONTRACT.md)、
 [执行证据](DECISION_LOOP_EXECUTION_RESULT_CONTRACT.md)。
 历史 R1/R2 状态和测试数只在 [归档](STAGE_ANALYSIS.md#历史备份) 保留。
+
+## 7. 已知session_failure的有界接力
+
+旧执行cleanup.treeStopConfirmed必须明确true，false/缺失先停止接力选择与身份迁移，并保持incomplete/非零。workflow失败边界交给同一个continuation driver，同Task新Attempt/fresh Session，保留部分输出、工具观察、截断/停止事实，提示核对现状，不能盲重放副作用。Agent×Model逐字段比较、unknown保守，handoff-max绝对上限与既有原因例外/重复守卫保留；fixed/用户池/最终准入不放宽。workflow恢复任务成功仍to_verify，整轮待原验证/下游，不自动resume全workflow。Review未完成原因如实区分保留资源/停止未知/用户stop/workflow/fan-out。

@@ -150,6 +150,7 @@ import {
   renderContinuationPacket,
   runHandoffContinuation,
   type ContinuationResult,
+  type WorkerRef,
 } from '../orchestration/continuation.ts';
 import { buildHandoff } from '../orchestration/workbench-handoff.ts';
 import { WORKFLOW_PLAN_CHOICES, isWorkflowChoice } from '../orchestration/workflow-plan.ts';
@@ -2181,6 +2182,17 @@ export async function runRoundCli(
   const handoffAgentChain = new Map<string, string[]>();
 
   /**
+   * B5.1: the concrete Agent × Model pairs each task has already used in this chain.
+   *
+   * Kept BESIDE `handoffAgentChain` (which is preserved for compatibility) and populated
+   * from the SAME `HandoffRecord` facts, so the pre-reassign guard can tell a same-agent
+   * DIFFERENT model (a new worker, allowed) from returning to a used pair (refused). It is
+   * a second copy of the driver's own pair chain, not a new selector: both use the same
+   * `evaluateHandoffBudget` field-by-field comparison.
+   */
+  const handoffWorkerChain = new Map<string, WorkerRef[]>();
+
+  /**
    * R2-3: what each handoff's single dispatch actually did.
    *
    * Recorded so "one handoff produces at most one new dispatch" is a MEASUREMENT in the
@@ -2253,6 +2265,44 @@ export async function runRoundCli(
     };
   };
 
+  // B5.1: the handoff budget, initialized HERE (before `handoffCapabilities`) on purpose.
+  // Its FIRST possible use is the `reassign` capability below, which the workflow loop can
+  // invoke before the continuation-driver section of this function is reached. Declaring
+  // it later left it in the temporal dead zone and threw a real `ReferenceError` on the
+  // first workflow reassign.
+  const handoffPolicy = { maxAutomaticHandoffsPerTask: o.handoffMax };
+
+  /**
+   * B5.1: the STOP-safety fact for a task whose CURRENT attempt ended in an EXECUTED
+   * session failure.
+   *
+   * Reads ONLY the atomic `currentActualOf` bundle (the AttemptRecord and the RunResult of
+   * that very attempt) and reuses the SAME classifier the continuation driver uses, so the
+   * workflow's reassign path and the canonical driver cannot disagree about whether a task
+   * stands at a handoff boundary. Returns `null` for anything else: no current attempt, a
+   * success, a non-transport failure, or a pure admission refusal.
+   *
+   * `confirmed` is a literal `true` only when the run's OWN `cleanup.treeStopConfirmed` is
+   * `true`; false/absent is "not stopped", never inferred from exit code or error name.
+   */
+  const sessionFailureBoundary = (taskId: string): { readonly confirmed: boolean } | null => {
+    const actual = currentActualOf(taskId);
+    if (actual === null || actual.run === null) return null;
+    const outcome = classifyExecutionOutcome({
+      taskId,
+      taskStatus: wb.store.get(taskId)?.status ?? 'running',
+      agentId: actual.agentId,
+      modelId: actual.modelId,
+      run: actual.run,
+      refusalCode: null,
+      refusalReason: null,
+      attemptIds: [actual.attemptId],
+    });
+    const classification = classifyHandoffReason(outcome);
+    if (!classification.handoff || classification.reason !== 'session_failure') return null;
+    return { confirmed: actual.run.cleanup?.treeStopConfirmed === true };
+  };
+
   const decisionCapabilities =
     o.retryMax > 0
       ? wb.decisionCapabilities({
@@ -2298,13 +2348,39 @@ export async function runRoundCli(
       return receipt;
     },
     reassign: async (req: { taskId: string; agentId?: string; modelId?: string; strategy?: 'explicit' | 'assignment'; reason?: string }) => {
+      // B5.1: the STOP gate is enforced at EVERY reassign entry, not only inside the
+      // canonical continuation driver. A task whose current attempt is an EXECUTED session
+      // failure with an UNCONFIRMED process-tree stop must not be migrated by any caller
+      // (a workflow's generic reassign included): the previous tree may still hold a
+      // writer, and migrating then dispatching would start a second session/runtime before
+      // the old one is proven stopped. Only a literal `treeStopConfirmed === true` clears
+      // this; absent/false never does. A CONFIRMED boundary is deliberately allowed here,
+      // because the canonical driver performs its legitimate handoff through this same
+      // capability.
+      const stop = sessionFailureBoundary(req.taskId);
+      if (stop !== null && !stop.confirmed) {
+        return {
+          ok: false,
+          code: 'handoff-stop-unconfirmed',
+          reason: `task ${req.taskId} ended in a session failure but its process-tree stop is NOT ` +
+            'confirmed; the old execution must be proven stopped before another worker may continue it, ' +
+            'so no reassign was applied',
+        };
+      }
       if (req.agentId !== undefined) {
         const used = handoffAgentChain.get(req.taskId) ?? [];
+        const usedWorkers = handoffWorkerChain.get(req.taskId) ?? [];
         const verdict = evaluateHandoffBudget({
           policy: handoffPolicy,
           used: used.length,
           agentsUsed: used,
           targetAgentId: req.agentId,
+          // B5.1: compare the concrete pair when the decision names a model, so
+          // same-agent m1 -> m2 -> m3 is a real series of new workers rather than an
+          // agent-only oscillation. A decision naming only an agent keeps the original
+          // agent-only, conservative semantics (modelId null -> treated as the same pair).
+          workersUsed: usedWorkers,
+          target: { agentId: req.agentId, modelId: req.modelId ?? null },
           ...(req.reason === undefined ? {} : { layaReason: req.reason }),
         });
         if (!verdict.allowed) {
@@ -2527,6 +2603,18 @@ export async function runRoundCli(
         if (members.length > 0 && members.every((m) => m?.status === 'succeeded')) { workflowStop = 'all-succeeded'; break; }
         if (members.some((m) => m?.status === 'failed' || m?.status === 'cancelled')) { workflowStop = 'terminal-failure'; break; }
         if (workflowCycles >= maxCycles) { workflowStop = 'cycle-limit'; break; }
+        // B5.1: a member that ended in an EXECUTED session failure is a HANDOFF boundary,
+        // not workflow progress. Recovery for it belongs to the ONE canonical bounded
+        // continuation below, which reads the atomic Attempt/RunResult stop fact. The
+        // workflow loop must NOT let Laya's generic `reassign` migrate the task first:
+        // for an UNCONFIRMED stop that would start a second writer before the old tree is
+        // proven stopped, and for a confirmed one it would pre-migrate the Task and make
+        // the driver record a `fromModel` read off the already-changed Task instead of the
+        // attempt that actually ran. Yielding here hands the boundary over untouched.
+        if (memberIds.some((id) => sessionFailureBoundary(id) !== null)) {
+          workflowStop = 'handoff-boundary';
+          break;
+        }
         // B4.6a: the USER checkpoint sits between "a member really ran" and "LAYA may
         // verify it and schedule downstream work". A stop ends the loop here.
         if (o.checkpoint === true) {
@@ -2563,7 +2651,6 @@ export async function runRoundCli(
   //
   // 2. THEN the review, over every attempt the round produced. Attempt 1 and attempt 2
   //    both reach the same single Codex review; there is no second review system.
-  const handoffPolicy = { maxAutomaticHandoffsPerTask: o.handoffMax };
 
   /**
    * Every task's terminal outcome, including the ones that produced NO evidence.
@@ -2604,7 +2691,13 @@ export async function runRoundCli(
       const live = wb.store.get(t.taskId);
       if (live === null) continue;
       const history = wb.evidence.history(t.taskId);
-      const run = runResults.get(t.taskId) ?? null;
+      // B5.1: prefer the CURRENT dispatch's atomic {attemptId, run} bundle over the
+      // per-task "latest run" lookup. `currentActualOf` returns null when this task has no
+      // current started attempt, and only THEN do we fall back to `runResults`; when it is
+      // present, its OWN `run` is used even if null, so a pending attempt never inherits an
+      // older attempt's result.
+      const actual = currentActualOf(t.taskId);
+      const run = actual !== null ? actual.run : (runResults.get(t.taskId) ?? null);
       const refusal = refusals.get(t.taskId) ?? null;
       // No evidence AND no refusal means nothing happened yet; there is no outcome to
       // report, and inventing one would put a fiction in front of the decision brain.
@@ -2612,8 +2705,8 @@ export async function runRoundCli(
       found.push(classifyExecutionOutcome({
         taskId: t.taskId,
         taskStatus: live.status,
-        agentId: live.agentId,
-        modelId: live.modelId,
+        agentId: actual?.agentId ?? live.agentId,
+        modelId: actual?.modelId ?? live.modelId,
         run,
         refusalCode: refusal === null ? null : refusal.code,
         refusalReason: refusal === null ? null : refusal.reason,
@@ -2777,6 +2870,15 @@ export async function runRoundCli(
             record.taskId,
             [...(handoffAgentChain.get(record.taskId) ?? []), record.fromAgentId ?? 'unknown'],
           );
+          // B5.1: keep the concrete pair chain in step with the agent chain, from the SAME
+          // record facts, so the pre-reassign guard sees a same-agent different model.
+          handoffWorkerChain.set(
+            record.taskId,
+            [
+              ...(handoffWorkerChain.get(record.taskId) ?? []),
+              { agentId: record.fromAgentId ?? 'unknown', modelId: record.fromModelId ?? null },
+            ],
+          );
           const task = wb.store.get(record.taskId);
           if (task === null) return;
 
@@ -2847,22 +2949,29 @@ export async function runRoundCli(
           if (task === null) return null;
           const classification = classifyHandoffReason(outcome);
           if (!classification.handoff) return null;
-          const history = wb.evidence.history(taskId);
-          const last = history.length > 0 ? history[history.length - 1]! : undefined;
-          const run = wb.lastRunResult(taskId);
+          // B5.1: the Attempt AND its RunResult come from the SAME `currentActualOf` atomic
+          // bundle, so the packet's evidence, cleanup and stop fact always describe the
+          // CURRENT attempt. `lastRunResult` + last history could pair attempt A's identity
+          // with attempt B's result. A pure admission refusal has no current attempt, which
+          // yields a null attempt/evidence exactly as before.
+          const actual = currentActualOf(taskId);
+          const run = actual === null ? null : actual.run;
+          const rec = actual === null ? null : wb.evidence.get(actual.attemptId);
           return buildContinuationPacket({
             task,
             reason: classification.reason,
             outcome,
             evidence: run === null ? null : buildHandoff(task, run),
-            attempt: last === undefined ? null : {
-              attemptId: last.attemptId,
-              agentId: last.agentId,
-              modelId: last.modelId,
-              leaseVersion: last.leaseVersion,
-              errorCode: last.errorCode,
-              errorMessage: last.errorMessage,
+            attempt: rec === null ? null : {
+              attemptId: rec.attemptId,
+              agentId: rec.agentId,
+              modelId: rec.modelId,
+              leaseVersion: rec.leaseVersion,
+              errorCode: rec.errorCode,
+              errorMessage: rec.errorMessage,
             },
+            // B5.1: the run's OWN cleanup, from the same bundle. Only treeStopConfirmed is read.
+            cleanup: run === null ? null : run.cleanup,
           });
         },
         async runCycle(context) {
@@ -2907,6 +3016,7 @@ export async function runRoundCli(
             code: application.applied ? null : application.code,
             reason: application.applied ? application.note : application.reason,
             targetAgentId: decision !== null && decision.action === 'reassign' ? (decision.agentId ?? null) : null,
+            targetModelId: decision !== null && decision.action === 'reassign' ? (decision.modelId ?? null) : null,
           };
         },
         now: () => Date.now(),
@@ -3076,8 +3186,15 @@ export async function runRoundCli(
   })();
   const groupRuntimeIncomplete = groupRuntimeRetained !== null;
 
+  // B5.1: a session_failure whose process-tree stop was never confirmed is NOT a finished
+  // round. The driver refused the handoff (`stop-unconfirmed`) rather than start a second
+  // writer, so the work is unfinished. Folded into the SAME completion fact that already
+  // drives `report.ok`, the withheld review and the Human Gate — no new status authority.
+  const handoffStopUnconfirmed = continuation !== null && continuation.stopped.code === 'stop-unconfirmed';
+
   const executionIncomplete =
-    (fanoutGroups.length > 0 && !fanoutAllSettled) || workflowIncomplete || groupRuntimeIncomplete;
+    (fanoutGroups.length > 0 && !fanoutAllSettled) || workflowIncomplete || groupRuntimeIncomplete ||
+    handoffStopUnconfirmed;
 
   report.fanoutDrain = {
     iterations: fanoutDrain.iterations,
@@ -3646,7 +3763,25 @@ export async function runRoundCli(
           `${groupRuntimeRetained.retentionReason === null ? '' : `: ${groupRuntimeRetained.retentionReason}`}), ` +
           'because an execution entered the edge and its tree stop was never confirmed, so no review was run; ' +
           'the round is unfinished rather than reviewed'
-        : `the fan-out execution set is incomplete (${fanoutDrain.unresolvedAtStop.length} requested member(s) never reached an execution resolution), so no review was run; the round is unfinished rather than reviewed`,
+        // B5.1: a known session failure whose process-tree stop was never confirmed is its
+        // OWN cause, named as such — never reported as a fan-out of zero members.
+        : handoffStopUnconfirmed
+          ? `a known session failure left an execution whose process-tree stop was never confirmed ` +
+            `(${continuation?.stopped.code ?? 'stop-unconfirmed'}), so no second writer was started and no ` +
+            'review was run; the round is unfinished rather than reviewed'
+          // B4.6a (P2): a real user STOP is named as a checkpoint stop, not as a fan-out.
+          : checkpointStop !== null
+            ? `the user stopped at a checkpoint on ${checkpointStop.taskId}: ${checkpointStop.reason}; ` +
+              `${checkpointStop.blockedTaskIds.length} task(s) were withheld` +
+              `${checkpointStop.blockedTaskIds.length === 0 ? '' : ` (${checkpointStop.blockedTaskIds.join(', ')})`}, ` +
+              'so no review was run; the round is unfinished rather than reviewed'
+            // B4.6a (P2): a sequential/collaborate workflow that did not complete is a
+            // WORKFLOW gap, not a fan-out (which has zero requested members here).
+            : workflowIncomplete
+              ? `the workflow is incomplete: ${workflowPending.length} member(s) did not reach succeeded ` +
+                `(${workflowPending.map((m) => `${m.taskId}=${m.status}`).join(', ')}), so no review was run; ` +
+                'the round is unfinished rather than reviewed'
+              : `the fan-out execution set is incomplete (${fanoutDrain.unresolvedAtStop.length} requested member(s) never reached an execution resolution), so no review was run; the round is unfinished rather than reviewed`,
       findings: [],
       recommendations: [],
       outputTail: null,
@@ -3741,6 +3876,12 @@ export async function runRoundCli(
   report.handoffAgentChain = Object.fromEntries(
     [...handoffAgentChain.entries()].map(([k, v]) => [k, [...v]]),
   );
+  // B5.1: the concrete pair chain, additive beside `handoffAgentChain`. The pair chain is
+  // what proves a same-agent different model was a REAL change; `handoffAgentChain` is kept
+  // for compatibility and must not be read as authenticating an actual model.
+  report.handoffWorkerChain = Object.fromEntries(
+    [...handoffWorkerChain.entries()].map(([k, v]) => [k, v.map((w) => ({ ...w }))]),
+  );
 
   // R2-3: handoff visibility in the round report. Recorded as a FACT (who, why, which
   // task, which attempt) rather than as a narrative, so the stop reason is always visible
@@ -3766,8 +3907,14 @@ export async function runRoundCli(
           reason: hd.reason,
           fromAgentId: hd.fromAgentId,
           toAgentId: hd.toAgentId,
+          // B5.1: the REQUESTED/ASSIGNED models, shown so two models of the same agent are
+          // visible as a real change. These are not an authentication of the model that
+          // actually ran.
+          fromModelId: hd.fromModelId,
+          toModelId: hd.toModelId,
           previousAttemptId: hd.previousAttemptId,
           decision: hd.decisionAction,
+          decisionApplied: hd.decisionApplied,
           note: hd.decisionNote,
         })),
         stopped: continuation.stopped,
@@ -3994,7 +4141,7 @@ export async function runRoundCli(
     // "everything was fine".
     const handoffInfo = report.handoff as {
       enabled: boolean; happened: number; limit: number;
-      handoffs: Array<{ taskId: string; reason: string; fromAgentId: string | null; toAgentId: string | null; previousAttemptId: string | null }>;
+      handoffs: Array<{ taskId: string; reason: string; fromAgentId: string | null; toAgentId: string | null; fromModelId?: string | null; toModelId?: string | null; previousAttemptId: string | null }>;
       stopped: { code: string; reason: string };
     };
     w('接力（Agent Handoff）');
@@ -4003,7 +4150,11 @@ export async function runRoundCli(
     } else {
       w(`  ${handoffInfo.happened} / ${handoffInfo.limit}`);
       for (const hd of handoffInfo.handoffs) {
-        w(`  ${hd.taskId}  ${hd.fromAgentId ?? '?'} → ${hd.toAgentId ?? '?'}  原因=${hd.reason}`);
+        // B5.1: show the REQUESTED pair (agent AND model) so a same-agent model change is
+        // visible; these are requested/assigned models, not proof of what actually ran.
+        const from = `${hd.fromAgentId ?? '?'}/${hd.fromModelId ?? 'default'}`;
+        const to = `${hd.toAgentId ?? '?'}/${hd.toModelId ?? 'default'}`;
+        w(`  ${hd.taskId}  ${from} → ${to}  原因=${hd.reason}`);
         w(`      Task 保持不变；上一 Attempt=${hd.previousAttemptId ?? '(none)'}`);
       }
       w(`  停止原因：${handoffInfo.stopped.code} — ${handoffInfo.stopped.reason}`);

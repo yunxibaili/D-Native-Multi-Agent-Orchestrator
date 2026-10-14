@@ -150,3 +150,7 @@ B2.1a已在最后workspace.prepare之后、取得preRunTask之后、resolveSessi
 ## B4.6a 同进程检查点边界
 
 检查点是显式CLI用户输入与纯值报告：在实际RunResult落入to_verify后、原有下一验收/派工前读取冻结的同Attempt snapshot，无store/runtime/可调用权威。continue不写Task状态，stop只结束本轮后续执行（包括接力），不撤销既有succeeded/文件，也不承诺取消仍活着的外部进程或持久化恢复。TTY输入用Node标准readline并有60秒界限，默认入口不读stdin；非法/EOF/error/timeout按stop处理。等待发生在下一派工前，不插入session→runtime冻结区；原fixed、阶段绑定、费用声明最终检查、stop-unconfirmed资源保护持续适用。新范围仍走原确认，不新增manager/状态权威。
+
+## B5.1 现有接力链的停止与来源
+
+不新增恢复manager/registry/调度权威。CLI workflow在已执行session_failure处交回canonical continuation；所有相关reassign入口先读同次原子Attempt/RunResult停止事实。false/absent停止确认不得迁移、发第二run或释放保护。具体pair逐字段比较，计数/重复限制不因换模型重置；来源model来自packet关联Attempt，新执行沿原Assignment/Scheduler/fresh session。恢复成功只to_verify，原完成/Review门不放宽。此处约束请求身份，不认证provider内部实际模型或外部副作用可重放。

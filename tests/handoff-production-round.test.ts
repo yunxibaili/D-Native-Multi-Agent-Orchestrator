@@ -31,7 +31,8 @@
  * So: production orchestration path = REAL. Laya provider = TEST SEAM.
  */
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -69,6 +70,35 @@ function check(name: string, cond: boolean, detail = ''): void {
   else { failed++; failures.push(name); process.stdout.write(`  FAIL ${name}${detail ? ` :: ${detail}` : ''}\n`); }
 }
 function section(t: string): void { process.stdout.write(`\n== ${t} ==\n`); }
+
+/**
+ * B5.1 (test-only wiring): owned temp-directory cleanup failures.
+ *
+ * The previous `cleanup()` swallowed every error with an empty catch, so a leaked owned
+ * directory could never fail the suite. Each failure is recorded here and folded into the
+ * process exit at the end, so a real leak is a red test rather than a silent one. This is
+ * deliberately a MODULE-LOCAL ledger, not a change to the harness's cleanup contract.
+ */
+const cleanupFailures: string[] = [];
+
+/**
+ * B5.1 (test-only wiring): remove ONE round-owned temp directory and record any failure in
+ * the module's SINGLE cleanup ledger.
+ *
+ * Shared by the success path (`Round.cleanup`) and the harness's exception path, so a
+ * `runRoundCli` throw cannot leak this round's directory without a trace: the harness
+ * removes it before rethrowing rather than returning `undefined` to a caller that never
+ * gets to call `cleanup()`.
+ */
+function removeOwnedDir(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch (e) {
+    cleanupFailures.push(`rmSync failed for ${dir}: ${(e as Error).message}`);
+    return;
+  }
+  if (existsSync(dir)) cleanupFailures.push(`owned temp dir was not removed: ${dir}`);
+}
 
 const AGENT_A = 'agent-a';
 const AGENT_B = 'agent-b';
@@ -187,6 +217,14 @@ interface Round {
   readonly reviewRequests: RunRequest[];
   readonly runtime: RuntimeOrchestrator;
   readonly dir: string;
+  /**
+   * B5.1 (test-only wiring): the REAL `runRoundCli` exit code, no longer discarded.
+   *
+   * It was `void code` before, so a new assertion could not distinguish a non-zero
+   * (unfinished/refused) round from a clean one. Returning it lets the new cases assert
+   * the round's own exit rather than re-deriving completeness from the report.
+   */
+  readonly code: number;
   readonly cleanup: () => void;
 }
 
@@ -446,7 +484,13 @@ async function productionRound(opts: {
     // really learns about them. `seedRegistry` skips a modelHint it already has.
     ...(opts.extraModels ?? []).map((modelId) => probeFor(AGENT_A, 'available', modelId)),
   ];
-  code = await runRoundCli(drivable as never, argv, { provider, probes, ...(opts.onWorkbenchSnapshot === undefined ? {} : { onWorkbenchSnapshot: opts.onWorkbenchSnapshot }) });
+  code = await runRoundCli(drivable as never, argv, { provider, probes, roundResultDir: join(dir, 'owned-reports'), ...(opts.onWorkbenchSnapshot === undefined ? {} : { onWorkbenchSnapshot: opts.onWorkbenchSnapshot }) });
+  } catch (e) {
+    // B5.1 (test-only wiring): a throwing round must not leak THIS round's owned directory.
+    // It is removed through the SAME single cleanup ledger the success path uses, then the
+    // error is rethrown so the failure stays visible rather than becoming a missing owner.
+    removeOwnedDir(dir);
+    throw e;
   } finally {
     process.stdout.write = before;
   }
@@ -456,8 +500,10 @@ async function productionRound(opts: {
   if (jsonStart !== -1) {
     try { report = JSON.parse(captured.slice(jsonStart)); } catch { report = {}; }
   }
-  void code;
-  return { report, requests, reviewRequests, runtime, dir, cleanup: () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* windows */ } } };
+  return {
+    report, requests, reviewRequests, runtime, dir, code,
+    cleanup: () => removeOwnedDir(dir),
+  };
 }
 
 const unavailableRun = (agentId: string): RunResult => ({
@@ -482,6 +528,41 @@ const okRun = (agentId: string, output = 'done'): RunResult => ({
   output, outputTruncated: false, transcriptPath: null, usage: null, toolCalls: [],
   diagnostics: [], cleanup: { rootKilled: false, descendantsReaped: false, note: '' },
   error: null,
+} as unknown as RunResult);
+
+/**
+ * B5.1: a REAL-shaped TRANSPORT_ERROR run, with the process-tree stop fact made explicit.
+ *
+ * `treeStopConfirmed` is set on the cleanup report only when a boolean is supplied, so the
+ * "absent" case is expressible too. Nothing here fakes a quota provider or a completion
+ * status — it is the existing `RuntimeRunner` seam dictating one run result.
+ */
+const transportRun = (opts: {
+  agentId: string;
+  treeStopConfirmed?: boolean;
+  output?: string;
+  toolCalls?: RunResult['toolCalls'];
+  transcriptPath?: string | null;
+}): RunResult => {
+  const cleanup: Record<string, unknown> = {
+    rootKilled: false, descendantsReaped: true, note: 'controlled transport stop', processStart: 'started',
+  };
+  if (opts.treeStopConfirmed !== undefined) cleanup.treeStopConfirmed = opts.treeStopConfirmed;
+  return {
+    taskId: 'rt', threadId: null, agentId: opts.agentId, state: 'failed',
+    startedAt: Date.now(), endedAt: Date.now() + 1, exitCode: 1, signal: null,
+    output: opts.output ?? '', outputTruncated: false, transcriptPath: opts.transcriptPath ?? null,
+    usage: null, toolCalls: opts.toolCalls ?? [], diagnostics: [],
+    cleanup, error: { code: 'TRANSPORT_ERROR', message: 'controlled session disconnect' },
+  } as unknown as RunResult;
+};
+
+const timeoutRun = (agentId: string): RunResult => ({
+  taskId: 'rt', threadId: null, agentId, state: 'timed_out',
+  startedAt: Date.now(), endedAt: Date.now() + 1, exitCode: null, signal: null,
+  output: '', outputTruncated: false, transcriptPath: null, usage: null, toolCalls: [],
+  diagnostics: [], cleanup: { rootKilled: false, descendantsReaped: true, note: '', treeStopConfirmed: true },
+  error: { code: 'TIMED_OUT', message: 'slow' },
 } as unknown as RunResult);
 
 // ===========================================================================
@@ -2786,9 +2867,545 @@ const showScopes = (t: TickScopeTrace): string => t.scopes
   } finally { r.cleanup(); }
 }
 
+// ===========================================================================
+// B5.1 — known session_failure: stop safety and Agent x Model handoff
+// ===========================================================================
+
+// --- A. confirmed stop -> same-agent MODEL handoff, real file preserved -------
+section('B5.1-A. confirmed-stop session_failure -> same-agent model handoff');
+{
+  const owned: { file: string | null } = { file: null };
+  let secondSawBytes: string | null = null;
+  const r = await productionRound({
+    objective: 'B5.1 confirmed-stop model handoff',
+    extraModels: [`${AGENT_A}/m2`],
+    initialPair: { agentId: AGENT_A, modelId: `${AGENT_A}/m1` },
+    script: [
+      { action: 'continue' },
+      { action: 'reassign', agentId: AGENT_A, modelId: `${AGENT_A}/m2`, reason: 'm1 transport died; continue on the registered m2' },
+    ],
+    outcomeFor: (req, n) => {
+      if (n === 1) {
+        // The FIRST agent "runs": write an owned real file and record the write tool fact.
+        const file = join(req.cwd, 'm1-partial.txt');
+        writeFileSync(file, 'M1-PARTIAL-BYTES');
+        owned.file = file;
+        return transportRun({
+          agentId: req.agentId,
+          treeStopConfirmed: true,
+          output: 'partial: wrote m1-partial.txt\nunresolved: finish the remaining step',
+          toolCalls: [{ name: 'write', input: { filePath: file } }],
+        });
+      }
+      // The SECOND agent CHECKS the existing bytes rather than overwriting them.
+      if (owned.file !== null) secondSawBytes = readFileSync(owned.file, 'utf8');
+      return okRun(req.agentId, 'm2 checked existing bytes and continued');
+    },
+  });
+  try {
+    const handoff = r.report.handoff as {
+      happened: number;
+      handoffs: Array<{ taskId: string; fromAgentId: string | null; toAgentId: string | null; fromModelId?: string | null; toModelId?: string | null; reason: string }>;
+      stopped: { code: string };
+    };
+    check('B5.1-A: exactly one handoff happened', handoff.handoffs.length === 1,
+      `stopped=${handoff.stopped.code} handoffs=${JSON.stringify(handoff.handoffs)}`);
+    if (handoff.handoffs.length === 1) {
+      const hd = handoff.handoffs[0]!;
+      check('B5.1-A: SAME agent', hd.fromAgentId === AGENT_A && hd.toAgentId === AGENT_A, `${hd.fromAgentId}->${hd.toAgentId}`);
+      check('B5.1-A: the two REQUESTED models are visible (m1 -> m2)',
+        hd.fromModelId === `${AGENT_A}/m1` && hd.toModelId === `${AGENT_A}/m2`,
+        JSON.stringify({ from: hd.fromModelId, to: hd.toModelId }));
+      check('B5.1-A: the reason is session_failure', hd.reason === 'session_failure', hd.reason);
+    }
+    check('B5.1-A: TWO runtimes were requested (m1, m2)', r.requests.length === 2,
+      `models=${r.requests.map((q) => q.model).join(',')}`);
+    check('B5.1-A: the second request names m2', r.requests[1]?.model === `${AGENT_A}/m2`, String(r.requests[1]?.model));
+    check('B5.1-A: the second request is a FRESH session (no thread resume)',
+      r.requests[1]?.threadId === undefined, String(r.requests[1]?.threadId));
+    const p2 = r.requests[1]?.prompt ?? '';
+    check('B5.1-A: the continuation context carries the m1 file from evidence',
+      owned.file !== null && p2.includes(owned.file), p2.slice(0, 300));
+    check('B5.1-A: the continuation context states the stop IS confirmed',
+      p2.includes('STOP FACT') && p2.includes('IS confirmed'), 'missing stop fact');
+    check('B5.1-A: the continuation context warns against blind replay',
+      p2.includes('blindly replay'), 'missing anti-replay guidance');
+    check('B5.1-A: the second run saw the PRESERVED bytes (not a blind overwrite)',
+      secondSawBytes === 'M1-PARTIAL-BYTES', String(secondSawBytes));
+
+    const attempts = ((r.report.roundResult as {
+      machine?: { attempts?: Array<{ taskId: string; kind: string; agentId: string; modelId: string | null; sessionId: string | null; changedFiles: string[] }> };
+    })?.machine?.attempts ?? []);
+    const execs = attempts.filter((a) => a.kind === 'execution');
+    const byTask = new Map<string, typeof execs>();
+    for (const a of execs) byTask.set(a.taskId, [...(byTask.get(a.taskId) ?? []), a]);
+    const continued = [...byTask.values()].filter((l) => l.length >= 2);
+    check('B5.1-A: ONE task carries TWO execution attempts', continued.length === 1,
+      JSON.stringify(execs.map((a) => `${a.agentId}/${a.modelId}`)));
+    if (continued.length === 1) {
+      const first = continued[0]![0]!;
+      const second = continued[0]![1]!;
+      check('B5.1-A: attempt 1 is m1 and attempt 2 is m2 on the SAME task',
+        first.taskId === second.taskId && first.modelId === `${AGENT_A}/m1` && second.modelId === `${AGENT_A}/m2`,
+        `${first.modelId} -> ${second.modelId}`);
+      check('B5.1-A: the two attempts have DIFFERENT sessions',
+        first.sessionId !== second.sessionId && second.sessionId !== null,
+        `${String(first.sessionId)} vs ${String(second.sessionId)}`);
+      check('B5.1-A: attempt 1 records the file it wrote',
+        owned.file !== null && first.changedFiles.includes(owned.file), JSON.stringify(first.changedFiles));
+    }
+    check('B5.1-A: the pair chain is reported', r.report.handoffWorkerChain !== undefined);
+    check('B5.1-A: the round exited 0 (cleared the stop, then succeeded)',
+      r.code === 0, `code=${r.code}`);
+  } finally { r.cleanup(); }
+}
+
+// --- B. same agent m1->m2->m3 is a real series; the count bound is absolute ---
+section('B5.1-B. same-agent m1->m2->m3 is a real series; the count bound is absolute');
+{
+  const r = await productionRound({
+    objective: 'B5.1 pair chain and count bound',
+    extraModels: [`${AGENT_A}/m2`, `${AGENT_A}/m3`],
+    initialPair: { agentId: AGENT_A, modelId: `${AGENT_A}/m1` },
+    extraArgs: ['--handoff-max', '3'],
+    script: [
+      { action: 'continue' },
+      { action: 'reassign', agentId: AGENT_A, modelId: `${AGENT_A}/m2`, reason: 'm1 died' },
+      { action: 'reassign', agentId: AGENT_A, modelId: `${AGENT_A}/m3`, reason: 'm2 died' },
+      // No explicit reason: returning to the already-used m1 pair must be refused.
+      { action: 'reassign', agentId: AGENT_A, modelId: `${AGENT_A}/m1` },
+    ],
+    outcomeFor: (req) => transportRun({ agentId: req.agentId, treeStopConfirmed: true, output: 'partial' }),
+  });
+  try {
+    const handoff = r.report.handoff as {
+      happened: number; limit: number;
+      handoffs: Array<{ toAgentId: string | null; toModelId?: string | null }>;
+      stopped: { code: string };
+    };
+    check('B5.1-B: TWO different-model handoffs happened', handoff.handoffs.length === 2, JSON.stringify(handoff.handoffs));
+    check('B5.1-B: the chain requested m1 -> m2 -> m3 (3 runtimes)', r.requests.length === 3,
+      r.requests.map((q) => q.model).join(','));
+    check('B5.1-B: returning to the used m1 PAIR is refused (loop-refused)',
+      handoff.stopped.code === 'loop-refused', handoff.stopped.code);
+    check('B5.1-B: no m1 was re-requested after the refusal',
+      r.requests.filter((q) => q.model === `${AGENT_A}/m1`).length === 1,
+      r.requests.map((q) => q.model).join(','));
+  } finally { r.cleanup(); }
+
+  // And with the DEFAULT bound, a third switch (with a reason) still cannot exceed it.
+  const r2 = await productionRound({
+    objective: 'B5.1 count bound cannot be exceeded by a reason',
+    extraModels: [`${AGENT_A}/m2`, `${AGENT_A}/m3`],
+    initialPair: { agentId: AGENT_A, modelId: `${AGENT_A}/m1` },
+    script: [
+      { action: 'continue' },
+      { action: 'reassign', agentId: AGENT_A, modelId: `${AGENT_A}/m2`, reason: 'm1 died' },
+      { action: 'reassign', agentId: AGENT_A, modelId: `${AGENT_A}/m3`, reason: 'm2 died, m3 is the last option' },
+    ],
+    outcomeFor: (req) => transportRun({ agentId: req.agentId, treeStopConfirmed: true, output: 'partial' }),
+  });
+  try {
+    const handoff = r2.report.handoff as { happened: number; limit: number; stopped: { code: string } };
+    check('B5.1-B: the count bound caps the chain at 2 by default',
+      handoff.happened === 2 && handoff.limit === 2, `happened=${handoff.happened} limit=${handoff.limit}`);
+    check('B5.1-B: the chain stopped on budget-exhausted', handoff.stopped.code === 'budget-exhausted', handoff.stopped.code);
+    check('B5.1-B: exactly 3 runtimes even with a reason on the third attempt',
+      r2.requests.length === 3, r2.requests.map((q) => q.model).join(','));
+  } finally { r2.cleanup(); }
+}
+
+// --- C. an UNCONFIRMED stop must not hand off, migrate or start a second run ---
+section('B5.1-C. unconfirmed stop: no handoff, no identity change, no second runtime');
+for (const variant of [
+  { label: 'false', treeStopConfirmed: false as boolean | undefined },
+  { label: 'absent', treeStopConfirmed: undefined as boolean | undefined },
+]) {
+  const r = await productionRound({
+    objective: `B5.1 unconfirmed stop (${variant.label})`,
+    extraModels: [`${AGENT_A}/m2`],
+    initialPair: { agentId: AGENT_A, modelId: `${AGENT_A}/m1` },
+    script: [
+      { action: 'continue' },
+      { action: 'reassign', agentId: AGENT_A, modelId: `${AGENT_A}/m2`, reason: 'must never be reached' },
+    ],
+    outcomeFor: (req) => transportRun({
+      agentId: req.agentId,
+      ...(variant.treeStopConfirmed === undefined ? {} : { treeStopConfirmed: variant.treeStopConfirmed }),
+      output: 'partial',
+    }),
+  });
+  try {
+    const handoff = r.report.handoff as { happened: number; handoffs: unknown[]; stopped: { code: string } };
+    check(`B5.1-C(${variant.label}): exactly ONE runtime ran`, r.requests.length === 1, String(r.requests.length));
+    check(`B5.1-C(${variant.label}): NO handoff was offered`,
+      handoff.happened === 0 && handoff.handoffs.length === 0, JSON.stringify(handoff));
+    check(`B5.1-C(${variant.label}): stopped as stop-unconfirmed`,
+      handoff.stopped.code === 'stop-unconfirmed', handoff.stopped.code);
+    check(`B5.1-C(${variant.label}): the round is unfinished`,
+      r.report.executionIncomplete === true && r.report.ok === false, JSON.stringify({ incomplete: r.report.executionIncomplete, ok: r.report.ok }));
+    check(`B5.1-C(${variant.label}): the round exit is non-zero`, r.code !== 0, String(r.code));
+    const review = r.report.unifiedReview as { status: string; reason: string | null };
+    check(`B5.1-C(${variant.label}): the review is withheld`, review.status === 'execution_incomplete', review.status);
+    check(`B5.1-C(${variant.label}): the reason names the unconfirmed process-tree stop`,
+      String(review.reason).includes('process-tree stop'), String(review.reason));
+    const tasks = r.report.tasks as Array<{ taskId: string; agentId: string; modelId: string | null }>;
+    check(`B5.1-C(${variant.label}): the task kept its original pair (no migration)`,
+      tasks.some((t) => t.agentId === AGENT_A && t.modelId === `${AGENT_A}/m1`), JSON.stringify(tasks));
+    const ev = r.report.evidence as Array<{ attempts: number }>;
+    check(`B5.1-C(${variant.label}): only ONE attempt was recorded`,
+      ev.reduce((n, e) => n + e.attempts, 0) === 1, JSON.stringify(ev));
+    check(`B5.1-C(${variant.label}): m2 was NEVER requested`,
+      !r.requests.some((q) => q.model === `${AGENT_A}/m2`), r.requests.map((q) => q.model).join(','));
+  } finally { r.cleanup(); }
+}
+
+// --- C2. a live owned writer keeps beating; the round refuses a second runtime ---
+section('B5.1-C2. a live owned writer is still alive and no second run starts (controlled injection)');
+{
+  // CONTROLLED FAULT INJECTION, not a claim that a Windows Job escaped. A single
+  // round-owned child process heartbeats a file in the round's own directory; the first
+  // run reports an UNCONFIRMED stop. The claim under test is only that (a) the writer is
+  // still alive, (b) the round refused to start a second runtime, and (c) the child is
+  // cleaned up ONLY through this round's own handle (never by PID/name scan, never by
+  // deleting a foreign directory).
+  let child: ChildProcess | null = null;
+  let beatsDuringFirstRun: number | null = null;
+  let secondRuntimeWhileAlive = false;
+  const beatFileOf = (cwd: string): string => join(cwd, 'b51-heartbeat.txt');
+  const readBeat = (file: string): number | null => {
+    try { return Number(readFileSync(file, 'utf8')); } catch { return null; }
+  };
+  const r = await productionRound({
+    objective: 'B5.1 live writer heartbeat',
+    extraModels: [`${AGENT_A}/m2`],
+    initialPair: { agentId: AGENT_A, modelId: `${AGENT_A}/m1` },
+    script: [{ action: 'continue' }, { action: 'reassign', agentId: AGENT_A, modelId: `${AGENT_A}/m2`, reason: 'must never be reached' }],
+    outcomeFor: (req, n) => {
+      if (n === 1) {
+        const beatFile = beatFileOf(req.cwd);
+        child = spawn(process.execPath, ['-e',
+          `const fs=require('fs');const f=${JSON.stringify(beatFile)};let i=0;` +
+          `setInterval(()=>{try{fs.writeFileSync(f,String(++i));}catch{}},20);`,
+        ], { stdio: 'ignore', windowsHide: true });
+        // Bounded synchronous wait for the first beat ONLY; the child is a separate OS process.
+        const until = Date.now() + 3_000;
+        while (Date.now() < until && readBeat(beatFile) === null) { /* spin */ }
+        beatsDuringFirstRun = readBeat(beatFile);
+      } else if (child !== null && child.exitCode === null) {
+        secondRuntimeWhileAlive = true;
+      }
+      return transportRun({ agentId: req.agentId, treeStopConfirmed: false, output: 'partial' });
+    },
+  });
+  try {
+    check('B5.1-C2: the owned writer produced a heartbeat during the first run',
+      beatsDuringFirstRun !== null && beatsDuringFirstRun >= 1, String(beatsDuringFirstRun));
+    check('B5.1-C2: only ONE runtime ran', r.requests.length === 1, String(r.requests.length));
+    check('B5.1-C2: NO second runtime started while the writer was alive',
+      secondRuntimeWhileAlive === false && (r.report.handoff as { happened: number }).happened === 0,
+      JSON.stringify({ secondRuntimeWhileAlive, handoff: r.report.handoff }));
+    check('B5.1-C2: the writer is STILL alive after the round (the round did not kill it)',
+      child !== null && (child as ChildProcess).exitCode === null, `exitCode=${String((child as ChildProcess | null)?.exitCode)}`);
+    check('B5.1-C2: the round stopped as stop-unconfirmed',
+      (r.report.handoff as { stopped: { code: string } }).stopped.code === 'stop-unconfirmed',
+      JSON.stringify((r.report.handoff as { stopped: { code: string } }).stopped));
+  } finally {
+    // Only THIS round's child handle is signalled; no PID/name scan, no foreign removal.
+    const c = child as ChildProcess | null;
+    if (c !== null && c.exitCode === null) {
+      const exited = new Promise<void>((resolve) => { c.once('exit', () => resolve()); });
+      try { c.kill(); } catch { /* already gone */ }
+      await Promise.race([exited, new Promise<void>((resolve) => setTimeout(resolve, 3_000))]);
+    }
+    r.cleanup();
+  }
+}
+
+// --- D. fixed lock / --no-handoff / timeout ---------------------------------
+section('B5.1-D. fixed lock, --no-handoff and a timeout are NOT auto-switched');
+{
+  const fixed = await productionRound({
+    objective: 'B5.1 fixed lock resists an automatic switch',
+    extraModels: [`${AGENT_A}/m2`],
+    extraArgs: ['--select', 'fixed', '--agent', AGENT_A, '--model', `${AGENT_A}/m1`],
+    script: [{ action: 'continue' }, { action: 'reassign', agentId: AGENT_A, modelId: `${AGENT_A}/m2`, reason: 'try to switch a fixed pair' }],
+    outcomeFor: (req) => transportRun({ agentId: req.agentId, treeStopConfirmed: true, output: 'partial' }),
+  });
+  try {
+    const handoff = fixed.report.handoff as { happened: number; stopped: { code: string } };
+    check('B5.1-D: a fixed pair is NOT auto-switched', handoff.happened === 0, JSON.stringify(handoff));
+    check('B5.1-D: the reassign was refused', handoff.stopped.code === 'decision-refused', handoff.stopped.code);
+    check('B5.1-D: one runtime only', fixed.requests.length === 1, String(fixed.requests.length));
+  } finally { fixed.cleanup(); }
+
+  const noHandoff = await productionRound({
+    objective: 'B5.1 --no-handoff is single attempt',
+    extraModels: [`${AGENT_A}/m2`],
+    initialPair: { agentId: AGENT_A, modelId: `${AGENT_A}/m1` },
+    extraArgs: ['--no-handoff'],
+    script: [{ action: 'continue' }, { action: 'reassign', agentId: AGENT_A, modelId: `${AGENT_A}/m2`, reason: 'ignored' }],
+    outcomeFor: (req) => transportRun({ agentId: req.agentId, treeStopConfirmed: true, output: 'partial' }),
+  });
+  try {
+    check('B5.1-D: --no-handoff keeps exactly one attempt', noHandoff.requests.length === 1, String(noHandoff.requests.length));
+    const handoff = noHandoff.report.handoff as { enabled: boolean; happened: number };
+    check('B5.1-D: handoff is reported disabled', handoff.enabled === false && handoff.happened === 0, JSON.stringify(handoff));
+  } finally { noHandoff.cleanup(); }
+
+  const timed = await productionRound({
+    objective: 'B5.1 timeout does not hand off',
+    script: [{ action: 'continue' }, { action: 'reassign', agentId: AGENT_B, modelId: `${AGENT_B}/m1`, reason: 'must not happen' }],
+    outcomeFor: (req) => timeoutRun(req.agentId),
+  });
+  try {
+    check('B5.1-D: a timeout is NOT a new handoff trigger',
+      (timed.report.handoff as { happened: number }).happened === 0, JSON.stringify(timed.report.handoff));
+    check('B5.1-D: no second runtime on a timeout', timed.requests.length === 1, String(timed.requests.length));
+  } finally { timed.cleanup(); }
+}
+
+// --- E. a workflow gap is reported as a WORKFLOW gap, not fan-out(0) ---------
+section('B5.1-E. an incomplete workflow is named a workflow, not a fan-out of zero');
+{
+  const r = await productionRound({
+    objective: 'B5.1 workflow incomplete review reason',
+    extraArgs: ['--workflow', 'sequential', '--workflow-choice', 'full', '--max-children', '5'],
+    script: [{ action: 'continue' }],
+    outcomeFor: (req) => okRun(req.agentId, 'step output'),
+  });
+  try {
+    const review = r.report.unifiedReview as { status: string; reason: string | null };
+    check('B5.1-E: the review is withheld as execution_incomplete', review.status === 'execution_incomplete', review.status);
+    check('B5.1-E: the reason names the WORKFLOW gap',
+      String(review.reason).includes('workflow is incomplete'), String(review.reason));
+    check('B5.1-E: it is NOT misreported as a zero-member fan-out',
+      !String(review.reason).includes('fan-out'), String(review.reason));
+  } finally { r.cleanup(); }
+}
+
+// ===========================================================================
+// B5.1 rework — the REAL `--workflow sequential` path over `runRoundCli`.
+//
+// The gaps the previous slice's green tests did not reach: a session_failure inside a
+// sequential workflow used to let Laya's GENERIC `reassign` migrate the Task before the
+// ONE canonical continuation driver ever saw it. That is replaced here by a handover: the
+// workflow loop yields at the boundary and the driver performs any allowed handoff from
+// the atomic Attempt/RunResult fact. Nothing here fabricates a run — the runtime outcome
+// is the existing `RuntimeRunner` seam.
+// ===========================================================================
+
+// --- WF-A. confirmed stop -> the ONE driver, source authenticated (m1 -> m2) ----------
+section('B5.1-WF-A. workflow sequential: a confirmed session_failure hands over to the ONE driver (m1 -> m2)');
+{
+  const r = await productionRound({
+    objective: 'B5.1 workflow confirmed-stop handoff',
+    extraModels: [`${AGENT_A}/m2`],
+    extraArgs: ['--workflow', 'sequential', '--workflow-choice', 'full', '--max-children', '5'],
+    initialPair: { agentId: AGENT_A, modelId: `${AGENT_A}/m1` },
+    script: [
+      { action: 'continue' },
+      { action: 'reassign', agentId: AGENT_A, modelId: `${AGENT_A}/m2`, reason: 'm1 transport died; continue on the registered m2' },
+    ],
+    outcomeFor: (req, n) => (n === 1
+      ? transportRun({ agentId: req.agentId, treeStopConfirmed: true, output: 'partial' })
+      : okRun(req.agentId, 'm2 continued')),
+  });
+  try {
+    const handoff = r.report.handoff as {
+      happened: number;
+      handoffs: Array<{ taskId: string; fromAgentId: string | null; toAgentId: string | null; fromModelId: string | null; toModelId: string | null; previousAttemptId: string | null }>;
+      stopped: { code: string };
+    };
+    const wf = (r.report.workflow ?? {}) as { stop?: string };
+    check('B5.1-WF-A: the workflow loop yielded at the session-failure boundary',
+      wf.stop === 'handoff-boundary', String(wf.stop));
+    check('B5.1-WF-A: exactly one handoff happened', handoff.handoffs.length === 1,
+      `stopped=${handoff.stopped.code} handoffs=${handoff.handoffs.length}`);
+    check('B5.1-WF-A: exactly TWO runtimes were requested (m1 then m2)', r.requests.length === 2,
+      r.requests.map((q) => q.model).join(','));
+    check('B5.1-WF-A: the SECOND RunRequest names m2', r.requests[1]?.model === `${AGENT_A}/m2`,
+      String(r.requests[1]?.model));
+    check('B5.1-WF-A: no pre-migrated m3 was ever requested', !r.requests.some((q) => q.model === `${AGENT_A}/m3`),
+      r.requests.map((q) => q.model).join(','));
+    const execs = ((r.report.roundResult as {
+      machine?: { attempts?: Array<{ taskId: string; kind: string; attemptId: string; modelId: string | null; sessionId: string | null }> };
+    })?.machine?.attempts ?? []).filter((a) => a.kind === 'execution');
+    const w1 = execs.filter((a) => a.taskId.endsWith('-w1'));
+    if (handoff.handoffs.length === 1) {
+      const hd = handoff.handoffs[0]!;
+      check('B5.1-WF-A: SAME agent', hd.fromAgentId === AGENT_A && hd.toAgentId === AGENT_A,
+        `${hd.fromAgentId}->${hd.toAgentId}`);
+      check('B5.1-WF-A: fromModel is m1 (authenticated from the previous attempt, not the changed Task)',
+        hd.fromModelId === `${AGENT_A}/m1`, String(hd.fromModelId));
+      check('B5.1-WF-A: toModel is m2', hd.toModelId === `${AGENT_A}/m2`, String(hd.toModelId));
+      check('B5.1-WF-A: previousAttemptId resolves to the m1 attempt',
+        typeof hd.previousAttemptId === 'string' &&
+        w1.some((a) => a.attemptId === hd.previousAttemptId && a.modelId === `${AGENT_A}/m1`),
+        `previous=${String(hd.previousAttemptId)} execs=${JSON.stringify(w1.map((a) => `${a.modelId}:${a.attemptId}`))}`);
+    }
+    check('B5.1-WF-A: the SAME member task carries TWO attempts (m1 then m2)',
+      w1.length === 2 && w1[0]!.modelId === `${AGENT_A}/m1` && w1[1]!.modelId === `${AGENT_A}/m2`,
+      JSON.stringify(w1.map((a) => a.modelId)));
+    check('B5.1-WF-A: the two attempts have DIFFERENT sessions',
+      w1.length === 2 && w1[0]!.sessionId !== w1[1]!.sessionId && w1[1]!.sessionId !== null,
+      `${String(w1[0]?.sessionId)} vs ${String(w1[1]?.sessionId)}`);
+    const w1Task = (r.report.tasks as Array<{ taskId: string; status: string }>).find((t) => t.taskId.endsWith('-w1'));
+    check('B5.1-WF-A: the recovered task reached to_verify', w1Task?.status === 'to_verify', String(w1Task?.status));
+    check('B5.1-WF-A: the whole workflow is honestly unfinished (nonzero, incomplete)',
+      r.code !== 0 && r.report.ok === false && r.report.executionIncomplete === true,
+      `code=${r.code} ok=${String(r.report.ok)} incomplete=${String(r.report.executionIncomplete)}`);
+    const review = r.report.unifiedReview as { status: string };
+    check('B5.1-WF-A: the review is withheld as execution_incomplete', review.status === 'execution_incomplete', review.status);
+  } finally { r.cleanup(); }
+}
+
+// --- WF-B. unconfirmed stop -> no second writer, no migration (workflow path) ---------
+section('B5.1-WF-B. workflow sequential: an unconfirmed stop starts no second writer and migrates nothing');
+for (const variant of [
+  { label: 'false', treeStopConfirmed: false as boolean | undefined },
+  { label: 'absent', treeStopConfirmed: undefined as boolean | undefined },
+]) {
+  const r = await productionRound({
+    objective: `B5.1 workflow unconfirmed stop (${variant.label})`,
+    extraModels: [`${AGENT_A}/m2`],
+    extraArgs: ['--workflow', 'sequential', '--workflow-choice', 'full', '--max-children', '5'],
+    initialPair: { agentId: AGENT_A, modelId: `${AGENT_A}/m1` },
+    script: [{ action: 'continue' }, { action: 'reassign', agentId: AGENT_A, modelId: `${AGENT_A}/m2`, reason: 'must never be reached' }],
+    outcomeFor: (req) => transportRun({
+      agentId: req.agentId,
+      ...(variant.treeStopConfirmed === undefined ? {} : { treeStopConfirmed: variant.treeStopConfirmed }),
+      output: 'partial',
+    }),
+  });
+  try {
+    const handoff = r.report.handoff as { happened: number; handoffs: unknown[]; stopped: { code: string; reason: string } };
+    const wf = (r.report.workflow ?? {}) as { stop?: string };
+    check(`B5.1-WF-B(${variant.label}): the workflow yielded at the boundary`,
+      wf.stop === 'handoff-boundary', String(wf.stop));
+    check(`B5.1-WF-B(${variant.label}): exactly ONE runtime ran`, r.requests.length === 1,
+      r.requests.map((q) => q.model).join(','));
+    check(`B5.1-WF-B(${variant.label}): m2 was NEVER requested`, !r.requests.some((q) => q.model === `${AGENT_A}/m2`),
+      r.requests.map((q) => q.model).join(','));
+    check(`B5.1-WF-B(${variant.label}): NO handoff was offered`,
+      handoff.happened === 0 && handoff.handoffs.length === 0, JSON.stringify(handoff));
+    check(`B5.1-WF-B(${variant.label}): the round stopped as stop-unconfirmed`,
+      handoff.stopped.code === 'stop-unconfirmed', handoff.stopped.code);
+    check(`B5.1-WF-B(${variant.label}): the task kept its ORIGINAL pair (no migration)`,
+      (r.report.tasks as Array<{ taskId: string; agentId: string; modelId: string | null }>)
+        .some((t) => t.taskId.endsWith('-w1') && t.agentId === AGENT_A && t.modelId === `${AGENT_A}/m1`),
+      JSON.stringify(r.report.tasks));
+    const ev = r.report.evidence as Array<{ taskId: string; attempts: number }>;
+    check(`B5.1-WF-B(${variant.label}): only ONE attempt was recorded`,
+      ev.reduce((n, e) => n + e.attempts, 0) === 1, JSON.stringify(ev));
+    check(`B5.1-WF-B(${variant.label}): the round is unfinished and exits non-zero`,
+      r.report.executionIncomplete === true && r.report.ok === false && r.code !== 0,
+      `incomplete=${String(r.report.executionIncomplete)} ok=${String(r.report.ok)} code=${r.code}`);
+    const review = r.report.unifiedReview as { status: string; reason: string | null };
+    check(`B5.1-WF-B(${variant.label}): the review names the unconfirmed process-tree stop`,
+      review.status === 'execution_incomplete' && String(review.reason).includes('process-tree stop'),
+      `${review.status}: ${String(review.reason)}`);
+  } finally { r.cleanup(); }
+}
+// The no-stage / SOLO path is protected by the SAME driver gate; section B5.1-C above
+// proves it end to end over `runRoundCli`.
+
+// --- WF-C. an OLD fixed-pair constraint still holds at the relay entry ----------------
+section('B5.1-WF-C. workflow sequential: a user-fixed pair is not silently swapped at the relay entry');
+{
+  const r = await productionRound({
+    objective: 'B5.1 workflow fixed-pair relay refusal',
+    extraModels: [`${AGENT_A}/m2`],
+    extraArgs: ['--workflow', 'sequential', '--workflow-choice', 'full', '--max-children', '5', '--select', 'fixed', '--agent', AGENT_A, '--model', `${AGENT_A}/m1`],
+    script: [
+      { action: 'continue' },
+      { action: 'reassign', agentId: AGENT_A, modelId: `${AGENT_A}/m2`, reason: 'try to swap a fixed pair via the relay' },
+    ],
+    outcomeFor: (req) => transportRun({ agentId: req.agentId, treeStopConfirmed: true, output: 'partial' }),
+  });
+  try {
+    const handoff = r.report.handoff as { happened: number; stopped: { code: string } };
+    check('B5.1-WF-C: the fixed pair is NOT auto-switched', handoff.happened === 0, JSON.stringify(handoff));
+    check('B5.1-WF-C: the relay reassign was refused', handoff.stopped.code === 'decision-refused', handoff.stopped.code);
+    check('B5.1-WF-C: ONE runtime only', r.requests.length === 1, r.requests.map((q) => q.model).join(','));
+    check('B5.1-WF-C: the task kept its fixed pair (no migration, no substitution)',
+      (r.report.tasks as Array<{ taskId: string; agentId: string; modelId: string | null }>)
+        .some((t) => t.taskId.endsWith('-w1') && t.agentId === AGENT_A && t.modelId === `${AGENT_A}/m1`),
+      JSON.stringify(r.report.tasks));
+  } finally { r.cleanup(); }
+}
+
+// --- WF-D. the pair chain and the loop guard survive the relay entry -------------------
+section('B5.1-WF-D. workflow sequential: m1 -> m2 -> m3 is a real series and the loop guard still fires');
+{
+  const r = await productionRound({
+    objective: 'B5.1 workflow pair chain',
+    extraModels: [`${AGENT_A}/m2`, `${AGENT_A}/m3`],
+    extraArgs: ['--workflow', 'sequential', '--workflow-choice', 'full', '--max-children', '5', '--handoff-max', '3'],
+    initialPair: { agentId: AGENT_A, modelId: `${AGENT_A}/m1` },
+    script: [
+      { action: 'continue' },
+      { action: 'reassign', agentId: AGENT_A, modelId: `${AGENT_A}/m2`, reason: 'm1 died' },
+      { action: 'reassign', agentId: AGENT_A, modelId: `${AGENT_A}/m3`, reason: 'm2 died' },
+      { action: 'reassign', agentId: AGENT_A, modelId: `${AGENT_A}/m1` },
+    ],
+    outcomeFor: (req) => transportRun({ agentId: req.agentId, treeStopConfirmed: true, output: 'partial' }),
+  });
+  try {
+    const handoff = r.report.handoff as {
+      happened: number; limit: number;
+      handoffs: Array<{ fromModelId: string | null; toModelId: string | null }>;
+      stopped: { code: string };
+    };
+    check('B5.1-WF-D: the chain requested m1 -> m2 -> m3 (3 runtimes)', r.requests.length === 3,
+      r.requests.map((q) => q.model).join(','));
+    check('B5.1-WF-D: two handoffs happened', handoff.handoffs.length === 2, JSON.stringify(handoff.handoffs));
+    check('B5.1-WF-D: the recorded from/to pairs are the REAL attempt pairs',
+      JSON.stringify(handoff.handoffs.map((h) => `${h.fromModelId}->${h.toModelId}`)) ===
+        JSON.stringify([`${AGENT_A}/m1->${AGENT_A}/m2`, `${AGENT_A}/m2->${AGENT_A}/m3`]),
+      JSON.stringify(handoff.handoffs.map((h) => `${h.fromModelId}->${h.toModelId}`)));
+    check('B5.1-WF-D: returning to the used m1 pair is refused', handoff.stopped.code === 'loop-refused', handoff.stopped.code);
+    check('B5.1-WF-D: m1 was requested exactly once', r.requests.filter((q) => q.model === `${AGENT_A}/m1`).length === 1,
+      r.requests.map((q) => q.model).join(','));
+    const wf = (r.report.workflow ?? {}) as { stop?: string };
+    check('B5.1-WF-D: the workflow yielded at the boundary', wf.stop === 'handoff-boundary', String(wf.stop));
+  } finally { r.cleanup(); }
+}
+
+// --- WF-E. the workflow's OWN generic reassign still runs (P1: no TDZ) -----------------
+section('B5.1-WF-E. workflow sequential: a generic (non-boundary) reassign executes without a TDZ');
+{
+  // P1 of this rework: `handoffPolicy` used to be declared AFTER the workflow loop, so the
+  // FIRST workflow `reassign` — reached through `handoffCapabilities.reassign` — read it in
+  // the temporal dead zone and threw a real `ReferenceError`. This drives exactly that
+  // path (a reassign before any boundary), and the round must produce a report rather than
+  // crash. Normal workflow reassign semantics are preserved.
+  const r = await productionRound({
+    objective: 'B5.1 workflow generic reassign',
+    extraModels: [`${AGENT_A}/m2`],
+    extraArgs: ['--workflow', 'sequential', '--workflow-choice', 'full', '--max-children', '5'],
+    initialPair: { agentId: AGENT_A, modelId: `${AGENT_A}/m1` },
+    script: [{ action: 'reassign', agentId: AGENT_A, modelId: `${AGENT_A}/m2`, reason: 'reorganize the workflow before any run' }],
+    outcomeFor: (req) => okRun(req.agentId, 'step output'),
+  });
+  try {
+    check('B5.1-WF-E: the round produced a report (no TDZ ReferenceError crashed it)',
+      r.report.error === undefined, String(r.report.error));
+    check('B5.1-WF-E: the generic workflow reassign was applied (a member moved to m2)',
+      (r.report.tasks as Array<{ modelId: string | null }>).some((t) => t.modelId === `${AGENT_A}/m2`),
+      JSON.stringify(r.report.tasks));
+    check('B5.1-WF-E: no runtime ran, because a reassign does not dispatch',
+      r.requests.length === 0, r.requests.map((q) => q.model).join(','));
+  } finally { r.cleanup(); }
+}
+
 process.stdout.write(`\n${passed} passed, ${failed} failed\n`);
 if (failures.length > 0) {
   process.stdout.write(`failing:\n${failures.map((f) => `  - ${f}`).join('\n')}\n`);
 }
+// B5.1 (test-only wiring): an owned-directory leak is a failure, not a swallowed warning.
+if (cleanupFailures.length > 0) {
+  process.stdout.write(`cleanup failures:\n${cleanupFailures.map((f) => `  - ${f}`).join('\n')}\n`);
+}
 process.stdout.write('\n');
-process.exitCode = failed === 0 ? 0 : 1;
+process.exitCode = failed === 0 && cleanupFailures.length === 0 ? 0 : 1;

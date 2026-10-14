@@ -160,6 +160,28 @@ export interface ContinuationWork {
 }
 
 /**
+ * B5.1: the STOP fact a `session_failure` handoff must clear before it may be offered.
+ *
+ * A transport-level session death says the WORKER stopped answering; it does NOT prove
+ * its process tree is gone. The runtime already records that separate fact on
+ * `RunResult.cleanup.treeStopConfirmed`, and it is the ONLY field that may gate a second
+ * writer. This is carried on the packet as a minimal read-only fact and consumed by the
+ * driver; it is deliberately NOT a new hook, store or authority.
+ *
+ * `confirmed` is `null` when no stop proof is required for this outcome. When a proof IS
+ * required, only a literal `true` clears it: a missing/false/absent fact is treated as
+ * NOT stopped, never inferred from exit code, output, error name or `processStart`.
+ */
+export interface ContinuationStopSafety {
+  /** True when a stop proof must be confirmed before continuing (executed session_failure). */
+  readonly required: boolean;
+  /** `true` only when the tree stop is positively confirmed; `null` when not required. */
+  readonly confirmed: boolean | null;
+  /** Human-readable statement of the fact, for the packet and the report. */
+  readonly detail: string;
+}
+
+/**
  * What Agent B is told about Agent A's attempt.
  *
  * Bounded by construction: `completedWork` is a tail of real `RunResult.output`, and
@@ -219,6 +241,15 @@ export interface ContinuationPacket {
    * smuggle a foreign conversation into a different agent's runtime.
    */
   readonly nativeSessionReference: { readonly agentId: string; readonly threadId: string } | null;
+
+  /**
+   * B5.1: whether the previous run's process tree is CONFIRMED stopped.
+   *
+   * Always present. `required` is true only for an EXECUTED `session_failure`; all other
+   * outcomes continue exactly as before. It is the fact the driver reads to decide
+   * whether it may ask for a reassign at all.
+   */
+  readonly stopSafety: ContinuationStopSafety;
 }
 
 export interface BuildPacketInput {
@@ -243,6 +274,12 @@ export interface BuildPacketInput {
   /** Whether `remainingWork` came from the worker's own words. Labelled, never assumed. */
   readonly remainingWork?: ContinuationWork | null;
   readonly workspace?: { readonly path: string | null; readonly mode: string | null };
+  /**
+   * B5.1: the previous run's OWN cleanup report, from the SAME atomic attempt bundle as
+   * `outcome`/`attempt`. Only `treeStopConfirmed` is read. Absent/null is treated as
+   * "not confirmed", never as "stopped".
+   */
+  readonly cleanup?: { readonly treeStopConfirmed?: boolean | null } | null;
 }
 
 /**
@@ -294,6 +331,23 @@ export function buildContinuationPacket(input: BuildPacketInput): ContinuationPa
       ? { text: handoff.unresolved.join('; '), source: 'worker-claim' }
       : null;
 
+  // B5.1: a stop proof is required ONLY for an outcome that actually EXECUTED and is a
+  // transport-level session failure. A pure admission refusal (quota/agent) never ran, so
+  // it keeps the old flow untouched. `cleanup.treeStopConfirmed === true` is the only way
+  // to clear it; everything else (absent/false/undefined) is "not confirmed".
+  const stopRequired = input.reason === 'session_failure' && input.outcome.executed === true;
+  const stoppedConfirmed = input.cleanup !== null && input.cleanup !== undefined
+    && input.cleanup.treeStopConfirmed === true;
+  const stopSafety: ContinuationStopSafety = {
+    required: stopRequired,
+    confirmed: stopRequired ? stoppedConfirmed : null,
+    detail: !stopRequired
+      ? 'no process-tree stop proof is required for this outcome'
+      : stoppedConfirmed
+        ? 'the previous session failed at the transport level and its process tree stop IS confirmed, so a second writer may start'
+        : 'the previous session failed at the transport level but its process-tree stop is NOT confirmed; a second writer must not start until the old tree is proven stopped',
+  };
+
   return {
     taskId: input.task.taskId,
     taskType: input.task.taskType,
@@ -331,6 +385,8 @@ export function buildContinuationPacket(input: BuildPacketInput): ContinuationPa
       input.nativeThreadId !== '' && input.attempt !== null
         ? { agentId: input.attempt.agentId, threadId: input.nativeThreadId }
         : null,
+
+    stopSafety,
   };
 }
 
@@ -384,10 +440,25 @@ export function renderContinuationPacket(packet: ContinuationPacket, maxChars = 
     lines.push(`  ${tail(packet.remainingWork.text)}  [source: ${packet.remainingWork.source}]`);
   }
   lines.push('');
+  // B5.1: the stop fact travels WITH the handoff context so the next worker knows the
+  // previous process tree was proven stopped (or, when the fact is not required, that the
+  // previous run never entered an execution edge at all).
+  lines.push(`STOP FACT: ${packet.stopSafety.detail}`);
+  lines.push('');
   lines.push(
     packet.nativeSessionReference === null
       ? 'No native session carries over: start a fresh conversation on the new agent.'
       : `A native session for ${packet.nativeSessionReference.agentId} may be resumed if that same agent continues.`,
+  );
+  // B5.1 (requirement D): the next worker is told to CHECK what already exists rather
+  // than blindly redo it. This is guidance, NOT a guarantee that any side effect is
+  // safe to recover: a partial external action may be unrecoverable.
+  lines.push('');
+  lines.push(
+    'This is a continuation, not a fresh task: a previous worker may already have written files or ' +
+    'performed other side effects. Before continuing, CHECK the existing results on disk and in the ' +
+    'evidence above, then continue from there. Do NOT blindly replay side effects the previous worker ' +
+    'may already have performed.',
   );
   return lines.join('\n');
 }
@@ -416,7 +487,16 @@ export type HandoffStopCode =
   | 'no-trigger'
   | 'no-eligible-agent'
   | 'decision-refused'
-  | 'not-attempted';
+  | 'not-attempted'
+  /**
+   * B5.1: an executed `session_failure` whose process-tree stop was NOT confirmed.
+   *
+   * This is a REFUSAL to offer a handoff, not a failed one: the previous worker's tree
+   * may still hold a writer, so starting a second attempt would violate the
+   * "second writer only after the first is proven stopped" contract. The task keeps its
+   * identity and the round is reported unfinished.
+   */
+  | 'stop-unconfirmed';
 
 /**
  * The code a caller's reassign seam returns when the loop guard refuses the target.
@@ -434,6 +514,45 @@ export interface BudgetVerdict {
 }
 
 /**
+ * B5.1: a concrete Agent × Model identity, compared FIELD BY FIELD.
+ *
+ * Deliberately not a concatenated `agent/model` key: distinct pairs can collide after
+ * string joining (`a` + `/b` vs `a/` + `b`), and a collision would let a genuinely
+ * different worker be mistaken for one already used — exactly the "same key, different
+ * fields" false positive this slice must not have. Nothing here authenticates an ACTUAL
+ * model; it is the requested/assigned pair as the authorities state it.
+ */
+export interface WorkerRef {
+  readonly agentId: string;
+  readonly modelId: string | null;
+}
+
+const knownModel = (m: string | null | undefined): m is string => typeof m === 'string' && m !== '';
+
+/**
+ * Same worker, STRICTLY: used to decide whether a reassign actually MOVED the task.
+ *
+ *   - different agent            -> different worker
+ *   - same agent, both models KNOWN and different -> different worker (m1 -> m2)
+ *   - same agent, either model UNKNOWN -> conservatively the SAME worker; a missing
+ *     model is never evidence that the model changed.
+ */
+export function isSameWorker(a: WorkerRef, b: WorkerRef): boolean {
+  if (a.agentId !== b.agentId) return false;
+  if (knownModel(a.modelId) && knownModel(b.modelId)) return a.modelId === b.modelId;
+  return true;
+}
+
+/**
+ * Already-used, LOOSELY: used to guard the loop. Same field comparison as
+ * `isSameWorker`, so an unknown model on either side is treated as the same worker and
+ * cannot be used to sneak back into the chain.
+ */
+export function workerAlreadyUsed(used: readonly WorkerRef[], target: WorkerRef): boolean {
+  return used.some((u) => isSameWorker(u, target));
+}
+
+/**
  * Decide whether one more handoff may happen.
  *
  * Two independent guards, both required:
@@ -447,6 +566,11 @@ export interface BudgetVerdict {
  * stated WHY returning to that agent is right. That is the "unless Laya has an
  * explicit reason" clause — and it still cannot exceed the count bound, because a
  * justification is not a licence to loop forever.
+ *
+ * B5.1: when the caller supplies CONCRETE pairs (`workersUsed` + `target`), the loop
+ * guard compares agentId/modelId FIELD BY FIELD, so the same agent on a DIFFERENT known
+ * model is a new worker and is allowed. Callers that supply only `agentsUsed`/
+ * `targetAgentId` keep the original agent-only, conservative semantics unchanged.
  */
 export function evaluateHandoffBudget(input: {
   readonly policy: HandoffPolicy;
@@ -457,8 +581,13 @@ export function evaluateHandoffBudget(input: {
   readonly targetAgentId?: string | null;
   /** Laya's stated justification, if any. Only it can unlock the loop guard. */
   readonly layaReason?: string | null;
+  /** B5.1: the concrete pairs already used in this chain, oldest first. */
+  readonly workersUsed?: readonly WorkerRef[];
+  /** B5.1: the concrete pair Laya is about to choose, when it is fully known. */
+  readonly target?: WorkerRef | null;
 }): BudgetVerdict {
   const limit = input.policy.maxAutomaticHandoffsPerTask;
+  const justified = input.layaReason !== undefined && input.layaReason !== null && input.layaReason.trim() !== '';
 
   if (!Number.isInteger(limit) || limit < 0) {
     return {
@@ -482,19 +611,36 @@ export function evaluateHandoffBudget(input: {
     };
   }
 
-  const target = input.targetAgentId ?? null;
-  if (target !== null && input.agentsUsed.includes(target)) {
-    const justified = input.layaReason !== undefined && input.layaReason !== null && input.layaReason.trim() !== '';
-    if (!justified) {
-      return {
-        allowed: false,
-        code: 'loop-refused',
-        reason: `"${target}" already ran this task in the current continuation chain ` +
-          `(${input.agentsUsed.join(' -> ')}); returning to it would oscillate, so it is refused ` +
-          'unless the decision brain states an explicit reason',
-        used: input.used,
-        limit,
-      };
+  // Pair guard when concrete data is supplied; agent-only guard otherwise.
+  const targetWorker = input.target ?? null;
+  if (targetWorker !== null && input.workersUsed !== undefined) {
+    if (workerAlreadyUsed(input.workersUsed, targetWorker)) {
+      if (!justified) {
+        return {
+          allowed: false,
+          code: 'loop-refused',
+          reason: `${targetWorker.agentId}/${targetWorker.modelId ?? '(default)'} already ran this task in the ` +
+            'current continuation chain; returning to it would oscillate, so it is refused unless the decision ' +
+            'brain states an explicit reason',
+          used: input.used,
+          limit,
+        };
+      }
+    }
+  } else {
+    const target = input.targetAgentId ?? null;
+    if (target !== null && input.agentsUsed.includes(target)) {
+      if (!justified) {
+        return {
+          allowed: false,
+          code: 'loop-refused',
+          reason: `"${target}" already ran this task in the current continuation chain ` +
+            `(${input.agentsUsed.join(' -> ')}); returning to it would oscillate, so it is refused ` +
+            'unless the decision brain states an explicit reason',
+          used: input.used,
+          limit,
+        };
+      }
     }
   }
 
@@ -569,6 +715,8 @@ export interface ContinuationCycleResult {
   readonly reason: string | null;
   /** The agent Laya named, when it named one. */
   readonly targetAgentId: string | null;
+  /** B5.1: the model Laya named, when it named one. Kept so the report shows the pair. */
+  readonly targetModelId?: string | null;
 }
 
 export interface HandoffRecord {
@@ -576,6 +724,10 @@ export interface HandoffRecord {
   readonly reason: HandoffReason;
   readonly fromAgentId: string | null;
   readonly toAgentId: string | null;
+  /** B5.1: the model the previous worker was on (requested/assigned), additive. */
+  readonly fromModelId: string | null;
+  /** B5.1: the model the task was moved to (requested/assigned), additive. */
+  readonly toModelId: string | null;
   readonly previousAttemptId: string | null;
   readonly packet: ContinuationPacket;
   readonly decisionAction: string | null;
@@ -599,6 +751,15 @@ export interface ContinuationResult {
    * RESULT, rather than re-deriving it from the handoff records.
    */
   readonly agentChain: Readonly<Record<string, readonly string[]>>;
+  /**
+   * B5.1: the concrete Agent × Model pairs each task's chain has used, in order.
+   *
+   * Additive beside `agentChain` (kept for compatibility). The pair chain is the
+   * authoritative source for "was a DIFFERENT worker used?", so a same-agent different
+   * model is visible as a real change; `agentChain` must not be used to authenticate an
+   * actual model or a handoff count.
+   */
+  readonly workerChain: Readonly<Record<string, readonly WorkerRef[]>>;
 }
 
 /**
@@ -633,6 +794,7 @@ export async function runHandoffContinuation(
 
   const handoffs: HandoffRecord[] = [];
   const agentsUsed = new Map<string, string[]>();
+  const workersUsed = new Map<string, WorkerRef[]>();
   let cyclesUsed = 0;
 
   const stop = (code: HandoffStopCode, reason: string): ContinuationResult => ({
@@ -641,6 +803,7 @@ export async function runHandoffContinuation(
     policy,
     cyclesUsed,
     agentChain: Object.fromEntries([...agentsUsed.entries()].map(([k, v]) => [k, [...v]])),
+    workerChain: Object.fromEntries([...workersUsed.entries()].map(([k, v]) => [k, v.map((w) => ({ ...w }))])),
   });
 
   for (let cycle = 0; cycle < maxCycles; cycle++) {
@@ -674,6 +837,21 @@ export async function runHandoffContinuation(
     const packet = deps.buildPacket(target.taskId, target);
     if (packet === null) {
       return stop('no-trigger', `no continuation packet could be built for ${target.taskId}`);
+    }
+
+    // B5.1: the STOP gate. An executed session_failure whose process-tree stop is not
+    // confirmed must NOT even ask Laya to choose another worker: the previous tree may
+    // still hold a writer, and a reassign+dispatch would start a second one. This is
+    // checked BEFORE `runCycle`, so no reassign is requested, no identity is migrated and
+    // no second runtime can start. Nothing here infers a stop from exit code, output,
+    // error name or `processStart`; only `cleanup.treeStopConfirmed === true` clears it.
+    if (packet.stopSafety.required && packet.stopSafety.confirmed !== true) {
+      return stop(
+        'stop-unconfirmed',
+        `task ${target.taskId} ended in a session failure (${packet.handoffCode ?? 'no code'}) but its ` +
+          'process-tree stop is NOT confirmed; the old execution must be proven stopped before any other ' +
+          'worker may continue it, so no handoff was offered and the task keeps its identity',
+      );
     }
 
     cyclesUsed++;
@@ -716,14 +894,39 @@ export async function runHandoffContinuation(
     }
 
     const after = deps.identityOf(target.taskId);
-    const moved = after !== null && before !== null && after.agentId !== before.agentId;
+    // B5.1: a move is judged on the concrete PAIR, field by field. A same-agent change to
+    // a different KNOWN model IS a new worker and must be recorded as a real change (the
+    // old agent-only comparison reported m1 -> m2 as "no change"). An unknown/missing model
+    // stays conservative and is NOT treated as a move.
+    //
+    // `beforeWorker` is the Task identity read BEFORE the reassign; `moved` is a fact about
+    // that identity changing. The handoff SOURCE's MODEL (`fromWorker.modelId`), however, is
+    // authenticated from the PACKET's previous attempt — the model that actually ran — and
+    // NOT reverse-derived from a `before` that may already have been migrated. Otherwise a
+    // stray migration before this driver would make the record claim `fromModel = m2` while
+    // `previousAttemptId` still resolved to m1's attempt (which really ran `m1`).
+    const beforeWorker: WorkerRef = {
+      agentId: before?.agentId ?? packet.previousAgentId ?? 'unknown',
+      modelId: before?.modelId ?? packet.previousModelId ?? null,
+    };
+    const fromWorker: WorkerRef = {
+      agentId: beforeWorker.agentId,
+      modelId: packet.previousModelId ?? beforeWorker.modelId,
+    };
+    const afterWorker: WorkerRef | null = after === null
+      ? null
+      : { agentId: after.agentId, modelId: after.modelId };
+    const moved = afterWorker !== null && before !== null && !isSameWorker(beforeWorker, afterWorker);
     const toAgentId = after?.agentId ?? decision.targetAgentId;
+    const toModelId = after?.modelId ?? decision.targetModelId ?? null;
 
     handoffs.push({
       taskId: target.taskId,
       reason: classification.reason,
-      fromAgentId: before?.agentId ?? packet.previousAgentId,
+      fromAgentId: fromWorker.agentId,
       toAgentId,
+      fromModelId: fromWorker.modelId,
+      toModelId,
       previousAttemptId: packet.previousAttemptId,
       packet,
       decisionAction: decision.action,
@@ -732,24 +935,30 @@ export async function runHandoffContinuation(
       at: deps.now(),
     });
 
-    agentsUsed.set(target.taskId, [...used, before?.agentId ?? 'unknown']);
+    agentsUsed.set(target.taskId, [...used, fromWorker.agentId]);
+    const workersBefore = workersUsed.get(target.taskId) ?? [];
+    workersUsed.set(target.taskId, [...workersBefore, fromWorker]);
 
     if (!moved) {
       return stop(
         'no-eligible-agent',
-        `the reassign was applied but ${target.taskId} still runs on ${after?.agentId ?? 'the same agent'}; ` +
-          'there is no other eligible worker, so the chain ends rather than looping',
+        `the reassign was applied but ${target.taskId} still runs on the same worker ` +
+          `(${toAgentId ?? 'unknown'}/${toModelId ?? 'default'}); there is no other eligible worker, so the ` +
+          'chain ends rather than looping',
       );
     }
 
     // The repeat guard runs AFTER the fact, so a chain that already oscillated is
-    // stopped here rather than being prevented from starting.
-    const chainNow = agentsUsed.get(target.taskId) ?? [];
-    const repeat = chainNow.length >= 2 && chainNow[chainNow.length - 1] === chainNow[chainNow.length - 2];
+    // stopped here rather than being prevented from starting. B5.1: the comparison is on
+    // the concrete pair, so a same-agent loop between two models is not mistaken for a
+    // benign move.
+    const chainNow = workersUsed.get(target.taskId) ?? [];
+    const repeat = chainNow.length >= 2 && isSameWorker(chainNow[chainNow.length - 1]!, chainNow[chainNow.length - 2]!);
     if (repeat) {
       return stop(
         'loop-refused',
-        `the chain ${chainNow.join(' -> ')} began repeating itself, so it is stopped before continuing`,
+        `the worker chain ${chainNow.map((w) => `${w.agentId}/${w.modelId ?? 'default'}`).join(' -> ')} began ` +
+          'repeating itself, so it is stopped before continuing',
       );
     }
 

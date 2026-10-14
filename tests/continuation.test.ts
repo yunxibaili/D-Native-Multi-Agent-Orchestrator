@@ -53,11 +53,19 @@ import {
   buildContinuationPacket,
   classifyHandoffReason,
   evaluateHandoffBudget,
+  isSameWorker,
   renderContinuationPacket,
   runHandoffContinuation,
+  workerAlreadyUsed,
   type ContinuationDeps,
+  type WorkerRef,
 } from '../src/orchestration/continuation.ts';
 import { AVAILABILITY_ERROR_CODES, translateRunResult } from '../src/orchestration/translate.ts';
+import {
+  USER_MODEL_POOL_POLICY,
+  type UserModelPool,
+  type UserModelPoolEntry,
+} from '../src/orchestration/model-pool.ts';
 import type { DecisionProvider } from '../src/decision/types.ts';
 import { sourceText } from './helpers.ts';
 
@@ -109,6 +117,13 @@ const registryWith = (agents: readonly string[]): ModelRegistry => {
   }
   return reg;
 };
+
+/** B2.1 pool seams reused here: a live, no-additional-charge user declaration. */
+const poolEntry = (agentId: string, modelId: string): UserModelPoolEntry => ({
+  agentId, modelId, billing: 'free', source: 'r2-3 relay test declaration',
+  observedAt: 0, expiresAt: Number.MAX_SAFE_INTEGER,
+});
+const poolOf = (...entries: UserModelPoolEntry[]): UserModelPool => ({ policy: USER_MODEL_POOL_POLICY, models: entries });
 
 const runResult = (over: Partial<RunResult> & { state: RunResult['state'] }): RunResult => ({
   agentId: A, startedAt: NOW, endedAt: NOW + 10, exitCode: 0, signal: null,
@@ -195,6 +210,8 @@ function harness(opts: {
   script?: (req: RunRequest) => RunResult;
   agents?: readonly string[];
   allowAvailabilityContinuation?: boolean;
+  /** B2.1: the SAME frozen user-declared pool the Workbench enforces at reassign time. */
+  modelPool?: UserModelPool;
 } = {}): Harness {
   const dir = mkdtempSync(join(tmpdir(), 'cont-'));
   const runs: RunRequest[] = [];
@@ -234,6 +251,7 @@ function harness(opts: {
   const wb = new NativeWorkbench({
     orchestrator: orch, scheduler: sched, registry: registryWith(agents),
     quotaRecords: agents.map((a) => quotaRecord(a)), cwd: dir, now: () => NOW,
+    ...(opts.modelPool !== undefined ? { modelPool: opts.modelPool } : {}),
   });
   return {
     wb, sched, orch, dir, runs,
@@ -450,6 +468,206 @@ section('R2-3 4. budget and loop protection');
     policy: { maxAutomaticHandoffsPerTask: 1 }, used: 1, agentsUsed: [A], targetAgentId: A, layaReason: 'because',
   });
   check('...but a stated reason still cannot exceed the count bound', stillBounded.allowed === false);
+}
+
+// ---------------------------------------------------------------------------
+// 4b. B5.1 — concrete worker pairs and the stop-safety gate
+// ---------------------------------------------------------------------------
+section('R2-3 4b. B5.1 concrete pairs, collision-safe, and the stop gate');
+
+{
+  const p = DEFAULT_HANDOFF_POLICY;
+  const m1: WorkerRef = { agentId: A, modelId: `${A}/m1` };
+  const m2: WorkerRef = { agentId: A, modelId: `${A}/m2` };
+  const m3: WorkerRef = { agentId: A, modelId: `${A}/m3` };
+
+  check('B5.1: same agent, different KNOWN models is a DIFFERENT worker', isSameWorker(m1, m2) === false);
+  check('B5.1: same agent, same model is the SAME worker', isSameWorker(m1, { agentId: A, modelId: `${A}/m1` }) === true);
+  check('B5.1: a different agent is a DIFFERENT worker', isSameWorker(m1, { agentId: B, modelId: `${B}/m1` }) === false);
+  check('B5.1: an UNKNOWN model is conservatively the SAME worker', isSameWorker(m1, { agentId: A, modelId: null }) === true);
+  check('workerAlreadyUsed matches field by field', workerAlreadyUsed([m1], m2) === false && workerAlreadyUsed([m1], m1) === true);
+
+  check('B5.1: the pair guard ALLOWS a new model on the same agent',
+    evaluateHandoffBudget({ policy: p, used: 1, agentsUsed: [A], workersUsed: [m1], target: m2, targetAgentId: A }).allowed === true);
+  const backToM1 = evaluateHandoffBudget({ policy: p, used: 1, agentsUsed: [A], workersUsed: [m1], target: m1, targetAgentId: A });
+  check('B5.1: the pair guard REFUSES returning to a used pair',
+    backToM1.allowed === false && backToM1.code === 'loop-refused', JSON.stringify(backToM1));
+  check('B5.1: ...unless Laya states an explicit reason',
+    evaluateHandoffBudget({ policy: p, used: 1, agentsUsed: [A], workersUsed: [m1], target: m1, targetAgentId: A, layaReason: 'A recovered' }).allowed === true);
+  const capped = evaluateHandoffBudget({
+    policy: { maxAutomaticHandoffsPerTask: 1 }, used: 1, agentsUsed: [A], workersUsed: [m2], target: m3, targetAgentId: A, layaReason: 'because',
+  });
+  check('B5.1: ...but a reason cannot exceed the count bound', capped.allowed === false && capped.code === 'budget-exhausted');
+
+  // A concatenated key would collide these two; field-by-field comparison must not.
+  check('B5.1: the pair guard does NOT collide two different tuples that concatenate equally',
+    evaluateHandoffBudget({
+      policy: p, used: 1, agentsUsed: ['a'],
+      workersUsed: [{ agentId: 'a', modelId: 'b/c' }],
+      target: { agentId: 'a/b', modelId: 'c' }, targetAgentId: 'a/b',
+    }).allowed === true);
+
+  // Legacy: no pair supplied keeps the original agent-only, conservative semantics.
+  const legacy = evaluateHandoffBudget({ policy: p, used: 1, agentsUsed: [A], targetAgentId: A });
+  check('B5.1: without pairs the guard keeps agent-only semantics', legacy.allowed === false && legacy.code === 'loop-refused');
+}
+
+// ---------------------------------------------------------------------------
+// 4c. B5.1 — an executed session_failure needs a CONFIRMED stop before handoff
+// ---------------------------------------------------------------------------
+section('R2-3 4c. B5.1 stop-safety gate');
+
+{
+  const h = harness();
+  try {
+    const taskId = seedTask(h, A);
+    const task = h.wb.store.get(taskId)!;
+    const stopRun = runResult({ state: 'failed', agentId: A, output: 'partial work', error: { code: 'TRANSPORT_ERROR', message: 'session disconnected' } });
+    const outcome = classifyExecutionOutcome({ taskId, taskStatus: 'retrying', agentId: A, modelId: `${A}/m1`, run: stopRun });
+    check('B5.1: a TRANSPORT_ERROR run classifies as session_failure', outcome.outcome === 'session_failure', outcome.outcome);
+
+    const withClean = (treeStopConfirmed: boolean | undefined) => ({
+      rootKilled: false, descendantsReaped: true, note: '',
+      ...(treeStopConfirmed === undefined ? {} : { treeStopConfirmed }),
+    });
+    const base = { task, reason: 'session_failure' as const, outcome, evidence: null, attempt: { attemptId: 'att_x', agentId: A, modelId: `${A}/m1` } };
+    const unconfirmed = buildContinuationPacket({ ...base, cleanup: withClean(undefined) });
+    const confirmed = buildContinuationPacket({ ...base, cleanup: withClean(true) });
+    check('B5.1: an executed session_failure REQUIRES a stop proof', unconfirmed.stopSafety.required === true);
+    check('B5.1: an ABSENT treeStopConfirmed is NOT confirmed', unconfirmed.stopSafety.confirmed !== true);
+    check('B5.1: treeStopConfirmed=true IS confirmed', confirmed.stopSafety.confirmed === true);
+
+    const nonSession = buildContinuationPacket({
+      task, reason: 'agent_unavailable', evidence: null, attempt: null, cleanup: null,
+      outcome: classifyExecutionOutcome({ taskId, taskStatus: 'retrying', agentId: A, run: runResult({ state: 'failed', agentId: A, error: { code: 'SPAWN_FAILED', message: 'no start' } }) }),
+    });
+    check('B5.1: a non-session_failure outcome needs NO stop proof',
+      nonSession.stopSafety.required === false && nonSession.stopSafety.confirmed === null);
+
+    check('B5.1: the packet text carries the STOP FACT', renderContinuationPacket(unconfirmed).includes('STOP FACT'));
+    check('B5.1: the packet warns against blind replay', renderContinuationPacket(confirmed).includes('blindly replay'));
+
+    // Driver: unconfirmed -> stop-unconfirmed, Laya never consulted, no handoff.
+    let cycles = 0;
+    const unconfirmedDeps: ContinuationDeps = {
+      async readOutcomes() { return [outcome]; },
+      buildPacket() { return unconfirmed; },
+      identityOf() { return { agentId: A, modelId: `${A}/m1` }; },
+      async runCycle() { cycles++; return { action: 'reassign', applied: true, dispatched: false, code: null, reason: 'x', targetAgentId: A, targetModelId: `${A}/m2` }; },
+      now: () => NOW,
+    };
+    const u = await runHandoffContinuation(unconfirmedDeps);
+    check('B5.1: the driver STOPS as stop-unconfirmed', u.stopped.code === 'stop-unconfirmed', u.stopped.code);
+    check('B5.1: the driver never consulted Laya', cycles === 0, String(cycles));
+    check('B5.1: no handoff was recorded', u.handoffs.length === 0);
+
+    // Driver: confirmed -> the same-agent model move IS recorded (pair change).
+    let model = `${A}/m1`;
+    const confirmedDeps: ContinuationDeps = {
+      async readOutcomes() { return [outcome]; },
+      buildPacket() { return confirmed; },
+      identityOf: () => ({ agentId: A, modelId: model }),
+      async runCycle() { cycles++; model = `${A}/m2`; return { action: 'reassign', applied: true, dispatched: false, code: null, reason: 'moved', targetAgentId: A, targetModelId: `${A}/m2` }; },
+      now: () => NOW,
+    };
+    const c = await runHandoffContinuation(confirmedDeps, { policy: { maxAutomaticHandoffsPerTask: 1 } });
+    check('B5.1: with a confirmed stop the same-agent model move is recorded', c.handoffs.length === 1, JSON.stringify(c.handoffs.map((x) => `${x.fromModelId}->${x.toModelId}`)));
+    check('B5.1: the record carries the from/to pair',
+      c.handoffs[0]?.fromModelId === `${A}/m1` && c.handoffs[0]?.toModelId === `${A}/m2`,
+      JSON.stringify(c.handoffs[0] && { from: c.handoffs[0].fromModelId, to: c.handoffs[0].toModelId }));
+    check('B5.1: the worker chain records the pair',
+      (c.workerChain[taskId] ?? [])[0]?.modelId === `${A}/m1`, JSON.stringify(c.workerChain));
+  } finally { h.cleanup(); }
+}
+
+// ---------------------------------------------------------------------------
+// 4d. B5.1 — the handoff SOURCE model is authenticated from the previous attempt
+// ---------------------------------------------------------------------------
+section('R2-3 4d. B5.1 fromModel is authenticated from the packet, not a changed Task');
+
+{
+  // A pre-migrated Task is exactly the shape the workflow path used to produce: the packet
+  // still describes attempt 1 (which really ran m1), while the Task binding already reads
+  // m2. The record must authenticate the SOURCE model from the ATTEMPT, never reverse-
+  // derive it from the changed Task.
+  const h = harness();
+  try {
+    const taskId = seedTask(h, A);
+    const task = h.wb.store.get(taskId)!;
+    const stopRun = runResult({ state: 'failed', agentId: A, output: 'partial', error: { code: 'TRANSPORT_ERROR', message: 'session disconnected' } });
+    const outcome = classifyExecutionOutcome({ taskId, taskStatus: 'retrying', agentId: A, modelId: `${A}/m1`, run: stopRun });
+    const packet = buildContinuationPacket({
+      task, reason: 'session_failure', outcome, evidence: null,
+      attempt: { attemptId: 'att_0001', agentId: A, modelId: `${A}/m1` },
+      cleanup: { treeStopConfirmed: true },
+    });
+    check('B5.1: the packet names the real previous model (m1)', packet.previousModelId === `${A}/m1`, String(packet.previousModelId));
+
+    const deps: ContinuationDeps = {
+      async readOutcomes() { return [outcome]; },
+      buildPacket() { return packet; },
+      // The Task already MIGRATED to m2; the driver must not trust it as the source.
+      identityOf() { return { agentId: A, modelId: `${A}/m2` }; },
+      async runCycle() { return { action: 'reassign', applied: true, dispatched: false, code: null, reason: 'moved', targetAgentId: A, targetModelId: `${A}/m3` }; },
+      now: () => NOW,
+    };
+    const res = await runHandoffContinuation(deps, { policy: { maxAutomaticHandoffsPerTask: 1 } });
+    check('B5.1: the from model is the PREVIOUS ATTEMPT (m1), not the changed Task (m2)',
+      res.handoffs[0]?.fromModelId === `${A}/m1`,
+      JSON.stringify(res.handoffs[0] && { from: res.handoffs[0].fromModelId, to: res.handoffs[0].toModelId }));
+    check('B5.1: previousAttemptId still resolves to the m1 attempt',
+      res.handoffs[0]?.previousAttemptId === 'att_0001', String(res.handoffs[0]?.previousAttemptId));
+  } finally { h.cleanup(); }
+}
+
+// ---------------------------------------------------------------------------
+// 4e. B5.1 — an OLD user model-pool constraint still holds at the relay entry
+// ---------------------------------------------------------------------------
+section('R2-3 4e. B5.1 a relay reassign to a pair OUTSIDE the user pool is refused');
+
+{
+  // The user declared ONLY agent-a/model-1. Agent B's pair is genuinely REGISTERED, so a
+  // naive relay would happily "continue" the task on it. The pre-existing B2.1 constraint
+  // must refuse that at the relay entry — no migration, no silent substitution, no run.
+  const h = harness({ modelPool: poolOf(poolEntry(A, `${A}/m1`)) });
+  try {
+    const taskId = seedTask(h, A);
+    const task = h.wb.store.get(taskId)!;
+    check('B5.1: the task starts on the DECLARED pair', task.agentId === A && task.modelId === `${A}/m1`,
+      `${task.agentId}/${task.modelId}`);
+
+    const outcome = classifyExecutionOutcome({
+      taskId, taskStatus: 'planned', agentId: A, modelId: `${A}/m1`,
+      refusalCode: 'quota-exhausted', refusalReason: 'the only declared agent is out of quota',
+    });
+    check('B5.1: the outcome is a handoff trigger', classifyHandoffReason(outcome).handoff === true);
+
+    const packet = buildContinuationPacket({
+      task, reason: 'quota_exhausted', outcome, evidence: null, attempt: null,
+    });
+    const deps: ContinuationDeps = {
+      async readOutcomes() { return [outcome]; },
+      buildPacket() { return packet; },
+      identityOf() { return { agentId: A, modelId: `${A}/m1` }; },
+      async runCycle() {
+        // The REAL relay seam: the Workbench's reassign, which owns the pool constraint.
+        const swap = h.wb.reassignTask(taskId, B, `${B}/m1`, 'continue on another agent');
+        return {
+          action: 'reassign', applied: swap.ok, dispatched: false,
+          code: swap.ok ? null : swap.code, reason: swap.reason,
+          targetAgentId: B, targetModelId: `${B}/m1`,
+        };
+      },
+      now: () => NOW,
+    };
+    const res = await runHandoffContinuation(deps);
+    check('B5.1: the relay reassign to an out-of-pool pair is REFUSED',
+      res.handoffs.length === 0 && res.stopped.code === 'decision-refused', JSON.stringify(res.stopped));
+    const after = h.wb.store.get(taskId)!;
+    check('B5.1: the task did NOT migrate (no silent substitution)',
+      after.agentId === A && after.modelId === `${A}/m1`, `${after.agentId}/${after.modelId}`);
+    check('B5.1: no runtime ran on the refused relay', h.runs.length === 0, String(h.runs.length));
+  } finally { h.cleanup(); }
 }
 
 // ---------------------------------------------------------------------------
