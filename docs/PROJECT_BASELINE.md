@@ -38,7 +38,8 @@ README 是导航。用户明确指令优先；发现源码、证据与基线不�
 | B3.1 | 独立 PASS：用户声明候选→LAYA任务级原生Skill请求→有来源的工具观察；仅受控最小范围 |
 | B3.2 | 独立 PASS：仅OpenCode用户声明Server/Tool候选→advisory请求→名称匹配事件观察；非真实MCP调用认证 |
 | B3 overall | 整体未封板；真实工具调用、强制限制与Skill加载尚未验收 |
-| B2.1 | 独立 BLOCKED：用户模型池/费用声明接线和155条测试通过，但工作区准备后缺最终过期检查；1个P1未关闭 |
+| B2.1 / B2.1a | 独立 PASS：用户声明池的候选/分配/最终同步启动准入受控闭环；两个历史P1已关闭 |
+| B2 overall | NOT SEALED；账户资格/硬金额预算/付费与全流程费用未验收 |
 | B4.6+ / B2 后续 / B3 后续 / B5 | PLANNED；本轮未授权启动实现 |
 | PARALLEL_WRITE | CLOSED |
 | 本产品前端 | 本机独立进度页已授权且禁止入 Git；正式工作台 UI 需求仍待确认 |
@@ -224,7 +225,7 @@ fold进同一executionIncomplete事实，统一控制report.ok/退出码、revie
 Git创建期保护和worktree缺失门保留，非Git/sequential/正常no-review原语义保持。
 
 仅证受控CLI/Git/文件与失败传播链路，不证明产品真实Agent兼容性、费用/Skill/MCP/自动接力。
-B1/B4整体仍未封板，PARALLEL_WRITE=CLOSED；B3.1原生Skill有界切片现已独立通过，B3.2原生MCP选择与观察有界切片亦已独立通过；B2.1有界模型池/费用声明切片已独立审核，因最终启动检查P1未关闭而BLOCKED；下一片B2.1a只收口该单点，不等同付费预算或真实免费资格验收。
+B1/B4整体仍未封板，PARALLEL_WRITE=CLOSED；B3.1原生Skill有界切片现已独立通过，B3.2原生MCP选择与观察有界切片亦已独立通过；B2.1/B2.1a有界用户声明池与最终同步启动准入已独立PASS；下一候选B4.6检查点监督待单独下发，不等同付费预算或真实免费资格验收。
 
 ### 5.7 B3.1 任务级原生 Skill 最小闭环
 
@@ -261,12 +262,12 @@ orchestrator round "review the API" --cwd . --workflow sequential --mcp-catalog 
 ```
 默认无标志保持旧路径；未连接/安装MCP，未读取或改写Agent配置/凭据，未新增SDK/网关/执行器。此advisory请求不会裁剪原生工具定义，也不构成调用或费用授权；真实MCP与Skill加载/Token收益留后续opt-in验收。
 
-### 5.9 B2.1 用户模型池与费用声明（实施已有，独立 BLOCKED）
+### 5.9 B2.1 / B2.1a 用户模型池与费用声明（受控最小闭环独立 PASS）
 
 显式 `--model-pool <file>` 只配合sequential/collaborate，不支持legacy/classify-only；无标志不启用新费用限制。只声明允许的具体Agent×Model，不注册新模型或修改availability/quota。保留旧静态池作兼容，历史名字带free/一次cost0不作为当前免费资格。
 文件最多32KiB/32项，空池deny-all；格式为 `policy="no-additional-charge"` 与 `models` 数组，每项仅有agentId/modelId/billing/source/observedAt/expiresAt。billing可声明free/included/paid/unknown；source与期限随声明保留，paid/unknown/未来观察/过期/错Agent/未列pair拒绝。free/included仍只是用户声明，不认证账户额度、价格或免费资格，不承诺全流程零费用。Agent内部辅助模型、LAYA/审核及付费工具没有被本片完整约束；USD硬预算与付费授权未实现。
 同一纯值谓词用于初始候选、Assignment、reassign和既有Spawn Gate，fixed不替换且不构成支出授权；单候选按规则绑定，不向真实provider发单选问题。原始复合键碰撞可误放行不同pair的P1已修为逐项精确比较，registry身份定义未全局改写。
-**当前未关闭P1**：gate在异步workspace.prepare之前检查；若声明在prepare期间到期，prepare结束后冻结的执行仍可进入runtime。Codex受控时间/工作区准备probe独立复现runtime=1、启动时间晚于expiresAt。本片不具备“最终启动时仍有效”的完整契约，不推荐将其当严格费用或有效期保护。下一片B2.1a在已有最终同步freeze前复用同一准入规则，不新建费用平台。
+**最终启动检查P1已在B2.1a独立关闭**：最后workspace.prepare await之后，取得实际preRunTask，再复用既有buildSpawnGateInput检查当前pair、费用声明有效期及原有条件；发生在session/thread解析和queued/running/lease/onStart/runtime状态提交之前。无新await或第二权威；拒绝携带真正denying gate，任务/issued lease不假运行，既有finally释放已取的pre-start claim。有效声明正常启动；无池旧入口不启用额外检查。该有效期是最终准入时的声明判断，不认证真实账户资格/实际费用，不做运行中到期杀停。
 报告中的eligibility是报告时对声明的判断，不是实际费用或过去启动时有效性的认证。默认入口仍不保证免费；新增无池provenance诊断行也意味着不能宣称所有输出字节完全不变。
 
 ## 6. 不可绕过的契约
@@ -299,6 +300,18 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 不新增 provider 网关、群聊平台、第二个调度器或通用工作流引擎来掩盖协议缺口。
 
 ## 8. 最近独立证据与上传记录
+
+2026-10-14 B2.1a：**Codex独立 PASS（用户声明池最终启动准入的受控最小范围）**。B2.1两个历史P1已关闭，B2 overall未封板。
+- 本地确定性单点修复，沿用前轮已核验的ModelPool/Assignment/Spawn Gate/Workspace/最终freeze，不重复安装或引入第三方系统。本轮只改orchestration/orchestrator.ts与既有b14测试；生产增38行含注释，无新模块/依赖/manager/authority，未改runtime/adapters/native/费用配置。
+- 实际opencode-agent implement首轮完成，无返工。原生session `ses_ec7240877ffeYX9AaojoDK8odN` 的44条assistant元数据全部opencode-go/deepseek-v4.1-flash，finish=stop、wrapper exit0；Codex模型不变。
+- Codex独立typecheck、选择 **179/0**、Workbench **419/0**、execution-lifecycle **136/0**、阶段 **47/0**、协作 **96/0**、Git协作 **104/0**、resource-claim **192/0**、isolation守卫5 opt-in/0违规、diff check全部exit0。原120个check调用点/条件完整保留（对应原155条运行覆盖）；AST生产runtime.run边仍1，位置orchestration/orchestrator.ts:1403，新增authority0。
+- 四个新增路径经真实Workbench→Assignment→Scheduler/executeTask、真实共享WorkspaceManager/claim book、受控Runtime：prepare期间到期拒绝且runtime/onStart/Attempt=0、status不动/lease issued/claim0；声明一直有效正常1次执行；无池旧入口正常；prepare期间actual pair迁至已注册未列pair时拒绝，不冒充旧session归属。migration只为测试控制race，不授权生产绕过WB约束。
+- 原Codex阻塞probe独立重跑（保留旧失败记录，新记录单列）：runtime从1变0、skipped=模型不可用且missing user-pool-expired。探针为真实executeTask+受控prepare/time/runtime，不代表实际Git耗时或真实Agent收费。
+- 两组内存负控：跳过最终检查→168/11，跳过实际claim释放→176/3，均exit1；分别证明到期/actual pair的阻断和真实claim释放断言承重，工作树代码/测试原始哈希不变。未为演示制造bug或强行返工。
+- 无full suite、产品真实模型/账户/费用查询；free/included仍是用户声明，paid/unknown仍拒绝，默认无池不承诺免费。PARALLEL_WRITE=CLOSED，B1/B4/B3/B2整体不封板，正式前端未启动。
+- 后端规划估算固定100分母：发现/用户模型池信用8→9，费用声明准入信用1→2，合计63/100，展示约65%完成/35%剩余（区间30–50%）；增量来自已交付的约束闭环，不来自测试数量。真实资格/硬预算/共享额度/内部辅助费用仍不足。
+- 本轮审后上传独立codex/b21a-final-admission-review-pass分支；远端hash核验后才报告成功。main/共享index/dirty tree保持，project-progress全部excluded。下一候选B4.6先调查已有检查点/用户纠偏入口，未自动授权。
+
 
 2026-10-14 B2.1：**Codex独立 BLOCKED，1个最终启动检查P1未关闭；测试全绿不等于费用准入完整。**
 - 调查复用仓内ModelPool/modelKey、SelectionSpec、Assignment、Workbench和Spawn Gate。GitHub MCP成功读取[LiteLLM allowed-model admission](https://github.com/BerriAI/litellm/blob/main/litellm/proxy/auth/auth_checks.py)与LICENSE/维护状态；非enterprise代码MIT，Python/Rust网关不符合本地最小接线成本，未复制/安装。只参考白名单+拒绝方法。OpenCode[模型身份](https://opencode.ai/docs/models/)与[small_model官方说明](https://opencode.ai/docs/config/#models)核对后，不把主模型选择当内部所有费用限制。
@@ -783,18 +796,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-14T13:13:23+08:00",
+  "updatedAt": "2026-10-14T13:37:17+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "B2.1",
-    "name": "用户模型池与费用声明准入",
-    "status": "blocked",
-    "summary": "独立BLOCKED：155条测试全绿且配对碰撞已关闭；仍可在工作区准备期间到期后启动，缺最终同步准入检查（1个P1）。"
+    "id": "B2.1a",
+    "name": "最终启动前费用声明检查",
+    "status": "done",
+    "summary": "独立PASS（受控有界）：prepare期间到期或实际pair未列即拒绝，runtime/onStart/Attempt=0，资源声明释放；有效声明正常执行。两个历史P1关闭。"
   },
   "next": {
-    "id": "B2.1a",
-    "name": "最终启动前的费用声明检查单点",
+    "id": "B4.6",
+    "name": "检查点监督与用户纠偏最小闭环",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -802,8 +815,8 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
   "estimate": {
     "method": "按十项能力加权的工程判断；不是测试数、工时或代码统计。不得用任务数直接计算。",
     "remainingRange": [
-      35,
-      55
+      30,
+      50
     ],
     "capabilities": [
       {
@@ -815,8 +828,8 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       {
         "name": "发现、模型池与用户选择",
         "weight": 12,
-        "earned": 8,
-        "basis": "目录、auto/fixed 已有；实际模型、角色默认和动态选择不足"
+        "earned": 9,
+        "basis": "目录、auto/fixed、用户声明允许池与实际pair准入已有；真实目录入调度、实际模型、角色默认和动态选择不足"
       },
       {
         "name": "功能 A/B 与项目计划",
@@ -851,8 +864,8 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       {
         "name": "费用、额度与消耗覆盖",
         "weight": 5,
-        "earned": 1,
-        "basis": "既有 quota/预算底座，全流程费用策略未验收"
+        "earned": 2,
+        "basis": "B2.1/B2.1a显式无新增费用声明、来源/期限与最终启动拒绝受控通过；真实资格/共享额度/USD硬预算/内部费用未验收"
       },
       {
         "name": "中断接力与最小历史",
@@ -869,14 +882,6 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     ]
   },
   "blockers": [
-    {
-      "id": "b21-final-admission",
-      "severity": "P1",
-      "title": "准备工作区后缺最终费用声明检查",
-      "detail": "execution gate通过后prepare期间到期仍可runtime.run；独立受控逻辑probe复现。",
-      "next": "B2.1a：在最终同步freeze前复用既有准入规则与实际pair",
-      "kind": "已复现 / 待关闭"
-    },
     {
       "id": "B43-P3-CLEANUP",
       "severity": "P3",
@@ -924,6 +929,14 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "next": "模型/费用明确后按范围opt-in验收 / B4.7",
       "id": "native-mcp",
       "kind": "部分实现 / 待验证"
+    },
+    {
+      "id": "actual-fee-boundary",
+      "severity": "验收缺口",
+      "title": "费用声明不等于账户真实免费或硬预算",
+      "detail": "显式池的最终准入已受控通过；真实资格/共享余额、付费授权/USD硬预算、LAYA/审核/工具及原生辅助费用仍未完整覆盖。",
+      "next": "真实模型验收前按用户账户/费用/数据授权补证；不建复杂计费平台",
+      "kind": "部分实现 / 未验收"
     }
   ],
   "tasks": [
@@ -1021,9 +1034,16 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     {
       "id": "B2.1",
       "title": "模型池与费用声明准入",
-      "status": "blocked",
+      "status": "done",
       "deliverable": "用户限定pair，未知/付费拒绝，声明有来源和期限",
-      "evidence": "独立155/0与定向全绿；补充prepare期间到期probe复现runtime=1，1个P1未关闭"
+      "evidence": "与B2.1a一起独立179/0；配对碰撞及最终启动检查P1已关闭，仅用户声明准入范围"
+    },
+    {
+      "id": "B2.1a",
+      "title": "最终同步启动检查收口",
+      "deliverable": "prepare后再检查实际pair与声明有效期，拒绝时不启动/不泄漏claim",
+      "status": "done",
+      "evidence": "独立179/0 + 原阻塞probe runtime0 + 两内存负控；原155覆盖保留，首轮无需返工"
     },
     {
       "id": "B4.6",
@@ -1057,8 +1077,8 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
   "checks": [
     {
       "name": "独立结论",
-      "result": "BLOCKED（1个P1）",
-      "source": "测试全绿后补充检查真实executeTask异步窗口"
+      "result": "PASS（受控最小范围）",
+      "source": "B2.1/B2.1a两历史P1关闭；不封板B2 overall"
     },
     {
       "name": "typecheck / diff",
@@ -1066,39 +1086,34 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "source": "Codex本轮独立实跑"
     },
     {
-      "name": "选择/模型池/Assignment/Gate",
-      "result": "155 / 95 / 235 / 50 · 全通过",
-      "source": "旧46个check条件保留；fixture不认证实际免费"
+      "name": "选择 / Workbench / 生命周期",
+      "result": "179 / 419 / 136 · 全通过",
+      "source": "原120个check条件保留，对应原155条运行覆盖"
     },
     {
-      "name": "Workbench / 协作 / Skill-MCP / 阶段",
-      "result": "419 / 96 / 119 / 47 · 全通过",
+      "name": "阶段 / 协作 / Git / 资源",
+      "result": "47 / 96 / 104 / 192 · 全通过",
       "source": "Codex独立实跑"
     },
     {
-      "name": "contract / isolation",
-      "result": "248/0（2 skipped）/ 5 opt-in 0违规",
-      "source": "本轮未真实调用产品Agent"
+      "name": "独立旧阻塞probe",
+      "result": "runtime0 / expiry拒绝",
+      "source": "生产executeTask+受控prepare/时间，旧失败证据未覆盖"
     },
     {
-      "name": "独立内存负控",
-      "result": "153/2、147/8 · 均exit1",
-      "source": "工作树源码/测试哈希未变"
-    },
-    {
-      "name": "工作区准备窗口probe",
-      "result": "启动时间晚于expiry，runtime=1",
-      "source": "生产executeTask+受控prepare/Runtime/时间；非真实收费"
+      "name": "两组内存负控",
+      "result": "168/11、176/3 · 均exit1",
+      "source": "最后准入和实际claim释放承重；源码哈希未变"
     },
     {
       "name": "实际worker / 生产edge",
-      "result": "DeepSeek V4.1 Flash / run=1 authority=0",
-      "source": "session81条assistant元数据finish stop；AST核对"
+      "result": "DeepSeek V4.1 Flash / run1 authority0",
+      "source": "44条assistant元数据finish stop；首轮完成，AST核对"
     },
     {
-      "name": "GitHub审核快照",
-      "result": "已上传 2486869 · BLOCKED",
-      "source": "codex/b21-model-pool-review-blocked；远端hash核验，main/index未改；网页excluded"
+      "name": "真实费用 / 完整suite",
+      "result": "未执行 / 未执行",
+      "source": "用户声明不是账户事实；保持费用和数据边界"
     }
   ],
   "sources": [

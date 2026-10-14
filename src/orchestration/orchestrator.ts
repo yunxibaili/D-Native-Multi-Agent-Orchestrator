@@ -1239,6 +1239,44 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
           gate: decision,
         };
       }
+
+      // ---- B2.1a: final pre-start USER-POOL validity check -------------------
+      // The user-declared no-additional-charge pool was checked at the entry gate,
+      // but that ran BEFORE `workspace.prepare()` was awaited. A declaration can
+      // expire during that await, and the frozen pair would still start. This
+      // re-runs the SAME gate/predicate at the REAL start time (via `Date.now()`),
+      // on the fresh pair this dispatch will actually run, BEFORE the session/thread
+      // decision and every queued/running/lease/onStart/runtime commit. An expiry is
+      // therefore an ordinary pre-start refusal: the task keeps its status, the lease
+      // stays `issued` (never activated), no session or Attempt is fabricated, and the
+      // claim taken above is released by the existing `finally`. Absent pool = the
+      // previous behaviour byte for byte. Only the pool enables this extra call.
+      if (this.gate.userModelPool !== undefined) {
+        const poolDecision = buildSpawnGateInput({
+          taskId: preRunTask.taskId,
+          agentId: preRunTask.agentId,
+          modelId: preRunTask.modelId,
+          requestedUnits: preRunTask.budgetUnits,
+          sources: {
+            ...this.gate,
+            taskType: preRunTask.taskType,
+            currentConcurrency: this.runningChildrenExcluding(preRunTask.taskId),
+            maxConcurrency: this.getConcurrencyLimit(),
+          },
+        });
+        if (!poolDecision.result.allowed) {
+          const missingNote =
+            poolDecision.missing.length > 0 ? ` (missing signals: ${poolDecision.missing.map((m) => m.code).join(', ')})` : '';
+          return {
+            ok: false,
+            code: poolDecision.result.code,
+            reason: `${poolDecision.result.reason}${missingNote}`,
+            status: preRunTask.status,
+            gate: poolDecision,
+          };
+        }
+      }
+
       const dispatchSession = req.resolveSessionForDispatch?.({
         taskId: task.taskId,
         agentId: preRunTask.agentId,

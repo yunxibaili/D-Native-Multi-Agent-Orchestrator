@@ -32,7 +32,9 @@ import { validateRuntimeLaunchPreflight } from '../src/runtime/preflight.ts';
 import { runRoundCli } from '../src/cli/round-cli.ts';
 import { createFakeAdapter } from './helpers.ts';
 import { createDshAdapter } from '../src/adapters/dsh.ts';
-import { resolveSelection, fixedPairOf, type AgentDescriptor, type RunHandle, type RunRequest, type RunResult, type SelectionSpec } from '../src/core/types.ts';
+import { resolveSelection, fixedPairOf, type AgentDescriptor, type RunHandle, type RunRequest, type RunResult, type SelectionSpec, type WorkspaceMode } from '../src/core/types.ts';
+import { WorkspaceManager } from '../src/orchestration/workspace.ts';
+import { normalizeScopeForWorkspace, type ResourceClaimMode, type ResourceScope } from '../src/orchestration/resource-claim.ts';
 import type { QuotaRecord, QuotaStatus } from '../src/quota/types.ts';
 import type { DecisionProvider, DecisionRequest } from '../src/decision/types.ts';
 import { INITIAL_AGENT_MODEL_ID, initialCandidateKey } from '../src/decision/initial-assignment.ts';
@@ -159,8 +161,21 @@ interface Harness {
   requests: RunRequest[];
   dir: string;
   budgets: BudgetManager;
+  /** B2.1a: the workspace manager when the caller supplied one, for claim inspection. */
+  workspace: WorkspaceManager | null;
 }
-function makeHarness(opts: { projectSelection?: SelectionSpec; provider?: DecisionProvider; modelPool?: UserModelPool; quotaStatus?: QuotaStatus; models?: Array<[string, string, string[]]> } = {}): Harness {
+function makeHarness(opts: {
+  projectSelection?: SelectionSpec;
+  provider?: DecisionProvider;
+  modelPool?: UserModelPool;
+  quotaStatus?: QuotaStatus;
+  models?: Array<[string, string, string[]]>;
+  // B2.1a seams: an injected workspace + its mode/claim resolvers, so a regression can
+  // drive the REAL executeTask through a controlled workspace.prepare await window.
+  workspace?: WorkspaceManager;
+  workspaceMode?: (task: Task) => WorkspaceMode | 'none';
+  resourceClaims?: (task: Task) => { mode: ResourceClaimMode; scope: ResourceScope } | null;
+} = {}): Harness {
   const dir = ownDir('b14-');
   const requests: RunRequest[] = [];
   const rt = new RuntimeOrch({
@@ -197,6 +212,9 @@ function makeHarness(opts: { projectSelection?: SelectionSpec; provider?: Decisi
     now: () => NOW,
     runtime,
     defaultCwd: dir,
+    ...(opts.workspace !== undefined ? { workspace: opts.workspace } : {}),
+    ...(opts.workspaceMode !== undefined ? { workspaceMode: opts.workspaceMode } : {}),
+    ...(opts.resourceClaims !== undefined ? { resourceClaims: opts.resourceClaims } : {}),
   });
   const scheduler = new TaskScheduler({ orchestrator: orch, cwd: dir });
   const wb = new NativeWorkbench({
@@ -209,7 +227,7 @@ function makeHarness(opts: { projectSelection?: SelectionSpec; provider?: Decisi
     ...(opts.projectSelection !== undefined ? { projectSelection: opts.projectSelection } : {}),
     ...(opts.modelPool !== undefined ? { modelPool: opts.modelPool } : {}),
   });
-  return { wb, requests, dir, budgets };
+  return { wb, requests, dir, budgets, workspace: opts.workspace ?? null };
 }
 
 async function planAssign(h: Harness, spec: WorkbenchTaskSpec): Promise<{ children: Task[]; assigned: readonly AssignOutcome[]; selections: readonly InitialSelectionOutcome[] }> {
@@ -745,6 +763,160 @@ section('B2.1 dispatch recheck: a declaration that expires after assignment refu
   check('dispatch: the refusal reason names the user-pool expiry rule',
     refusal !== undefined && refusal.reason.includes('user-pool-expired'), String(refusal?.reason));
   check('dispatch: the refusal rides the gate model-unavailable path', refusal?.code === 'model-unavailable', String(refusal?.code));
+}
+
+section('B2.1a final pre-start gate: an expiry DURING workspace.prepare never starts a run');
+
+/**
+ * B2.1a: a REAL shared WorkspaceManager whose `prepare` runs `during` inside its await
+ * window, then yields. Shared mode creates no worktree and runs no git worktree command;
+ * wrapping `prepare` (rather than cloning the harness) is what lets the regression move
+ * the wall clock between the entry gate and the final pre-start gate on the real
+ * executeTask path. The claim book stays the real one.
+ */
+function gatedSharedWorkspace(dir: string, during: (input: { taskId: string }) => void): WorkspaceManager {
+  const wm = new WorkspaceManager({ projectRoot: dir, workspaceLock: false });
+  const realPrepare = wm.prepare.bind(wm);
+  wm.prepare = async (input) => {
+    const handle = await realPrepare(input);
+    during(input);
+    return handle;
+  };
+  return wm;
+}
+
+const writeClaimFor = (dir: string) => (task: Task) => ({
+  mode: 'write' as const,
+  scope: normalizeScopeForWorkspace(`task:${task.taskId}`, dir),
+});
+
+{
+  // (1) Valid at assignment AND at the entry gate; expires while prepare awaits.
+  const realNow = Date.now;
+  const t0 = Date.now();
+  const dir = ownDir('b21a-expire-');
+  const wm = gatedSharedWorkspace(dir, () => { Date.now = () => t0 + 5_000; });
+  try {
+    const h = makeHarness({
+      provider: stubProvider(`${A}\u0000${MA}`),
+      modelPool: livePool(liveEntry(A, MA, { observedAt: t0 - 10_000, expiresAt: t0 + 1_000 })),
+      workspace: wm,
+      workspaceMode: () => 'shared',
+      resourceClaims: writeClaimFor(dir),
+    });
+    const { children, assigned } = await planAssign(h, specFor({ mode: 'fixed', agentId: A, modelId: MA }));
+    check('B2.1a(1): assignment succeeded while the declaration was valid', assigned.every((a) => a.ok), JSON.stringify(assigned));
+    const childId = children[0]!.taskId;
+    h.budgets.task(childId, 100_000);
+    const statusBefore = h.wb.store.get(childId)!.status;
+    const dispatched = await h.wb.dispatch();
+    const refusal = (dispatched.tick?.skipped ?? []).find((s) => s.taskId === childId);
+    check('B2.1a(1): the declaration expired during prepare => ZERO runtime runs', h.requests.length === 0, `requests=${h.requests.length}`);
+    check('B2.1a(1): NO onStart/session was touched', dispatched.sessionsTouched.length === 0, JSON.stringify(dispatched.sessionsTouched));
+    check('B2.1a(1): NO execution Attempt was created', h.wb.evidence.history(childId).length === 0, `attempts=${h.wb.evidence.history(childId).length}`);
+    const after = h.wb.store.get(childId)!;
+    check('B2.1a(1): the task status is unchanged (planned/queued)',
+      after.status === statusBefore && (after.status === 'planned' || after.status === 'queued'), `${statusBefore} -> ${after.status}`);
+    check('B2.1a(1): the lease stayed issued (never activated)', h.wb.store.leaseOf(childId)?.status === 'issued', String(h.wb.store.leaseOf(childId)?.status));
+    check('B2.1a(1): the final gate refused the task', refusal !== undefined, JSON.stringify(dispatched.tick?.skipped ?? []));
+    check('B2.1a(1): the refusal names the user-pool expiry rule', refusal !== undefined && refusal.reason.includes('user-pool-expired'), String(refusal?.reason));
+    check('B2.1a(1): the refusal rides the gate model-unavailable path', refusal?.code === 'model-unavailable', String(refusal?.code));
+    check('B2.1a(1): the pre-start claim was released', wm.resourceClaimCount === 0, `claims=${wm.resourceClaimCount}`);
+  } finally {
+    Date.now = realNow;
+  }
+}
+
+{
+  // (2) A declaration valid THROUGH prepare still runs exactly once; the claim is released.
+  const realNow = Date.now;
+  const t0 = Date.now();
+  const dir = ownDir('b21a-valid-');
+  const wm = gatedSharedWorkspace(dir, () => { Date.now = () => t0 + 5_000; });
+  try {
+    const h = makeHarness({
+      provider: stubProvider(`${A}\u0000${MA}`),
+      modelPool: livePool(liveEntry(A, MA, { observedAt: t0 - 10_000, expiresAt: t0 + 3_600_000 })),
+      workspace: wm,
+      workspaceMode: () => 'shared',
+      resourceClaims: writeClaimFor(dir),
+    });
+    const { children, assigned } = await planAssign(h, specFor({ mode: 'fixed', agentId: A, modelId: MA }));
+    check('B2.1a(2): assignment succeeded while the declaration was valid', assigned.every((a) => a.ok), JSON.stringify(assigned));
+    const childId = children[0]!.taskId;
+    h.budgets.task(childId, 100_000);
+    await h.wb.dispatch();
+    check('B2.1a(2): a still-valid declaration runs exactly once', h.requests.length === 1, `requests=${h.requests.length}`);
+    check('B2.1a(2): the run used the correct assigned pair',
+      h.requests[0]?.agentId === A && h.requests[0]?.model === MA, h.requests.map((r) => `${r.agentId}/${String(r.model)}`).join(','));
+    check('B2.1a(2): the claim was released after the settled success', wm.resourceClaimCount === 0, `claims=${wm.resourceClaimCount}`);
+  } finally {
+    Date.now = realNow;
+  }
+}
+
+{
+  // (3) Absent pool: the old dispatch path is unchanged even when the clock moves.
+  const realNow = Date.now;
+  const t0 = Date.now();
+  const dir = ownDir('b21a-nopool-');
+  const wm = gatedSharedWorkspace(dir, () => { Date.now = () => t0 + 5_000; });
+  try {
+    const h = makeHarness({
+      provider: stubProvider(`${A}\u0000${MA}`),
+      workspace: wm,
+      workspaceMode: () => 'shared',
+      resourceClaims: writeClaimFor(dir),
+    });
+    const { children, assigned } = await planAssign(h, specFor({ mode: 'fixed', agentId: A, modelId: MA }));
+    check('B2.1a(3): no-pool assignment succeeded', assigned.every((a) => a.ok), JSON.stringify(assigned));
+    const childId = children[0]!.taskId;
+    h.budgets.task(childId, 100_000);
+    const dispatched = await h.wb.dispatch();
+    check('B2.1a(3): absent pool => the old dispatch still runs once despite the clock change', h.requests.length === 1, `requests=${h.requests.length}`);
+    check('B2.1a(3): absent pool => no user-pool refusal was produced',
+      (dispatched.tick?.skipped ?? []).every((s) => !s.reason.includes('user-pool')), JSON.stringify(dispatched.tick?.skipped ?? []));
+  } finally {
+    Date.now = realNow;
+  }
+}
+
+{
+  // (4) Controlled race only: the fresh pair changes DURING prepare, via the EXISTING
+  // orchestrator identity API, to a registered-but-unlisted pair. The final gate must
+  // refuse before any run, with no session/Attempt falsely attributed.
+  const realNow = Date.now;
+  const t0 = Date.now();
+  const dir = ownDir('b21a-race-');
+  let h: Harness | null = null;
+  const wm = gatedSharedWorkspace(dir, (input) => {
+    h!.wb.orchestrator.migrateIdentity(input.taskId, { agentId: B, modelId: MB, reason: 'B2.1a controlled race' });
+  });
+  try {
+    h = makeHarness({
+      provider: stubProvider(`${A}\u0000${MA}`),
+      modelPool: livePool(liveEntry(A, MA, { observedAt: t0 - 10_000, expiresAt: t0 + 3_600_000 })),
+      workspace: wm,
+      workspaceMode: () => 'shared',
+      resourceClaims: writeClaimFor(dir),
+    });
+    const { children, assigned } = await planAssign(h, specFor({ mode: 'fixed', agentId: A, modelId: MA }));
+    check('B2.1a(4): assignment succeeded on the declared pair', assigned.every((a) => a.ok), JSON.stringify(assigned));
+    const childId = children[0]!.taskId;
+    h.budgets.task(childId, 100_000);
+    const dispatched = await h.wb.dispatch();
+    const fresh = h.wb.store.get(childId)!;
+    check('B2.1a(4): the fresh pair really did change during prepare', fresh.agentId === B && fresh.modelId === MB, `${fresh.agentId}/${fresh.modelId}`);
+    check('B2.1a(4): the changed, unlisted pair never reached the runtime', h.requests.length === 0, `requests=${h.requests.length}`);
+    check('B2.1a(4): no session was falsely attributed', dispatched.sessionsTouched.length === 0, JSON.stringify(dispatched.sessionsTouched));
+    check('B2.1a(4): no Attempt was created', h.wb.evidence.history(childId).length === 0, `attempts=${h.wb.evidence.history(childId).length}`);
+    const refusal = (dispatched.tick?.skipped ?? []).find((s) => s.taskId === childId);
+    check('B2.1a(4): the final gate refused the unlisted fresh pair',
+      refusal !== undefined && refusal.reason.includes('user-pool-model-not-declared'), String(refusal?.reason));
+    check('B2.1a(4): the pre-start claim was released', wm.resourceClaimCount === 0, `claims=${wm.resourceClaimCount}`);
+  } finally {
+    Date.now = realNow;
+  }
 }
 
 section('B2.1 CLI: refusals cost ZERO calls; a valid sequential round finishes with an honest report');
