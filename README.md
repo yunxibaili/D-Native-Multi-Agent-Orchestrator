@@ -41,7 +41,8 @@ DSH 当前不支持逐请求指定模型或 native session 恢复，不能声称
 listed ≠ connected ≠ callable ≠ free；严格零新增费用尚未端到端验收。
 
 当前 **B4.5/B4.5a独立PASS（受控最小Git顺序协作范围）**：组内单worktree交付、脏文件保护和实际成果审核已通过；
-停止未确认、no-review或scope重叠均阻止误报成功。下一候选B3.1待单独授权，B1/B4整体仍未封板。
+停止未确认、no-review或scope重叠均阻止误报成功。B1/B4整体仍未封板。
+B3.1任务级原生Skill有界闭环独立PASS：显式 `--skill-catalog skills.json` 配合sequential/collaborate，LAYA至多选一个advisory请求或none，报告分开请求/绑定/工具观察。候选不证明已安装，绑定不证明已加载；MCP和真实加载/token收益未认证。下一候选B3.2待单独授权。
 新草案要求的需求确认、阶段批准、监督、交付与恢复已重排；见 [交付计划](docs/BACKEND_DELIVERY_PLAN.md) 和 [下一任务](docs/NEXT_TASK.md)。
 完整后端目标粗估完成约60%、剩约40%（工程估算，不含正式前端）；权重、证据和不确定区间见唯一基线，不能按测试数量计算进度。
 

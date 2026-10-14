@@ -183,6 +183,17 @@ import {
   type StageMaterial,
 } from '../orchestration/stage-material.ts';
 import { decideWorkflowPlan, type WorkflowPlanCandidate } from '../decision/plan-choice.ts';
+// B3.1: the advisory native-skill choice preset + the bounded user-declared catalogue and
+// the ONE honest projection of a native skill-tool observation.
+import { decideSkillChoice, type SkillChoiceCandidate } from '../decision/skill-choice.ts';
+import {
+  SKILL_CATALOG_MAX_BYTES,
+  isSkillCatalogError,
+  parseSkillCatalog,
+  projectSkillReport,
+  type SkillCatalog,
+  type SkillReportEntry,
+} from '../orchestration/skill-catalog.ts';
 import { buildDispatchReceipt } from '../orchestration/dispatch-receipt.ts';
 import { projectDispatchTaskEvidence } from '../orchestration/dispatch-evidence.ts';
 import { buildExecutionSnapshot } from '../orchestration/execution-monitor.ts';
@@ -250,6 +261,15 @@ OPTIONS
                          integrator for a collaboration group). Replaces the built-in
                          plans; plan ids are then the valid --workflow-choice values.
                          Requires --workflow sequential|collaborate.
+  --skill-catalog <file>
+                         opt-in advisory NATIVE SKILL candidates (B3.1). A JSON file
+                         {agentId, skills:[{name, description}]} you declare for ONE agent.
+                         After Assignment, LAYA may pick AT MOST ONE of these per initially
+                         assigned task (or explicitly none); the pick is bound into the
+                         task's advisory brief as a REQUEST only. It never reroutes an
+                         agent/model and is not an enforceable tool authorization, proof the
+                         skill is installed, or a guarantee it loaded. Requires --workflow
+                         sequential|collaborate; absent = byte-identical behaviour to before.
   --stage <file>         opt-in stage gate (B4.3): a JSON file describing the CURRENT
                          stage's material — stageId, scope, requirement, acceptance, and an
                          optional planRef. REQUIRES --workflow sequential|collaborate, because
@@ -335,6 +355,8 @@ interface RoundOptions {
   workflowChoice?: string;
   /** B4.2: a structured plan file whose bounded plans replace the built-in ones. */
   workflowPlan?: string;
+  /** B3.1: opt-in, user-declared skill CANDIDATES for ONE agent (`--skill-catalog`). */
+  skillCatalog?: string;
   /** B4.3: the current stage's material file (opt-in stage gate). */
   stage?: string;
   /** B4.3: the user's confirmation, bound to the stage material's digest. */
@@ -464,6 +486,18 @@ function parse(argv: readonly string[]): RoundOptions | { error: string } {
     if (workflowPlan !== undefined && workflow === undefined) {
       return { error: '--workflow-plan requires --workflow sequential or --workflow collaborate' };
     }
+    // B3.1: the advisory skill catalogue is only meaningful where the initial Assignment
+    // path runs. The legacy shape-based plan and `--classify-only` have no initially
+    // assigned task to choose for, so the combination is a usage error raised HERE, before
+    // any file read, provider call or task write.
+    const skillCatalog = s('skill-catalog');
+    if (flags['skill-catalog'] === true) return { error: '--skill-catalog requires a file path' };
+    if (skillCatalog !== undefined && workflow !== 'sequential' && workflow !== 'collaborate') {
+      return { error: '--skill-catalog requires --workflow sequential or --workflow collaborate' };
+    }
+    if (skillCatalog !== undefined && flags['classify-only'] === true) {
+      return { error: '--skill-catalog cannot be combined with --classify-only' };
+    }
     // B4.1: the answer space is the MODE's own bounded list, so `--workflow-choice duo`
     // with `--workflow sequential` is a usage error rather than a silent fallback.
     const choiceSpace = workflow === 'collaborate'
@@ -505,6 +539,7 @@ function parse(argv: readonly string[]): RoundOptions | { error: string } {
       ...(workflow !== undefined ? { workflow } : {}),
       ...(workflowChoice !== undefined ? { workflowChoice } : {}),
       ...(workflowPlan !== undefined ? { workflowPlan } : {}),
+      ...(skillCatalog !== undefined ? { skillCatalog } : {}),
       ...(stage !== undefined ? { stage } : {}),
       ...(confirm !== undefined ? { confirm } : {}),
       ...(stageCheck ? { stageCheck } : {}),
@@ -677,6 +712,29 @@ function readPlanFileForRound(cwd: string, workflowPlan: string, workflow: strin
   return planFile;
 }
 
+/**
+ * Read + validate the B3.1 skill catalogue. The ONE reader, run ONCE before any external
+ * call or task write; a missing, unreadable, oversized or malformed file is a clear refusal
+ * (never a silent empty catalogue).
+ */
+function readSkillCatalogForRound(cwd: string, file: string): SkillCatalog {
+  const path = resolve(cwd, file);
+  if (!existsSync(path) || !statSync(path).isFile()) {
+    throw new Error(`--skill-catalog "${file}" is not a readable file (resolved to "${path}")`);
+  }
+  const size = statSync(path).size;
+  if (size > SKILL_CATALOG_MAX_BYTES) {
+    throw new Error(`--skill-catalog "${file}" is ${size} bytes, over the ${SKILL_CATALOG_MAX_BYTES} byte limit`);
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (e) {
+    throw new Error(`--skill-catalog "${file}" is not valid JSON: ${(e as Error).message}`);
+  }
+  return parseSkillCatalog(raw);
+}
+
 export async function runRoundCli(
   runtime: RuntimeOrchestrator,
   argv: readonly string[],
@@ -700,6 +758,27 @@ export async function runRoundCli(
   const note = (s: string): void => {
     process.stderr.write(s + '\n');
   };
+
+  /*
+   * B3.1: the OPT-IN skill catalogue is read + validated ONCE here, before the stage gate,
+   * before the provider is configured, before any quota probe, classification or task. A
+   * missing / unreadable / oversized / malformed file is a clear refusal (exit 2) and
+   * creates nothing and calls nothing.
+   */
+  let skillCatalog: SkillCatalog | null = null;
+  if (o.skillCatalog !== undefined) {
+    try {
+      skillCatalog = readSkillCatalogForRound(o.cwd, o.skillCatalog);
+    } catch (e) {
+      const detail = isSkillCatalogError(e) ? `[${e.code}] ${e.detail}` : (e as Error).message;
+      if (o.json) w(JSON.stringify({ ok: false, stage: 'skill-catalog', error: detail }, null, 2));
+      else {
+        note(`skill catalog refused: ${detail}`);
+        note('nothing was created or run.');
+      }
+      return 2;
+    }
+  }
 
   /*
    * B4.3/B4.3a: the OPT-IN stage gate. It is purely LOCAL — files plus a flag — and it runs
@@ -1591,6 +1670,132 @@ export async function runRoundCli(
   // The first real state: every child now has an identity, a session and a workspace.
   observe(Date.now());
 
+  /*
+   * B3.1: the ADVISORY skill choice. It runs AFTER the authoritative initial Assignment
+   * (so the real Agent x Model is known and is reported/validated) and BEFORE the first
+   * dispatch (so a provider failure can stop the round with nothing executed).
+   *
+   * For each initially assigned task, AT MOST ONE skill is chosen from the user-declared
+   * candidates — and ONLY when the task's assigned agent is the catalogue's agent AND that
+   * agent advertises native skill support (`capabilities.skills === true`). Otherwise the
+   * rule says "explicit none" and the provider is NOT asked (a one-option question carries
+   * no information and the real provider refuses it).
+   *
+   * This never reroutes an agent or a model, never touches the fixed pair, quota, budget or
+   * resources, and adds no scheduler/router/manager. The choice is recorded through the
+   * EXISTING `setTaskIntent`, preserving every unrelated intent field.
+   */
+  interface SkillSelection {
+    /** The skill LAYA selected (or null for an explicit/rule none). */
+    readonly requestedName: string | null;
+    /** The name BOUND into the advisory brief at selection time (equal to `requestedName`
+     * when a skill was selected; never re-read from a possibly-pruned intent later). */
+    readonly admittedName: string | null;
+    readonly source: 'laya' | 'rule';
+    readonly reason: string;
+    readonly agentId: string;
+    readonly modelId: string | null;
+  }
+  const skillSelections = new Map<string, SkillSelection>();
+  if (skillCatalog !== null) {
+    const skillsCapable = new Map<string, boolean>();
+    for (const d of descriptors) skillsCapable.set(d.id, d.capabilities?.skills === true);
+    for (const a of assigned) {
+      if (!a.ok) continue;
+      const task = wb.store.get(a.taskId);
+      if (task === null) continue;
+      const agentId = task.agentId;
+      const modelId = task.modelId ?? null;
+      const matching = agentId === skillCatalog.agentId;
+      const capable = skillsCapable.get(agentId) === true;
+      const offered: SkillChoiceCandidate[] = matching
+        ? skillCatalog.skills.map((s) => ({ name: s.name, description: s.description }))
+        : [];
+      const ruleReason = !matching
+        ? `the catalogue is declared for agent "${skillCatalog.agentId}", not the assigned agent "${agentId}"`
+        : !capable
+          ? `agent "${agentId}" does not advertise native skill support (capabilities.skills !== true)`
+          : offered.length === 0
+            ? 'the catalogue declares no skills for this agent'
+            : provider === null
+              ? 'no decision provider is available, so no skill is requested'
+              : '';
+      if (ruleReason !== '') {
+        skillSelections.set(a.taskId, { requestedName: null, admittedName: null, source: 'rule', reason: ruleReason, agentId, modelId });
+        continue;
+      }
+      const roleMatch = /:: ([\w-]+) — deliverable:/.exec(task.acceptanceCriteria);
+      let chosen: string | null;
+      try {
+        chosen = await decideSkillChoice(provider, {
+          task: {
+            taskId: task.taskId,
+            objective: task.acceptanceCriteria,
+            ...(roleMatch === null ? {} : { role: roleMatch[1]! }),
+            taskType: task.taskType,
+            acceptanceCriteria: task.acceptanceCriteria,
+            agentId,
+            modelId,
+          },
+          candidates: offered,
+        });
+      } catch (e) {
+        const msg = `${(e as Error).name}: ${(e as Error).message}`;
+        report.stage = 'skill-choice';
+        report.error = `skill choice refused: ${msg}`;
+        if (o.json) w(JSON.stringify(report, null, 2));
+        else note(`skill choice refused: ${msg}; nothing was executed.`);
+        notifyWorkbenchSnapshot();
+        return 1;
+      }
+      if (chosen === null) {
+        skillSelections.set(a.taskId, {
+          requestedName: null,
+          admittedName: null,
+          source: 'laya',
+          reason: 'the decision provider chose the explicit no-skill option',
+          agentId,
+          modelId,
+        });
+      } else {
+        const existing = wb.intentFor(a.taskId) ?? {};
+        wb.setTaskIntent(a.taskId, { ...existing, skills: [chosen] });
+        skillSelections.set(a.taskId, {
+          requestedName: chosen,
+          admittedName: chosen,
+          source: 'laya',
+          reason: 'the decision provider selected this skill from the offered candidates',
+          agentId,
+          modelId,
+        });
+      }
+    }
+  }
+
+  /**
+   * B3.1: the advisory brief for an initially assigned task that has NO dependencies.
+   *
+   * `NativeWorkbench.dispatch` auto-composes a brief (which already renders the recorded
+   * skill intent) for tasks that HAVE dependencies, but a no-dependency first step gets the
+   * bare prompt instead. This reuses the SAME `briefFor`/`buildTaskBrief` and hands the
+   * result to the SAME `dispatch(promptFor)` seam the continuation path already uses, so the
+   * selected skill reaches EVERY task's brief rather than only the later steps. It returns
+   * undefined (and changes nothing) whenever no skill was selected.
+   */
+  const skillBriefPrompts = (): ReadonlyMap<string, string> | undefined => {
+    if (skillCatalog === null) return undefined;
+    const prompts = new Map<string, string>();
+    for (const [taskId, sel] of skillSelections) {
+      if (sel.requestedName === null) continue;
+      const task = wb.store.get(taskId);
+      if (task === null || task.dependencies.length > 0) continue;
+      if (task.status !== 'planned' && task.status !== 'queued') continue;
+      const brief = wb.briefFor(taskId, wb.runResults());
+      if (brief !== null) prompts.set(taskId, brief);
+    }
+    return prompts.size > 0 ? prompts : undefined;
+  };
+
   // While the decision cycle runs, keep the picture fresh. A TICK, not a daemon: the
   // timer is `unref`'d and cleared below, and it can only ever READ the store.
   const observeTimer = observer === null
@@ -1722,7 +1927,13 @@ export async function runRoundCli(
     // T3-a.3: capture the receipt the Decision Loop uses, so the round knows exactly which
     // members started an execution THIS round (and which were refused/pending).
     dispatch: async () => {
-      const receipt = await decisionCapabilities.dispatch();
+      // B3.1: when a skill was selected for a no-dependency task, its advisory brief is
+      // handed to the SAME `dispatch(promptFor)` seam (exactly as the continuation path
+      // does). Absent that, this is `decisionCapabilities.dispatch()` byte-for-byte.
+      const skillPrompts = skillBriefPrompts();
+      const receipt = skillPrompts === undefined
+        ? await decisionCapabilities.dispatch()
+        : await wb.dispatchReceipt(skillPrompts);
       captureDispatchFacts(receipt);
       return receipt;
     },
@@ -2572,6 +2783,41 @@ export async function runRoundCli(
     toVerify,
     dispatched: decisionPart.dispatchedTasks.length,
   };
+  /*
+   * B3.1: the skill report is OPT-IN and truthful per task. It is built ONLY when
+   * `--skill-catalog` was given, so a round without the flag has a byte-identical report.
+   *
+   * Each entry keeps the REQUEST (what LAYA chose, and where), the ADMISSION (the name SAVED
+   * and bound into the advisory brief at selection time — a saved binding, not a later
+   * re-read and not proof the task ran) and the OBSERVATION (completed native `skill` tool
+   * events from THIS task's OWN latest run result only) in separate fields, so a late run by
+   * a DIFFERENT agent can never be read as the request having been honoured. A call is
+   * labelled `equalsRequested` only when the SAME assigned agent emitted it. An absent run is
+   * `observation: null`, never a fabricated success.
+   */
+  if (skillCatalog !== null) {
+    const skillRuns = wb.runResults();
+    report.skillCatalog = {
+      agentId: skillCatalog.agentId,
+      offered: skillCatalog.skills.map((s) => s.name),
+      note: 'USER-DECLARED candidates only; not discovered by the orchestrator and not proven installed',
+    };
+    report.skills = assigned
+      .filter((a) => a.ok && skillSelections.has(a.taskId))
+      .map((a) => {
+        const sel = skillSelections.get(a.taskId)!;
+        return projectSkillReport({
+          taskId: a.taskId,
+          requested: sel.requestedName,
+          admitted: sel.admittedName,
+          source: sel.source,
+          reason: sel.reason,
+          assignedAgentId: sel.agentId,
+          assignedModelId: sel.modelId,
+          run: skillRuns.get(a.taskId) ?? null,
+        });
+      });
+  }
   // Null unless `--observe` was given. This reports WHERE the observation went and
   // what the dashboard would have shown, not an instruction to read it.
   report.observation = observationPaths === null || observedFinal === null
@@ -3060,6 +3306,29 @@ export async function runRoundCli(
     w('TASKS');
     for (const t of tasks) {
       w(`  ${t.taskId.padEnd(18)} ${String(t.type).padEnd(15)} ${t.agentId}/${t.modelId ?? '-'}  ${t.status}`);
+    }
+    // B3.1: the advisory skill projection, printed only when the flag opted in.
+    if (o.skillCatalog !== undefined) {
+      const skillRows = (report.skills ?? []) as SkillReportEntry[];
+      w();
+      w('SKILLS (advisory request only; not an enforceable tool authorization)');
+      if (skillRows.length === 0) w('  (no initially assigned task was considered)');
+      for (const s of skillRows) {
+        w(`  ${s.taskId}  requested=${s.requested ?? '(none)'}  admitted=${s.admitted ?? '(none)'}  source=${s.selectionSource}`);
+        if (s.observation === null) {
+          w('      observed tool-events: none (no run result)');
+        } else {
+          const calls = s.observation.skillCalls.length === 0
+            ? 'none'
+            : s.observation.skillCalls.map((c) => `${c.name}${c.equalsRequested ? '' : ' (unrequested)'}`).join(', ');
+          w(`      observed tool-events: ${calls}  (runtime task ${s.observation.runtime.taskId ?? '-'}, agent ${s.observation.runtime.agentId ?? '-'})`);
+          // A run by a DIFFERENT agent is shown as an origin mismatch, so a same-named call
+          // can never read as this request being honoured by the wrong worker.
+          if (!s.observation.agentMatchesAssignment) {
+            w(`      ORIGIN MISMATCH: the observed run is agent ${s.observation.runtime.agentId ?? '(unknown)'}, but this request was assigned to ${s.assignedAgentId}; the observation is NOT this request being honoured`);
+          }
+        }
+      }
     }
     w();
     if (unassigned.length > 0) {

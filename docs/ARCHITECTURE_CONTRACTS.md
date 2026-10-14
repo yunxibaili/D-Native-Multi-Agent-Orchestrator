@@ -80,7 +80,10 @@ Lease、fencing、ResourceClaim、Workspace 和停止/释放顺序不因多模�
 当前 Skill boolean 只表达“适配器能否请求原生 Agent 加载自己的 Skill”，
 不是完整目录、强制授权边界或可直接用于能力排序的事实。
 
-新需求要求 LAYA 选择 Skill/MCP。实现前必须明确扩展候选事实和能力契约，
+B3.1已经增加显式用户声明Skill候选与逐任务advisory选择；只匹配已分配Agent的原生能力，不参与Worker路由。
+首个无依赖任务使用既有dispatchReceipt(promptFor)，其余沿自动brief；没有新执行边或调度权威。
+报告保存选择时绑定与同任务latest-run工具观察；跨Agent同名调用不匹配旧请求，admitted不证明运行。
+MCP/真实加载/强制工具限制尚未实现；扩展前仍须明确候选事实和能力契约，
 不能把现有 boolean 静默改成“已加载、已授权或一定可调用”。
 复用原生 Skill/MCP 机制和既有执行入口；LAYA 表达选择和意图，
 Session/Adapter/权限校验继续落实真实执行，工具结果保留来源。
