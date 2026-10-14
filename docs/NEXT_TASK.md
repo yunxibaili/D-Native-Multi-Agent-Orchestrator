@@ -1,6 +1,6 @@
-# 下一候选 — B4.7.1a Node台账单点收口
+# 下一候选 — B4.7.1b Demo计划与验收路径对齐
 
-更新日期：2026-10-14
+更新日期：2026-10-15
 唯一状态/证据见[PROJECT_BASELINE.md](PROJECT_BASELINE.md)。用户已授权继续；只读准备已完成。真实调用等待实际模型、费用/包含额度/超额扣费、会话次数和数据范围，不以“继续”猜付费或数据授权。
 
 ## 已准备的最小路线
@@ -41,3 +41,9 @@ OpenCode目标仍为`opencode-go/deepseek-v4.1-flash`；用户已将DSH第二目
 B4.7.1 BLOCKED，首次+唯一返工结束。独立typecheck/68入口/60ownership/6-entry guard通过，Node-only耦合探针exit1确认：Node检查成功且Job空，fact未进入runRealDuo.commands，完整链的controls数会比台账多。未通过测试改动留本地，不进入上传快照；生产代码未变。
 下一片只修改既有b47两测试文件：将同次Node fact返回并fold到真实commands，记录失败/异常或may-have-started时的事实，增加走相同路径的承重回归；本地sessionId不能命名成nativeSessions，原生ID未知就unknown。保留现有固定池、最多3native/90秒、owned配置/Job停止/清理失败退出，不重写执行器/审批/框架。新任务下发后由OpenCode实施、Codex独立审核。
 真实样本已有明确授权：两free候选、只生成隔离demo、最多3原生执行会话/各90秒，不收费/独立LAYA或Review，未知就停止。授权不重问；入口通过前不启用，本次消耗0。真实验收/完整B4尚未通过，PARALLEL_WRITE继续CLOSED。
+
+## 2026-10-15最新结论
+
+B4.7.1a的Node台账/异常记录/身份命名及遗漏task-budget接线范围独立PASS，83/0+实际耦合probe通过；完整B4.7真实duo仍BLOCKED。实际Space Bunny正确按src/provider/**写src/provider/add.mjs并结束，原生model已独立确认、消息成本报告0，Codex5个函数案例通过；入口却验根add.mjs，第二模型和集成被阻止。不要把它误判为模型质量/可调用/Job问题。旧台账blocker已关闭，勿重复重做。
+下一片仅对齐现有demo的scope/交付/验收路径：优先沿用内置provider/consumer目录，或复用B4.2共享builder定义一致的模块/测试计划；不另造DAG/manager或改生产。用受控实际文件回归验证每条路径一致，不为了新前端开发产品UI。整个entry代码仍本地未上传，裁定文档已上传。
+原授权最多3个原生执行会话，实际用1剩2，不自动提供方重试/重置次数。完整新duo需3个，必须明确追加额度或选择2个会话内的不同目标；相同免费/隔离demo/90秒/无独立LAYA-Review的范围保留，不重新问已经批准部分。即使结构修复也先独立审查再启动，PARALLEL_WRITE继续CLOSED。
