@@ -146,3 +146,7 @@ B4.0 顺序执行异构职责沿既有路径；B4.1 候选计划产生 N 个成�
 
 用户池是冻结纯值，复用ModelRegistry身份与同一admitUserModelPoolPair；不建立第二registry/路由器。不同字段组合的复合键文本可能碰撞，声明准入须逐项精确匹配agentId/modelId。Assignment仍accept-or-refuse，不替换fixed，不越过quota或资源门。
 B2.1a已在最后workspace.prepare之后、取得preRunTask之后、resolveSession/thread及状态提交/runtime之前复用同一buildSpawnGateInput进行同步检查；独立probe与内存负控确认到期/未列actual pair均无runtime/Attempt，原资源finally释放pre-start claim。无新增await或执行边；session解析到runtime之间没有新增Task/Session lookup，不破坏T1冻结。此为最终准入时的声明有效性判断，非真实账户/全流程费用保证。当前provenance会新增无池诊断行，默认不启用新限制不等于所有报告字节完全相同。
+
+## B4.6a 同进程检查点边界
+
+检查点是显式CLI用户输入与纯值报告：在实际RunResult落入to_verify后、原有下一验收/派工前读取冻结的同Attempt snapshot，无store/runtime/可调用权威。continue不写Task状态，stop只结束本轮后续执行（包括接力），不撤销既有succeeded/文件，也不承诺取消仍活着的外部进程或持久化恢复。TTY输入用Node标准readline并有60秒界限，默认入口不读stdin；非法/EOF/error/timeout按stop处理。等待发生在下一派工前，不插入session→runtime冻结区；原fixed、阶段绑定、费用声明最终检查、stop-unconfirmed资源保护持续适用。新范围仍走原确认，不新增manager/状态权威。

@@ -82,6 +82,10 @@ const SUITES = [
   // controlled runtime writes into `req.cwd` and the integrator reads the members' real
   // bytes there; the user checkout is proven byte-unchanged.
   'b45-git-collaboration',
+  // B4.6a: the opt-in single-step USER checkpoint. Hermetic — the real runRoundCli chain
+  // with fake adapters; the user's answer is supplied through the injected `checkpointInput`
+  // seam, and a separate child proves the terminal reader releases so the process exits.
+  'b46-workflow-checkpoint',
   'memory',
   'orchestration',
   'model-pool',

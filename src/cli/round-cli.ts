@@ -217,6 +217,12 @@ import {
   parseUserModelPoolText,
   type UserModelPool,
 } from '../orchestration/model-pool.ts';
+import {
+  CHECKPOINT_OUTPUT_MAX_CHARS,
+  createStdinCheckpointReader,
+  parseCheckpointAnswer,
+  type WorkflowCheckpointSnapshot,
+} from './workflow-checkpoint.ts';
 import { buildDispatchReceipt } from '../orchestration/dispatch-receipt.ts';
 import { projectDispatchTaskEvidence } from '../orchestration/dispatch-evidence.ts';
 import { buildExecutionSnapshot } from '../orchestration/execution-monitor.ts';
@@ -354,6 +360,16 @@ OPTIONS
   --review-agent <id>    who performs the round review (default: codex)
   --review-timeout <ms>  bound the round review (default: 300000)
   --no-review            skip the round review (offline runs only; reports not_requested)
+  --checkpoint           OPT-IN single-step USER checkpoint (B4.6a). Requires --workflow
+                         sequential|collaborate. After each member really runs, and before it
+                         is handed to LAYA's 'complete'/downstream dispatch, the round shows
+                         that task's OWN attempt (role, criteria, bounded output, attemptId,
+                         requested pair, tree-stop fact) on stderr and asks you to 'continue'
+                         or 'stop <reason>'. 'continue' only lets the EXISTING verification and
+                         scheduling proceed - it sets no success and skips no fixed/model-pool/
+                         stage/resource gate. 'stop' records the reason, leaves the task in
+                         to_verify and starts nothing further. Non-TTY / EOF / error / invalid
+                         answer / 60s timeout all STOP. No supervisor model is called.
   --handoff-max <n>      automatic agent switches allowed per task when an agent is out
                          of quota / unavailable (default: 2; 0 disables handoff)
   --no-handoff           make exactly one attempt per task (default: handoff is ON)
@@ -416,6 +432,12 @@ interface RoundOptions {
   confirm?: string;
   /** B4.3: validate + report the stage material (and its digest), then stop. */
   stageCheck?: boolean;
+  /**
+   * B4.6a: opt-in single-step USER checkpoint (`--checkpoint`). Only meaningful with
+   * `--workflow sequential|collaborate`; the parser refuses every other combination
+   * before any task exists. Absent = byte-identical behaviour to before.
+   */
+  checkpoint?: boolean;
   layaUrl: string;
   layaTimeoutMs: number;
   /** R5-1 (P1-A): native EXECUTION deadline (RunRequest.timeoutMs), not a wait bound. */
@@ -458,6 +480,21 @@ interface RoundOptions {
 const OBSERVE_HEARTBEAT_MS = 5_000;
 
 const VERBATIM = new Set(['laya-url', 'agent', 'model', 'select', 'workflow', 'workflow-choice', 'cwd', 'observe', 'review-agent']);
+
+/**
+ * B4.6a: extract a human-readable message from ANY thrown value.
+ *
+ * The checkpoint input seam (and, in principle, any injected reader) may throw a
+ * NON-Error: a bare string, `null`, `undefined` or a plain object. The obvious
+ * `(e as Error).message` throws a TypeError on `null`/`undefined`, which would turn a
+ * fail-closed STOP into a crashed round. This is total: it never throws.
+ */
+function thrownMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === 'string') return e;
+  if (e === null || e === undefined) return String(e);
+  try { return JSON.stringify(e); } catch { return typeof e; }
+}
 
 function parse(argv: readonly string[]): RoundOptions | { error: string } {
   const positionals: string[] = [];
@@ -598,6 +635,31 @@ function parse(argv: readonly string[]): RoundOptions | { error: string } {
     if (stageCheck && stage === undefined) {
       return { error: '--stage-check requires --stage <file>' };
     }
+    // B4.6a: the opt-in single-step USER checkpoint only makes sense where the bounded
+    // workflow loop actually runs. The legacy path has no workflow members, and
+    // `--classify-only` / `--stage-check` never reach the loop, so every other
+    // combination is a usage error raised HERE - before any file read, provider call,
+    // quota probe or task write.
+    // B4.6a: `--checkpoint` is a BARE boolean flag and accepts NO value. Both
+    // `--checkpoint=true` (the `=` form) and `--checkpoint true` (the space form) parse to
+    // a STRING here, so the old `flags.checkpoint === true` test silently read them as
+    // "off" — the user explicitly asked for supervision and got an unsupervised run
+    // instead. A value form is therefore a usage error raised HERE, before any file read,
+    // provider call, quota probe or task write; it must never be silently ignored. This
+    // does NOT extend the accepted syntax: a bare `--checkpoint` is the only accepted form.
+    if (flags.checkpoint !== undefined && flags.checkpoint !== true) {
+      return { error: `--checkpoint takes no value: use the bare flag --checkpoint (got "${String(flags.checkpoint)}")` };
+    }
+    const checkpoint = flags.checkpoint === true;
+    if (checkpoint && workflow !== 'sequential' && workflow !== 'collaborate') {
+      return { error: '--checkpoint requires --workflow sequential or --workflow collaborate' };
+    }
+    if (checkpoint && flags['classify-only'] === true) {
+      return { error: '--checkpoint cannot be combined with --classify-only' };
+    }
+    if (checkpoint && stageCheck) {
+      return { error: '--checkpoint cannot be combined with --stage-check: nothing is executed to checkpoint' };
+    }
     const agentFlag = s('agent');
     const modelFlag = s('model');
     if (select === 'fixed' && (agentFlag === undefined || modelFlag === undefined)) {
@@ -621,6 +683,7 @@ function parse(argv: readonly string[]): RoundOptions | { error: string } {
       ...(stage !== undefined ? { stage } : {}),
       ...(confirm !== undefined ? { confirm } : {}),
       ...(stageCheck ? { stageCheck } : {}),
+      ...(checkpoint ? { checkpoint } : {}),
       layaUrl: s('laya-url') ?? 'http://127.0.0.1:8077',
       layaTimeoutMs: num('laya-timeout', 60_000),
       // R5-1.1 (§6/P1-A): the NATIVE EXECUTION deadline — a different thing from the
@@ -722,6 +785,18 @@ export interface RoundCliOverrides {
    * so an observer can neither steer the round nor break it by throwing.
    */
   readonly onWorkbenchSnapshot?: (snapshot: RoundWorkbenchObservation) => void;
+  /**
+   * B4.6a: an OPT-IN, read-only USER-INPUT seam for the workflow checkpoint.
+   *
+   * It receives a detached, frozen snapshot of plain values - never the Workbench, a
+   * store, a registry, an assignment, a runtime or any callable - and returns the
+   * user's RAW answer, which the CLI validates through `parseCheckpointAnswer`. A typed
+   * return is NOT trusted: a non-string, a wrong word or an empty line fails closed to a
+   * STOP. Absent, the production terminal reader is used. It is only ever called when
+   * `--checkpoint` was given, so a round without the flag reads no input and adds no
+   * report field.
+   */
+  readonly checkpointInput?: (snapshot: WorkflowCheckpointSnapshot) => string | Promise<string>;
 }
 
 /**
@@ -2315,6 +2390,34 @@ export async function runRoundCli(
     });
   };
 
+  /*
+   * B4.6a: the OPT-IN single-step USER checkpoint state. Every value below is empty and
+   * unused unless `--checkpoint` was given, so a round without the flag behaves exactly
+   * as before: no input is read and no report field is added.
+   *
+   * `checkpointStop` is the ONE fact the rest of the round reads: when it is non-null the
+   * user stopped, so the bounded loop ends AND the later handoff/continuation is not
+   * started. It is a report fact, never a second state authority: it does not touch a
+   * Task, a lease or the store.
+   */
+  interface CheckpointEntry {
+    readonly taskId: string;
+    readonly status: string;
+    readonly role: string | null;
+    readonly acceptanceCriteria: string;
+    readonly attemptId: string;
+    readonly agentId: string;
+    readonly modelId: string | null;
+    readonly output: string;
+    readonly outputTruncated: boolean;
+    readonly treeStopConfirmed: boolean | null;
+    readonly choice: 'continue' | 'stop';
+    readonly stopReason: string | null;
+  }
+  const checkpointEntries: CheckpointEntry[] = [];
+  const checkpointedAttempts = new Set<string>();
+  let checkpointStop: { taskId: string; reason: string; blockedTaskIds: string[] } | null = null;
+
   let outcome: Awaited<ReturnType<typeof runDecisionCycle>> = await runOneCycle();
   let workflowCycles = 1;
   let workflowStop: string | null = null;
@@ -2331,6 +2434,91 @@ export async function runRoundCli(
     const memberIds = planned.children.map((c) => c.taskId);
     const maxCycles = memberIds.length * 3 + 3;
     const sig = (): string => memberIds.map((id) => wb.store.get(id)?.status ?? 'missing').join(',');
+
+    // B4.6a: task id -> declared role, read from the ACTUAL plan (never a regex guess).
+    const roleByTaskId = new Map<string, string>();
+    if (collaborationIds !== null) {
+      collaborationIds.memberIds.forEach((id, i) => roleByTaskId.set(id, collaborationMembers[i]?.role ?? 'unknown'));
+      roleByTaskId.set(collaborationIds.integratorId, `integration (collaborator ${collaborationIntegratorMember})`);
+    } else {
+      memberIds.forEach((id, i) => roleByTaskId.set(id, sequentialSteps[i]?.role ?? 'unknown'));
+    }
+
+    /**
+     * The workflow members a STOP leaves un-run or un-verified: everything that is not
+     * terminal. Reported so the user can see WHAT the stop withheld. It names facts from
+     * the TaskStore and changes nothing.
+     */
+    const blockedByStop = (): string[] => memberIds.filter((id) => {
+      const status = wb.store.get(id)?.status;
+      return status !== undefined && status !== 'succeeded' && status !== 'failed' && status !== 'cancelled';
+    });
+
+    /**
+     * B4.6a: the single-step user checkpoint.
+     *
+     * It runs at the TOP of each loop iteration — after a member really ran (so it is
+     * `to_verify` with a real `RunResult` correlated to the CURRENT attempt) and BEFORE
+     * the next cycle can hand it to LAYA's `complete` or dispatch a downstream step.
+     * Each attempt is offered AT MOST ONCE: the set above is keyed by `attemptId`, so a
+     * no-progress re-read never re-prompts, and a task with no real run is skipped
+     * rather than faked.
+     *
+     * `continue` changes NOTHING about the round's gates; it only lets the existing
+     * verification/scheduling proceed. A stop (including any unreadable, errored,
+     * timed-out or invalid answer) returns a reason, and the caller ends the loop.
+     */
+    const checkpointGate = async (): Promise<{ taskId: string; reason: string } | null> => {
+      if (o.checkpoint !== true) return null;
+      for (const id of memberIds) {
+        const task = wb.store.get(id);
+        if (task === null || task.status !== 'to_verify') continue;
+        const actual = currentActualOf(id);
+        if (actual === null || actual.run === null) continue;
+        if (checkpointedAttempts.has(actual.attemptId)) continue;
+        checkpointedAttempts.add(actual.attemptId);
+
+        const run = actual.run;
+        const bounded = run.output.slice(0, CHECKPOINT_OUTPUT_MAX_CHARS);
+        const snapshot: WorkflowCheckpointSnapshot = Object.freeze({
+          taskId: id,
+          status: task.status,
+          role: roleByTaskId.get(id) ?? null,
+          acceptanceCriteria: task.acceptanceCriteria,
+          attemptId: actual.attemptId,
+          agentId: actual.agentId,
+          modelId: actual.modelId,
+          output: bounded,
+          outputTruncated: run.outputTruncated === true || bounded.length < run.output.length,
+          treeStopConfirmed: run.cleanup?.treeStopConfirmed ?? null,
+        });
+        const record = (choice: 'continue' | 'stop', stopReason: string | null): void => {
+          checkpointEntries.push({ ...snapshot, choice, stopReason });
+        };
+
+        let raw: unknown;
+        try {
+          // The seam is only consulted when the flag opted in, and it is not called at all
+          // without the flag. Its typed return is NOT trusted: `parseCheckpointAnswer`
+          // validates the actual value, and a non-string fails closed.
+          raw = overrides.checkpointInput !== undefined
+            ? await overrides.checkpointInput(snapshot)
+            : await createStdinCheckpointReader()(snapshot);
+        } catch (e) {
+          const reason = `the checkpoint answer could not be read (${thrownMessage(e)}); stopping this round`;
+          record('stop', reason);
+          return { taskId: id, reason };
+        }
+        const decision = parseCheckpointAnswer(typeof raw === 'string' ? raw : '');
+        if (decision.action === 'continue') { record('continue', null); continue; }
+        if (decision.action === 'stop') { record('stop', decision.reason); return { taskId: id, reason: decision.reason }; }
+        const reason = `the checkpoint answer was not understood (${decision.detail}); stopping this round`;
+        record('stop', reason);
+        return { taskId: id, reason };
+      }
+      return null;
+    };
+
     if (outcome.status !== 'ok') {
       workflowStop = `cycle-${outcome.status}`;
     } else {
@@ -2339,6 +2527,16 @@ export async function runRoundCli(
         if (members.length > 0 && members.every((m) => m?.status === 'succeeded')) { workflowStop = 'all-succeeded'; break; }
         if (members.some((m) => m?.status === 'failed' || m?.status === 'cancelled')) { workflowStop = 'terminal-failure'; break; }
         if (workflowCycles >= maxCycles) { workflowStop = 'cycle-limit'; break; }
+        // B4.6a: the USER checkpoint sits between "a member really ran" and "LAYA may
+        // verify it and schedule downstream work". A stop ends the loop here.
+        if (o.checkpoint === true) {
+          const stopped = await checkpointGate();
+          if (stopped !== null) {
+            workflowStop = 'user-stop';
+            checkpointStop = { taskId: stopped.taskId, reason: stopped.reason, blockedTaskIds: blockedByStop() };
+            break;
+          }
+        }
         const before = sig();
         outcome = await runOneCycle();
         workflowCycles++;
@@ -2545,7 +2743,11 @@ export async function runRoundCli(
   }
 
   let continuation: ContinuationResult | null = null;
-  if (o.handoff) {
+  // B4.6a: a user STOP ends the round's work. A handoff/continuation exists to start a
+  // NEW attempt on another agent, which is exactly "further work", so it is not started
+  // when the user stopped at a checkpoint. Existing failure/protection paths are
+  // unchanged: this only withholds the continuation the stop already ended.
+  if (o.handoff && checkpointStop === null) {
     try {
       continuation = await runHandoffContinuation({
         async readOutcomes() { return readRoundOutcomes(); },
@@ -2891,6 +3093,32 @@ export async function runRoundCli(
       stop: workflowStop,
       pending: workflowPending,
     };
+    /*
+     * B4.6a: the USER checkpoint record — OPT-IN, so it exists ONLY when `--checkpoint`
+     * was given and a round without the flag is byte-identical to before. It holds what
+     * was shown, what the user chose, a stop reason (or null) and the tasks the stop
+     * withheld. It is a REPORT fact only: it is not a second task state, and it never
+     * certifies that an artifact exists or that a test passed.
+     */
+    if (o.checkpoint === true) {
+      report.checkpoints = {
+        enabled: true,
+        prompts: checkpointEntries.length,
+        entries: checkpointEntries,
+        stop: checkpointStop,
+        /*
+         * B4.6a (P2): the note must state the REAL effect of a stop, not "every task is
+         * unverified". By the time the checkpoint is offered the plan may already contain
+         * tasks that LAYA verified (`succeeded`) in an EARLIER cycle; a stop withholds the
+         * step that is currently awaiting verification and starts nothing further, but it
+         * does not retract a verdict already reached. The two cases are worded separately.
+         */
+        note:
+          checkpointStop !== null
+            ? 'OPT-IN user supervision only: no supervisor model was called. The user STOPPED at a checkpoint: the step awaiting verification is left UNVERIFIED, tasks verified BEFORE the stop keep their verdict, and nothing further runs. A stop is not a certification that any artifact exists or any test passed.'
+            : 'OPT-IN user supervision only: no supervisor model was called. The checkpoint itself verifies nothing: "continue" only let the existing LAYA verification/scheduling proceed, and no task became succeeded because of it. It is not a certification that any artifact exists or any test passed.',
+      };
+    }
     /*
      * B4.1: the collaboration group's identity is reported FROM THE AUTHORITIES, after
      * Assignment and execution. B4.1a (P2) fixes what this projection may CLAIM:
@@ -3517,7 +3745,17 @@ export async function runRoundCli(
   // R2-3: handoff visibility in the round report. Recorded as a FACT (who, why, which
   // task, which attempt) rather than as a narrative, so the stop reason is always visible
   // — including when no handoff happened, which must not read as "everything was fine".
-  report.handoff = continuation === null
+  report.handoff = checkpointStop !== null
+    // B4.6a: the user stopped at a checkpoint, so the continuation was deliberately not
+    // started. Reported as such — NEVER as "--no-handoff", which would be a false reason.
+    ? {
+        enabled: o.handoff, happened: 0, limit: o.handoffMax, handoffs: [],
+        stopped: {
+          code: 'user-stop',
+          reason: `the user stopped at a checkpoint on ${checkpointStop.taskId}: ${checkpointStop.reason}`,
+        },
+      }
+    : continuation === null
     ? { enabled: false, happened: 0, limit: o.handoffMax, handoffs: [], stopped: { code: 'not-attempted', reason: '--no-handoff was given, so every task got exactly one attempt' } }
     : {
         enabled: true,

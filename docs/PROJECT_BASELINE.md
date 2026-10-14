@@ -40,7 +40,8 @@ README 是导航。用户明确指令优先；发现源码、证据与基线不�
 | B3 overall | 整体未封板；真实工具调用、强制限制与Skill加载尚未验收 |
 | B2.1 / B2.1a | 独立 PASS：用户声明池的候选/分配/最终同步启动准入受控闭环；两个历史P1已关闭 |
 | B2 overall | NOT SEALED；账户资格/硬金额预算/付费与全流程费用未验收 |
-| B4.6+ / B2 后续 / B3 后续 / B5 | PLANNED；本轮未授权启动实现 |
+| B4.6a | 独立 PASS WITH P2：同进程用户单步检查点；不等于完整监督/纠偏恢复 |
+| B4.6 后续 / B2 后续 / B3 后续 / B5 | PLANNED；未授权扩大 |
 | PARALLEL_WRITE | CLOSED |
 | 本产品前端 | 本机独立进度页已授权且禁止入 Git；正式工作台 UI 需求仍待确认 |
 
@@ -270,6 +271,15 @@ orchestrator round "review the API" --cwd . --workflow sequential --mcp-catalog 
 **最终启动检查P1已在B2.1a独立关闭**：最后workspace.prepare await之后，取得实际preRunTask，再复用既有buildSpawnGateInput检查当前pair、费用声明有效期及原有条件；发生在session/thread解析和queued/running/lease/onStart/runtime状态提交之前。无新await或第二权威；拒绝携带真正denying gate，任务/issued lease不假运行，既有finally释放已取的pre-start claim。有效声明正常启动；无池旧入口不启用额外检查。该有效期是最终准入时的声明判断，不认证真实账户资格/实际费用，不做运行中到期杀停。
 报告中的eligibility是报告时对声明的判断，不是实际费用或过去启动时有效性的认证。默认入口仍不保证免费；新增无池provenance诊断行也意味着不能宣称所有输出字节完全不变。
 
+### 5.10 B4.6a：同进程用户检查点（最小范围独立 PASS WITH P2）
+
+`round "目标" --workflow sequential|collaborate --checkpoint` 在成员本次真实运行进入to_verify后、原有LAYA验收/下一次派工前展示只读材料。仅独立开关有效，带值写法写前exit2；legacy/classify-only/stage-check不支持。默认不读取stdin、不添加checkpoints字段。生产输入要求TTY，60秒无答复、EOF、输入错误或非法答复都停止，不默认继续；提示走stderr，JSON stdout完整。
+
+- 输入 `continue` 只允许原有Verification/Scheduler继续，不直接标记成功或豁免费用/fixed/stage/resource门；空/不满足验收输出继续保持to_verify。检查点期间声明过期的独立probe：第一步已验收、第二步model-unavailable/user-pool-expired且无新Attempt。
+- 输入 `stop <reason>` 留下当前to_verify、停止后续任务/集成/接力，本轮incomplete/非零；此前succeeded状态与已有文件/证据保留。snapshot是冻结平值，本次Attempt与RunResult关联，声明角色/验收/请求pair与有界输出、截断/停止事实分别呈现，非实际模型或产物认证。
+- 同一Attempt只询问一次；仅覆盖有界workflow循环中的检查点，不给后续continuation新Attempt承诺检查点。无额外监督模型；运行中强制暂停、改计划/改选、跨进程恢复和完整自动监督均未实现。新的范围仍须现有阶段确认，不能拿旧用户continue批准新范围。
+- P2：现有通用未完成Review原因仍写作fan-out(0成员)，未区分顺序用户停止；checkpoints.stop、handoff.user-stop、executionIncomplete/ok=false/非零及Human Gate事实正确，不出现假PASS。文案单点后续收口，不为此重开架构。
+
 ## 6. 不可绕过的契约
 
 WorkerIdentity={taskId,agentId,modelId,sessionId}；不以模型品牌替代 Agent 能力事实。
@@ -300,6 +310,18 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 不新增 provider 网关、群聊平台、第二个调度器或通用工作流引擎来掩盖协议缺口。
 
 ## 8. 最近独立证据与上传记录
+
+2026-10-14 B4.6a：**Codex独立 PASS WITH P2，仅同进程任务边界用户检查点。**
+- 先调查HumanGate/NextRoundInput、RoundResult、既有Verification/continue、CLI有界循环、fixed/stage/model-pool与资源保护。GitHub MCP成功查阅[LangGraph仓库](https://github.com/langchain-ai/langgraph)与MIT LICENSE（未归档、活跃）；[官方interrupt说明](https://docs.langchain.com/oss/python/langgraph/interrupts)明确持久化与节点重启/副作用重放依赖。只参考外部输入与验收分离，不引入Python框架/检查器/新状态权威。
+- 实现只改round-cli、新增workflow-checkpoint小模块、扩展b40a测试、新增b46 reader/协作测试、登记既有test-timed；Codex不代写产品实现。一次实现+一次有界返工：首session ses_ec67066feffe26lYX2Ep2AyQAT导出78条assistant全部opencode-go/deepseek-v4.1-flash、finish=stop；返工session ses_ec65f3f4bffe5lXi49ZaK4dTjx的44条全部同模型、最后finish=tool-calls。两个wrapper exit0；返工改动已落盘，但测试工具调用权限被拒，未产出最终报告。工具仅给permission rejected，无更详细原因，不能把exit0/实现方自述当验证通过；不追发第三开发轮，下面结果均Codex独立执行。
+- 首轮独立65/0、30/0仍复现带值开关被忽略、第二步停止却声称全未验收；返工收口为写前exit2/正确保留此前验收，并补非Error抛出、非法输入、空/不满足输出继续、生产默认非TTY和EOF/短timeout/error回归。最终独立：typecheck exit0；b40a **93/0**，b46 **42/0**，协作 **96/0**，选择 **179/0**，阶段 **47/0**，Workbench **419/0**，lifecycle **136/0**，resource **192/0**，isolation守卫5 opt-in/0违规，diff-check均exit0。旧42个check调用点及条件（归一EOL后）保留；runtime.run边1、authority0。
+- 同进程真实CLI链+受控provider/runtime：首步stop仅runtime1/to_verify、下游/集成未运行；第二步stop保留第一步succeeded；continue仍走原验收；snapshot脱离权威且冻结。collaboration停止保留成员实际文件；此b46 fixture的集成输出不另作真实Agent或真实多模型集成能力证据，既有b41直接验证另列。
+- 两个内存负控（无工作树改动）：跳过用户检查点→47 passed/10 failed且fatal/exit1，原停止路径错误整轮成功；跳过带值flag校验→36/6、exit1，实际提前拒绝断言承重。独立检查点等待期间clock推进probe：用户continue后下一任务拒绝user-pool-expired，runtime仅首步1、下游无Attempt。非实际账户费用查询。
+- 最终reader在真实Windows PTY stdin.isTTY=true，收到continue后自然exit0；只证明标准stdin读取，不证明真实Agent执行。EOF/短timeout/input error用实际readline+受控流；成功和失败child不调用process.exit，独立实跑正常退出。
+- P2仅既有未完成Review原因泛称fan-out(0成员)；不改变真实阻断/退出/状态。P3工具限制：本轮本地URL被浏览器安全策略拒绝，已运行refresh并核对本地快照，但不声称完成视觉验收。未绕过浏览器策略。
+- 测试owned b40a/b46目录0；实现方3个外部readerprobe脚本按写入记录+当前内容哈希逐项确认后仅删除对应文件，未删共享目录/foreign文件。没有真实产品Agent/账号/网络任务、full suite、安装/依赖/系统配置变更；保留PARALLEL_WRITE=CLOSED与整体未封板。
+- 规划估算固定100分母：监督/用户输入信用0→2（5权重），总65/100、展示约65%完成/35%剩余，区间30–50%，不含正式前端，不由测试数计算。完整监督/实际纠偏恢复仍不足。下一候选B5.1先调查已有中断/停止/continuation的一个实际缺口，未启动。
+- Git上传：待独立审核快照上传并核验；本机进度页全部excluded，main/共享index/原dirty tree保持。
 
 2026-10-14 B2.1a：**Codex独立 PASS（用户声明池最终启动准入的受控最小范围）**。B2.1两个历史P1已关闭，B2 overall未封板。
 - 本地确定性单点修复，沿用前轮已核验的ModelPool/Assignment/Spawn Gate/Workspace/最终freeze，不重复安装或引入第三方系统。本轮只改orchestration/orchestrator.ts与既有b14测试；生产增38行含注释，无新模块/依赖/manager/authority，未改runtime/adapters/native/费用配置。
@@ -796,18 +818,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-14T13:42:23+08:00",
+  "updatedAt": "2026-10-14T17:16:07+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "B2.1a",
-    "name": "最终启动前费用声明检查",
+    "id": "B4.6a",
+    "name": "单步用户检查点",
     "status": "done",
-    "summary": "独立PASS（受控有界）：prepare期间到期或实际pair未列即拒绝，runtime/onStart/Attempt=0，资源声明释放；有效声明正常执行。两个历史P1关闭。"
+    "summary": "独立PASS WITH P2：继续仍走原验收，停止阻断下游/接力且保留已验收成果；93/0与42/0独立通过。完整自动监督/纠偏恢复未实现。"
   },
   "next": {
-    "id": "B4.6",
-    "name": "检查点监督与用户纠偏最小闭环",
+    "id": "B5.1",
+    "name": "模型中断的有界接力最小切片",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -852,8 +874,8 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       {
         "name": "监督与用户纠偏",
         "weight": 5,
-        "earned": 0,
-        "basis": "草案已明确方向，检查点接线尚未实施"
+        "earned": 2,
+        "basis": "同进程单步用户只读检查与继续/停止受控通过；完整监督、实际改任务纠偏和跨进程恢复不足"
       },
       {
         "name": "Skill/MCP 与按需上下文",
@@ -937,6 +959,14 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "detail": "显式池的最终准入已受控通过；真实资格/共享余额、付费授权/USD硬预算、LAYA/审核/工具及原生辅助费用仍未完整覆盖。",
       "next": "真实模型验收前按用户账户/费用/数据授权补证；不建复杂计费平台",
       "kind": "部分实现 / 未验收"
+    },
+    {
+      "id": "B46-REVIEW-WORDING",
+      "severity": "P2",
+      "title": "未完成Review原因未区分用户停止",
+      "detail": "现有reason泛称fan-out(0成员)；实际checkpoints/handoff/状态/非零正确，无假PASS。",
+      "next": "后续边界一并收口报告文案，不新增监督框架",
+      "kind": "报告文案"
     }
   ],
   "tasks": [
@@ -1050,7 +1080,7 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "title": "检查点监督与用户纠偏",
       "status": "planned",
       "deliverable": "异常阻止后续派工，用户决定纠偏",
-      "evidence": "不增加第二个调度权威"
+      "evidence": "B4.6a最小用户检查点已交付；完整监督和实际纠偏恢复未验收"
     },
     {
       "id": "B5.1",
@@ -1072,53 +1102,50 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "status": "planned",
       "deliverable": "确认流程后再设计正式 UI",
       "evidence": "当前进度页只是本机状态展示"
+    },
+    {
+      "id": "B4.6a",
+      "title": "同进程单步用户检查点",
+      "deliverable": "显式任务结果检查与继续/停止；不做跨进程恢复",
+      "status": "done",
+      "evidence": "Codex独立93/0+42/0、真实TTY reader/内存负控/等待后期限拒绝；仅最小同进程范围，P2 Review原因文案待收口"
     }
   ],
   "checks": [
     {
-      "name": "独立结论",
-      "result": "PASS（受控最小范围）",
-      "source": "B2.1/B2.1a两历史P1关闭；不封板B2 overall"
+      "name": "独立验证",
+      "result": "PASS：typecheck；顺序93/0、检查点42/0及相关7套",
+      "source": "Codex实跑，非实现方自述；未跑full suite/产品真实模型"
     },
     {
-      "name": "typecheck / diff",
-      "result": "PASS / PASS",
-      "source": "Codex本轮独立实跑"
+      "name": "承重负控",
+      "result": "两组真实非零退出",
+      "source": "跳过用户gate 47/10+fatal；跳过flag校验36/6；工作源文件不变"
     },
     {
-      "name": "选择 / Workbench / 生命周期",
-      "result": "179 / 419 / 136 · 全通过",
-      "source": "原120个check条件保留，对应原155条运行覆盖"
+      "name": "门禁兼容",
+      "result": "用户continue不能豁免过期声明",
+      "source": "实际CLI链+受控clock：runtime仅1、下游user-pool-expired无Attempt"
     },
     {
-      "name": "阶段 / 协作 / Git / 资源",
-      "result": "47 / 96 / 104 / 192 · 全通过",
-      "source": "Codex独立实跑"
+      "name": "终端输入",
+      "result": "真实Windows TTY收到continue并自然exit0",
+      "source": "reader-only controlled snapshot；未调用产品Agent"
     },
     {
-      "name": "独立旧阻塞probe",
-      "result": "runtime0 / expiry拒绝",
-      "source": "生产executeTask+受控prepare/时间，旧失败证据未覆盖"
+      "name": "委派模型",
+      "result": "DeepSeek V4.1 Flash：实现+1返工",
+      "source": "原生会话78/44条assistant元数据；返工最终报告缺失，独立验证另列"
     },
     {
-      "name": "两组内存负控",
-      "result": "168/11、176/3 · 均exit1",
-      "source": "最后准入和实际claim释放承重；源码哈希未变"
+      "name": "本机页面",
+      "result": "数据已刷新；视觉未验证",
+      "source": "浏览器安全策略拒绝本地URL；没有绕过"
     },
     {
-      "name": "实际worker / 生产edge",
-      "result": "DeepSeek V4.1 Flash / run1 authority0",
-      "source": "44条assistant元数据finish stop；首轮完成，AST核对"
-    },
-    {
-      "name": "真实费用 / 完整suite",
-      "result": "未执行 / 未执行",
-      "source": "用户声明不是账户事实；保持费用和数据边界"
-    },
-    {
-      "name": "GitHub审核快照",
-      "result": "已上传 580dbc4 · PASS",
-      "source": "codex/b21a-final-admission-review-pass；远端hash核验，main/index保持，网页excluded"
+      "name": "GitHub",
+      "result": "待上传并核验",
+      "source": "独立审核快照；页面禁止入Git"
     }
   ],
   "sources": [

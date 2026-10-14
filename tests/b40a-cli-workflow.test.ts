@@ -29,6 +29,7 @@ import { EXECUTION_TOPOLOGY_ID, TOPOLOGY_SOLO } from '../src/decision/execution-
 import { WORKFLOW_PLAN_ID } from '../src/decision/plan-choice.ts';
 import { ACCEPTANCE_MATERIAL_FIELD, ORCHESTRATION_ACTION_ID } from '../src/orchestration/decision-loop.ts';
 import type { QuotaProbe } from '../src/quota/index.ts';
+import type { WorkflowCheckpointSnapshot } from '../src/cli/workflow-checkpoint.ts';
 
 let passed = 0;
 let failed = 0;
@@ -81,7 +82,7 @@ function probeFor(agentId: string, status: 'available' | 'exhausted' | 'not_fetc
   } as unknown as QuotaProbe;
 }
 
-interface Round { report: Record<string, unknown>; requests: RunRequest[]; reviewRequests: RunRequest[]; decisionRequests: DecisionRequest[]; reportDir: string }
+interface Round { report: Record<string, unknown>; requests: RunRequest[]; reviewRequests: RunRequest[]; decisionRequests: DecisionRequest[]; reportDir: string; exitCode: number }
 
 /** What the fixture provider ACTUALLY saw in the acceptance material, per cycle. */
 interface MaterialSeen { objective: string; entries: Array<{ taskId: string; acceptanceCriteria: string; output: string; executionMissing: boolean }> }
@@ -112,6 +113,10 @@ async function workflowRound(opts: {
   fixed?: { agentId: string; modelId: string };
   objective?: string;
   reviewVerdictJson?: string;
+  /** B4.6a: opt in to the single-step USER checkpoint. */
+  checkpoint?: boolean;
+  /** B4.6a: control the user's raw answer (the CLI validates it, not this fixture). */
+  checkpointInput?: (snapshot: WorkflowCheckpointSnapshot) => string | Promise<string>;
 } = {}): Promise<Round> {
   const dir = ownDir();
   // B4.0b P2-C: an OWNED publish dir, always. The production default is
@@ -275,16 +280,19 @@ async function workflowRound(opts: {
     '--workflow', 'sequential',
     ...(opts.workflowChoice !== undefined ? ['--workflow-choice', opts.workflowChoice] : []),
     ...(opts.fixed !== undefined ? ['--select', 'fixed', '--agent', opts.fixed.agentId, '--model', opts.fixed.modelId] : []),
+    ...(opts.checkpoint === true ? ['--checkpoint'] : []),
   ];
   const before = process.stdout.write.bind(process.stdout);
   let captured = '';
   process.stdout.write = ((chunk: string | Uint8Array): boolean => { captured += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'); return true; }) as typeof process.stdout.write;
+  let exitCode = -1;
   try {
-    await runRoundCli(drivable as never, argv, {
+    exitCode = await runRoundCli(drivable as never, argv, {
       provider,
       probes: [probeFor(AGENT_A, 'available', `${AGENT_A}/m1`)],
       // B4.0b P2-C: publish into the OWNED dir, never the caller's default report.
       roundResultDir: reportDir,
+      ...(opts.checkpointInput === undefined ? {} : { checkpointInput: opts.checkpointInput }),
     });
   } finally {
     process.stdout.write = before;
@@ -292,7 +300,7 @@ async function workflowRound(opts: {
   const jsonStart = captured.indexOf('{');
   let report: Record<string, unknown> = {};
   if (jsonStart !== -1) { try { report = JSON.parse(captured.slice(jsonStart)); } catch { report = {}; } }
-  return { report, requests, reviewRequests, decisionRequests, reportDir };
+  return { report, requests, reviewRequests, decisionRequests, reportDir, exitCode };
 }
 
 const workflowOf = (r: Round): Record<string, unknown> => (r.report.workflow ?? {}) as Record<string, unknown>;
@@ -504,6 +512,248 @@ section('report isolation: the caller\'s report dir is never touched');
   const resolved = defaultRoundResultPath({ ORCH_HOME: callerDir } as NodeJS.ProcessEnv);
   check('isolation: the default resolver still honours $ORCH_HOME',
     resolved === sentinel, `${resolved} vs ${sentinel}`);
+}
+
+// =========================================================================
+// B4.6a: the opt-in single-step USER checkpoint.
+//
+// The REAL runRoundCli / Workbench / Assignment / Scheduler / Verification chain runs
+// here; only LAYA's answers and the runtime's per-agent outcome are injected. The user's
+// answer is controlled through the `checkpointInput` seam, and the CLI validates it.
+// =========================================================================
+
+interface CheckpointsReport {
+  enabled: boolean;
+  prompts: number;
+  entries: Array<{ taskId: string; status: string; role: string | null; acceptanceCriteria: string; attemptId: string; agentId: string; modelId: string | null; output: string; outputTruncated: boolean; treeStopConfirmed: boolean | null; choice: 'continue' | 'stop'; stopReason: string | null }>;
+  stop: { taskId: string; reason: string; blockedTaskIds: string[] } | null;
+  note: string;
+}
+const checkpointsOf = (r: Round): CheckpointsReport | undefined => r.report.checkpoints as CheckpointsReport | undefined;
+
+section('checkpoint off: the seam is never called and no field is added');
+
+{
+  let calls = 0;
+  const r = await workflowRound({ planChoice: 'lean', checkpointInput: () => { calls += 1; return 'continue'; } });
+  check('off: the input seam is never called without --checkpoint', calls === 0, `calls=${calls}`);
+  check('off: no checkpoints field is added to the report', r.report.checkpoints === undefined, JSON.stringify(r.report.checkpoints));
+  check('off: the lean round still completes', r.report.ok === true && r.requests.length === 2 && taskStatusW(r, 2) === 'succeeded',
+    `ok=${String(r.report.ok)} n=${r.requests.length} w2=${taskStatusW(r, 2)}`);
+}
+
+section('checkpoint continue: the existing acceptance still succeeds, one prompt per attempt');
+
+{
+  const prompted: string[] = [];
+  const r = await workflowRound({
+    planChoice: 'full',
+    checkpoint: true,
+    checkpointInput: (s) => { prompted.push(s.taskId); return 'continue'; },
+  });
+  const cp = checkpointsOf(r)!;
+  check('continue: one prompt per step (three attempts, three prompts)',
+    prompted.length === 3 && new Set(prompted).size === 3, JSON.stringify(prompted));
+  check('continue: the same attempt is never prompted twice', new Set(prompted).size === prompted.length, JSON.stringify(prompted));
+  check('continue: the round still completes all three steps',
+    r.report.ok === true && r.requests.length === 3 && taskStatusW(r, 3) === 'succeeded' && r.exitCode === 0,
+    `ok=${String(r.report.ok)} n=${r.requests.length} w3=${taskStatusW(r, 3)} exit=${r.exitCode}`);
+  check('continue: every entry records the continue choice and no stop',
+    cp.entries.length === 3 && cp.entries.every((e) => e.choice === 'continue' && e.stopReason === null) && cp.stop === null,
+    JSON.stringify(cp.entries.map((e) => e.choice)));
+  // The snapshot facts are this attempt's own — role, a real attemptId, its own marker.
+  check('continue: each entry carries the task\'s own role, attemptId and output',
+    cp.entries.every((e) => e.attemptId.trim() !== '' && typeof e.role === 'string' && e.role !== '' && e.output.includes('STEP_OUT_')) &&
+      cp.entries.some((e) => e.output.includes('STEP_OUT_1')) && cp.entries.some((e) => e.output.includes('STEP_OUT_3')),
+    JSON.stringify(cp.entries.map((e) => `${e.role}:${e.output.slice(0, 12)}`)));
+}
+
+section('checkpoint stop: only the first member RUNS, downstream never starts, round is incomplete');
+
+{
+  const r = await workflowRound({
+    planChoice: 'full',
+    checkpoint: true,
+    checkpointInput: () => 'stop the first step does not look right',
+  });
+  const cp = checkpointsOf(r)!;
+  check('stop: exactly ONE runtime run happened', r.requests.length === 1, `n=${r.requests.length}`);
+  check('stop: the first step is left to_verify (unverified)', taskStatusW(r, 1) === 'to_verify', taskStatusW(r, 1));
+  check('stop: downstream steps never ran', r.requests.every((q) => !q.prompt.includes('implementation — deliverable') && !q.prompt.includes('test — deliverable')),
+    r.requests.map((q) => q.prompt.slice(0, 40)).join(' | '));
+  check('stop: the loop stopped on user-stop', workflowOf(r).stop === 'user-stop', String(workflowOf(r).stop));
+  check('stop: the report records the stop reason and task', cp.stop !== null && cp.stop.reason === 'the first step does not look right' &&
+    cp.entries[0]!.choice === 'stop' && cp.entries[0]!.stopReason === 'the first step does not look right',
+    JSON.stringify(cp.stop));
+  check('stop: the report names the blocked downstream tasks', cp.stop !== null && cp.stop.blockedTaskIds.length >= 2 &&
+    cp.stop.blockedTaskIds.some((id) => id.endsWith('-w3')), JSON.stringify(cp.stop?.blockedTaskIds));
+  check('stop: the round is NOT ok, IS incomplete, and exits non-zero',
+    r.report.ok === false && r.report.executionIncomplete === true && r.exitCode !== 0,
+    `ok=${String(r.report.ok)} incomplete=${String(r.report.executionIncomplete)} exit=${r.exitCode}`);
+  // The checkpoint's correlated attempt/pair matches the run the report recorded.
+  check('stop: the checkpoint attempt/pair matches the real run',
+    cp.entries[0]!.agentId === r.requests[0]!.agentId && cp.entries[0]!.attemptId.trim() !== '' &&
+      cp.entries[0]!.output.includes('STEP_OUT_1'),
+    JSON.stringify({ entry: cp.entries[0]!.attemptId, req: r.requests[0]!.agentId }));
+  // Even with handoff ON by default, a stop starts no second execution.
+  const handoff = r.report.handoff as { enabled?: boolean; happened?: number } | undefined;
+  check('stop: handoff stays enabled by default yet no further work started',
+    handoff?.enabled === true && handoff.happened === 0 && r.requests.length === 1,
+    JSON.stringify(handoff));
+  // The run's evidence is not discarded by the stop.
+  const ev = (r.report.evidence ?? []) as Array<{ taskId: string; attempts: number }>;
+  check('stop: the completed run\'s evidence is preserved', ev.some((e) => e.taskId.endsWith('-w1') && e.attempts >= 1),
+    JSON.stringify(ev));
+}
+
+section('checkpoint fail-closed: an illegal or unreadable answer stops');
+
+{
+  const illegal = await workflowRound({ planChoice: 'lean', checkpoint: true, checkpointInput: () => 'maybe later' });
+  const cp = checkpointsOf(illegal)!;
+  check('illegal: an unrecognised answer stops the round', workflowOf(illegal).stop === 'user-stop' && illegal.requests.length === 1,
+    `stop=${String(workflowOf(illegal).stop)} n=${illegal.requests.length}`);
+  check('illegal: the report says the answer was not understood',
+    cp.entries[0]!.choice === 'stop' && /not understood|invalid/i.test(cp.entries[0]!.stopReason ?? '') && cp.stop !== null,
+    JSON.stringify(cp.entries[0]!.stopReason));
+  check('illegal: the round is incomplete and non-zero', illegal.report.ok === false && illegal.report.executionIncomplete === true && illegal.exitCode !== 0,
+    `ok=${String(illegal.report.ok)} exit=${illegal.exitCode}`);
+
+  const threw = await workflowRound({ planChoice: 'lean', checkpoint: true, checkpointInput: () => { throw new Error('stdin exploded'); } });
+  const cp2 = checkpointsOf(threw)!;
+  check('throw: a reader error stops the round (fail closed)', workflowOf(threw).stop === 'user-stop' && threw.requests.length === 1,
+    `stop=${String(workflowOf(threw).stop)} n=${threw.requests.length}`);
+  check('throw: the report records the unreadable answer',
+    cp2.entries[0]!.choice === 'stop' && /could not be read/.test(cp2.entries[0]!.stopReason ?? ''),
+    JSON.stringify(cp2.entries[0]!.stopReason));
+}
+
+// =========================================================================
+section('checkpoint stop AFTER a verified step: prior verdicts are kept, only the pending step is unverified');
+
+{
+  // Real path: step 1 runs, "continue" lets LAYA VERIFY it (succeeded), step 2 then runs and
+  // the user stops. The old note claimed "a stop leaves every task unverified", which is
+  // FALSE here — step 1 was already verified and must keep its verdict. The task states are
+  // read from the real TaskStore projection.
+  let prompts = 0;
+  const r = await workflowRound({
+    planChoice: 'full',
+    checkpoint: true,
+    checkpointInput: () => { prompts += 1; return prompts === 1 ? 'continue' : 'stop step two is not acceptable'; },
+  });
+  const cp = checkpointsOf(r)!;
+  check('stop-after-success: exactly two runs (step 1 verified, step 2 stopped)', r.requests.length === 2, `n=${r.requests.length}`);
+  check('stop-after-success: step 1 keeps its VERIFIED status (not retracted by the stop)', taskStatusW(r, 1) === 'succeeded', taskStatusW(r, 1));
+  check('stop-after-success: step 2 is left to_verify and step 3 is still planned',
+    taskStatusW(r, 2) === 'to_verify' && taskStatusW(r, 3) === 'planned', `w2=${taskStatusW(r, 2)} w3=${taskStatusW(r, 3)}`);
+  check('stop-after-success: the loop stopped on user-stop', workflowOf(r).stop === 'user-stop', String(workflowOf(r).stop));
+  check('stop-after-success: the note says only the AWAITING step is unverified and prior work is kept',
+    /awaiting verification is left UNVERIFIED/i.test(String(cp.note)) && /verified BEFORE the stop keep their verdict/i.test(String(cp.note)),
+    String(cp.note));
+  check('stop-after-success: the note no longer claims every task is unverified',
+    !/every task unverified/i.test(String(cp.note)), String(cp.note));
+  check('stop-after-success: the round is incomplete and non-zero',
+    r.report.ok === false && r.report.executionIncomplete === true && r.exitCode !== 0,
+    `ok=${String(r.report.ok)} incomplete=${String(r.report.executionIncomplete)} exit=${r.exitCode}`);
+}
+
+// =========================================================================
+section('checkpoint continue: an empty or unsatisfying output is still NOT accepted');
+
+{
+  // "continue" must only let the EXISTING verification proceed. When the step's own output
+  // is empty or does not show its deliverable, LAYA must not accept it: the task stays
+  // to_verify, only ONE run happened, the round is incomplete and exits non-zero.
+  for (const mode of ['unsatisfying', 'empty'] as const) {
+    const r = await workflowRound({
+      planChoice: 'full',
+      outputMode: mode,
+      checkpoint: true,
+      checkpointInput: () => 'continue',
+    });
+    const cp = checkpointsOf(r)!;
+    check(`continue+${mode}: only the first step ran`, r.requests.length === 1, `n=${r.requests.length}`);
+    check(`continue+${mode}: the step stays to_verify (never accepted)`, taskStatusW(r, 1) === 'to_verify', taskStatusW(r, 1));
+    check(`continue+${mode}: the checkpoint choice was a real continue`, cp.entries.length === 1 && cp.entries[0]!.choice === 'continue', JSON.stringify(cp.entries.map((e) => e.choice)));
+    check(`continue+${mode}: the round is not ok, IS incomplete, and exits non-zero`,
+      r.report.ok === false && r.report.executionIncomplete === true && r.exitCode !== 0,
+      `ok=${String(r.report.ok)} incomplete=${String(r.report.executionIncomplete)} exit=${r.exitCode}`);
+  }
+}
+
+// =========================================================================
+section('checkpoint fail-closed: a non-string answer and a NON-Error throw stop safely');
+
+{
+  // A typed seam return is NOT trusted: a non-string must be validated (and rejected) by
+  // the SAME parseCheckpointAnswer, never read as a default continue.
+  const nonString = await workflowRound({
+    planChoice: 'lean',
+    checkpoint: true,
+    checkpointInput: (() => 42) as unknown as () => string,
+  });
+  const cp = checkpointsOf(nonString)!;
+  check('non-string: a numeric answer stops and is not treated as continue',
+    workflowOf(nonString).stop === 'user-stop' && nonString.requests.length === 1 && cp.entries[0]!.choice === 'stop',
+    `stop=${String(workflowOf(nonString).stop)} n=${nonString.requests.length} choice=${cp.entries[0]!.choice}`);
+  check('non-string: the report says the answer was not understood',
+    /not understood|invalid/i.test(cp.entries[0]!.stopReason ?? ''), JSON.stringify(cp.entries[0]!.stopReason));
+  check('non-string: a COMPLETE report is still produced and the round exits non-zero',
+    nonString.report.ok === false && nonString.report.checkpoints !== undefined && nonString.exitCode !== 0,
+    `ok=${String(nonString.report.ok)} exit=${nonString.exitCode}`);
+
+  // A seam that throws a NON-Error (null / a bare string) must NOT crash the round:
+  // `(e as Error).message` would itself throw on null. The stop must still be recorded and
+  // the report must still be produced, then the round exits non-zero.
+  for (const thrown of [null, 'reader exploded'] as const) {
+    const label = thrown === null ? 'null' : 'string';
+    const r = await workflowRound({
+      planChoice: 'lean',
+      checkpoint: true,
+      checkpointInput: (() => { throw thrown; }) as unknown as () => string,
+    });
+    const cpThrow = checkpointsOf(r)!;
+    check(`non-Error(${label}): stops safely (fail closed)`, workflowOf(r).stop === 'user-stop' && r.requests.length === 1,
+      `stop=${String(workflowOf(r).stop)} n=${r.requests.length}`);
+    check(`non-Error(${label}): the report names the unreadable answer`,
+      cpThrow.entries[0]!.choice === 'stop' && /could not be read/.test(cpThrow.entries[0]!.stopReason ?? ''),
+      JSON.stringify(cpThrow.entries[0]!.stopReason));
+    check(`non-Error(${label}): a COMPLETE report is produced, not a crash`, r.report.ok === false && r.report.checkpoints !== undefined && r.exitCode !== 0,
+      `ok=${String(r.report.ok)} exit=${r.exitCode}`);
+  }
+}
+
+// =========================================================================
+section('checkpoint production reader: a real non-TTY stdin stops after the first run');
+
+{
+  // The PRODUCTION default reader (no `checkpointInput` seam) reads `process.stdin`. In a
+  // real non-interactive invocation stdin is not a TTY, so the reader refuses WITHOUT
+  // waiting and the round must stop after the first member ran: runtime=1, no downstream
+  // run, a COMPLETE JSON report, and a non-zero exit. `isTTY` is forced off so the
+  // assertion is deterministic regardless of the ambient terminal; the reader is still the
+  // real one, and no seam is passed.
+  const stdin = process.stdin as unknown as { isTTY?: boolean };
+  const own = Object.getOwnPropertyDescriptor(stdin, 'isTTY');
+  Object.defineProperty(stdin, 'isTTY', { value: false, configurable: true });
+  let r: Round;
+  try {
+    r = await workflowRound({ planChoice: 'full', checkpoint: true });
+  } finally {
+    if (own !== undefined) Object.defineProperty(stdin, 'isTTY', own);
+    else delete stdin.isTTY;
+  }
+  const cp = checkpointsOf(r)!;
+  check('non-TTY: exactly ONE runtime run happened', r.requests.length === 1, `n=${r.requests.length}`);
+  check('non-TTY: the stop reason names the non-terminal stdin',
+    cp.stop !== null && /not a terminal/.test(cp.stop.reason), JSON.stringify(cp.stop?.reason));
+  check('non-TTY: no downstream step ever ran', r.requests.every((q) => !q.prompt.includes('implementation — deliverable') && !q.prompt.includes('test — deliverable')),
+    r.requests.map((q) => q.prompt.slice(0, 40)).join(' | '));
+  check('non-TTY: the JSON report is complete and the round exits non-zero',
+    r.report.ok === false && r.report.executionIncomplete === true && r.report.checkpoints !== undefined &&
+      r.report.roundResult !== undefined && r.exitCode !== 0,
+    `ok=${String(r.report.ok)} incomplete=${String(r.report.executionIncomplete)} exit=${r.exitCode}`);
 }
 
 // =========================================================================

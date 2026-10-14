@@ -1,6 +1,6 @@
 # LAYA Native Multi-Agent Orchestrator
 
-更新日期：2026-10-13
+更新日期：2026-10-14
 
 个人 Windows 工作台的本机多 Agent 编排后端。用户提交目标，LAYA 决定任务分工、具体 Agent × Model 与需要的能力，既有执行链负责准入、调度、隔离、证据和验证。
 
@@ -42,9 +42,9 @@ listed ≠ connected ≠ callable ≠ free；严格零新增费用尚未端到�
 
 当前 **B4.5/B4.5a独立PASS（受控最小Git顺序协作范围）**：组内单worktree交付、脏文件保护和实际成果审核已通过；
 停止未确认、no-review或scope重叠均阻止误报成功。B1/B4整体仍未封板。
-B3.1任务级原生Skill有界闭环独立PASS：显式 `--skill-catalog skills.json` 配合sequential/collaborate，LAYA至多选一个advisory请求或none，报告分开请求/绑定/工具观察。候选不证明已安装，绑定不证明已加载；MCP和真实加载/token收益未认证。B3.2亦已独立PASS（具体Server/Tool的advisory选择与名称匹配观察）：`--mcp-catalog mcp-tools.json`，只支持OpenCode目录声明，不自动连接/配置MCP，也不裁剪原生工具定义。B2.1/B2.1a用户声明池与最终同步启动准入已受控独立PASS；下一候选B4.6检查点监督待下发。
+B3.1任务级原生Skill有界闭环独立PASS：显式 `--skill-catalog skills.json` 配合sequential/collaborate，LAYA至多选一个advisory请求或none，报告分开请求/绑定/工具观察。候选不证明已安装，绑定不证明已加载；MCP和真实加载/token收益未认证。B3.2亦已独立PASS（具体Server/Tool的advisory选择与名称匹配观察）：`--mcp-catalog mcp-tools.json`，只支持OpenCode目录声明，不自动连接/配置MCP，也不裁剪原生工具定义。B2.1/B2.1a用户声明池与最终同步启动准入已受控独立PASS；B4.6a最小同进程用户检查点已独立PASS WITH P2：`--checkpoint`在单步运行后、验收前允许用户继续/停止；完整监督/纠偏恢复仍缺。下一候选B5.1待下发。
 新草案要求的需求确认、阶段批准、监督、交付与恢复已重排；见 [交付计划](docs/BACKEND_DELIVERY_PLAN.md) 和 [下一任务](docs/NEXT_TASK.md)。
-完整后端目标粗估完成约60%、剩约40%（工程估算，不含正式前端）；权重、证据和不确定区间见唯一基线，不能按测试数量计算进度。
+后端规划估算只在唯一基线维护（固定能力权重，不含正式前端）；不能按测试数量计算进度。
 
 本机独立进度页：`project-progress/index.html`，不进入 Git，不接 Runtime 控制。
 本机存在时用 `node project-progress/refresh.mjs` 刷新，或加 `--serve` 只读实时预览；每次任务推进必须同步。
