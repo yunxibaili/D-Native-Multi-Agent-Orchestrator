@@ -16,3 +16,8 @@
 ## 任务纪律
 
 每次开始只读读取project-progress/audit/观察日志一次，不写/删/上传，不强制采信；实际结论以源码与证据为准。若确需实现，OpenCode仍由opencode-agent implement/DeepSeek V4.1 Flash开发，Codex独立审查，最多首次+一次返工；没有缺口不为委派造代码。更新基线/受影响文档/ignored进度数据并上传独立快照，保留main/index/dirty树。正式前端尚未进入，先确认前端需求再做UI。
+
+## 用户已指定的模型与当前单点
+
+OpenCode DeepSeek V4.1 Flash采用已验证实例`opencode-go/deepseek-v4.1-flash`；第二目标为DSH截图WorkBuddy组的Hy3 x0.00限时免费，不替换成x0.05。请从模型设置提供该免费档的provider ID与model ID，不能由界面显示名猜机器ID，不发送API Key。
+本机Desktop公开包0.2.0-rc.2与项目使用的npm CLI0.1.5-rc.2不同；生产adapter当前拒绝指定model，必须先证明headless同源且任务绑定可靠。复用既有DSH adapter，研究profile/overlay及settings优先级；不能只加--model、只加patch、打开capability或猜Desktop默认。没有充分协议/反馈则明确unsupported/unknown，避免误调收费档。未经另行明确范围不改安装/用户profile/桌面默认/凭据，不启动真实推理；免费资格、截止与新增费用仍按用户声明与真实证据分开。

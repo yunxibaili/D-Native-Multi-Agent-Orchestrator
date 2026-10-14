@@ -319,6 +319,15 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 
 ## 8. 最近独立证据与上传记录
 
+2026-10-14 B4.7模型目标补充（只读可行性核对，真实推理0）：用户选OpenCode DeepSeek V4.1 Flash及DSH里WorkBuddy分组的“Hy3 · x0.00 · 限时免费”；不能替换成截图另列的Hy3 x0.05。现有OpenCode实例完整请求ID为`opencode-go/deepseek-v4.1-flash`，B5.1原生委派元数据105/90条已验证，属于开发委派历史证据，不是产品B4.7真实验收。
+
+本机npm DSH安装包0.1.5-rc.2的headless启动语法只有任务位置参数，runner读取`agentDefaultModel.currentSelection()`；现有项目adapter modelSelection=false，独立直接调用生产validateRequest确认model=hy3以UNSUPPORTED_OPTION拒绝，未创建transport/未启动Agent。发现桌面应用公开app.asar根包为`@deepseek-ai/dsh-desktop@0.2.0-rc.2`，其中headless已含JSON/session选项，仍从默认model服务取selection；它与当前npm CLI、desktop/headless profile不是同一已验证配置。未读取用户profile/settings/凭据，只读安装包公开源码及asar清单。
+
+GitHub MCP本轮实际检索/读取官方headless README成功（e7776f059198c60d206962c2deecbbb26d510df2），路径apps/headless失败是路径不存在，不称服务不可用。[官方provider文档](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/guide/providers.md)允许配置第三方/自定义模型，profile分开；不能据master已支持JSON/session宣称当前npm CLI拥有该能力。本机launcher确有--patch overlay入口，但default model服务可被settings层覆盖，仅加patch不能认证实际选中Hy3。
+
+最小接入方向是复用现有DSH adapter，先确认免费档的真实provider ID/model ID及headless可达性，再验证不可被settings覆盖的任务级绑定/原生反馈；无充分协议证据不打开modelSelection、不重建adapter/网关、不改DSH安装、桌面默认或凭据。截图是用户所指档位的证据，没有内部ID、优惠截止或当前账户资格；不把x0.00当永久免费或硬费用保证。当前待确认的是机器ID/绑定和费用范围，不是要求重新选择全部模型。无真实推理/新实现/阶段封板，PARALLEL_WRITE=CLOSED，估算不增。
+
+
 2026-10-14 B4.7：**仅真实验收准备完成；尚未运行真实产品模型，不作验收PASS。**
 
 - 用户授权继续；开始只读读取audit观察资料、当前基准/下一任务、真实与hermetic入口。核对OpenCode adapter的逐请求model、cwd、JSONL/sessionID、工具/usage事件与终态；复用runRoundCli、计划文件、Assignment/Session/Scheduler、原子Attempt/RunResult及owned isolation，不新建执行/测试框架。旧native e2e包含硬编码历史模型、隐式真实review/较长运行，不能直接当本次有界入口启动。
@@ -854,18 +863,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-14T18:54:56+08:00",
+  "updatedAt": "2026-10-14T19:23:22+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
     "id": "B4.7",
     "name": "真实Agent代表验收：调用前准备",
     "status": "blocked",
-    "summary": "只读核对与最小隔离demo方案已准备；真实调用为0，等待用户明确模型、费用/会话数及数据范围。不是代码失败，不把准备计入真实验收。"
+    "summary": "用户已选OpenCode Flash + DSH WorkBuddy Hy3限时免费档。OpenCode请求支持已有；DSH桌面0.2与npm CLI0.1.5不同，现有adapter拒绝指定hy3。等待免费档内部ID/headless绑定及费用范围，真实推理0。"
   },
   "next": {
-    "id": "B4.7 run",
-    "name": "范围明确后执行一次有界真实小样本",
+    "id": "B4.7 DSH binding",
+    "name": "确认Hy3免费档provider/model与原生绑定，再做小样本",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -943,9 +952,9 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     {
       "id": "B47-CALL-SCOPE",
       "severity": "待用户信息",
-      "title": "真实验收模型/费用/数据范围未明确",
-      "detail": "请给实际pair、包含额度/新增费用与超额扣费范围、最多native会话及是否只发隔离demo；只读准备可推进，真实推理等待。",
-      "next": "收到范围后直接复用现有链小样本验收",
+      "title": "DSH Hy3免费档的机器ID/原生绑定待确认",
+      "detail": "目标已选；截图未给内部provider/model ID或优惠期限。当前DSH adapter拒绝model，桌面与headless配置未认证同源；OpenCode费用/原生会话数仍需明确。",
+      "next": "用户给免费档provider ID/model ID；只补已有DSH接入的绑定，不换收费档",
       "kind": "授权边界 / 非代码缺陷"
     },
     {
@@ -1173,19 +1182,19 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
   ],
   "checks": [
     {
-      "name": "B4.7准备",
-      "result": "仓内复用/官方版本资料/最小demo方案已完成",
-      "source": "Codex只读核对；GitHub MCP pinned tag与官方CLI/Go，不证明真实账户可调用或免费"
+      "name": "指定模型可行性",
+      "result": "OpenCode请求验证通过；DSH model=hy3生产validateRequest明确拒绝",
+      "source": "本轮只读代码/直接生产方法probe；无transport/真实推理"
     },
     {
-      "name": "本轮调用/差异",
-      "result": "真实产品Agent/模型0；src/native/tests/config无改动；diff check PASS",
-      "source": "未委派实现，无fullsuite；开发委派与产品费用授权分开"
+      "name": "本机版本差异",
+      "result": "npm DSH0.1.5-rc.2 / Desktop公开包0.2.0-rc.2",
+      "source": "公开安装包与asar代码；未读用户settings/profile或凭据"
     },
     {
       "name": "进度",
-      "result": "仍67/100；真实验收等待范围，不作PASS",
-      "source": "只读准备不加能力信用；页面数据刷新，视觉未认证"
+      "result": "仍67/100；B4.7实际模型验收NOT RUN",
+      "source": "目标档位明确但内部绑定未验证；页面数据刷新/不入Git"
     }
   ],
   "sources": [
