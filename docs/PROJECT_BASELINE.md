@@ -321,7 +321,7 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 - P2仅既有未完成Review原因泛称fan-out(0成员)；不改变真实阻断/退出/状态。P3工具限制：本轮本地URL被浏览器安全策略拒绝，已运行refresh并核对本地快照，但不声称完成视觉验收。未绕过浏览器策略。
 - 测试owned b40a/b46目录0；实现方3个外部readerprobe脚本按写入记录+当前内容哈希逐项确认后仅删除对应文件，未删共享目录/foreign文件。没有真实产品Agent/账号/网络任务、full suite、安装/依赖/系统配置变更；保留PARALLEL_WRITE=CLOSED与整体未封板。
 - 规划估算固定100分母：监督/用户输入信用0→2（5权重），总65/100、展示约65%完成/35%剩余，区间30–50%，不含正式前端，不由测试数计算。完整监督/实际纠偏恢复仍不足。下一候选B5.1先调查已有中断/停止/continuation的一个实际缺口，未启动。
-- Git上传：待独立审核快照上传并核验；本机进度页全部excluded，main/共享index/原dirty tree保持。
+- Git上传已核验：`codex/b46a-user-checkpoint-review-pass`，代码/独立审核证据提交 [fec5d18](https://github.com/yunxibaili/D-Native-Multi-Agent-Orchestrator/commit/fec5d18ebc9baa142ecd5b61c1036da80da3f002)。main/共享index/原dirty tree保持；本机页excluded且仅核验数据，视觉访问受策略限制。此上传事实随后单独同步，不改变产品代码或结论。
 
 2026-10-14 B2.1a：**Codex独立 PASS（用户声明池最终启动准入的受控最小范围）**。B2.1两个历史P1已关闭，B2 overall未封板。
 - 本地确定性单点修复，沿用前轮已核验的ModelPool/Assignment/Spawn Gate/Workspace/最终freeze，不重复安装或引入第三方系统。本轮只改orchestration/orchestrator.ts与既有b14测试；生产增38行含注释，无新模块/依赖/manager/authority，未改runtime/adapters/native/费用配置。
@@ -818,7 +818,7 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-14T17:16:07+08:00",
+  "updatedAt": "2026-10-14T17:19:44+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
@@ -1144,8 +1144,8 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     },
     {
       "name": "GitHub",
-      "result": "待上传并核验",
-      "source": "独立审核快照；页面禁止入Git"
+      "result": "已上传 fec5d18 / 核验通过",
+      "source": "审核分支 codex/b46a-user-checkpoint-review-pass；main/index保持，页面excluded"
     }
   ],
   "sources": [
