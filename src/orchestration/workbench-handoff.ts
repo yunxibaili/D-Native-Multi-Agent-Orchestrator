@@ -241,6 +241,16 @@ export function buildTaskBrief(input: {
    * as a hard requirement: a missing skill should degrade the work, not stop it.
    */
   skills?: readonly string[];
+  /**
+   * B3.2: Laya's advisory native MCP tool INTENT, rendered verbatim.
+   *
+   * Same smallness and same rule as `skills`: the orchestrator declares no MCP server,
+   * connects to nothing, installs nothing and cannot tell whether the assigned agent has
+   * the tool configured. The native agent owns its own tool configuration and invocation,
+   * so the only thing missing was a way to ASK. Worded as a request so a tool the agent
+   * does not have is reported and the work continues, never fabricated.
+   */
+  mcpTools?: readonly string[];
 }): string {
   const lines: string[] = [
     'Work:',
@@ -249,6 +259,10 @@ export function buildTaskBrief(input: {
   if (input.skills !== undefined && input.skills.length > 0) {
     lines.push('', 'Requested skills (use your own if you have them; otherwise continue without):');
     for (const s of input.skills) lines.push(`- ${s}`);
+  }
+  if (input.mcpTools !== undefined && input.mcpTools.length > 0) {
+    lines.push('', 'Requested MCP tools (use your own configured tool if you have it; otherwise report it unavailable and continue):');
+    for (const m of input.mcpTools) lines.push(`- ${m}`);
   }
   if (input.constraints !== undefined && input.constraints.length > 0) {
     lines.push('', 'Constraints:');

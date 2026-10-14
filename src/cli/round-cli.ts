@@ -194,6 +194,19 @@ import {
   type SkillCatalog,
   type SkillReportEntry,
 } from '../orchestration/skill-catalog.ts';
+// B3.2: the advisory native-MCP-tool choice preset + the bounded user-declared catalogue and
+// the ONE honest projection of a catalog-name-matched native tool observation.
+import { decideMcpChoice, type McpChoiceCandidate } from '../decision/mcp-choice.ts';
+import {
+  MCP_CATALOG_MAX_BYTES,
+  isMcpCatalogError,
+  mcpToolIntentLabel,
+  parseMcpCatalog,
+  projectMcpReport,
+  type McpCatalog,
+  type McpReportEntry,
+  type McpToolTuple,
+} from '../orchestration/mcp-catalog.ts';
 import { buildDispatchReceipt } from '../orchestration/dispatch-receipt.ts';
 import { projectDispatchTaskEvidence } from '../orchestration/dispatch-evidence.ts';
 import { buildExecutionSnapshot } from '../orchestration/execution-monitor.ts';
@@ -268,8 +281,18 @@ OPTIONS
                          assigned task (or explicitly none); the pick is bound into the
                          task's advisory brief as a REQUEST only. It never reroutes an
                          agent/model and is not an enforceable tool authorization, proof the
-                         skill is installed, or a guarantee it loaded. Requires --workflow
-                         sequential|collaborate; absent = byte-identical behaviour to before.
+                          skill is installed, or a guarantee it loaded. Requires --workflow
+                          sequential|collaborate; absent = byte-identical behaviour to before.
+  --mcp-catalog <file>
+                         opt-in advisory NATIVE MCP tool candidates (B3.2). A JSON file
+                         {agentId:"opencode", tools:[{server, tool, description}]} you
+                         declare for the ONE agent this version supports. After Assignment,
+                         LAYA may pick AT MOST ONE of these per matching initially assigned
+                         task (or explicitly none); the pick is bound into the task's advisory
+                         brief as a REQUEST only. It never connects/installs/authorizes an MCP
+                         server, never reroutes an agent/model, and is not proof the tool
+                         exists, is MCP, or ran. Requires --workflow sequential|collaborate;
+                         absent = byte-identical behaviour to before.
   --stage <file>         opt-in stage gate (B4.3): a JSON file describing the CURRENT
                          stage's material — stageId, scope, requirement, acceptance, and an
                          optional planRef. REQUIRES --workflow sequential|collaborate, because
@@ -357,6 +380,8 @@ interface RoundOptions {
   workflowPlan?: string;
   /** B3.1: opt-in, user-declared skill CANDIDATES for ONE agent (`--skill-catalog`). */
   skillCatalog?: string;
+  /** B3.2: opt-in, user-declared native MCP tool CANDIDATES for ONE agent (`--mcp-catalog`). */
+  mcpCatalog?: string;
   /** B4.3: the current stage's material file (opt-in stage gate). */
   stage?: string;
   /** B4.3: the user's confirmation, bound to the stage material's digest. */
@@ -498,6 +523,17 @@ function parse(argv: readonly string[]): RoundOptions | { error: string } {
     if (skillCatalog !== undefined && flags['classify-only'] === true) {
       return { error: '--skill-catalog cannot be combined with --classify-only' };
     }
+    // B3.2: the advisory MCP catalogue is only meaningful where the initial Assignment path
+    // runs, exactly like the skill catalogue. The same combinations are usage errors raised
+    // HERE, before any file read, provider call or task write.
+    const mcpCatalog = s('mcp-catalog');
+    if (flags['mcp-catalog'] === true) return { error: '--mcp-catalog requires a file path' };
+    if (mcpCatalog !== undefined && workflow !== 'sequential' && workflow !== 'collaborate') {
+      return { error: '--mcp-catalog requires --workflow sequential or --workflow collaborate' };
+    }
+    if (mcpCatalog !== undefined && flags['classify-only'] === true) {
+      return { error: '--mcp-catalog cannot be combined with --classify-only' };
+    }
     // B4.1: the answer space is the MODE's own bounded list, so `--workflow-choice duo`
     // with `--workflow sequential` is a usage error rather than a silent fallback.
     const choiceSpace = workflow === 'collaborate'
@@ -540,6 +576,7 @@ function parse(argv: readonly string[]): RoundOptions | { error: string } {
       ...(workflowChoice !== undefined ? { workflowChoice } : {}),
       ...(workflowPlan !== undefined ? { workflowPlan } : {}),
       ...(skillCatalog !== undefined ? { skillCatalog } : {}),
+      ...(mcpCatalog !== undefined ? { mcpCatalog } : {}),
       ...(stage !== undefined ? { stage } : {}),
       ...(confirm !== undefined ? { confirm } : {}),
       ...(stageCheck ? { stageCheck } : {}),
@@ -735,6 +772,29 @@ function readSkillCatalogForRound(cwd: string, file: string): SkillCatalog {
   return parseSkillCatalog(raw);
 }
 
+/**
+ * Read + validate the B3.2 MCP catalogue. The ONE reader, run ONCE before any external call
+ * or task write; a missing, unreadable, oversized or malformed file is a clear refusal (never
+ * a silent empty catalogue). It connects to nothing.
+ */
+function readMcpCatalogForRound(cwd: string, file: string): McpCatalog {
+  const path = resolve(cwd, file);
+  if (!existsSync(path) || !statSync(path).isFile()) {
+    throw new Error(`--mcp-catalog "${file}" is not a readable file (resolved to "${path}")`);
+  }
+  const size = statSync(path).size;
+  if (size > MCP_CATALOG_MAX_BYTES) {
+    throw new Error(`--mcp-catalog "${file}" is ${size} bytes, over the ${MCP_CATALOG_MAX_BYTES} byte limit`);
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (e) {
+    throw new Error(`--mcp-catalog "${file}" is not valid JSON: ${(e as Error).message}`);
+  }
+  return parseMcpCatalog(raw);
+}
+
 export async function runRoundCli(
   runtime: RuntimeOrchestrator,
   argv: readonly string[],
@@ -774,6 +834,27 @@ export async function runRoundCli(
       if (o.json) w(JSON.stringify({ ok: false, stage: 'skill-catalog', error: detail }, null, 2));
       else {
         note(`skill catalog refused: ${detail}`);
+        note('nothing was created or run.');
+      }
+      return 2;
+    }
+  }
+
+  /*
+   * B3.2: the OPT-IN MCP catalogue is read + validated ONCE here, alongside the skill
+   * catalogue, before the stage gate, before the provider is configured, before any quota
+   * probe, classification or task. A missing / unreadable / oversized / malformed file is a
+   * clear refusal (exit 2); nothing is created, called or connected.
+   */
+  let mcpCatalog: McpCatalog | null = null;
+  if (o.mcpCatalog !== undefined) {
+    try {
+      mcpCatalog = readMcpCatalogForRound(o.cwd, o.mcpCatalog);
+    } catch (e) {
+      const detail = isMcpCatalogError(e) ? `[${e.code}] ${e.detail}` : (e as Error).message;
+      if (o.json) w(JSON.stringify({ ok: false, stage: 'mcp-catalog', error: detail }, null, 2));
+      else {
+        note(`mcp catalog refused: ${detail}`);
         note('nothing was created or run.');
       }
       return 2;
@@ -1773,20 +1854,122 @@ export async function runRoundCli(
   }
 
   /**
-   * B3.1: the advisory brief for an initially assigned task that has NO dependencies.
+   * B3.2: the ADVISORY native MCP tool choice. It has the SAME placement as the skill choice —
+   * AFTER the authoritative initial Assignment (so the real Agent x Model is known) and BEFORE
+   * the first dispatch (so a provider failure stops the round with nothing executed).
+   *
+   * For each initially assigned task, AT MOST ONE native tool is chosen from the user-declared
+   * candidates — and ONLY when the task's assigned agent is the catalogue's supported agent
+   * ("opencode"). Otherwise the rule says "explicit none" and the provider is NOT asked.
+   *
+   * This never connects/installs/authorizes an MCP server, never reroutes an agent or a model,
+   * never touches the fixed pair, quota or resources, and adds no scheduler/router/manager.
+   * The choice is recorded through the EXISTING `setTaskIntent`, preserving every unrelated
+   * intent field (including a skill already recorded for the same task).
+   */
+  interface McpSelection {
+    /** The tool tuple LAYA selected (or null for an explicit/rule none). */
+    readonly requested: McpToolTuple | null;
+    /** The tuple BOUND into the advisory brief at selection time (equal to `requested` when a
+     * tool was selected; never re-read from a possibly-pruned intent later). */
+    readonly admitted: McpToolTuple | null;
+    readonly source: 'laya' | 'rule';
+    readonly reason: string;
+    readonly agentId: string;
+    readonly modelId: string | null;
+  }
+  const mcpSelections = new Map<string, McpSelection>();
+  if (mcpCatalog !== null) {
+    for (const a of assigned) {
+      if (!a.ok) continue;
+      const task = wb.store.get(a.taskId);
+      if (task === null) continue;
+      const agentId = task.agentId;
+      const modelId = task.modelId ?? null;
+      // The catalogue is declared for the ONE supported agent, so "matching" is exact. MCP
+      // support is NOT inferred from `capabilities.skills` or any other capability.
+      const matching = agentId === mcpCatalog.agentId;
+      const offered = mcpCatalog.tools;
+      const ruleReason = !matching
+        ? `the MCP catalogue is declared for agent "${mcpCatalog.agentId}", not the assigned agent "${agentId}"`
+        : offered.length === 0
+          ? 'the MCP catalogue declares no tools for this agent'
+          : provider === null
+            ? 'no decision provider is available, so no MCP tool is requested'
+            : '';
+      if (ruleReason !== '') {
+        mcpSelections.set(a.taskId, { requested: null, admitted: null, source: 'rule', reason: ruleReason, agentId, modelId });
+        continue;
+      }
+      const roleMatch = /:: ([\w-]+) — deliverable:/.exec(task.acceptanceCriteria);
+      let chosen: McpChoiceCandidate | null;
+      try {
+        chosen = await decideMcpChoice(provider, {
+          task: {
+            taskId: task.taskId,
+            objective: task.acceptanceCriteria,
+            ...(roleMatch === null ? {} : { role: roleMatch[1]! }),
+            taskType: task.taskType,
+            agentId,
+            modelId,
+          },
+          candidates: offered.map((t) => ({ nativeName: t.nativeName, server: t.server, tool: t.tool, description: t.description })),
+        });
+      } catch (e) {
+        const msg = `${(e as Error).name}: ${(e as Error).message}`;
+        report.stage = 'mcp-choice';
+        report.error = `mcp tool choice refused: ${msg}`;
+        if (o.json) w(JSON.stringify(report, null, 2));
+        else note(`mcp tool choice refused: ${msg}; nothing was executed.`);
+        notifyWorkbenchSnapshot();
+        return 1;
+      }
+      if (chosen === null) {
+        mcpSelections.set(a.taskId, {
+          requested: null,
+          admitted: null,
+          source: 'laya',
+          reason: 'the decision provider chose the explicit no-tool option',
+          agentId,
+          modelId,
+        });
+      } else {
+        const tuple: McpToolTuple = { server: chosen.server, tool: chosen.tool, nativeName: chosen.nativeName };
+        const existing = wb.intentFor(a.taskId) ?? {};
+        wb.setTaskIntent(a.taskId, { ...existing, mcpTools: [mcpToolIntentLabel(tuple)] });
+        mcpSelections.set(a.taskId, {
+          requested: tuple,
+          admitted: tuple,
+          source: 'laya',
+          reason: 'the decision provider selected this native MCP tool from the offered candidates',
+          agentId,
+          modelId,
+        });
+      }
+    }
+  }
+
+  /**
+   * B3.1/B3.2: the ONE shared advisory brief composer for an initially assigned task that has
+   * NO dependencies and at least one SELECTED advisory pick (a native skill and/or an MCP
+   * tool).
    *
    * `NativeWorkbench.dispatch` auto-composes a brief (which already renders the recorded
-   * skill intent) for tasks that HAVE dependencies, but a no-dependency first step gets the
-   * bare prompt instead. This reuses the SAME `briefFor`/`buildTaskBrief` and hands the
-   * result to the SAME `dispatch(promptFor)` seam the continuation path already uses, so the
-   * selected skill reaches EVERY task's brief rather than only the later steps. It returns
-   * undefined (and changes nothing) whenever no skill was selected.
+   * skill/mcpTools intent) for tasks that HAVE dependencies, but a no-dependency first step
+   * gets the bare prompt instead. This reuses the SAME `briefFor`/`buildTaskBrief` and hands
+   * the result to the SAME `dispatch(promptFor)` seam the continuation path already uses, so
+   * both advisory picks reach EVERY task's brief rather than only the later steps. It returns
+   * undefined (and changes nothing) whenever no advisory pick was made.
    */
-  const skillBriefPrompts = (): ReadonlyMap<string, string> | undefined => {
-    if (skillCatalog === null) return undefined;
+  const advisoryBriefPrompts = (): ReadonlyMap<string, string> | undefined => {
+    if (skillCatalog === null && mcpCatalog === null) return undefined;
+    // The UNION of the task ids that got a selected skill and/or a selected MCP tool. A task
+    // with neither is absent, so a round with only rule-none picks changes nothing.
+    const ids = new Set<string>();
+    for (const [taskId, sel] of skillSelections) if (sel.requestedName !== null) ids.add(taskId);
+    for (const [taskId, sel] of mcpSelections) if (sel.requested !== null) ids.add(taskId);
     const prompts = new Map<string, string>();
-    for (const [taskId, sel] of skillSelections) {
-      if (sel.requestedName === null) continue;
+    for (const taskId of ids) {
       const task = wb.store.get(taskId);
       if (task === null || task.dependencies.length > 0) continue;
       if (task.status !== 'planned' && task.status !== 'queued') continue;
@@ -1927,13 +2110,14 @@ export async function runRoundCli(
     // T3-a.3: capture the receipt the Decision Loop uses, so the round knows exactly which
     // members started an execution THIS round (and which were refused/pending).
     dispatch: async () => {
-      // B3.1: when a skill was selected for a no-dependency task, its advisory brief is
-      // handed to the SAME `dispatch(promptFor)` seam (exactly as the continuation path
-      // does). Absent that, this is `decisionCapabilities.dispatch()` byte-for-byte.
-      const skillPrompts = skillBriefPrompts();
-      const receipt = skillPrompts === undefined
+      // B3.1/B3.2: when a skill and/or MCP tool was selected for a no-dependency task, its
+      // advisory brief is handed to the SAME `dispatch(promptFor)` seam (exactly as the
+      // continuation path does). Absent that, this is `decisionCapabilities.dispatch()`
+      // byte-for-byte.
+      const advisoryPrompts = advisoryBriefPrompts();
+      const receipt = advisoryPrompts === undefined
         ? await decisionCapabilities.dispatch()
-        : await wb.dispatchReceipt(skillPrompts);
+        : await wb.dispatchReceipt(advisoryPrompts);
       captureDispatchFacts(receipt);
       return receipt;
     },
@@ -2818,6 +3002,42 @@ export async function runRoundCli(
         });
       });
   }
+  /*
+   * B3.2: the MCP report is OPT-IN and truthful per task. It is built ONLY when
+   * `--mcp-catalog` was given, so a round without the flag has a byte-identical report.
+   *
+   * Each entry keeps the REQUEST (what LAYA chose, and where), the ADMISSION (the tuple SAVED
+   * and bound into the advisory brief at selection time — a saved binding, not a later re-read
+   * and not proof the task ran) and the OBSERVATION (completed native tool events from THIS
+   * task's OWN latest run result whose EXACT name matches an offered declaration). A run by a
+   * DIFFERENT agent can never be read as the request having been honoured. An absent run is
+   * `observation: null`, never a fabricated success. The observation asserts a NAME MATCH
+   * against a user declaration — never verified MCP protocol/server identity.
+   */
+  if (mcpCatalog !== null) {
+    const mcpRuns = wb.runResults();
+    report.mcpCatalog = {
+      agentId: mcpCatalog.agentId,
+      offered: mcpCatalog.tools.map((t) => ({ server: t.server, tool: t.tool, nativeName: t.nativeName })),
+      note: 'USER-DECLARED candidates only; not discovered by the orchestrator, not a connected or authorized MCP server, and not proven installed',
+    };
+    report.mcpTools = assigned
+      .filter((a) => a.ok && mcpSelections.has(a.taskId))
+      .map((a) => {
+        const sel = mcpSelections.get(a.taskId)!;
+        return projectMcpReport({
+          taskId: a.taskId,
+          requested: sel.requested,
+          admitted: sel.admitted,
+          source: sel.source,
+          reason: sel.reason,
+          assignedAgentId: sel.agentId,
+          assignedModelId: sel.modelId,
+          offered: mcpCatalog!.tools,
+          run: mcpRuns.get(a.taskId) ?? null,
+        });
+      });
+  }
   // Null unless `--observe` was given. This reports WHERE the observation went and
   // what the dashboard would have shown, not an instruction to read it.
   report.observation = observationPaths === null || observedFinal === null
@@ -3322,6 +3542,30 @@ export async function runRoundCli(
             ? 'none'
             : s.observation.skillCalls.map((c) => `${c.name}${c.equalsRequested ? '' : ' (unrequested)'}`).join(', ');
           w(`      observed tool-events: ${calls}  (runtime task ${s.observation.runtime.taskId ?? '-'}, agent ${s.observation.runtime.agentId ?? '-'})`);
+          // A run by a DIFFERENT agent is shown as an origin mismatch, so a same-named call
+          // can never read as this request being honoured by the wrong worker.
+          if (!s.observation.agentMatchesAssignment) {
+            w(`      ORIGIN MISMATCH: the observed run is agent ${s.observation.runtime.agentId ?? '(unknown)'}, but this request was assigned to ${s.assignedAgentId}; the observation is NOT this request being honoured`);
+          }
+        }
+      }
+    }
+    // B3.2: the advisory MCP tool projection, printed only when the flag opted in.
+    if (o.mcpCatalog !== undefined) {
+      const mcpRows = (report.mcpTools ?? []) as McpReportEntry[];
+      w();
+      w('MCP TOOLS (advisory request only; CATALOG-NAME-MATCHED native events; not verified MCP identity, connection or authorization)');
+      if (mcpRows.length === 0) w('  (no initially assigned task was considered)');
+      for (const s of mcpRows) {
+        const fmt = (t: McpToolTuple | null): string => (t === null ? '(none)' : `${t.server}/${t.tool} [native ${t.nativeName}]`);
+        w(`  ${s.taskId}  requested=${fmt(s.requested)}  admitted=${fmt(s.admitted)}  source=${s.selectionSource}`);
+        if (s.observation === null) {
+          w('      observed catalog-name-matched tool-events: none (no run result)');
+        } else {
+          const calls = s.observation.toolCalls.length === 0
+            ? 'none'
+            : s.observation.toolCalls.map((c) => `${c.nativeName}${c.equalsRequested ? '' : ' (unrequested)'}`).join(', ');
+          w(`      observed catalog-name-matched tool-events: ${calls}  (runtime task ${s.observation.runtime.taskId ?? '-'}, agent ${s.observation.runtime.agentId ?? '-'})`);
           // A run by a DIFFERENT agent is shown as an origin mismatch, so a same-named call
           // can never read as this request being honoured by the wrong worker.
           if (!s.observation.agentMatchesAssignment) {

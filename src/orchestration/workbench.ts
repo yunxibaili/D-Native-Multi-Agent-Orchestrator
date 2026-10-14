@@ -249,6 +249,13 @@ export interface AssignOutcome {
  */
 export interface TaskIntent {
   readonly skills?: readonly string[];
+  /**
+   * B3.2: advisory native MCP tools LAYA requested for this task, each rendered prompt text
+   * built from the declared tuple (server/tool + the exact native tool name). Prompt text
+   * ONLY: nothing here connects a server, installs a tool, changes routing or limits the
+   * agent's native tools. Absence omits the section entirely.
+   */
+  readonly mcpTools?: readonly string[];
   readonly sessionIntent?: SessionIntent;
   readonly preferredAgent?: string;
   readonly preferredModel?: string;
@@ -1875,6 +1882,8 @@ unDecisionCycle can read a real TickResult. */
       // is omitted entirely, so a task with no skill intent gets a byte-identical brief
       // to the one it got before this existed.
       skills: this.taskIntents.get(taskId)?.skills,
+      // B3.2: the same rule for the advisory native MCP tools.
+      mcpTools: this.taskIntents.get(taskId)?.mcpTools,
       handoffs,
     });
   }
