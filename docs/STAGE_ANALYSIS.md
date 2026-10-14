@@ -236,13 +236,13 @@ opencode-go/deepseek-v4.1-flash。首次实现 guard 正确；一次 bounded rew
 仅一次 bounded rework 关闭两处已复现投影问题；最终独立 typecheck、全部选定定向 suite 与 diff check 通过。
 PARALLEL_WRITE=CLOSED，未进入 B4.5 或正式前端；本机进度页与唯一基线同步。
 
-## B4.5 / B4.5a 收口与下一候选
+## 历史 B4.5 / B4.5a 收口与当时下一候选
 
 单组隔离worktree复用既有权威实现；审核cwd/子目录语义、运行期Claim保护和Windows scope归一化均已独立关闭。
 只保证Git根目录、committed base、组内顺序写的受控最小范围；不将fixture提升为真实Agent兼容性。
-下一候选B3.1：先调查一个本机Agent原生Skill/MCP入口，复用现有intent/capability/证据链，完成目录→选择→实际加载/调用核对。
+B4.5a结束时的下一候选B3.1：先调查一个本机Agent原生Skill/MCP入口，复用现有intent/capability/证据链，完成目录→选择→实际加载/调用核对。
 不先建设通用MCP网关，不由目录推断授权或已调用；具体有界任务在用户下发后形成。
-PARALLEL_WRITE=CLOSED，B1/B4整体未封板；本轮没有启动B3.1或正式前端，实际证据与估算只见唯一基线。
+PARALLEL_WRITE=CLOSED，B1/B4整体未封板；B4.5a当时没有启动B3.1或正式前端；随后B3.1已获用户授权并独立通过，当前事实与估算只见唯一基线。
 
 ## B3.1 本轮推进与下一切片
 

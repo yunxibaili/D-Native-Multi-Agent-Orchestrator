@@ -281,7 +281,7 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 - 独立真实CLI/受控Runtime的跨Agentprobe：同名外来调用保留actual agent，但 `agentMatchesAssignment=false`、`equalsRequested=false`，文本明确来源不匹配；这是受控证据，并非真实handoff测试。
 - 两组独立内存负控：去掉intent交付 / 接受未完成工具事件，都使实际suite出现3条失败并exit1；前者随后因缺少预期证据触发fatal，不能当作完整64条负控遍历。源码/测试原始哈希未变，无临时回退工作树。AST生产runtime.run调用边1，新authority0。
 - 本轮改动范围为3个生产文件（2新纯值/决策preset+CLI接线）、1新测试、既有测试runner登记与受影响文档；runtime/adapters/native/依赖/生产配置未改，owned b31临时目录0。未跑full suite、未调用产品真实模型、未读凭据/改本机Agent配置，PARALLEL_WRITE=CLOSED。
-- Git上传沿用独立 `codex/b31-skill-review-pass` 审核快照分支，精确内容与远端hash核对后才报告完成；保留main/共享暂存区/dirty tree。本机project-progress全部excluded。
+- 已核对并上传首份源码/文档快照 `8ee75251b730a9a92ee6cf874b795b30dce13600` 至独立 `codex/b31-skill-review-pass` 分支（远端hash已验证）；页面复核后再补文档展示字段的前向快照，保留main/共享暂存区/dirty tree。本机project-progress全部excluded。
 
 
 2026-10-14 B4.5a：**Codex独立PASS；B4.5受控最小Git顺序协作范围可封板，本轮停止，B3.1未启动**。
@@ -735,7 +735,7 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-14T11:45:26+08:00",
+  "updatedAt": "2026-10-14T11:48:33+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
@@ -834,7 +834,7 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "severity": "范围限制",
       "title": "Git协作的支持范围",
       "detail": "只支持仓库根目录启动、从committed base开始、组内单worktree顺序执行；未提交内容不自动带入，最终人工集成。",
-      "next": "使用反馈后再扩展，不阻塞B3.1",
+      "next": "使用反馈后再扩展，不阻塞B3.2准备",
       "kind": "最小已验收"
     },
     {
@@ -864,9 +864,10 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     {
       "title": "原生MCP与真实Skill证据仍缺",
       "severity": "产品缺口",
-      "status": "未实现 / 未验证",
       "detail": "B3.1仅用户声明候选和advisory请求闭环；没有认证实际安装/正文/权限/token收益，未执行MCP。",
-      "next": "B3.2 / 后续opt-in真实验收"
+      "next": "B3.2 / 后续opt-in真实验收",
+      "id": "native-mcp",
+      "kind": "未实现 / 未验证"
     }
   ],
   "tasks": [
@@ -889,7 +890,7 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "title": "功能 A · 跨角色顺序分工",
       "status": "done",
       "deliverable": "调研 → 实现 → 测试 → 审核",
-      "evidence": "历史受控封板；本轮 b40a 42/0"
+      "evidence": "历史受控封板；本轮未重跑b40a，不能作本轮结果"
     },
     {
       "id": "B4.1a",
@@ -951,16 +952,15 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "id": "B3.1",
       "title": "任务级原生 Skill 最小闭环",
       "status": "done",
-      "deliverable": "目录 → 选择 → 实际加载/调用核对",
-      "evidence": "独立64/0 + ownership守卫 + 2内存负控；初次+唯一返工",
-      "summary": "用户声明候选→选择→advisory brief→原生工具观察；不等于MCP完成"
+      "deliverable": "用户声明候选 → LAYA选择 → advisory brief → 工具事件观察（受控）",
+      "evidence": "独立64/0 + ownership守卫 + 2内存负控；初次+唯一返工"
     },
     {
       "id": "B3.2",
       "title": "原生 MCP 最小闭环",
       "status": "planned",
-      "summary": "调查已有Agent接口并连接任务选择/观察，不能用目录冒充授权",
-      "evidence": "待单独授权；不搭通用MCP网关"
+      "evidence": "待单独授权；不搭通用MCP网关",
+      "deliverable": "原生接口调查 → 具体工具选择与有来源的调用观察"
     },
     {
       "id": "B2.1",
