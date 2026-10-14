@@ -330,6 +330,8 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 - 唯一待补：用户给出实际pair、费用/包含额度与超额扣费范围、原生会话上限和可发送数据。async问题已提交，未把等待超时当作授权。真实调用未执行，B4.7/B5整体不封板，PARALLEL_WRITE=CLOSED。
 
 
+- 准备记录已上传且远端hash确认：`codex/b47-real-agent-preflight`，[c09f12b](https://github.com/yunxibaili/D-Native-Multi-Agent-Orchestrator/commit/c09f12b0065010d6e00b541af39451e794cb1df2)；仅3份文档，src/native/tests/config不变。初次脚本命名置换误沿用上一任务的safe-model-handoff-review-pass后缀，已另建明确preflight分支；初始同commit别名保留，不代表真实验收PASS。不删除远端分支，main/index/dirty树保持，页面及audit排除。
+
 2026-10-14 B5.1：**Codex独立 PASS WITH P2，仅已知session_failure的停止安全/具体model有界接力。**
 
 - 开始只读读取audit三文件；调查现有continuation、唯一reassign、Runtime错误分类和原子执行证据。GitHub MCP实际检索BerriAI/litellm并核对MIT范围、活跃未归档及官方reliability方法；只参考有限模型fallback，不引入Python/Rust网关、manager、依赖或第二执行权威。
