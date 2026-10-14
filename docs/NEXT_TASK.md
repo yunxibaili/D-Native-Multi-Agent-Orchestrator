@@ -31,3 +31,7 @@ OpenCode目标仍为`opencode-go/deepseek-v4.1-flash`；用户已将DSH第二目
 优先候选为opencode/space-bunny-free及opencode/mimo-v2.6-flash-free，项目已有历史池，官方2026-10-14仍列免费。只代表已知协议路径/公开目录/价格，今日实际可调用和账户额度unknown；尚无真实调用授权。DSH GLM-5.3-Flash x0.06保持用户指定待办，不必等其逐请求绑定才验证OpenCode两模型。
 已有B2.1用户池、fixed/auto、Assignment及B5.1停止安全接力直接复用；不重写路由器。9Router动态目录/冷却与CLIProxyAPI配置可参考（均MIT，GitHub MCP实读成功），现阶段不安装代理网关、不复制协议指纹或凭据层。OpenRouter的随机free路由不替代LAYA明确模型选择。
 下一实施片若获授权：先有界只读本机目录确认这两个完整ID，再在生成隔离demo上验真实duo；免费池耗尽就停止，fixed不得替换，实际native模型无证据保持unknown，辅助标题/review费用单列；不将公共价格或旧cost0视为全流程零费。具体来源及调查限制只见唯一基线。
+
+## 本机目录核对已完成
+
+2026-10-14直接复用生产collectModelCatalog，隔离cwd/owned launcher，原生models一次1170ms、43项；Space Bunny Free/MiMo V2.6 Flash Free完整ID均列出，同次validated Job空，owned清理完成、exit=0。无需再重复目录核对。真实推理仍0、callable未知，先保留用户不调用模型约束；下一真实小样本须明确授权后执行，不把继续目录核对解释为放宽费用/调用范围。

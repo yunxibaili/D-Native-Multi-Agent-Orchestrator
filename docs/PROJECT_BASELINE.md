@@ -319,6 +319,8 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 
 ## 8. 最近独立证据与上传记录
 
+2026-10-14 B4.7本机免费候选目录核对完成：用户要求继续后，直接复用collectModelCatalog默认contained路径，无runner注入；只运行原生OpenCode models一次，不运行doctor其他Agent/probe或任何推理。owned launcher copy+隔离cwd，20秒上限，1170ms完成，status=ok、共43项；opencode/space-bunny-free与opencode/mimo-v2.6-flash-free完整ID均存在。当前原生目录还列cat-jam-free、exo-free、ling-3.0-flash-fin-free、ling-3.1-flash-free、longcat-2.5-preview-free、muse-spark-1.3-contributor-free、nemotron-3-ultra-free、nemotron-3.5-lightning-free、step-5-preview-free；不将名称当当前免费资格/模型效果。只读本轮唯一owned control，经readControlRecord/treeStopConfirmedFrom认证success及ActiveProcessesFinal=0；cleanupFailures=0、owned root已删除、进程退出0。保存project-progress/b47-native-free-catalog.json，不进Git；不读/删除共享control，不扫描终止foreign进程。真实模型推理0、当前callable仍unknown；源码/配置/模型路由未改。目录核对不提高真实验收完成信用。
+
 2026-10-14 B4.7免费池与成熟实现调查（用户要求先网上调查，不随机试跑）：源码旧ACTIVE_FREE_MODEL_POOL为opencode/space-bunny-free、opencode/mimo-v2.6-flash-free、workbuddy-intl/hy3，来自9月30日历史证据；B2.1已明确旧池不是当前免费账户事实，用户声明池独立准入。GitHub MCP本轮可用：9Router公开provider registry动态读取OpenCode官方models目录，accountFallback实现模型/账户冷却、有界退避，executor说明会话标识需保持；MIT、未归档、活跃，但不把README无限免费承诺当事实。不复制其协议指纹/工具注入，不引入第二网关。CLIProxyAPI亦MIT、未归档、release workflow明确windows-amd64/arm64；config.example已有路由/会话亲和/重试/冷却，适合作为以后统一API的可选外部能力，不负责现有Task/Session/Job/Verification。无需现在安装任何项目。
 
 官方公开目录GET及models.dev元数据首次读取成功（不登录、不读凭据、不发推理），后一次补齐保存请求15秒超时如实保留，不循环重试。优先首组候选opencode/space-bunny-free + opencode/mimo-v2.6-flash-free：项目已有pair，官方当前价格页仍列Free；额外公开候选cat-jam-free、step-5-preview-free、longcat-2.5-preview-free、ling-3.1-flash-free、nemotron-3.5-lightning-free、muse-spark-1.3-contributor-free仅为目录/价格研究，不写registry或放宽池。官方部分促销模型可能收集数据，Space Bunny/Step5/LongCat标明零留存；使用效果/角色适配不靠模型名推断。OpenCode价目中GLM5.3Flash及DeepSeekV4.1Flash为付费路线，不将其价格迁移到WorkBuddy或Go订阅；x0.06不是免费证明。
@@ -875,18 +877,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-14T19:47:01+08:00",
+  "updatedAt": "2026-10-14T21:36:31+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
     "id": "B4.7",
     "name": "真实Agent代表验收：调用前准备",
     "status": "blocked",
-    "summary": "免费池/成熟实现调查完成：优先已有OpenCode Space Bunny Free + MiMo V2.6 Flash Free（官方仍列免费；当前可调用未知）。复用B2.1池/B5.1接力，DSH GLM绑定单列，不挡首个两模型路线；本轮真实推理0。"
+    "summary": "本机原生OpenCode目录核对完成：43项，Space Bunny Free/MiMo V2.6 Flash Free完整ID均列出；同次Job空确认、owned清理完成。复用已有free双模型路径，不等DSH；真实推理仍0，用户不调用模型约束保留。"
   },
   "next": {
     "id": "B4.7 OpenCode free pair",
-    "name": "确认首组免费候选的有界真实验收范围；DSH绑定另行推进",
+    "name": "两个free候选目录已确认；获真实调用范围授权后做隔离小样本",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -965,7 +967,7 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "id": "B47-CALL-SCOPE",
       "severity": "待用户信息",
       "title": "真实调用尚未授权；DSH绑定仅阻塞DSH路线",
-      "detail": "用户本轮仅允许不调用模型与联网调查。推荐OpenCode Space Bunny/MiMo已有选模路径，无需DSH先接通；公开免费价格/目录不证明账户当前额度或全流程零费。DSH GLM内部ID和任务绑定仍unknown，不把其x0.06当免费。",
+      "detail": "已有两个候选均通过本机原生目录核对及官方免费价格调查，但还未验证账户当前额度或真实推理。用户此前选只做不调用模型的验证，继续目录准备不解释为推理授权。DSH GLM绑定仅阻塞DSH路线。",
       "next": "先确认仅新建demo、少量native会话、无新增费用的真实范围；复用已有OpenCode路径，不引入代理服务或随机试跑",
       "kind": "授权边界 / 非代码缺陷"
     },
