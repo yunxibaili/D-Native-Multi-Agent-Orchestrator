@@ -331,6 +331,8 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 - 本轮不跑fullsuite，不调用产品真实Agent/模型或查账户，不读凭据/改配置；Codex不代写产品实现。下一候选B4.7先明确模型、费用和数据范围，再做小型真实验收；尚未授权推理。审核快照上传事实以远端hash核对后追加，main/共享index/dirty树保留，project-progress全部excluded。
 
 
+- 已上传并核验远端：`codex/b51-safe-model-handoff-review-pass`，源码/审核快照 [5adc537](https://github.com/yunxibaili/D-Native-Multi-Agent-Orchestrator/commit/5adc5377a392c58f25b9e3619ad86118bd1c4fe2)，父e30e899f0183181741c2a9d1754500e64c737a58；12个精确文件、206个完整版本化文件tree与当前规范化字节一致。main/共享index/dirty树保持，页面与只读audit全部排除。此上传事实同步为单独文档提交，不改源码或结论。
+
 2026-10-14 B4.6a：**Codex独立 PASS WITH P2，仅同进程任务边界用户检查点。**
 - 先调查HumanGate/NextRoundInput、RoundResult、既有Verification/continue、CLI有界循环、fixed/stage/model-pool与资源保护。GitHub MCP成功查阅[LangGraph仓库](https://github.com/langchain-ai/langgraph)与MIT LICENSE（未归档、活跃）；[官方interrupt说明](https://docs.langchain.com/oss/python/langgraph/interrupts)明确持久化与节点重启/副作用重放依赖。只参考外部输入与验收分离，不引入Python框架/检查器/新状态权威。
 - 实现只改round-cli、新增workflow-checkpoint小模块、扩展b40a测试、新增b46 reader/协作测试、登记既有test-timed；Codex不代写产品实现。一次实现+一次有界返工：首session ses_ec67066feffe26lYX2Ep2AyQAT导出78条assistant全部opencode-go/deepseek-v4.1-flash、finish=stop；返工session ses_ec65f3f4bffe5lXi49ZaK4dTjx的44条全部同模型、最后finish=tool-calls。两个wrapper exit0；返工改动已落盘，但测试工具调用权限被拒，未产出最终报告。工具仅给permission rejected，无更详细原因，不能把exit0/实现方自述当验证通过；不追发第三开发轮，下面结果均Codex独立执行。
@@ -838,7 +840,7 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-14T18:38:51+08:00",
+  "updatedAt": "2026-10-14T18:40:40+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
@@ -1159,9 +1161,9 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "source": "原生产CLI与内存变异；源码未回退"
     },
     {
-      "name": "进度/上传",
-      "result": "页面数据核对；上传远端核对后记录",
-      "source": "本机页不入Git；视觉受策略限制"
+      "name": "页面/上传",
+      "result": "数据与基线一致；远端源码快照hash确认",
+      "source": "codex/b51-safe-model-handoff-review-pass / 5adc537；本机页与audit排除，视觉未认证"
     }
   ],
   "sources": [
