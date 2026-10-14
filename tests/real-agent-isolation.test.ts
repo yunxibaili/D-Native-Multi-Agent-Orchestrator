@@ -50,6 +50,10 @@ const REAL_AGENT_TESTS = [
   'w43-opencode-evidence.test.ts',
   // B1.2: opt-in real OpenCode `models` catalogue query (contained ManagedProcess).
   'b12-opencode-model-catalog.test.ts',
+  // B4.7.1: opt-in REAL OpenCode free-duo acceptance ENTRY. It owns its demo, launcher
+  // copy and control records via the ownership helper, and it launches nothing unless
+  // both the entitlement scope AND the auxiliary-model containment are established.
+  'b47-free-duo.test.ts',
 ];
 
 const HELPER = join(HERE, 'helpers', 'real-agent-isolation.ts');

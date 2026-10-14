@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前状态入口
 
-更新日期：2026-10-14
+更新日期：2026-10-15
 性质：当前事实、阶段状态、授权边界与证据索引；不是未来能力承诺。
 
 ## 1. 文档权责
@@ -43,7 +43,7 @@ README 是导航。本机 `project-progress/audit/` 是用户指定的只读第�
 | B4.6a | 最小同进程用户检查点独立通过；原报告文案P2在B5.1关闭，不等于完整监督/纠偏恢复 |
 | B5.1 | 独立 PASS WITH P2：已知session_failure的停止安全/具体model有界接力；仅受控当前链 |
 | B5 overall | NOT SEALED；真实协议掉线、完整工作流恢复及更广错误分类未验收 |
-| B4.7 | 用户授权继续；只读验收准备已完成，真实调用待模型/费用/数据范围明确 |
+| B4.7 | 整体 NOT SEALED；B4.7.1b 路径收口独立 PASS，首个 Space Bunny 实际产物已验证；完整真实 duo 未验收，原授权会话用1/3、剩2 |
 | B4.6 后续 / B2 后续 / B3 后续 / B5 后续 | PLANNED；未授权扩大 |
 | PARALLEL_WRITE | CLOSED |
 | 本产品前端 | 本机独立进度页已授权且禁止入 Git；正式工作台 UI 需求仍待确认 |
@@ -318,6 +318,16 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 不新增 provider 网关、群聊平台、第二个调度器或通用工作流引擎来掩盖协议缺口。
 
 ## 8. 最近独立证据与上传记录
+
+2026-10-15 B4.7.1b Demo路径收口独立PASS（仅测试入口，不封整个B4.7）：按用户“继续推进”下发bounded任务，OpenCode经opencode-agent implement实际执行一次、wrapper exit0、session ses_ec48dcd77ffeosAdfpVJzmwlTp。Codex读取sanitize原生export，25个assistant消息均为opencode-go/deepseek-v4.1-flash、finish=stop；无子代理、无需返工。worker只改既有tests/b47-free-duo.test.ts与tests/b47-free-duo-entry.test.ts，生产src/native/scripts、helper与已有dirty内容保持不变。
+
+保留同一内置duo builder与真实Workbench/Assignment/Session/Scheduler路径；具体目标和验证统一为src/provider/add.mjs、src/consumer/add.test.mjs（导入../provider/add.mjs）、src/integration/。没有根目录fallback/猜测搜索/挪动真实模型产物，也没有新增DAG/执行器。旧Node台账、身份分层、task-budget、pair/费用/期限、3native/90秒、unknown停止保护均保留。
+
+Codex独立实跑typecheck exit0、b47-free-duo-entry 96/0 exit0、ownership60/0 exit0、isolation6 opt-in/0违规exit0、default entry NOT_RUN exit0、git diff --check PASS。额外独立Node探针走同一verifyDeliverable+fact sink，检查根目录decoy拒绝、历史真实Space Bunny模块在正确scope通过、错误scope模块失败、consumer真实导入/运行、最终测试、失败consumer与集成拒绝，共7个contained Node命令；全部同次validated Job空、facts/control匹配、cleanupFailures0。集成断言仍是既有artifact引用+最终consumer测试，不能据此声称真实集成模型运行或其artifact被执行。内存hook仅将provider读取恢复旧根路径，不修改工作树：91/5、exit1，5个失败证明回归承重；不是重试至偶然成功。
+
+本轮产品推理/原生执行会话新增0；开发worker与Node验收不是产品模型会话。上轮Space Bunny实跑1次与元数据cost0/5案例为历史证据，MiMo独立任务及完整duo仍未验证。原授权总3已用1剩2；完整新duo需要3，下一B4.7.2须额外批准1个会话（总上限4）后，才能启动一次新的完整3会话样本。免费pair/隔离demo/各90秒/不收费或另启LAYA-Review的原范围保留；未重置次数、未自动重试，未开放PARALLEL_WRITE、未进入正式前端。工程估算保持67/100，不用测试数增加完成度。
+
+独立探针初次用不存在command在createOpenCodeAdapter发现阶段抛LAUNCHER_UNSUPPORTED，任何Node/Agent启动前停止；已改受控Node command且7检查通过。其初次owned目录w44-eM6GD9（无control记录）按保守策略保留；自动审批拒绝其确切递归删除，返回blocked by policy，未换工具绕过。仅该已记录目录留作用户手动清理，不能声称本轮所有temp残留0；不影响产品代码或contained停止正确性。audit仅只读。证据见project-progress/b471b-model-evidence.json、b471b-independent-probe.json、b471b-negative-control.log、b471b-review-state.json及定向logs，均不入Git。审核通过的3个测试文件（含既有ownership入口登记）与受影响文档可上传前向快照，未上传页面/audit/原生session export；主HEAD/index保持不变。
 
 2026-10-15 B4.7.1a单点关闭，真实双模型验收仍BLOCKED：经真实opencode-agent implement首次+唯一返工，wrapper均0、native finish stop，32/51条assistant元数据均opencode-go/deepseek-v4.1-flash；本片没有worker子agent。只改既有两测试文件。独立typecheck、b47-free-duo-entry83/0、ownership60/0、6-entry isolation guard通过。原Node事实丢失修复：同一ManagedProcess finally把fact送进real commands sink；独立实际Node成功/错误模块/启动后停止读取抛错probe证明成功事实与control对齐、失败验收不抹去、未知stop不可清理。nativeSessions改为orchestrationSessionIds，真正nativeThreadIds只取同次RunResult.threadId。未新增生产manager/authority/依赖。
 
@@ -895,18 +905,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-15T01:16:55+08:00",
+  "updatedAt": "2026-10-15T01:32:24+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "B4.7.1a",
-    "name": "单点关闭；首个真实free模型交付已验证",
-    "status": "blocked",
-    "summary": "Node台账/身份/预算接线独立通过，83/0；实际Space Bunny任务成功并按src/provider/add.mjs交付，Codex5案例通过。入口却查根add.mjs，路径矛盾阻止第二模型/集成，完整duo仍未通过。"
+    "id": "B4.7.1b",
+    "name": "Demo路径收口独立通过；完整真实duo待会话额度",
+    "status": "done",
+    "summary": "scope/目标/验收已统一，独立96/0+7个contained Node检查通过；内存旧路径负控91/5。新增产品模型调用0，首个Space Bunny真实产物为历史证据，完整双模型链尚未验收。"
   },
   "next": {
-    "id": "B4.7.1b",
-    "name": "统一demo任务范围/交付/验收路径；后续调用须守剩余额度",
+    "id": "B4.7.2",
+    "name": "一次完整真实free duo；需追加1个原生执行会话上限",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -982,12 +992,12 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
   },
   "blockers": [
     {
-      "id": "B47-CALL-SCOPE",
-      "severity": "P1",
-      "title": "Demo计划fileScope与验收路径不一致",
-      "detail": "第一模型实际按src/provider/**写出有效add.mjs，入口验证根add.mjs导致失败。该Native元数据cost0、Job已空；MiMo独立任务/集成未运行。已批准3个原生会话实际用1剩2，完整新duo需要3，不擅自重置额度。",
-      "next": "只对齐既有demo的scope/交付/验收，受控回归防路径矛盾；需要新完整3会话时明确追加，或按剩2会话选择其他目标",
-      "kind": "验收入口测试输入矛盾 / 非Agent不可用"
+      "id": "B47-NATIVE-COUNT",
+      "severity": "授权范围",
+      "title": "完整新duo需3个会话，原授权剩2",
+      "detail": "B4.7.1b已关闭路径P1。原上限3已实际用1；不重置额度，不把继续解释为增加次数。MiMo独立任务和集成尚未验证。",
+      "next": "用户允许新增1个会话、把累计上限改4后，一次新duo最多3会话/各90秒；其余原免费/隔离范围保留。",
+      "kind": "调用数量待追加 / 非代码阻塞"
     },
     {
       "id": "B43-P3-CLEANUP",
@@ -1068,6 +1078,14 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "detail": "owner返回前TDZ抛错；不具备可靠定点清理路径，未扫描批删，不能称零残留。后续probe和harness已补异常清理。",
       "next": "保留观察，不影响生产正确性；不按前缀删除foreign目录",
       "kind": "独立探针卫生"
+    },
+    {
+      "id": "B471B-PROBE-DIR",
+      "severity": "P3",
+      "title": "启动前失败探针目录待手动清理",
+      "detail": "自有w44-eM6GD9无进程启动；其确切递归删除被自动审批blocked by policy拒绝，未绕过。",
+      "next": "用户手动清理已记录目录；不阻塞路径修复或后端",
+      "kind": "工具限制"
     }
   ],
   "tasks": [
@@ -1193,9 +1211,9 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     {
       "id": "B4.7",
       "title": "真实 Agent 代表验收",
-      "status": "blocked",
+      "status": "partial",
       "deliverable": "成功、受阻与真实成本/停止证据",
-      "evidence": "本轮仅只读准备，product model calls=0；等待实际pair/费用/数据范围，未增加完成信用"
+      "evidence": "目录及单个Space Bunny真实产物为历史证据；B4.7.1b入口路径独立PASS96/0，完整duo仍待数量授权和实跑。"
     },
     {
       "id": "F0",
@@ -1213,26 +1231,12 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     }
   ],
   "checks": [
-    {
-      "name": "B4.7.1a单点",
-      "result": "PASS：typecheck/83入口/60ownership/6 guard；实际Node+抛错耦合probe通过",
-      "source": "Codex本轮独立实跑"
-    },
-    {
-      "name": "实际模型",
-      "result": "Space Bunny原生9条assistant均正确model、finish stop、消息成本报告0；模块5案例通过",
-      "source": "同次native export/真正生成文件/contained Node验证"
-    },
-    {
-      "name": "完整duo",
-      "result": "BLOCKED：scope src/provider与validator根目录矛盾，后续未运行",
-      "source": "真实entry exit1，att_0001与同次控制记录"
-    },
-    {
-      "name": "Git/页面",
-      "result": "只上传裁定文档，未通过整体entry留本地；页面数据刷新，未视觉检查",
-      "source": "独立快照/同基线数据比较"
-    }
+    "B4.7.1b独立PASS：typecheck0、入口96/0、ownership60/0、isolation6/0、diff check PASS",
+    "7个实际contained Node检查：scope/产物/测试路径一致，负例拒绝，Job空、facts/control匹配、清理完成",
+    "内存恢复旧根路径：91/5、exit1，回归承重；未改实现文件",
+    "产品native累计1/3、剩2；本轮新增0，完整duo未运行",
+    "Git上传审核测试与受影响文档；页面/audit/export禁止入Git；HEAD/index不动",
+    "本机页面数据由唯一基线刷新；未作浏览器目视认证"
   ],
   "sources": [
     {
