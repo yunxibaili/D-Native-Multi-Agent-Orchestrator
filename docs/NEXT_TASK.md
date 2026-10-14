@@ -1,4 +1,4 @@
-# 当前任务 — B4.7 真实 Agent 小样本验收
+# 下一候选 — B4.7.1a Node台账单点收口
 
 更新日期：2026-10-14
 唯一状态/证据见[PROJECT_BASELINE.md](PROJECT_BASELINE.md)。用户已授权继续；只读准备已完成。真实调用等待实际模型、费用/包含额度/超额扣费、会话次数和数据范围，不以“继续”猜付费或数据授权。
@@ -35,3 +35,9 @@ OpenCode目标仍为`opencode-go/deepseek-v4.1-flash`；用户已将DSH第二目
 ## 本机目录核对已完成
 
 2026-10-14直接复用生产collectModelCatalog，隔离cwd/owned launcher，原生models一次1170ms、43项；Space Bunny Free/MiMo V2.6 Flash Free完整ID均列出，同次validated Job空，owned清理完成、exit=0。无需再重复目录核对。真实推理仍0、callable未知，先保留用户不调用模型约束；下一真实小样本须明确授权后执行，不把继续目录核对解释为放宽费用/调用范围。
+
+## 当前独立裁定与下一小片
+
+B4.7.1 BLOCKED，首次+唯一返工结束。独立typecheck/68入口/60ownership/6-entry guard通过，Node-only耦合探针exit1确认：Node检查成功且Job空，fact未进入runRealDuo.commands，完整链的controls数会比台账多。未通过测试改动留本地，不进入上传快照；生产代码未变。
+下一片只修改既有b47两测试文件：将同次Node fact返回并fold到真实commands，记录失败/异常或may-have-started时的事实，增加走相同路径的承重回归；本地sessionId不能命名成nativeSessions，原生ID未知就unknown。保留现有固定池、最多3native/90秒、owned配置/Job停止/清理失败退出，不重写执行器/审批/框架。新任务下发后由OpenCode实施、Codex独立审核。
+真实样本已有明确授权：两free候选、只生成隔离demo、最多3原生执行会话/各90秒，不收费/独立LAYA或Review，未知就停止。授权不重问；入口通过前不启用，本次消耗0。真实验收/完整B4尚未通过，PARALLEL_WRITE继续CLOSED。
