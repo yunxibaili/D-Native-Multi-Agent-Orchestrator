@@ -1,14 +1,18 @@
-# 下一任务候选 — B4.7 真实 Agent 代表验收
+# 当前任务 — B4.7 真实 Agent 小样本验收
 
 更新日期：2026-10-14
-唯一状态与证据见[PROJECT_BASELINE.md](PROJECT_BASELINE.md)。B5.1已知session_failure的安全pair接力受控子集独立PASS WITH P2，整体B5不封板；本轮停止，B4.7真实推理尚未授权。
+唯一状态/证据见[PROJECT_BASELINE.md](PROJECT_BASELINE.md)。用户已授权继续；只读准备已完成。真实调用等待实际模型、费用/包含额度/超额扣费、会话次数和数据范围，不以“继续”猜付费或数据授权。
 
-## 先明确使用范围，再委派小样本
+## 已准备的最小路线
 
-开始先只读读取project-progress/audit/三份观察日志一次，不修改/删除/上传，不把它当状态权威。核对当前源码、基线与已注册adapter的逐请求model/session/工作区能力。优先复用现有CLI、计划文件、stage、池、brief、Assignment、含停止确认的执行与Review链，不新造执行器。
-用户先明确两个支持的Agent×Model、是否已含账户额度/允许新增费用、调用次数或金额上限、可发送的数据/仓库与工具范围；没有授权不能用名字/目录/历史零费用推断免费，不调用真实模型测试。可先做只读本机接口核对，未知事实单列。
-授权后只做一个小型功能A或B代表流程，记录实际产物、请求与真实反馈身份、Session/Attempt、输入/输出token与已知费用、停止/owned清理、验收与受阻事实。真实provider自动fallback未知时不认证实际模型。hermetic结果不能替代真实运行，DSH无逐请求model不得冒充多模型支持。
+优先复用现有runRoundCli、计划文件、Assignment/Session/Scheduler、同Attempt材料、原验证门及owned isolation。只新建隔离demo，不带入当前dirty源码。先两步实现→测试，产物由当前Codex独立复核/实跑；只有一个pair获授权也能先验功能A的真实顺序链，完整多模型兼容性仍unknown。两个pair明确后可验duo（三次真实任务执行含集成），PARALLEL_WRITE仍CLOSED。
+每native执行建议有界90秒/无异常自动重试，所有失败或停止未知如实记录，不释放保护/开第二写者。次数计native会话，不等于内部模型请求或货币预算。自动真实review必须明确纳入调用/费用范围；未执行真实review或LAYA，只能报告受控seam/未验证，不能使用fake PASS补齐证据。默认没有opt-in或参数缺失，不启动任何真实Agent。
 
-## 保留边界
+## 必须记录
 
-B5.1恢复任务成功只to_verify，全workflow仍待验证/下游；更广服务错误分类、跨进程恢复、副作用去重不一次补平台。fixed/池/最终启动/资源/stage门保持，PARALLEL_WRITE=CLOSED。OpenCode开发、Codex独立审核，worker仍DeepSeek V4.1 Flash，最多实现+一次返工。每片刷新唯一基线/ignored进度数据并上传已审核独立快照，保留main/shared index/dirty树。正式工作台前端未确认，进入前端前先和用户梳理需求。
+实际RunRequest的Agent/model/cwd与同次Attempt/Session/输出/工具观察；真正可读取的native反馈模型（没有则unknown）；真实文件字节及独立测试；validated Job tree-stop、owned路径/句柄和清理失败的真实退出码。目录不证明可调用/免费，成本未知不补0。OpenCode Go是否启用超额余额只能由用户说明，不读现有凭据、不擅改配置。
+本轮核对本机安装包标识1.18.35；官方相应tag源与CLI文档仅作接口依据，真实二进制行为仍须实跑。旧native e2e硬编码模型和隐式review/长时任务不直接运行。
+
+## 任务纪律
+
+每次开始只读读取project-progress/audit/观察日志一次，不写/删/上传，不强制采信；实际结论以源码与证据为准。若确需实现，OpenCode仍由opencode-agent implement/DeepSeek V4.1 Flash开发，Codex独立审查，最多首次+一次返工；没有缺口不为委派造代码。更新基线/受影响文档/ignored进度数据并上传独立快照，保留main/index/dirty树。正式前端尚未进入，先确认前端需求再做UI。

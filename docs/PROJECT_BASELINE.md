@@ -43,6 +43,7 @@ README 是导航。本机 `project-progress/audit/` 是用户指定的只读第�
 | B4.6a | 最小同进程用户检查点独立通过；原报告文案P2在B5.1关闭，不等于完整监督/纠偏恢复 |
 | B5.1 | 独立 PASS WITH P2：已知session_failure的停止安全/具体model有界接力；仅受控当前链 |
 | B5 overall | NOT SEALED；真实协议掉线、完整工作流恢复及更广错误分类未验收 |
+| B4.7 | 用户授权继续；只读验收准备已完成，真实调用待模型/费用/数据范围明确 |
 | B4.6 后续 / B2 后续 / B3 后续 / B5 后续 | PLANNED；未授权扩大 |
 | PARALLEL_WRITE | CLOSED |
 | 本产品前端 | 本机独立进度页已授权且禁止入 Git；正式工作台 UI 需求仍待确认 |
@@ -317,6 +318,17 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 不新增 provider 网关、群聊平台、第二个调度器或通用工作流引擎来掩盖协议缺口。
 
 ## 8. 最近独立证据与上传记录
+
+2026-10-14 B4.7：**仅真实验收准备完成；尚未运行真实产品模型，不作验收PASS。**
+
+- 用户授权继续；开始只读读取audit观察资料、当前基准/下一任务、真实与hermetic入口。核对OpenCode adapter的逐请求model、cwd、JSONL/sessionID、工具/usage事件与终态；复用runRoundCli、计划文件、Assignment/Session/Scheduler、原子Attempt/RunResult及owned isolation，不新建执行/测试框架。旧native e2e包含硬编码历史模型、隐式真实review/较长运行，不能直接当本次有界入口启动。
+- GitHub MCP实际搜索当前官方run.ts无结果；按dev旧路径读取失败后目录读取成功，确认上游目录布局不同。随后明确v1.18.35 tag取得旧路径run.ts（SHA cccc2550179f87bb74763004910028f79ade60c9）。不是认证/服务不可用，不据dev推断本机行为。本机安装包package.json标识1.18.35/MIT/win32与native exe入口；这不是本轮二进制version实测。
+- 官方[CLI](https://opencode.ai/docs/cli/#run)核实--model provider/model、--dir、--format json、session续接；官方[Go](https://opencode.ai/v2/docs/console/go/#usage-beyond-limits)明确Use balance启用时可超额扣余额。因此目录、订阅名称或旧cost0均不认证本次零费用；本轮未读取账户/凭据/余额或更改设置。
+- 已准备最小验收：仅本轮owned隔离demo，实现与测试两步；若只获一个pair，先验功能A顺序/材料链；若明确两个pair，再验功能B duo（三次执行含集成）。不发送现有项目源码，不启动真实推理直至范围明确；最大次数指原生会话，不是Agent内部LLM请求次数或USD硬上限。最终产物由当前Codex独立检查/实跑，本机已有自动review若需新真实调用必须另计授权，不用fakeReviewer PASS冒充真实审核。
+- 核对真实执行请求、same Attempt输出/工具事实、Session/thread、native反馈模型（取不到则unknown）、实际文件字节/测试结果、validated tree-stop及owned清理。若决策provider只用既有受控seam，须明示，不认证真实LAYA判断。旧硬杀/账号额度注入不作为本小样本必选项，不重跑W/T全部阶段。
+- 所有src/native/tests/config与安装保持原字节，未调用产品Agent/模型、未查询凭据或账户，未委派worker（无实现缺口需写代码）。git diff --check通过；尚不为只读准备跑typecheck/fullsuite或加信用，能力估算仍67/100。页面仅更新B4.7等待范围；视觉检查仍未获准，不绕浏览器策略。
+- 唯一待补：用户给出实际pair、费用/包含额度与超额扣费范围、原生会话上限和可发送数据。async问题已提交，未把等待超时当作授权。真实调用未执行，B4.7/B5整体不封板，PARALLEL_WRITE=CLOSED。
+
 
 2026-10-14 B5.1：**Codex独立 PASS WITH P2，仅已知session_failure的停止安全/具体model有界接力。**
 
@@ -840,18 +852,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-14T18:40:40+08:00",
+  "updatedAt": "2026-10-14T18:54:56+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "B5.1",
-    "name": "已知会话失败的安全模型接力",
-    "status": "done",
-    "summary": "Codex独立PASS WITH P2；首次+唯一返工关闭workflow TDZ/提前迁移/假来源。仅受控有界接力，恢复任务to_verify、全workflow仍待验收；B5未整体封板。"
+    "id": "B4.7",
+    "name": "真实Agent代表验收：调用前准备",
+    "status": "blocked",
+    "summary": "只读核对与最小隔离demo方案已准备；真实调用为0，等待用户明确模型、费用/会话数及数据范围。不是代码失败，不把准备计入真实验收。"
   },
   "next": {
-    "id": "B4.7",
-    "name": "先确认模型/费用/数据的真实代表验收",
+    "id": "B4.7 run",
+    "name": "范围明确后执行一次有界真实小样本",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -926,6 +938,14 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     ]
   },
   "blockers": [
+    {
+      "id": "B47-CALL-SCOPE",
+      "severity": "待用户信息",
+      "title": "真实验收模型/费用/数据范围未明确",
+      "detail": "请给实际pair、包含额度/新增费用与超额扣费范围、最多native会话及是否只发隔离demo；只读准备可推进，真实推理等待。",
+      "next": "收到范围后直接复用现有链小样本验收",
+      "kind": "授权边界 / 非代码缺陷"
+    },
     {
       "id": "B43-P3-CLEANUP",
       "severity": "P3",
@@ -1130,9 +1150,9 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     {
       "id": "B4.7",
       "title": "真实 Agent 代表验收",
-      "status": "planned",
+      "status": "blocked",
       "deliverable": "成功、受阻与真实成本/停止证据",
-      "evidence": "需用户模型、费用与数据授权"
+      "evidence": "本轮仅只读准备，product model calls=0；等待实际pair/费用/数据范围，未增加完成信用"
     },
     {
       "id": "F0",
@@ -1151,19 +1171,19 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
   ],
   "checks": [
     {
-      "name": "B5.1独立验证",
-      "result": "PASS WITH P2 / typecheck + 170/416/179/93/42/136/192 + isolation + diff",
-      "source": "Codex本轮实跑；fixture≠产品真实Agent"
+      "name": "B4.7准备",
+      "result": "仓内复用/官方版本资料/最小demo方案已完成",
+      "source": "Codex只读核对；GitHub MCP pinned tag与官方CLI/Go，不证明真实账户可调用或免费"
     },
     {
-      "name": "独立探针/负控",
-      "result": "6池用例 / workflow原探针 / checkpoint2例通过；2负控真实非零",
-      "source": "原生产CLI与内存变异；源码未回退"
+      "name": "本轮调用/差异",
+      "result": "真实产品Agent/模型0；src/native/tests/config无改动；diff check PASS",
+      "source": "未委派实现，无fullsuite；开发委派与产品费用授权分开"
     },
     {
-      "name": "页面/上传",
-      "result": "数据与基线一致；远端源码快照hash确认",
-      "source": "codex/b51-safe-model-handoff-review-pass / 5adc537；本机页与audit排除，视觉未认证"
+      "name": "进度",
+      "result": "仍67/100；真实验收等待范围，不作PASS",
+      "source": "只读准备不加能力信用；页面数据刷新，视觉未认证"
     }
   ],
   "sources": [
