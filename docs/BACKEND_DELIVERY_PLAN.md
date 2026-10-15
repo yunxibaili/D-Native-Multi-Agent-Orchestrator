@@ -6,7 +6,7 @@
 依据：[后端需求](BACKEND_REQUIREMENTS.md)、[阶段草案](DRAFT_STAGED_ROLE_WORKFLOW.md)。
 2026-10-14用户单独授权B4.5a后，B4.5/B4.5a受控最小Git顺序协作范围独立通过；其后用户已授权B3.1原生Skill有界切片，现已独立通过；其后B3.2原生MCP选择与观察也已获授权并独立通过；本轮停止，不授权后续阶段。
 
-当前路线的最新范围：B4.7.2a demo内说明/骨架与首执行请求准备接线已独立通过，125/0且断线负控123/2。B4.7.2真实未交付事实仍保留，未新增实跑，完整真实duo仍未验收。累计授权4已用2、剩2；下一B4.7.3全新3会话样本须明确追加1个（累计5），不改权限、不自动重试。事实/证据只见 [PROJECT_BASELINE.md](PROJECT_BASELINE.md)，建议范围见 [NEXT_TASK.md](NEXT_TASK.md)。下文旧说明不能覆盖最新边界。
+当前路线的最新范围：B4.7.3固定free duo代表样本已独立真实PASS（两模型/三任务/可执行产物/独立负控/Job空），累计产品会话5/5用尽。该样本不是整个后端验收，真实LAYA/Skill-MCP/动态额度等仍有缺口；下一步先确认剩余后端最小闭环范围，不自动开始F0或新模型调用。事实/证据只见 [PROJECT_BASELINE.md](PROJECT_BASELINE.md)，建议范围见 [NEXT_TASK.md](NEXT_TASK.md)。下文旧说明不能覆盖最新边界。
 
 ## 成功效果
 

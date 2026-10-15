@@ -1,24 +1,23 @@
-# 下一候选 — B4.7.3 一次新的完整真实 free duo
+# 下一候选 — 确认剩余后端最小闭环与真实验收范围
 
 更新日期：2026-10-15
-事实、授权计数及估算唯一见 [PROJECT_BASELINE.md](PROJECT_BASELINE.md)。本页不自行授权产品模型重试。
+事实、证据、授权计数与估算唯一见 [PROJECT_BASELINE.md](PROJECT_BASELINE.md)。本页不启动新阶段或模型调用。
 
-## 已完成，不再重写
+## 本阶段已完成的代表样本
 
-B4.7.1a/1b台账/身份/预算/路径收口与B4.7.2a demo材料准备均已独立通过。既有entry创建README与provider/consumer/integration目录，完整说明进入首个真实执行请求，不预写模型交付；125/0正向与123/2断线负控证明接线承重，缺失模块仍被真实Node拒绝。复用现有入口、owned helper、生产Workbench/Assignment/Session/Scheduler/Runtime，不新建执行器或协作系统。
+B4.7.3固定free duo独立PASS：真实Space Bunny实现、MiMo测试、Space Bunny集成；3个独立任务/本地session/native session/Attempt，严格顺序、共享隔离demo，集成复用成员1 pair。生成模块8案例、原模型测试与可执行集成程序实际通过；错误实现副本使测试与集成均真实失败。6个原controls与5个独立controls均确认Job空，本次owned上下文清理完成。
+本次3会话加此前2，已用完5/5授权；不自动续跑、不改权限或以次数重置重试。README/路径/材料/台账等已过的单点不重复重建。
 
-B4.7.2真实首会话权限拒绝后未交付的事实保留；准备说明是advisory，尚无新实跑证明模型会遵守，不能据受控PASS封整个B4.7。
+## 仍与用户完整需求不同的地方
 
-## 唯一待确认的新增调用数量
+此次不包含真实LAYA选择（明确的确定性协调seam）、真实Skill/MCP服务调用认证、动态账户免费资格/共享额度/全流程计费、完整用户需求批准与监督纠偏、真实中途掉线的广泛分类/恢复。不能据代表样本封整个B4.7或宣布后端完成；68/100只是有分母的工程估算。
 
-累计产品会话上限4已用2、剩2；本片新增0。一次全新完整duo需要3个原生执行会话，因此须额外允许1个、累计上限提高到5后才能开始。不得因“继续”重置计数、重用旧审批文本增加次数或自动重试失败样本。
-其他原范围保留：仅Space Bunny Free + MiMo V2.6 Flash Free、新建隔离demo、每会话最多90秒、不启用收费模型或独立LAYA/Review，免费条件或停止事实未知则停止。
+## 最小后续建议（待用户确认）
 
-## 一次样本及独立核验
+先只读核对现有LAYA/provider配置接口与后端CLI最小用户流程，从剩余真实使用缺口选一个最有价值的有界切片；优先现成接线，不新建manager/调度器/网关/审批平台，也不重审全部T/W阶段。
+这一步不读取凭据、不修改用户/Agent安装配置、不调用模型、不扩大前端。若下一切片需要真实推理，须明确新的模型、次数和费用/数据范围，已有5次授权已全部使用。
+完整后端能力仍有缺口，路线中的F0不自动开始；正式工作台前端进入前先与用户确认前端需求。本机进度页仍仅展示事实。
 
-调用前核对已审核代码、安装版本与官方当前free条件。执行既有tests/b47-free-duo.test.ts一次；目录内README和目标路径保持一致，不加auto/yolo/dangerously-skip-permissions或放宽external_directory。保留有界取证副本，独立核验实际模型、任务/会话/Attempt、真实文件/Node结果、Job空及owned清理；消息cost与账户总费用分开。任何交付/权限/停止失败立即阻断下游，不代写产物、不用fake Review补PASS，不自动重跑。
-只裁定本次代表样本，不扩大其他阶段。PARALLEL_WRITE=CLOSED；正式工作台前端仍待需求确认。
+## 工作流与维护
 
-## 结束维护
-
-开始只读读取project-progress/audit；更新唯一基线及受影响文档，刷新ignored进度页并核对数据；审核后上传独立快照，保留主HEAD/index/dirty树。页面/audit/native export和取证数据不入Git。
+用户明确下发实现后继续OpenCode bounded开发、Codex独立审核，默认首次+一次返工；无需实现就不为委派造代码。每次开始只读读取audit、结束更新唯一基线和受影响文档/本机进度页并上传审核快照。PARALLEL_WRITE=CLOSED；主HEAD/index/dirty树保留，页面/audit/exports/生成demo证据不入Git。
