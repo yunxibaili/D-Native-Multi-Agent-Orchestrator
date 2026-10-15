@@ -1,23 +1,18 @@
-# 下一候选 — LAYA-ACTION.1 最小动作与目标桥接（需实施授权）
+# 下一候选 — LAYA-ACTION.2 真实本地动作目标验收准备
 
-更新日期：2026-10-15。唯一事实与证据见 [PROJECT_BASELINE.md](PROJECT_BASELINE.md)。
+更新日期：2026-10-15；事实/裁定只见 [PROJECT_BASELINE.md](PROJECT_BASELINE.md)。
 
-## 当前独立结论
+## 已独立通过
 
-LAYA-ROUND.1只读审核BLOCKED：当前orchestrationDecisionRequest给next_action的候选只有动作名；官方/本机0.3.21 choice decoder不生成任意taskId兄弟字段。输入action_parameters说明不构成输出机制，extractAction因此只能得到{action:'complete'}，validateDecision强制taskId后malformed-decision拒绝。真实TaskStore+生产provider/decision loop的受控协议反例保持to_verify/dispatch=0；带fixture人工提供taskId的正控可验证，定位为目标桥接缺口。不是新真实模型推理，不取消action元数据修复与四预设4/4真实PASS。现有b40a fixture补parameters，所以全绿不能证明原生整链可完成。
-本轮现跑decision429/0、state-loop169/0、b40a-cli-workflow93/0均exit0；源码/测试未改、未启动worker/服务或新推理。只读外部依据为GitHub MCP官方v0.3.21固定tag6ab71fb4的agent.py/serve.py/router.py；本机probe/预算/日志保存在ignored project-progress，audit只读。
+LAYA-ACTION.1代码PASS，整体PASS WITH P2（既有B45负控定位失效）。OpenCode session ses_ec1c29b31ffe8q90kxh7SMjS03实际指定DeepSeek V4.1 Flash，首轮正常finish=stop；只改decision-loop/state-loop/b40a三文件，Codex独立审查与typecheck、decision429/0、state-loop198/0、CLI93/0、workbench419/0、协作96/0、计划61/0、阶段材料47/0通过。独立内存负控强制改为第一个目标，3个新断言失败/exit1，源文件未改。b40a的完整CLI链使用真实provider与原生形状受控响应，不再提供生成taskId/parameters；执行端/答案仍是fixture，不是真实模型验收。
+workflow有acceptanceMaterial时基本continue/wait/abort与complete具体目标同次形成候选表，按membership映射，多个目标不同key、单目标描述/表明确绑定；不默认任务。未知key/矛盾与额外目标参数拒绝，缺执行/criteria或空输出无完成候选；材料存在不等于语义/文件物理认证。旧无material的11动作/参数契约保留。复杂自由参数动作未原生收口，不宣称已全部可用。
 
-## 建议最小范围（尚未开始）
+## 下一步先准备，不自动推理
 
-继续OpenCode有界开发、Codex独立审核。先追踪decision-loop所有调用者/测试，复用已有有限choice与initial-assignment精确候选映射模式，解决workflow必需的complete+明确任务目标：把当前合法、已知的动作/目标组成候选，让LAYA选择其中之一，再精确还原预先定义的payload交给原有validateDecision/applyVerification。任务/状态/范围变化仍重新验证；未知/伪造/越界key拒绝，无合法目标时不伪造一个。不能调用者默认首个任务、不能把continue或exit0当complete，不能根据状态自动验收；须保留真实acceptance_material及未知/缺证据边界。
-优先局限decision-loop与相关hermetic测试，必要的CLI接线再明确；不重建provider/scheduler/DAG/manager、不改Python包/权重、不换生成模型。先收口最小workflow，其余需要自由文本/未支持参数的动态动作明确标记边界，不能声称全部修复；保持既有验证、fixed、pool、停止/租约与并行写门。首轮+最多一次返工。
-验收：原生0.3.21协议形状经真实provider/loop也能传递所选目标；两个不同to_verify任务必须由所选候选区分，不能默认任务；非法候选/非to_verify/缺材料不应假完成；原始对象元数据与未知任务参数校验不退化。typecheck及decision/state-loop/b40a等直接相关套件，必要负控，不跑full suite或真实模型。
+复用当前provider/decision loop与D:/AI/laya-cache固定离线服务，为少量真实next_action选择准备明确合成状态/同任务材料（包括至少两个不同to_verify目标），检验实际所选key能够映射明确目标、缺交付不会被接受。只使用新的内存任务/demo，不提交现有仓库代码或凭据，不调用产品Agent/云模型、不新增付费；记录真实checkpoint、响应、结果和Job退出。模型选wait/abort应如实记录，不能强制改答案或重试到通过。此文不授权POST；实际请求数/90秒期限/失败即停须由用户新确认，现有本地4次已用完、产品原生仍5/5。
+若要直接进入完整round，先按laya-round-budget.json复核预算：理想两步8次本地决策不是硬cap，条件对应上界13；产品执行/可支持Review/辅助CLI与原生内部费用另计，不绕过unknown availability/quota或伪造免费事实。无需新建runner/manager/第二大脑；没有新功能开发需要时不启动worker。
 
-## 后续真实整链预算与前提
+## 维护项与边界
 
-在参数桥接修复通过前不申请产品实跑。带前提估算：两份均为两步的候选计划、每任务至少2个可用pair、无Skill/MCP/重试/接力/动态改计划时，理想本地POST8（1分类+1计划+2pair+4cycle）；源码cycle上限9时对应总上界13。duo（两份duo计划、恰好2个可用pair）理想9/上界15，产品执行3；顺序产品执行2。默认原生Review在可审核且支持时至多另1，否则可能withheld/未启动；--no-review必须报告not_requested、不当产品Review PASS。quota普通路径最多4条辅助CLI尝试（OpenCode stats/providers list/--version，Codex doctor --json），不等于4个推理会话；原生内部辅助次数/费用未知。上述不是新增授权或全流程硬预算保证。
-用户声明池的新pair保持unknown、quota未知/unavailable仍应由原有gate拒绝，不伪造probe或认证免费；后续实际模型/费用/会话/数据需单独明确。产品原生授权累计5/5，本地4次也已用完，不自动追加。
-
-## 维护边界
-
-工程估算68/100（界面70/30取整）不增加；PARALLEL_WRITE=CLOSED，温度校准P2保留，正式前端未进入。准备/审核不因不实施而启动worker。每任务先只读audit，完成更新基线/受影响文档/本机页面并精确审核上传；project-progress/cache/audit不入Git，主HEAD/index与其他dirty内容保持。
+B45旧负控匹配'|| groupRuntimeIncomplete;'，本片父快照def22fb已有不匹配且CLI未改；worker报告103/1，独立静态归因确认，列P2另行限定测试维护，不混入本片或回退安全门求绿。两个worker自建临时hook已按时间/内容确认后按名清理。历史foreign审计/临时文件未动。
+温度校准P2、PARALLEL_WRITE=CLOSED与正式前端未进入保持；工程估算68/100（界面70/30取整）不按测试数量增加。每任务只读audit，结束更新唯一基线/受影响文档与本机页并精确审核上传；页面/cache/audit/本机证据不入Git，主HEAD/index/其他dirty内容保持。

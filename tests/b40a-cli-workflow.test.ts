@@ -22,6 +22,7 @@ import { runRoundCli } from '../src/cli/round-cli.ts';
 import { Orchestrator as RuntimeOrchestrator } from '../src/orchestrator/orchestrator.ts';
 import { createFakeAdapter } from './helpers.ts';
 import { defaultRoundResultPath } from '../src/orchestration/round-observation.ts';
+import { createLayaDecisionProvider } from '../src/decision/laya.ts';
 import type { RunHandle, RunRequest, RunResult } from '../src/core/types.ts';
 import type { DecisionProvider, DecisionRequest } from '../src/decision/types.ts';
 import { INITIAL_AGENT_MODEL_ID, initialCandidateKey } from '../src/decision/initial-assignment.ts';
@@ -59,7 +60,7 @@ function answerFor(id: string, question: { type: string; criteria: unknown }, ov
     const pick = offered.includes(overrides[id] ?? '') ? overrides[id]! : offered[0]!;
     const probabilities: Record<string, number> = {};
     for (const o of offered) probabilities[o] = o === pick ? 1 : 0;
-    return { type: 'choice', choice: pick, probabilities, confidence: 1 };
+    return { type: 'choice', choice: pick, probabilities, confidence: 1, answer_confidence: 1, action: { act_probability: 1 } };
   }
   if (question.type === 'score') {
     const levels = question.criteria as string[];
@@ -68,9 +69,9 @@ function answerFor(id: string, question: { type: string; criteria: unknown }, ov
     for (let i = 0; i < levels.length; i++) probabilities[String(i)] = i === index ? 1 : 0;
     const legend: Record<string, string> = {};
     for (let i = 0; i < levels.length; i++) legend[String(i)] = levels[i]!;
-    return { type: 'score', score: index, level: levels[index]!, levels: [...levels], probabilities, legend, confidence: 1 };
+    return { type: 'score', score: index, level: levels[index]!, levels: [...levels], probabilities, legend, confidence: 1, answer_confidence: 1 };
   }
-  if (question.type === 'noul') return { type: 'noul', noul: 1 };
+  if (question.type === 'noul') return { type: 'noul', noul: 1, answer_confidence: 1 };
   return { type: question.type };
 }
 
@@ -192,85 +193,101 @@ async function workflowRound(opts: {
     },
   };
 
-  const provider: DecisionProvider = {
-    name: 'laya-workflow-seam',
-    async probe() { return { ok: true, endpoint: 'seam://laya', detail: 'test seam', warnings: [] }; },
-    async decide(request) {
-      const answers: Record<string, unknown> = {};
-      for (const [key, question] of Object.entries(request.questions)) {
-        if (key === ORCHESTRATION_ACTION_ID) {
-          decisionRequests.push(request);
-          const stateJson = (request.state as Record<string, string> | undefined)?.[ORCHESTRATION_ACTION_ID];
-          const state = JSON.parse(String(stateJson ?? '{}')) as { tasks?: Array<{ taskId: string; status: string }> };
-          const tasks = state.tasks ?? [];
-          const toVerify = tasks.find((t) => t.status === 'to_verify');
-          const planned = tasks.find((t) => t.status === 'planned' || t.status === 'queued');
+  /*
+   * The REAL production provider, driven through a fetch seam that answers with ONLY
+   * the native 0.3.21 response shape: `{ type, choice, probabilities, confidence,
+   * answer_confidence, action? }`. There is deliberately NO sibling `taskId`/`reason`
+   * and NO `DecisionResponse.parameters`: the offered choice keys are the only way a
+   * target can be named, which is the whole point of LAYA-ACTION.1.
+   */
+  const overrides: Record<string, string> = { ...ROUTING_ANSWERS };
+  if (opts.planChoice !== undefined) overrides[WORKFLOW_PLAN_ID] = opts.planChoice;
+  if (opts.fixed !== undefined) overrides[INITIAL_AGENT_MODEL_ID] = initialCandidateKey(opts.fixed.agentId, opts.fixed.modelId);
+  overrides[EXECUTION_TOPOLOGY_ID] = TOPOLOGY_SOLO;
 
-          /*
-           * MATERIAL-DRIVEN, not status-driven. This is the whole point of B4.0b: the
-           * fixture accepts a task only when the material for THAT task shows its own
-           * execution met its own criteria. Seeing `to_verify` is never sufficient, and
-           * a missing/empty material can never be read as a pass.
-           */
-          let action = 'wait';
-          const parameters: Record<string, string> = {};
-          const rawMaterial = (request.state as Record<string, string> | undefined)?.[ACCEPTANCE_MATERIAL_FIELD];
-          if (toVerify !== undefined && rawMaterial !== undefined) {
-            const material = JSON.parse(rawMaterial) as MaterialSeen;
-            const entry = material.entries.find((e) => e.taskId === toVerify.taskId);
-            // The criteria BECAME the description (`<objective> :: <role> — deliverable:
-            // ...`), so the role token is a real, per-task criterion to check against.
-            const role = entry === undefined ? '' : (entry.acceptanceCriteria.split(':: ')[1] ?? '').split(' —')[0] ?? '';
-            const satisfies =
-              entry !== undefined &&
-              material.objective.trim() !== '' &&
-              entry.acceptanceCriteria.trim() !== '' &&
-              !entry.executionMissing &&
-              entry.output.trim() !== '' &&
-              entry.output.includes(role);
-            if (satisfies && entry !== undefined) {
-              action = 'complete';
-              parameters.taskId = entry.taskId;
-              parameters.reason = 'the acceptance material for this task shows its own output meets its own criteria';
-            }
-          } else if (toVerify === undefined && planned !== undefined) {
-            action = 'continue';
-          }
-          const criteria = question.criteria as Record<string, string>;
-          const offered = Object.keys(criteria);
-          const probabilities: Record<string, number> = {};
-          for (const o of offered) probabilities[o] = o === action ? 1 : 0;
-          answers[key] = { type: 'choice', choice: action, probabilities, confidence: 1, parameters };
-          continue;
-        }
-        if (key === WORKFLOW_PLAN_ID) {
-          const criteria = question.criteria as Record<string, string>;
-          const offered = Object.keys(criteria);
-          const pick = opts.planChoice !== undefined && offered.includes(opts.planChoice) ? opts.planChoice : offered[0]!;
-          const probabilities: Record<string, number> = {};
-          for (const o of offered) probabilities[o] = o === pick ? 1 : 0;
-          answers[key] = { type: 'choice', choice: pick, probabilities, confidence: 1 };
-          continue;
-        }
-        if (key === INITIAL_AGENT_MODEL_ID) {
-          const criteria = question.criteria as Record<string, string>;
-          const offered = Object.keys(criteria);
-          const wanted = opts.fixed === undefined ? null : initialCandidateKey(opts.fixed.agentId, opts.fixed.modelId);
-          const pick = wanted !== null && offered.includes(wanted) ? wanted : offered[0]!;
-          const probabilities: Record<string, number> = {};
-          for (const o of offered) probabilities[o] = o === pick ? 1 : 0;
-          answers[key] = { type: 'choice', choice: pick, probabilities, confidence: 1, criteria };
-          continue;
-        }
-        if (key === EXECUTION_TOPOLOGY_ID) {
-          answers[key] = { type: 'choice', choice: TOPOLOGY_SOLO, probabilities: { [TOPOLOGY_SOLO]: 1 }, confidence: 1 };
-          continue;
-        }
-        answers[key] = answerFor(key, question as { type: string; criteria: unknown }, ROUTING_ANSWERS);
-      }
-      return { answers, provider: { name: 'laya-workflow-seam', details: 'stub Laya: classification + workflow plan + scripted action' }, raw: {} } as never;
-    },
+  /**
+   * The material-driven action choice, mapped onto an ACTUALLY OFFERED key.
+   *
+   * The offered space is the bounded workflow space: continue/wait/abort plus one
+   * key per eligible to_verify task. `complete` is offered under the bare key when
+   * it binds a single task, otherwise under a key that names the task — so this
+   * fixture must pick the offered key, never inject a sibling target.
+   */
+  const nativeActionAnswer = (criteria: Record<string, string>, state: Record<string, string>): Record<string, unknown> => {
+    const offered = Object.keys(criteria);
+    const parsed = JSON.parse(String(state[ORCHESTRATION_ACTION_ID] ?? '{}')) as { tasks?: Array<{ taskId: string; status: string }> };
+    const tasks = parsed.tasks ?? [];
+    const toVerify = tasks.find((t) => t.status === 'to_verify');
+    const planned = tasks.find((t) => t.status === 'planned' || t.status === 'queued');
+
+    /*
+     * MATERIAL-DRIVEN, not status-driven. This is the whole point of B4.0b: the
+     * fixture accepts a task only when the material for THAT task shows its own
+     * execution met its own criteria. Seeing `to_verify` is never sufficient, and
+     * a missing/empty material can never be read as a pass.
+     */
+    let action = 'wait';
+    let target: string | null = null;
+    const rawMaterial = state[ACCEPTANCE_MATERIAL_FIELD];
+    if (toVerify !== undefined && rawMaterial !== undefined) {
+      const material = JSON.parse(rawMaterial) as MaterialSeen;
+      const entry = material.entries.find((e) => e.taskId === toVerify.taskId);
+      // The criteria BECAME the description (`<objective> :: <role> — deliverable:
+      // ...`), so the role token is a real, per-task criterion to check against.
+      const role = entry === undefined ? '' : (entry.acceptanceCriteria.split(':: ')[1] ?? '').split(' —')[0] ?? '';
+      const satisfies =
+        entry !== undefined &&
+        material.objective.trim() !== '' &&
+        entry.acceptanceCriteria.trim() !== '' &&
+        !entry.executionMissing &&
+        entry.output.trim() !== '' &&
+        entry.output.includes(role);
+      if (satisfies && entry !== undefined) { action = 'complete'; target = entry.taskId; }
+    } else if (toVerify === undefined && planned !== undefined) {
+      action = 'continue';
+    }
+    let chosen: string;
+    if (action === 'complete') {
+      chosen = offered.find((k) => k === 'complete')
+        ?? offered.find((k) => target !== null && k.endsWith(target))
+        ?? 'wait';
+    } else {
+      chosen = offered.includes(action) ? action : 'wait';
+    }
+    if (!offered.includes(chosen)) chosen = offered.includes('wait') ? 'wait' : offered[0]!;
+    const probabilities: Record<string, number> = {};
+    for (const o of offered) probabilities[o] = o === chosen ? 1 : 0;
+    return { type: 'choice', choice: chosen, probabilities, confidence: 1, answer_confidence: 1, action: { act_probability: 1 } };
   };
+
+  const provider: DecisionProvider = createLayaDecisionProvider({
+    fetchImpl: (async (url: string, init?: { method?: string; body?: string }) => {
+      const u = String(url);
+      if (u.endsWith('/health')) {
+        return new Response(JSON.stringify({ status: 'ok', device: 'cuda', loaded: ['english'], cpu_fallbacks: {} }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        });
+      }
+      const body = JSON.parse(String(init?.body ?? '{}')) as {
+        state?: Record<string, string>;
+        questions?: Record<string, { type: string; criteria?: unknown }>;
+      };
+      const questions = body.questions ?? {};
+      const state = body.state ?? {};
+      const answers: Record<string, unknown> = {};
+      for (const [key, q] of Object.entries(questions)) {
+        if (key === ORCHESTRATION_ACTION_ID) {
+          decisionRequests.push({ questions, state } as unknown as DecisionRequest);
+          answers[key] = nativeActionAnswer((q.criteria ?? {}) as Record<string, string>, state);
+          continue;
+        }
+        answers[key] = answerFor(key, q as { type: string; criteria: unknown }, overrides);
+      }
+      return new Response(JSON.stringify({ model: 'laya-fixture', answers, routing: {}, usage: {} }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch,
+  });
 
   const argv = [
     opts.objective ?? 'add a retry to the http client',
@@ -289,7 +306,14 @@ async function workflowRound(opts: {
   try {
     exitCode = await runRoundCli(drivable as never, argv, {
       provider,
-      probes: [probeFor(AGENT_A, 'available', `${AGENT_A}/m1`)],
+      /*
+       * TWO available pairs for the one agent. The REAL production provider refuses a
+       * one-option `choice` (it would answer the same for every input), and a single
+       * registered pair makes the initial Agent x Model question exactly that. Two pairs
+       * keep the assignment question a real decision; the fixture then picks among the
+       * offered keys, exactly as a native Laya answer would.
+       */
+      probes: [probeFor(AGENT_A, 'available', `${AGENT_A}/m1`), probeFor(AGENT_A, 'available', `${AGENT_A}/m2`)],
       // B4.0b P2-C: publish into the OWNED dir, never the caller's default report.
       roundResultDir: reportDir,
       ...(opts.checkpointInput === undefined ? {} : { checkpointInput: opts.checkpointInput }),

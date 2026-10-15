@@ -42,7 +42,13 @@ import {
   DEFERRED_ACTIONS,
   ALL_ACTIONS,
 } from '../src/orchestration/decision.ts';
-import { runDecisionCycle, orchestrationDecisionRequest } from '../src/orchestration/decision-loop.ts';
+import {
+  runDecisionCycle,
+  orchestrationDecisionRequest,
+  extractAction,
+} from '../src/orchestration/decision-loop.ts';
+import type { AcceptanceMaterial } from '../src/orchestration/decision-loop.ts';
+import { createLayaDecisionProvider } from '../src/decision/laya.ts';
 import {
   buildDispatchReceipt,
   emptyDispatchReceipt,
@@ -1027,6 +1033,367 @@ section('P6-A 12. no second store, scheduler, workspace or execution path');
     check(`${f} imports no lease / evidence internals`,
       !/assignment-lease|attempt-store|attempt-record/.test(text));
   }
+}
+
+// ---------------------------------------------------------------------------
+// 13. LAYA-ACTION.1: a bounded workflow action binds the target the provider chose
+//
+// The native 0.3.21 decoder answers with exactly one of the offered choice keys and
+// attaches NO sibling task parameters (verified against tag 6ab71fb4). So the request
+// must OFFER keys that already bind action+task, and the answer must be resolved
+// against the SAME immutable snapshot — never a default first task, a parsed target,
+// or a provider parameter smuggled into the payload.
+// ---------------------------------------------------------------------------
+section('Laya-action 13. bounded workflow answers resolve to the OFFERED task only');
+{
+  const dir = tmpDir();
+
+  /** The same-task acceptance material a workflow round would build for these tasks. */
+  const materialFor = (
+    objective: string,
+    entries: Array<{ taskId: string; criteria: string; output: string; taskType?: TaskType; executionMissing?: boolean }>,
+  ): AcceptanceMaterial => ({
+    objective,
+    entries: entries.map((e) => ({
+      taskId: e.taskId,
+      taskType: e.taskType ?? impl,
+      acceptanceCriteria: e.criteria,
+      attemptId: `att-${e.taskId}`,
+      agentId: AGENT,
+      modelId: SB,
+      output: e.output,
+      outputTruncated: false,
+      boundedForRequest: false,
+      transcriptPath: null,
+      artifacts: [],
+      runState: e.executionMissing === true ? null : 'succeeded',
+      exitCode: e.executionMissing === true ? null : 0,
+      runError: null,
+      executionMissing: e.executionMissing === true,
+      acceptanceCriteriaMissing: e.criteria.trim() === '',
+    })),
+  });
+
+  /** Root + children under a real Orchestrator, optionally parked in `to_verify`. */
+  const makeTree = (specs: Array<{ id: string; toVerify: boolean }>): Orchestrator => {
+    const o = new Orchestrator({
+      gate: gateSources(['r', ...specs.map((s) => s.id)]),
+      now,
+      runtime: fakeRuntime().runtime,
+      defaultCwd: dir,
+    });
+    o.createRoot({ taskId: 'r', agentId: AGENT, taskType: impl, acceptanceCriteria: 'root' });
+    for (const s of specs) {
+      o.spawnChild({
+        taskId: s.id, parentTaskId: 'r', agentId: AGENT, modelId: SB,
+        taskType: impl, acceptanceCriteria: `work ${s.id}`, budgetUnits: 10,
+      });
+      if (s.toVerify) {
+        const st = o.getStore();
+        st.transition(s.id, 'queued', NOW);
+        st.transition(s.id, 'running', NOW);
+        st.transition(s.id, 'to_verify', NOW);
+      }
+    }
+    return o;
+  };
+
+  /** The one EXISTING authority `complete` must still go through: applyVerification. */
+  const completeCapOf = (
+    o: Orchestrator,
+    seen: string[],
+  ): (req: { taskId: string; reason?: string }) => Promise<{ ok: boolean; code: string; reason: string }> =>
+    async (req) => {
+      seen.push(req.taskId);
+      const applied = o.applyVerification(req.taskId, { verdict: 'pass', reason: req.reason ?? 'bounded complete' });
+      return applied.ok
+        ? { ok: true, code: 'completed', reason: `task ${req.taskId} verified` }
+        : { ok: false, code: applied.code, reason: applied.reason };
+    };
+
+  /** A REAL Laya provider over a seam that emits ONLY native 0.3.21-shaped answers. */
+  const nativeProvider = (choose: (offered: readonly string[]) => string): { provider: DecisionProvider; seen: string[][] } => {
+    const seen: string[][] = [];
+    const fetchImpl = (async (_url: unknown, init?: { body?: string }) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as { questions?: Record<string, { type: string; criteria?: unknown }> };
+      const questions = body.questions ?? {};
+      const answers: Record<string, unknown> = {};
+      for (const [id, q] of Object.entries(questions)) {
+        const offered = q.type === 'choice' ? Object.keys((q.criteria ?? {}) as Record<string, string>) : [];
+        seen.push(offered);
+        const choice = choose(offered);
+        const probabilities: Record<string, number> = {};
+        for (const opt of offered) probabilities[opt] = opt === choice ? 1 : 0;
+        // Native shape: type / choice / probabilities / confidence / answer_confidence
+        // + the official action metadata. Deliberately NO sibling task parameters.
+        answers[id] = {
+          type: 'choice', choice, probabilities, confidence: 1, answer_confidence: 1,
+          action: { act_probability: 1 },
+        };
+      }
+      return new Response(JSON.stringify({ model: 'laya-test', answers, routing: {} }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+    return { provider: createLayaDecisionProvider({ fetchImpl }), seen };
+  };
+
+  /** A stub that can return ANY key/parameters (the real provider refuses these first). */
+  const rawProvider = (
+    choice: string,
+    parameters?: Record<string, string>,
+    beforeReturn?: () => void,
+  ): DecisionProvider => ({
+    name: 'raw-seam',
+    probe: async () => ({ ok: true, endpoint: 'raw://seam', detail: 'raw', warnings: [] }),
+    decide: async () => {
+      if (beforeReturn !== undefined) beforeReturn();
+      return {
+        answers: {
+          next_action: {
+            type: 'choice', choice, probabilities: { [choice]: 1 }, confidence: 1,
+            ...(parameters === undefined ? {} : { parameters }),
+          },
+        },
+        provider: { name: 'raw-seam', model: 'raw', elapsedMs: 0, details: {} },
+        raw: {},
+      } as never;
+    },
+  });
+
+  /** The offered keys that bind a `complete` target (everything not a base action). */
+  const completeKeysIn = (offered: readonly string[]): string[] =>
+    offered.filter((k) => k !== 'continue' && k !== 'wait' && k !== 'abort');
+
+  /** The keys a real workflow request would offer, read from the production builder. */
+  const offeredFor = (o: Orchestrator, material: AcceptanceMaterial): string[] => {
+    const obs = observeTasks(o.getStore(), { now: NOW, rootTaskId: 'r' });
+    const req = orchestrationDecisionRequest(obs, { acceptanceMaterial: material });
+    return Object.keys((req.questions['next_action'] as { criteria: Record<string, string> }).criteria);
+  };
+
+  // --- TWO eligible tasks: the provider must be able to name the SECOND, with no params ---
+  {
+    const o = makeTree([{ id: 't1', toVerify: true }, { id: 't2', toVerify: true }]);
+    const material = materialFor('two eligible tasks', [
+      { taskId: 't1', criteria: 't1 :: member — deliverable: a', output: 't1 member deliverable produced' },
+      { taskId: 't2', criteria: 't2 :: member — deliverable: b', output: 't2 member deliverable produced' },
+    ]);
+    const { provider, seen } = nativeProvider((offered) => completeKeysIn(offered).find((k) => k.endsWith('t2')) ?? 'wait');
+    const completed: string[] = [];
+    const cycle = await runDecisionCycle({
+      store: o.getStore(),
+      scheduler: new TaskScheduler({ orchestrator: o, cwd: dir }),
+      provider,
+      rootTaskId: 'r',
+      acceptanceMaterial: material,
+      capabilities: { complete: completeCapOf(o, completed) },
+    });
+    const offered = seen[0] ?? [];
+    const dec = cycle.status === 'ok' ? cycle.decision : null;
+    check('LAYA-ACTION: the bounded request offers a distinct complete key for EACH eligible task',
+      completeKeysIn(offered).some((k) => k.endsWith('t1')) && completeKeysIn(offered).some((k) => k.endsWith('t2')),
+      offered.join(','));
+    check('LAYA-ACTION: a native-shaped answer is accepted', cycle.status === 'ok', cycle.status);
+    check('LAYA-ACTION: the decision names the SECOND task, never the first',
+      dec?.action === 'complete' && dec.taskId === 't2', JSON.stringify(dec));
+    check('LAYA-ACTION: only the selected target reached the complete capability',
+      completed.length === 1 && completed[0] === 't2', completed.join(','));
+    check('LAYA-ACTION: the selected task succeeded and the other stayed to_verify',
+      o.getStore().get('t2')?.status === 'succeeded' && o.getStore().get('t1')?.status === 'to_verify',
+      `t1=${o.getStore().get('t1')?.status} t2=${o.getStore().get('t2')?.status}`);
+    check('LAYA-ACTION: raw action metadata never became a task parameter',
+      dec !== null && Object.keys(dec).sort().join(',') === 'action,taskId', dec === null ? 'no decision' : Object.keys(dec).join(','));
+  }
+
+  // --- a key for a task that is NOT eligible (not to_verify) is refused as unoffered ---
+  {
+    const o = makeTree([{ id: 't1', toVerify: true }, { id: 't2', toVerify: false }]);
+    const material = materialFor('one eligible', [
+      { taskId: 't1', criteria: 't1 :: member — deliverable: a', output: 't1 produced' },
+    ]);
+    const offered = offeredFor(o, material);
+    const key1 = completeKeysIn(offered)[0]!;
+    const sep = key1.slice('complete'.length, key1.length - 't1'.length);
+    const completed: string[] = [];
+    const before = JSON.stringify(o.getStore().all());
+    const cycle = await runDecisionCycle({
+      store: o.getStore(),
+      scheduler: new TaskScheduler({ orchestrator: o, cwd: dir }),
+      provider: rawProvider(`complete${sep}t2`),
+      rootTaskId: 'r',
+      acceptanceMaterial: material,
+      capabilities: { complete: completeCapOf(o, completed) },
+    });
+    check('LAYA-ACTION: no complete key is offered for the non-to_verify task',
+      !offered.some((k) => k.endsWith('t2')), offered.join(','));
+    check('LAYA-ACTION: a key for an ineligible task is refused as unoffered',
+      cycle.status === 'invalid' && cycle.error.code === 'unoffered-action-key',
+      cycle.status === 'invalid' ? cycle.error.code : cycle.status);
+    check('LAYA-ACTION: the refused key dispatched and changed nothing',
+      completed.length === 0 && JSON.stringify(o.getStore().all()) === before);
+  }
+
+  // --- a bounded key PLUS a contradictory target parameter is refused, not merged ---
+  {
+    const o = makeTree([{ id: 't1', toVerify: true }, { id: 't2', toVerify: true }]);
+    const material = materialFor('contradictory target', [
+      { taskId: 't1', criteria: 't1 :: member — deliverable: a', output: 't1 produced' },
+      { taskId: 't2', criteria: 't2 :: member — deliverable: b', output: 't2 produced' },
+    ]);
+    const offered = offeredFor(o, material);
+    const key1 = completeKeysIn(offered).find((k) => k.endsWith('t1'))!;
+    const completed: string[] = [];
+    const before = JSON.stringify(o.getStore().all());
+    const cycle = await runDecisionCycle({
+      store: o.getStore(),
+      scheduler: new TaskScheduler({ orchestrator: o, cwd: dir }),
+      provider: rawProvider(key1, { taskId: 't2' }),
+      rootTaskId: 'r',
+      acceptanceMaterial: material,
+      capabilities: { complete: completeCapOf(o, completed) },
+    });
+    check('LAYA-ACTION: a contradictory provider target is refused',
+      cycle.status === 'invalid' && cycle.error.code === 'contradictory-target',
+      cycle.status === 'invalid' ? cycle.error.code : cycle.status);
+    check('LAYA-ACTION: the contradictory answer caused no mutation or dispatch',
+      completed.length === 0 && JSON.stringify(o.getStore().all()) === before);
+  }
+
+  // --- a bounded key PLUS any other target/action parameter is refused, not merged ---
+  {
+    const o = makeTree([{ id: 't1', toVerify: true }]);
+    const material = materialFor('extra params', [{ taskId: 't1', criteria: 't1 :: member', output: 't1 produced' }]);
+    const offered = offeredFor(o, material);
+    const key1 = completeKeysIn(offered)[0]!;
+    const completed: string[] = [];
+    const before = JSON.stringify(o.getStore().all());
+    const cycle = await runDecisionCycle({
+      store: o.getStore(),
+      scheduler: new TaskScheduler({ orchestrator: o, cwd: dir }),
+      provider: rawProvider(key1, { agentId: 'some-other-agent' }),
+      rootTaskId: 'r',
+      acceptanceMaterial: material,
+      capabilities: { complete: completeCapOf(o, completed) },
+    });
+    check('LAYA-ACTION: extra target/action parameters are refused, never merged',
+      cycle.status === 'invalid' && cycle.error.code === 'unexpected-action-parameters',
+      cycle.status === 'invalid' ? cycle.error.code : cycle.status);
+    check('LAYA-ACTION: the extra-parameter refusal changed nothing',
+      completed.length === 0 && JSON.stringify(o.getStore().all()) === before);
+  }
+
+  // --- missing / empty / wrong-task evidence must create NO complete candidate ---
+  {
+    const cases: Array<{ label: string; material: AcceptanceMaterial }> = [
+      { label: 'empty output', material: materialFor('empty', [{ taskId: 't1', criteria: 't1 :: member', output: '' }]) },
+      { label: 'missing execution', material: materialFor('missing', [{ taskId: 't1', criteria: 't1 :: member', output: 'x', executionMissing: true }]) },
+      { label: 'foreign taskType', material: materialFor('foreign', [{ taskId: 't1', criteria: 't1 :: member', output: 'x', taskType: 'research' }]) },
+      { label: 'no entry at all', material: materialFor('none', []) },
+    ];
+    for (const c of cases) {
+      const o = makeTree([{ id: 't1', toVerify: true }]);
+      const offered = offeredFor(o, c.material);
+      const completed: string[] = [];
+      const before = JSON.stringify(o.getStore().all());
+      const cycle = await runDecisionCycle({
+        store: o.getStore(),
+        scheduler: new TaskScheduler({ orchestrator: o, cwd: dir }),
+        provider: rawProvider('complete'),
+        rootTaskId: 'r',
+        acceptanceMaterial: c.material,
+        capabilities: { complete: completeCapOf(o, completed) },
+      });
+      check(`LAYA-ACTION: ${c.label} offers no complete key`,
+        completeKeysIn(offered).length === 0, offered.join(','));
+      check(`LAYA-ACTION: ${c.label} cannot complete (unoffered) and changes nothing`,
+        cycle.status === 'invalid' && cycle.error.code === 'unoffered-action-key' &&
+          completed.length === 0 && JSON.stringify(o.getStore().all()) === before,
+        cycle.status === 'invalid' ? cycle.error.code : cycle.status);
+    }
+  }
+
+  // --- a task OUTSIDE the observed root is never a target ---
+  {
+    const o = makeTree([{ id: 't1', toVerify: true }]);
+    o.createRoot({ taskId: 'x', agentId: AGENT, taskType: impl, acceptanceCriteria: 'root x' });
+    o.spawnChild({ taskId: 'x1', parentTaskId: 'x', agentId: AGENT, modelId: SB, taskType: impl, acceptanceCriteria: 'work x1', budgetUnits: 10 });
+    const st = o.getStore();
+    st.transition('x1', 'queued', NOW); st.transition('x1', 'running', NOW); st.transition('x1', 'to_verify', NOW);
+    const material = materialFor('two roots', [
+      { taskId: 't1', criteria: 't1 :: member', output: 't1 produced' },
+      { taskId: 'x1', criteria: 'x1 :: member', output: 'x1 produced' },
+    ]);
+    const offered = offeredFor(o, material);
+    const key1 = completeKeysIn(offered)[0]!;
+    const sep = key1.slice('complete'.length, key1.length - 't1'.length);
+    const completed: string[] = [];
+    const before = JSON.stringify(o.getStore().all());
+    const cycle = await runDecisionCycle({
+      store: o.getStore(),
+      scheduler: new TaskScheduler({ orchestrator: o, cwd: dir }),
+      provider: rawProvider(`complete${sep}x1`),
+      rootTaskId: 'r',
+      acceptanceMaterial: material,
+      capabilities: { complete: completeCapOf(o, completed) },
+    });
+    check('LAYA-ACTION: a task in another root is not offered', !offered.some((k) => k.endsWith('x1')), offered.join(','));
+    check('LAYA-ACTION: a key naming an out-of-root task is refused',
+      cycle.status === 'invalid' && cycle.error.code === 'unoffered-action-key' && completed.length === 0,
+      cycle.status === 'invalid' ? cycle.error.code : cycle.status);
+    check('LAYA-ACTION: the out-of-root refusal changed nothing',
+      JSON.stringify(o.getStore().all()) === before);
+  }
+
+  // --- a status change while the provider is thinking must not be accepted stale ---
+  {
+    const o = makeTree([{ id: 't1', toVerify: true }]);
+    const material = materialFor('stale', [{ taskId: 't1', criteria: 't1 :: member', output: 't1 produced' }]);
+    const completed: string[] = [];
+    const cycle = await runDecisionCycle({
+      store: o.getStore(),
+      scheduler: new TaskScheduler({ orchestrator: o, cwd: dir }),
+      // The provider mutates the store AFTER the observation was taken and BEFORE it answers.
+      provider: rawProvider('complete', undefined, () => {
+        o.getStore().transition('t1', 'succeeded', NOW, 'changed while the provider was deciding');
+      }),
+      rootTaskId: 'r',
+      acceptanceMaterial: material,
+      capabilities: { complete: completeCapOf(o, completed) },
+    });
+    check('LAYA-ACTION: a task/status change during the decision is NOT accepted stale',
+      cycle.status === 'ok' && cycle.application.applied === false,
+      cycle.status === 'ok' ? `${cycle.application.applied}` : cycle.status);
+    check('LAYA-ACTION: the stale complete reached the authority, which refused it',
+      completed.length === 1 && o.getStore().get('t1')?.status === 'succeeded',
+      completed.join(','));
+  }
+
+  // --- legacy contract: no material -> the full vocabulary and parameter path stay ---
+  {
+    const o = makeTree([{ id: 't1', toVerify: true }]);
+    const obs = observeTasks(o.getStore(), { now: NOW, rootTaskId: 'r' });
+    const legacyOffered = Object.keys((orchestrationDecisionRequest(obs).questions['next_action'] as { criteria: Record<string, string> }).criteria);
+    check('LAYA-ACTION: a no-material request still offers the original eleven actions',
+      legacyOffered.length === 11 && legacyOffered.includes('reassign') && legacyOffered.includes('complete'),
+      legacyOffered.join(','));
+    const extracted = extractAction({
+      answers: { next_action: { type: 'choice', choice: 'complete', parameters: { taskId: 't1', reason: 'legacy params' } } },
+    });
+    const validated = validateDecision(extracted, obs);
+    check('LAYA-ACTION: a parameterised (legacy) provider still resolves',
+      validated.action === 'complete' && validated.taskId === 't1' && validated.reason === 'legacy params',
+      JSON.stringify(validated));
+    // A bounded workflow request must NOT advertise the unsupported parameter actions.
+    const material = materialFor('bounded', [{ taskId: 't1', criteria: 't1 :: member', output: 't1 produced' }]);
+    const boundedOffered = offeredFor(o, material);
+    check('LAYA-ACTION: a bounded request does NOT advertise unsupported parameter actions',
+      !boundedOffered.some((k) => ['reassign', 'rework', 'retry', 'add_task', 'split_task', 'parallelize', 'replan'].includes(k)),
+      boundedOffered.join(','));
+  }
+
+  rmSync(dir, { recursive: true, force: true });
 }
 
 process.stdout.write(`\n${passed} passed, ${failed} failed\n`);

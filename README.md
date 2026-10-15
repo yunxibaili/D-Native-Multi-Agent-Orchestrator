@@ -63,7 +63,7 @@ doctor 默认不查询模型目录；目录查询不是推理可调用或免费�
 
     node src/decision/check.ts --probe
 
-默认服务地址127.0.0.1:8077；已找回现有LAYA0.3.21，并将固定英语/多语言缓存恢复至D:/AI/laya-cache，真实离线CUDA加载/健康GET通过。检查后服务已停止；重新启动配置见[LAYA说明](docs/DECISION_PROVIDER.md#3-本地服务)。环境恢复轮未执行推理；后续已授权的真实决策验收首个请求因0.3.21 action元数据兼容缺口被拒绝（1/4后停止）。该兼容缺口已在LAYA-COMPAT.1中独立hermetic/捕获回放通过；随后LAYA-DECISION.2真实本地4/4接口验收独立通过（中英文分类/计划/pair），服务已停；完整round只读审核另发现原生next_action缺complete目标参数的P1，尚未修复，详见唯一基线与下一任务。
+默认服务地址127.0.0.1:8077；已找回现有LAYA0.3.21，并将固定英语/多语言缓存恢复至D:/AI/laya-cache，真实离线CUDA加载/健康GET通过。检查后服务已停止；重新启动配置见[LAYA说明](docs/DECISION_PROVIDER.md#3-本地服务)。环境恢复轮未执行推理；后续已授权的真实决策验收首个请求因0.3.21 action元数据兼容缺口被拒绝（1/4后停止）。该兼容缺口已在LAYA-COMPAT.1中独立hermetic/捕获回放通过；随后LAYA-DECISION.2真实本地4/4接口验收独立通过（中英文分类/计划/pair），服务已停；随后该P1已由LAYA-ACTION.1在最小workflow范围受控独立关闭；真实next_action整链尚待新授权验收，既有B45负控P2保留，详见唯一基线与下一任务。
 下列classify-only会调用真实LAYA模型，且当前round在分类前运行quota probes，不是无外部调用的健康检查：
 
     node src/cli/index.ts round "分析目标" --classify-only

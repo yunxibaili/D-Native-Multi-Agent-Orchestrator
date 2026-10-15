@@ -82,6 +82,11 @@ $env:LAYA_REVISION = '55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851'
 先前四预设真实PASS不变，但完整round为BLOCKED。最小方向是复用有限候选/精确映射，让LAYA选择包含已知任务目标的合法动作候选，再送同一验证/执行入口；不默认首任务、不把action元数据当编排动作、不引入生成大脑或新manager。仅建议，未实施；复杂自由参数动作需如实限制，不声称已支持全部动态改计划。
 两步顺序理想8次本地决策（1分类+1计划+2pair+4cycle），正常有界loop对应最多13；默认原生Review在可审核/支持时至多另1（否则可为0），quota CLI最多4条正常命令尝试及原生内部辅助另计，不能把理想值当实际硬cap。当前可用性/真实免费证据与产品5/5授权边界保留，未实跑/未改源码。
 
+### 3.4 有界workflow动作目标映射（LAYA-ACTION.1）
+
+有acceptanceMaterial时，复用有限choice：continue/wait/abort加每个eligible to_verify任务的complete候选；单目标complete的描述/表绑定该任务，多目标使用不同opaque key。请求与目标表同次构建，响应只能按同表membership得到payload；不解析任意key生成taskId、不默认首任务、不把provider参数合并成目标。未知key/不一致taskId/额外动作或目标参数拒绝；相符taskId及reason/rationale重述可兼容但不改变候选payload。缺执行/criteria或空输出不提供complete，这是材料存在检查，不认证文件真实性或语义质量；质量由LAYA判定、当前状态仍由原Verification验证。
+无material的通用旧请求保持11动作与参数路径。bounded workflow只提供continue/wait/abort/complete，复杂reassign/rework/改计划等自由参数动作不在本片原生支持范围；既有通用API并不因此被删除。独立typecheck及7个定向套件全绿，原生形状真实provider/CLI不再靠fixture注入目标；两个任务选第二个及独立first-target负控验证绑定确实承重。无真实LAYA/Agent调用，不把fixture验收当真实模型质量或整条生产round已认证。保留旧B45负控定位P2与温度P2，下一步真实本地目标验收另行授权。
+
 ## 4. 当前请求约束
 
 支持 choice、score、noul，具体字段以 types.ts 和 laya.ts 的校验为准。

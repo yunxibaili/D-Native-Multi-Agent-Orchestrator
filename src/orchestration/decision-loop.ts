@@ -189,10 +189,160 @@ export interface AcceptanceMaterial {
 }
 
 /**
+ * LAYA-ACTION.1: how a BOUNDED workflow choice key names its target.
+ *
+ * The same separator `initial-assignment.ts` uses: a value that cannot occur
+ * inside an action name or a task id, so a key is unambiguous. Crucially, keys
+ * are NEVER decoded here — a chosen key is resolved by MEMBERSHIP in the
+ * immutable snapshot built for the SAME request, so a key nobody offered (or an
+ * invented target) fails closed rather than being parsed into a target.
+ */
+const BOUND_TARGET_KEY_SEPARATOR = '\u0000';
+
+/** One action a bounded request offers, and the payload its key stands for. */
+interface BoundActionCandidate {
+  readonly key: string;
+  readonly action: 'continue' | 'wait' | 'abort' | 'complete';
+  /** The task a `complete` binds to. `null` for the targetless actions. */
+  readonly taskId: string | null;
+  readonly description: string;
+}
+
+/**
+ * The same-task acceptance entry that makes a `to_verify` task eligible for a
+ * `complete` candidate, or `null` when the evidence is missing/empty/foreign.
+ *
+ * Presence only: this is a boundary check, NOT a judgement. It can say "there is
+ * a same-task execution and an acceptance criterion to judge", never "the work
+ * was good" — that judgement stays LAYA's, and `validateDecision` and the
+ * verification authority remain the final check.
+ */
+function completeCandidateEntry(
+  material: AcceptanceMaterial,
+  task: TaskObservation['tasks'][number],
+): AcceptanceMaterialEntry | null {
+  const entry = material.entries.find((e) => e.taskId === task.taskId);
+  if (entry === undefined) return null;
+  if (entry.taskType !== task.taskType) return null;
+  if (entry.executionMissing) return null;
+  if (entry.acceptanceCriteriaMissing) return null;
+  if (entry.acceptanceCriteria.trim() === '') return null;
+  if (entry.output.trim() === '') return null;
+  return entry;
+}
+
+/**
+ * The small, supported action space for a bounded workflow decision.
+ *
+ * `continue`/`wait`/`abort` are targetless. `complete` is offered once per
+ * eligible `to_verify` task: the key binds the action AND its task, so a
+ * provider cannot name a task that was not on the table. When exactly one task
+ * is eligible the key is the bare `complete` (there is nothing to disambiguate);
+ * when several are, each gets a distinct opaque key.
+ */
+function boundActionCandidates(
+  observation: TaskObservation,
+  material: AcceptanceMaterial,
+): BoundActionCandidate[] {
+  const candidates: BoundActionCandidate[] = [
+    { key: 'continue', action: 'continue', taskId: null, description: ACTION_CRITERIA.continue },
+    { key: 'wait', action: 'wait', taskId: null, description: ACTION_CRITERIA.wait },
+    { key: 'abort', action: 'abort', taskId: null, description: ACTION_CRITERIA.abort },
+  ];
+  const eligible = observation.tasks.filter(
+    (t) => t.status === 'to_verify' && completeCandidateEntry(material, t) !== null,
+  );
+  const single = eligible.length === 1;
+  for (const task of eligible) {
+    const entry = completeCandidateEntry(material, task);
+    if (entry === null) continue;
+    candidates.push({
+      key: single ? 'complete' : `complete${BOUND_TARGET_KEY_SEPARATOR}${task.taskId}`,
+      action: 'complete',
+      taskId: task.taskId,
+      description:
+        `accept task "${task.taskId}" (${task.taskType}) only if the SAME task's own recorded ` +
+        `execution output meets its own acceptance criteria; judge that evidence, never accept on ` +
+        `status alone. Criteria: ${entry.acceptanceCriteria}`,
+    });
+  }
+  return candidates;
+}
+
+/**
+ * Build the request AND the immutable candidate snapshot it was built from.
+ *
+ * Returned together so the loop can resolve a provider's answer against the
+ * EXACT snapshot it offered — never a re-derivation, a fresh read of mutable
+ * state, or an inferred target.
+ *
+ * Two shapes, chosen by the caller's own seam:
+ *   - WITH `acceptanceMaterial` (the bounded workflow round): only the small
+ *     supported space is offered, keys bind action+task, and no free-text
+ *     parameter action is advertised as natively solvable.
+ *   - WITHOUT it (every legacy/general caller): the full vocabulary and the
+ *     parameter contract, byte-for-byte as before this slice.
+ */
+function buildOrchestrationRequest(
+  observation: TaskObservation,
+  options: OrchestrationDecisionRequestOptions,
+): { request: DecisionRequest; candidates: ReadonlyMap<string, BoundActionCandidate> | null } {
+  if (options.acceptanceMaterial === undefined) {
+    return {
+      request: {
+        questions: {
+          [ORCHESTRATION_ACTION_ID]: {
+            type: 'choice',
+            instructions: options.instructions ??
+              'Given the orchestration state below, which single action should the orchestrator take next?',
+            criteria: ACTION_CRITERIA,
+          },
+        },
+        state: {
+          [ORCHESTRATION_ACTION_ID]: toDecisionState(observation),
+          // Machine-readable, so the model can be told WHICH fields each action needs
+          // instead of having to infer them from prose it may skim.
+          [ACTION_PARAMETERS_FIELD]: JSON.stringify(ACTION_PARAMETERS),
+        },
+      },
+      candidates: null,
+    };
+  }
+
+  const all = boundActionCandidates(observation, options.acceptanceMaterial);
+  const criteria: Record<string, string> = {};
+  const candidates = new Map<string, BoundActionCandidate>();
+  for (const c of all) {
+    criteria[c.key] = c.description;
+    candidates.set(c.key, c);
+  }
+  return {
+    request: {
+      questions: {
+        [ORCHESTRATION_ACTION_ID]: {
+          type: 'choice',
+          instructions: options.instructions ??
+            'Choose exactly one of the offered actions. A `complete` option names the single task it ' +
+            'would accept, and applies only if that task\'s own acceptance material shows its own run ' +
+            'met its own criteria; otherwise choose `wait`. Do not invent a target.',
+          criteria,
+        },
+      },
+      state: {
+        [ORCHESTRATION_ACTION_ID]: toDecisionState(observation),
+        // B4.0b: the material a `complete` judgement is actually MADE from.
+        [ACCEPTANCE_MATERIAL_FIELD]: JSON.stringify(options.acceptanceMaterial),
+      },
+    },
+    candidates,
+  };
+}
+
+/**
  * Build the request the provider answers.
  *
  * The action set is the `criteria` of a single `choice` question, which is what
- * makes "the provider may only answer with one of these three" a property of the
+ * makes "the provider may only answer with one of these" a property of the
  * existing Decision Layer rather than a promise this file makes. The observation
  * travels as `state`, matching the provider's `Record<string, string>` contract.
  */
@@ -200,39 +350,32 @@ export function orchestrationDecisionRequest(
   observation: TaskObservation,
   options: OrchestrationDecisionRequestOptions = {},
 ): DecisionRequest {
-  return {
-    questions: {
-      [ORCHESTRATION_ACTION_ID]: {
-        type: 'choice',
-        instructions: options.instructions ??
-          'Given the orchestration state below, which single action should the orchestrator take next?',
-        criteria: ACTION_CRITERIA,
-      },
-    },
-    state: {
-      [ORCHESTRATION_ACTION_ID]: toDecisionState(observation),
-      // Machine-readable, so the model can be told WHICH fields each action needs
-      // instead of having to infer them from prose it may skim.
-      [ACTION_PARAMETERS_FIELD]: JSON.stringify(ACTION_PARAMETERS),
-      // B4.0b: PRESENT ONLY when the caller supplied it. A caller that does not (every
-      // non-workflow round) gets the byte-identical request it got before this seam,
-      // so default behaviour is untouched rather than "mostly the same".
-      ...(options.acceptanceMaterial === undefined
-        ? {}
-        : { [ACCEPTANCE_MATERIAL_FIELD]: JSON.stringify(options.acceptanceMaterial) }),
-    },
-  };
+  return buildOrchestrationRequest(observation, options).request;
 }
 
 /**
  * Read the action out of a validated response.
  *
- * Returns the RAW string rather than a typed decision on purpose: validation is
+ * Returns the RAW action rather than a typed decision on purpose: validation is
  * `validateDecision`'s job, and doing it here would give two places that could
  * disagree about what a valid action is. This function's only responsibility is
- * to extract a string; `validateDecision` then decides whether it may be acted on.
+ * to turn the answer into the decision payload; `validateDecision` then decides
+ * whether it may be acted on.
+ *
+ * TWO PATHS, and which one runs is decided by `candidates`:
+ *   - `candidates` is `undefined` (legacy/general request): the provider's choice
+ *     is the action name and its PARAMETERS are merged in verbatim, exactly as
+ *     before this slice. This is the parameter contract the general callers use.
+ *   - `candidates` is the snapshot the bounded workflow request was built from:
+ *     the choice must be an OFFERED key, and the payload is taken ONLY from that
+ *     snapshot. A key that was not offered fails closed, and a provider parameter
+ *     that contradicts the bound target is refused rather than merged — a
+ *     provider can never override the target the request actually offered.
  */
-export function extractAction(response: { answers: Record<string, { type: string; choice?: string; parameters?: Record<string, string> }> }): unknown {
+export function extractAction(
+  response: { answers: Record<string, { type: string; choice?: string; parameters?: Record<string, string> }> },
+  candidates?: ReadonlyMap<string, { readonly action: 'continue' | 'wait' | 'abort' | 'complete'; readonly taskId: string | null }>,
+): unknown {
   const answer = response.answers[ORCHESTRATION_ACTION_ID];
   if (answer === undefined) {
     throw new DecisionValidationError(
@@ -246,14 +389,45 @@ export function extractAction(response: { answers: Record<string, { type: string
       `"${ORCHESTRATION_ACTION_ID}" must be a choice answer, got ${answer.type}`,
     );
   }
-  // The provider's PARAMETERS are merged in verbatim, so a real Laya answer can carry
-  // `taskId` / `agentId` / `objective` itself. That is the whole difference between a
-  // production path where the brain supplies the target and one where a caller has to
-  // attach it by hand - the latter was the previous shape, and it made the target a
-  // hidden human choice rather than a decision.
-  //
-  // Anything unrecognised arrives at `validateDecision` and is refused there, so a
-  // provider cannot smuggle an extra field past the validator.
+
+  if (candidates !== undefined) {
+    const chosen = candidates.get(answer.choice);
+    if (chosen === undefined) {
+      throw new DecisionValidationError(
+        'unoffered-action-key',
+        `the provider chose ${JSON.stringify(answer.choice)}, which is not one of the bounded actions ` +
+          `this request offered [${[...candidates.keys()].join(', ') || 'none'}]`,
+      );
+    }
+    // The bounded payload comes ONLY from the snapshot. A provider may restate the task
+    // it chose (and may add prose), but any OTHER sibling key is a target/action override
+    // arriving as a parameter, and is refused rather than merged.
+    const parameters = answer.parameters ?? {};
+    const unexpected = Object.keys(parameters).filter((k) => k !== 'taskId' && k !== 'reason' && k !== 'rationale');
+    if (unexpected.length > 0) {
+      throw new DecisionValidationError(
+        'unexpected-action-parameters',
+        `the provider chose ${JSON.stringify(answer.choice)} and also supplied ${unexpected.join(', ')}; a ` +
+          `bounded action's target is fixed by the key it chose, so extra parameters cannot be merged`,
+      );
+    }
+    if (parameters.taskId !== undefined && parameters.taskId !== chosen.taskId) {
+      throw new DecisionValidationError(
+        'contradictory-target',
+        `the provider chose ${JSON.stringify(answer.choice)}, which binds task "${chosen.taskId}", but ` +
+          `also supplied taskId ${JSON.stringify(parameters.taskId)}; a provider parameter cannot override ` +
+          `the bounded target`,
+      );
+    }
+    return chosen.action === 'complete'
+      ? { action: 'complete', taskId: chosen.taskId }
+      : { action: chosen.action };
+  }
+
+  // Legacy path: the provider's PARAMETERS are merged in verbatim, so a caller
+  // can carry `taskId` / `agentId` / `objective` itself. Anything unrecognised
+  // arrives at `validateDecision` and is refused there, so a provider cannot
+  // smuggle an extra field past the validator.
   return { action: answer.choice, ...(answer.parameters ?? {}) };
 }
 
@@ -361,15 +535,17 @@ export async function runDecisionCycle(options: DecisionLoopOptions): Promise<De
   //    criteria it was offered; a transport failure is reported, not defaulted.
   let rawAction: unknown;
   try {
-    const request = orchestrationDecisionRequest(
+    const built = buildOrchestrationRequest(
       observation,
       {
         ...(options.instructions === undefined ? {} : { instructions: options.instructions }),
         ...(options.acceptanceMaterial === undefined ? {} : { acceptanceMaterial: options.acceptanceMaterial }),
       },
     );
-    const response = await options.provider.decide(request);
-    rawAction = extractAction(response);
+    const response = await options.provider.decide(built.request);
+    // Resolve against the EXACT snapshot the request offered (`built.candidates`),
+    // never a fresh derivation. `undefined` preserves the legacy parameter path.
+    rawAction = extractAction(response, built.candidates ?? undefined);
   } catch (e) {
     if (e instanceof DecisionValidationError) {
       // The provider answered, but not with an action. Same class of problem as
