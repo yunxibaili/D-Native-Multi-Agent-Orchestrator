@@ -391,6 +391,9 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 
 ## 8. 最近独立证据与上传记录
 
+2026-10-15 WORKFLOW-RESEARCH.1：按用户明确要求，将每个技术任务先调研固化为个人Skill research-before-work，并在全局AGENTS.md明确要求加载；项目AGENTS保留同一工作前置说明。实际先读本机skill-creator与官方Skills/AGENTS发现文档，GitHub MCP成功读取openai/skills对应实现；复用原生SKILL.md、agents/openai.yaml（自动选择开启）和现有全局指令，不加hook/服务/依赖。每个新任务先核对当前实现与至少一个相关在线一手来源，选型时查成熟实现；同任务有效证据复用，测试验证已发表方法在本机是否成立，不猜参数、不重复试模型求绿。委派带来源/复用入口/范围/验收与停止条件，保持OpenCode开发、Codex独立审核及指定模型。
+个人文件位于C:/Users/Admin/.codex/skills/research-before-work/与全局AGENTS.md，不属于本项目Git上传；官方quick_validate实际通过，元数据/唯一规则标记/既有路由逐字不变均已检查。没有另启Codex/OpenCode会话测试未来自动匹配，不能承诺所有未来会话已实测；当前会话已收到包含新全局规则的指令。无src/tests/native/scripts改动，无新推理/模型安装/全局服务配置修改；不消耗剩余额度，也不增加后端完成信用。基线/下一任务及本机页面同步后，仅上传受影响项目指令和文档，个人Skill与页面/audit仍不入项目Git。当前下一候选仍LAYA-QUALITY.2，真实调用未新增授权，估算68/100、PARALLEL_WRITE=CLOSED。
+
 2026-10-15 LAYA-QUALITY.1 候选资格过滤独立PASS：用户要求先上网调查、减少实验、验证现成方法。GitHub MCP实际可用，核对官方固定v0.3.21资料/许可/公开fixture，结合LangChain动态工具状态过滤法；仅方法适配，不迁移框架。实际opencode-agent implement首轮session ses_ec14f0146ffe02gzwXPa9l5DDE，native导出50条assistant均opencode-go/deepseek-v4.1-flash、末条finish=stop、wrapper exit0且完整报告；未返工。worker精确修改decision-loop.ts/state-loop.test.ts/b40a-cli-workflow.test.ts三文件，无新增文件，其他206个版本化文件逐字节未变。
 复用boundActionCandidates与现有observation.ready：仅在有ready子任务时提供continue，始终保留wait/abort及每个有材料的明确complete目标。请求构造与候选表同次冻结，provider等待期间的状态变化不能补授未提供的key；最终资源/quota/fixed/session/停止门保持。无acceptanceMaterial的旧11动作路径不变，不强迫模型完成任务，也不把ready当实际准入。
 Codex独立typecheck及decision429/0、state-loop276/0、CLI98/0、workbench419/0、协作96/0、计划61/0、阶段材料47/0全部exit0，三份源码/测试在验证前后hash稳定。内存负控撤去ready条件后264/12、exit1，未修改源文件；三份历史真实响应离线回放：两个ready为空的旧continue被拒且dispatch0，有ready的旧continue仍可进入受控dispatch；不是新模型选择或准确率。
@@ -1078,14 +1081,14 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-15T16:44:27+08:00",
+  "updatedAt": "2026-10-15T17:22:49+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "LAYA-QUALITY.1",
-    "name": "无ready不提供continue：已独立审核通过",
+    "id": "WORKFLOW-RESEARCH.1",
+    "name": "每个任务先调研：个人Skill与默认规则已固化",
     "status": "done",
-    "summary": "先研究官方动态过滤方法，复用现有ready/候选表；8项定向检查、历史响应回放与负控通过，未新增推理。真实目标完成仍待验收。"
+    "summary": "原生Skill校验通过，全局/项目指令明确接入；先证据再最小验证，不更换开发模型、不增加推理或后台服务。"
   },
   "next": {
     "id": "LAYA-QUALITY.2",
@@ -1534,16 +1537,22 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "status": "done",
       "deliverable": "无ready不提供continue；wait/abort/明确目标及既有保护保持",
       "evidence": "独立8项exit0，state-loop276/0、CLI98/0；3历史回放、负控12失败；原生evals validate12条仅格式；无新增推理"
+    },
+    {
+      "id": "WORKFLOW-RESEARCH.1",
+      "title": "先调研再动手的个人Skill",
+      "status": "done",
+      "deliverable": "原生Skill+全局规则+项目研究前置；无新框架",
+      "evidence": "官方在线资料与GitHub MCP核对；quick_validate通过、metadata校验、既有路由不变；未实测未来新会话自动匹配"
     }
   ],
   "checks": [
-    "研究官方同版本资料与动态工具过滤方法；实际GitHub MCP成功，未引入框架/新权重",
-    "opencode-agent implement：指定模型50条assistant全部一致、finish=stop、wrapper0；首轮完成",
-    "独立typecheck与decision429/state-loop276/CLI98/workbench419/协作96/计划61/阶段47均0失败",
-    "3个历史响应离线回放：无ready旧continue拒绝，有ready受控派发保留；不是新推理或准确率",
-    "内存负控去掉ready条件：264/12、exit1；源文件不变；原生evals格式验证12条exit0",
-    "文案容量P2关闭，保守512/校准/旧B45边界保留；ACTION.3真实目标完成仍未验收",
-    "本轮LAYA/产品推理0、累计本地11/产品5，工程估算68/100，并行写CLOSED；基线/页面同步"
+    "先读本机skill-creator及官方Skills/AGENTS文档；GitHub MCP实际读取openai/skills",
+    "research-before-work原生Skill格式校验PASS，自动选择metadata开启，全局AGENTS显式加载",
+    "全局既有opencode-agent-routing块逐字不变；项目仅指令/基准/下一任务文档变更",
+    "同任务复用有效来源，优先已有实现与最小验证；不重复试验到绿、不猜协议/能力",
+    "本轮产品代码/测试/native未变，未新增推理/依赖/服务，不因规则增加后端68/100信用",
+    "下一候选仍LAYA-QUALITY.2，真实调用未新增授权；本机页同步、个人Skill和audit不入项目Git"
   ],
   "sources": [
     {
