@@ -47,6 +47,8 @@ import {
   B47_CONSUMER_IMPORT,
   B47_CONSUMER_TEST,
   B47_DECLARATION_ENV,
+  B47_DEMO_GUIDANCE,
+  B47_DEMO_README,
   B47_DEMO_OBJECTIVE,
   B47_EVIDENCE_ENV,
   B47_INTEGRATION_DIR,
@@ -60,6 +62,7 @@ import {
   buildB47AuxConfig,
   decideCleanupEligibility,
   evaluateB47Entry,
+  prepareB47Demo,
   runB47AdmissionProbe,
   verifyAuxiliaryModelContainment,
   verifyDeliverable,
@@ -720,6 +723,178 @@ section('hermetic admission regression: REAL plan/Assignment/Scheduler, fail-bef
 }
 
 // ===========================================================================
+section('B4.7.2a intentional-demo scaffolding: prepared dirs + guidance, and the ACTUAL first request');
+
+{
+  const tmp = mkdtempSync(join(tmpdir(), 'b47-prep-'));
+  tmpDirs.push(tmp);
+  const demo = join(tmp, 'demo');
+  mkdirSync(demo, { recursive: true });
+  try {
+    // The SAME preparation the real harness runs: it is called inside createB47FreeDuoStack,
+    // so this is the production preparation, not a re-implementation.
+    prepareB47Demo(demo);
+
+    check('preparation created the provider directory', existsSync(join(demo, B47_PROVIDER_DIR)), join(demo, B47_PROVIDER_DIR));
+    check('preparation created the consumer directory', existsSync(join(demo, B47_CONSUMER_DIR)), join(demo, B47_CONSUMER_DIR));
+    check('preparation created the integration directory', existsSync(join(demo, B47_INTEGRATION_DIR)), join(demo, B47_INTEGRATION_DIR));
+
+    const readme = join(demo, B47_DEMO_README);
+    const readmeText = existsSync(readme) ? readFileSync(readme, 'utf8') : '';
+    check('preparation wrote the guidance README with the shared text',
+      readmeText.includes(B47_DEMO_GUIDANCE.join('\n')), readmeText.slice(0, 200));
+
+    const integrationEmpty = existsSync(join(demo, B47_INTEGRATION_DIR))
+      && readdirSync(join(demo, B47_INTEGRATION_DIR)).length === 0;
+    check('preparation did NOT pre-create src/provider/add.mjs', !existsSync(join(demo, B47_PROVIDER_ADD)), B47_PROVIDER_ADD);
+    check('preparation did NOT pre-create src/consumer/add.test.mjs', !existsSync(join(demo, B47_CONSUMER_TEST)), B47_CONSUMER_TEST);
+    check('preparation did NOT pre-create an integration artifact', integrationEmpty);
+
+    // Drive the REAL plan -> Assignment -> Scheduler path on a SEPARATE directory that is
+    // NEVER manually prepared, with a seam that THROWS before any Agent can start. This is
+    // the load-bearing wiring assertion: only the shared stack builder's OWN preparation can
+    // make the scaffold exist at the first runtime seam — a manual prepare of THIS directory
+    // would mask a removed call inside createB47FreeDuoStack.
+    const seamDemo = join(tmp, 'demo-seam');
+    mkdirSync(seamDemo, { recursive: true });
+    check('the seam demo is NEVER prepared by this test before the probe',
+      !existsSync(join(seamDemo, B47_DEMO_README))
+      && !existsSync(join(seamDemo, B47_PROVIDER_DIR))
+      && !existsSync(join(seamDemo, B47_CONSUMER_DIR))
+      && !existsSync(join(seamDemo, B47_INTEGRATION_DIR)));
+    const probe = await runB47AdmissionProbe({
+      demo: seamDemo,
+      storeDir: join(tmp, 'store'),
+      command: process.execPath,
+      withTaskBudgets: true,
+    });
+
+    check('the fail-before-start seam was reached for the first intended request',
+      probe.runtimeSeamReached === true && probe.presentedPrompt !== null,
+      JSON.stringify({ reached: probe.runtimeSeamReached }));
+    check('the first request is still bound to a fixed free candidate (never an Agent)',
+      probe.presentedModel !== null && B47_CANDIDATE_PAIRS.some((p) => p.modelId === probe.presentedModel),
+      String(probe.presentedModel));
+    check('the tick records a labelled seam refusal and admits no run',
+      probe.dispatch.admitted.length === 0
+      && probe.dispatch.skipped.some((s) => s.code === 'runtime-rejected-run' && /b47-admission-probe-runtime-seam/.test(s.reason)),
+      JSON.stringify(probe.dispatch));
+
+    // The scaffold must ALREADY exist at the ACTUAL first runtime seam: the shared stack
+    // builder prepared it before the first launch, NOT this test. These checks are what make
+    // the removal of that one shared-stack call detectable (the negative control must fail).
+    const obs = probe.firstSeamObservation;
+    check('the ACTUAL first runtime seam observed the complete guidance README before throwing',
+      obs !== null && obs.readmeExists && (obs.readmeText ?? '').includes(B47_DEMO_GUIDANCE.join('\n')),
+      JSON.stringify(obs));
+    check('the ACTUAL first runtime seam observed all three scoped directories before throwing',
+      obs !== null && obs.providerDirExists && obs.consumerDirExists && obs.integrationDirExists,
+      JSON.stringify(obs));
+    check('the ACTUAL first runtime seam observed NO member/integration deliverable pre-created',
+      obs !== null && !obs.providerAddExists && !obs.consumerTestExists && obs.integrationArtifactCount === 0,
+      JSON.stringify(obs));
+
+    // The ACTUAL production-composed prompt carries the COMPLETE shared guidance, both exact
+    // workspace paths and the cwd-only restriction — not a constant compared to itself.
+    const prompt = probe.presentedPrompt ?? '';
+    check('the first request prompt carries the full shared guidance block',
+      prompt.includes(B47_DEMO_GUIDANCE.join(' ')), prompt.slice(0, 240));
+    check('the first request prompt names the provider path and the consumer path',
+      prompt.includes(B47_PROVIDER_ADD) && prompt.includes(B47_CONSUMER_TEST), prompt.slice(0, 320));
+    check('the first request prompt restricts work to the current working directory',
+      /Stay in the current working directory/.test(prompt) && /parent, aux, store or sibling directories/.test(prompt),
+      prompt.slice(0, 320));
+    check('the first request prompt needs no API, settings or repository',
+      /NO API, NO settings and NO repository/.test(prompt), prompt.slice(0, 320));
+  } catch (e) {
+    check('the intentional-demo scaffolding section completed without throwing', false, String((e as Error).message));
+  }
+}
+
+// ===========================================================================
+section('B4.7.2a preparation is idempotent and never overwrites an existing file');
+
+{
+  const tmp = mkdtempSync(join(tmpdir(), 'b47-prep2-'));
+  tmpDirs.push(tmp);
+  const demo = join(tmp, 'demo');
+  mkdirSync(demo, { recursive: true });
+  prepareB47Demo(demo);
+  const moduleBytes = 'export const add = (a, b) => a + b;\n';
+  writeFileSync(join(demo, B47_PROVIDER_ADD), moduleBytes, 'utf8');
+  const readmeBefore = readFileSync(join(demo, B47_DEMO_README), 'utf8');
+
+  prepareB47Demo(demo);
+  prepareB47Demo(demo);
+
+  check('repeat preparation leaves the existing module bytes byte-identical',
+    readFileSync(join(demo, B47_PROVIDER_ADD), 'utf8') === moduleBytes);
+  check('repeat preparation leaves the guidance README unchanged',
+    readFileSync(join(demo, B47_DEMO_README), 'utf8') === readmeBefore);
+  check('repeat preparation still created no consumer deliverable',
+    !existsSync(join(demo, B47_CONSUMER_TEST)));
+}
+
+// ===========================================================================
+section('B4.7.2a a prepared-but-missing module still FAILS actual Node verification (scaffolding is not delivery)');
+
+{
+  const ctx = setupOwnedTestContext();
+  if (ctx === null) {
+    process.stdout.write('  SKIP prepared-but-missing verification :: no sealed Job launcher on this machine\n');
+  } else {
+    try {
+      const demo = ctx.dir('demo');
+      prepareB47Demo(demo);
+      check('the prepared demo has scaffolding before any real run',
+        existsSync(join(demo, B47_DEMO_README))
+        && existsSync(join(demo, B47_PROVIDER_DIR))
+        && existsSync(join(demo, B47_CONSUMER_DIR))
+        && existsSync(join(demo, B47_INTEGRATION_DIR)));
+      check('the prepared demo is missing the product module and test',
+        !existsSync(join(demo, B47_PROVIDER_ADD)) && !existsSync(join(demo, B47_CONSUMER_TEST)));
+
+      const controlDir = ctx.controlDir;
+      const controlNames = (): Set<string> =>
+        new Set(existsSync(controlDir) ? readdirSync(controlDir).filter((n) => n.endsWith('.txt')) : []);
+      const newValidControls = (before: ReadonlySet<string>): number => {
+        try {
+          return readdirSync(controlDir)
+            .filter((n) => n.endsWith('.txt') && !before.has(n))
+            .filter((n) => readControlRecord(join(controlDir, n)).ok)
+            .length;
+        } catch { return 0; }
+      };
+
+      const before = controlNames();
+      const ledger: B47OwnCommandFact[] = [];
+      const missing = await verifyDeliverable(demo, { taskId: 'b47prep-missing', deliverable: 'add.mjs' }, (f) => ledger.push(f));
+      const controls = newValidControls(before);
+      const elig = decideCleanupEligibility({ commands: ledger, observedControlRecords: controls });
+
+      check('the prepared-but-missing module FAILS the ACTUAL Node verification',
+        missing.accepted === false, JSON.stringify({ exit: missing.exitCode, stdout: missing.stdout.slice(-160) }));
+      check('the missing-module check records one started+stopped fact and its own validated Job record (Job-empty)',
+        ledger.length === 1 && ledger[0]!.kind === 'node-check' && ledger[0]!.disposition === 'started'
+        && ledger[0]!.stopConfirmed === true && controls === 1,
+        JSON.stringify({ ledger, controls }));
+      check('the Job-empty ledger (own fact + own validated control) is ELIGIBLE',
+        elig.eligible === true, JSON.stringify(elig));
+      check('verification did NOT create the module it was asked to check',
+        !existsSync(join(demo, B47_PROVIDER_ADD)));
+
+      const cf = await ctx.cleanup();
+      for (const f of cf) recordCleanupFailure(`prepared-but-missing context: ${f.resource}: ${f.error}`);
+      check('the prepared-but-missing context cleaned up', cf.length === 0, cf.map((f) => `${f.resource}: ${f.error}`).join('; '));
+    } catch (e) {
+      check('the prepared-but-missing section completed without throwing', false, String((e as Error).message));
+      const cf = await ctx.cleanup();
+      for (const f of cf) recordCleanupFailure(`prepared-but-missing context: ${f.resource}: ${f.error}`);
+    }
+  }
+}
+
+// ===========================================================================
 section('the parent environment is never mutated by any child case');
 
 {
@@ -741,6 +916,11 @@ section('the ENTRY and the suite registration obey the existing guards');
   check('the entry reads only the owned control directory', /owned\.controlDir/.test(src) && !/controlDirectory\s*\(/.test(src));
   check('the entry guards main() behind an entry-point check', /isEntryPoint/.test(src) && /await main\(\)/.test(src));
   check('the entry no longer carries the always-false auxiliary gate', !/b47-aux-model-unverified/.test(src));
+  // Preparation must have exactly ONE call site and it must live inside the shared stack
+  // builder, so the default entry / import / invalid gates stay free of its side effects.
+  check('preparation has exactly ONE call site, inside the shared stack builder',
+    (src.match(/prepareB47Demo\(options\.demo\)/g) ?? []).length === 1
+    && src.indexOf('prepareB47Demo(options.demo)') > src.indexOf('export function createB47FreeDuoStack'));
 
   // The suite list is explicit; the REAL entry must NOT be auto-registered.
   const timed = readFileSync(join(REPO, 'scripts', 'test-timed.mjs'), 'utf8');

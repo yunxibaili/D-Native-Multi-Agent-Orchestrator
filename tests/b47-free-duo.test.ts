@@ -50,7 +50,7 @@
  *      node tests/b47-free-duo.test.ts
  */
 
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -132,12 +132,29 @@ export const B47_CONSUMER_TEST = `${B47_CONSUMER_DIR}/add.test.mjs`;
 /** The relative specifier member 2's test uses to consume member 1's scoped module. */
 export const B47_CONSUMER_IMPORT = '../provider/add.mjs';
 
-/** The ONE deterministic objective the fixed duo plan is built from. */
+/**
+ * The demo's intentionally-fresh guidance, shared VERBATIM by the demo README and the task
+ * objective/brief. It is guidance for the real model, NOT a permission boundary or a
+ * guaranteed behaviour: an agent that ignores it is still verified only by native evidence.
+ */
+export const B47_DEMO_GUIDANCE: readonly string[] = Object.freeze([
+  'This directory is an intentionally fresh, empty STANDALONE demo, not a repository that is missing files.',
+  `Roles and exact paths: member 1 (provider) creates ${B47_PROVIDER_ADD}; member 2 (consumer) creates ${B47_CONSUMER_TEST} importing ${B47_CONSUMER_IMPORT}; the integrator writes ONE artifact under ${B47_INTEGRATION_DIR}/.`,
+  'This demo needs NO API, NO settings and NO repository; do all work inside the current working directory.',
+  'Stay in the current working directory. Do not inspect the parent, aux, store or sibling directories.',
+  'If a required permission is denied, report it rather than probing alternate paths.',
+]);
+
+/** The ONE guidance file written into a prepared demo (same text as the task objective). */
+export const B47_DEMO_README = 'README.md';
+
+/** The ONE deterministic objective the fixed duo plan is built from (with the demo guidance). */
 export const B47_DEMO_OBJECTIVE =
   `B4.7.1 demo: member 1 (provider) creates ${B47_PROVIDER_ADD} (a small add(a,b) module); ` +
   `member 2 (consumer) creates ${B47_CONSUMER_TEST} that imports ${B47_CONSUMER_IMPORT} ` +
   `and checks add(a,b); the designated integrator validates both files and writes ONE small ` +
-  `integration artifact under ${B47_INTEGRATION_DIR}/.`;
+  `integration artifact under ${B47_INTEGRATION_DIR}/. ` +
+  B47_DEMO_GUIDANCE.join(' ');
 
 /** The declared Workbench task budget for the root AND every committed child. */
 export const B47_BUDGET_UNITS = 1_000_000;
@@ -795,6 +812,20 @@ export interface B47FreeDuoStack {
 }
 
 /**
+ * Prepare the SAME intentional demo for the controlled probe and the real harness, so the
+ * two paths cannot drift. Creates the scoped directories and writes the shared guidance
+ * ONCE. It never creates a deliverable, never copies repo code, and never overwrites an
+ * existing file (so a probe that reuses a demo cannot clobber a member's output).
+ */
+export function prepareB47Demo(demo: string): void {
+  for (const dir of [B47_PROVIDER_DIR, B47_CONSUMER_DIR, B47_INTEGRATION_DIR]) {
+    mkdirSync(join(demo, dir), { recursive: true });
+  }
+  const readme = join(demo, B47_DEMO_README);
+  if (!existsSync(readme)) writeFileSync(readme, `${B47_DEMO_GUIDANCE.join('\n')}\n`, 'utf8');
+}
+
+/**
  * Build the SAME stack the real harness runs: the real planner candidates, the real
  * Assignment/Session/Scheduler and the real Workbench over an injected runtime seam.
  * The runtime seam is the ONLY thing a caller swaps, so the admission path the hermetic
@@ -807,6 +838,9 @@ export function createB47FreeDuoStack(options: {
   readonly userModelPool: UserModelPool;
   readonly makeRuntime: (rt: RuntimeOrchestrator) => RuntimeRunner;
 }): B47FreeDuoStack {
+  // Preparation happens HERE, before the first runtime launch, on the one shared path so
+  // the controlled probe and the real harness see an identical intentional demo.
+  prepareB47Demo(options.demo);
   const rootId = 'b47-duo';
   const objective = B47_DEMO_OBJECTIVE;
   const spec: WorkbenchTaskSpec = { taskId: rootId, objective, taskType: 'implementation', budgetUnits: B47_BUDGET_UNITS };
@@ -883,14 +917,57 @@ export function createB47FreeDuoStack(options: {
 /** The label of the controlled fail-before-start runtime seam (NOT an Agent). */
 export const B47_ADMISSION_SEAM_LABEL = 'b47-admission-probe-runtime-seam (fail-before-start; NOT an Agent)';
 
+/**
+ * B4.7.2a: the intentional demo's scaffold state as observed AT the first runtime seam,
+ * captured inside `run(r)` BEFORE it throws. A probe driven against a directory that was
+ * NEVER manually prepared therefore exposes a removed `prepareB47Demo` inside the shared
+ * stack builder, instead of being masked by an earlier manual preparation of the same dir.
+ */
+export interface B47FirstSeamObservation {
+  readonly readmeExists: boolean;
+  readonly readmeText: string | null;
+  readonly providerDirExists: boolean;
+  readonly consumerDirExists: boolean;
+  readonly integrationDirExists: boolean;
+  readonly providerAddExists: boolean;
+  readonly consumerTestExists: boolean;
+  readonly integrationArtifactCount: number;
+}
+
+/** Read the scaffold state ONLY through the existing fs primitives (no new harness). */
+function observeB47FirstSeam(demo: string): B47FirstSeamObservation {
+  const readme = join(demo, B47_DEMO_README);
+  let integrationArtifactCount = 0;
+  try {
+    const dir = join(demo, B47_INTEGRATION_DIR);
+    if (existsSync(dir)) integrationArtifactCount = readdirSync(dir).filter((n) => statSync(join(dir, n)).isFile()).length;
+  } catch {
+    integrationArtifactCount = 0;
+  }
+  return {
+    readmeExists: existsSync(readme),
+    readmeText: existsSync(readme) ? readFileSync(readme, 'utf8') : null,
+    providerDirExists: existsSync(join(demo, B47_PROVIDER_DIR)),
+    consumerDirExists: existsSync(join(demo, B47_CONSUMER_DIR)),
+    integrationDirExists: existsSync(join(demo, B47_INTEGRATION_DIR)),
+    providerAddExists: existsSync(join(demo, B47_PROVIDER_ADD)),
+    consumerTestExists: existsSync(join(demo, B47_CONSUMER_TEST)),
+    integrationArtifactCount,
+  };
+}
+
 export interface B47AdmissionProbe {
   readonly withTaskBudgets: boolean;
   readonly childIds: readonly string[];
   readonly assignedCount: number;
   readonly runtimeSeamReached: boolean;
   readonly presentedModel: string | null;
+  /** The ACTUAL prompt of the FIRST intended RunRequest the seam received. */
+  readonly presentedPrompt: string | null;
   readonly firstTaskId: string;
   readonly dispatch: B47DispatchObservation;
+  /** B4.7.2a: scaffold state at the ACTUAL first runtime seam, BEFORE the seam throws. */
+  readonly firstSeamObservation: B47FirstSeamObservation | null;
 }
 
 /**
@@ -913,6 +990,8 @@ export async function runB47AdmissionProbe(options: {
 }): Promise<B47AdmissionProbe> {
   let runtimeSeamReached = false;
   let presentedModel: string | null = null;
+  let presentedPrompt: string | null = null;
+  let firstSeamObservation: B47FirstSeamObservation | null = null;
   const stack = createB47FreeDuoStack({
     demo: options.demo,
     storeDir: options.storeDir,
@@ -922,6 +1001,10 @@ export async function runB47AdmissionProbe(options: {
       run: (r) => {
         runtimeSeamReached = true;
         presentedModel = r.model ?? null;
+        presentedPrompt = r.prompt ?? null;
+        // Capture the scaffold state AT this seam, before throwing: if the shared stack
+        // builder's preparation was removed, an UNPREPARED demo is visible HERE.
+        firstSeamObservation = observeB47FirstSeam(options.demo);
         throw new Error(`${B47_ADMISSION_SEAM_LABEL}: refusing to start any Agent`);
       },
     }),
@@ -944,8 +1027,10 @@ export async function runB47AdmissionProbe(options: {
     assignedCount: assigned.filter((a) => a.ok).length,
     runtimeSeamReached,
     presentedModel,
+    presentedPrompt,
     firstTaskId,
     dispatch: observeDispatch(firstTaskId, dispatched),
+    firstSeamObservation,
   };
 }
 

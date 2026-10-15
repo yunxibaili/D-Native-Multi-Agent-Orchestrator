@@ -43,7 +43,7 @@ README 是导航。本机 `project-progress/audit/` 是用户指定的只读第�
 | B4.6a | 最小同进程用户检查点独立通过；原报告文案P2在B5.1关闭，不等于完整监督/纠偏恢复 |
 | B5.1 | 独立 PASS WITH P2：已知session_failure的停止安全/具体model有界接力；仅受控当前链 |
 | B5 overall | NOT SEALED；真实协议掉线、完整工作流恢复及更广错误分类未验收 |
-| B4.7 | 整体 NOT SEALED；B4.7.1b 路径收口 PASS；B4.7.2 一次真实样本 BLOCKED：首会话目录外权限请求被自动拒绝后未交付；累计产品会话用2/4、剩2，无重试 |
+| B4.7 | 整体 NOT SEALED；B4.7.2a demo材料准备/首请求接线独立 PASS，真实模型遵守情况未验；B4.7.2失败事实保留，累计产品会话用2/4、剩2 |
 | B4.6 后续 / B2 后续 / B3 后续 / B5 后续 | PLANNED；未授权扩大 |
 | PARALLEL_WRITE | CLOSED |
 | 本产品前端 | 本机独立进度页已授权且禁止入 Git；正式工作台 UI 需求仍待确认 |
@@ -318,6 +318,14 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 不新增 provider 网关、群聊平台、第二个调度器或通用工作流引擎来掩盖协议缺口。
 
 ## 8. 最近独立证据与上传记录
+
+2026-10-15 B4.7.2a Demo内最小准备与承重回归独立PASS：用户“继续推进”授权该test-only切片。复用既有createB47FreeDuoStack、候选builder、Workbench brief、Assignment/Scheduler及verifyDeliverable；OpenCode由opencode-agent implement首次+一次返工完成，两次wrapper均exit0、原生finish=stop。独立sanitize export确认首次ses_ec282815affeYr2hzWAIg1yfTc的30个assistant、返工ses_ec27eb41dffekLGjSJ0WD86g50的12个assistant均opencode-go/deepseek-v4.1-flash；无子代理，本轮产品模型调用新增0。
+
+仅改既有tests/b47-free-duo.test.ts和tests/b47-free-duo-entry.test.ts：prepareB47Demo在同一stack构造入口、首runtime前创建provider/consumer/integration目录，并仅在不存在时写一次README；同一5条说明进入objective→候选→真实RunRequest.prompt：新建空demo为预期、各自准确路径、无需API/settings/repo、限cwd不探查parent/aux/store/sibling、权限拒绝应报告。未预写add、测试或集成产物，重复准备不改既有模块/README。未复制仓库代码、未改任何权限、费用/次数/模型或生产执行配置；这是advisory说明，不是权限强制或保证真实模型服从。
+
+首次121/0未作为最终PASS：Codex内存hook断开真实stack的prepare调用，原测试仍121/0 exit0，因测试提前手工准备同一目录。唯一返工改用全新未手工准备的seam目录，观察同一个首RunRequest到达时的README/目录/产物缺失状态。最终Codex独立typecheck exit0、入口125/0 exit0、ownership60/0 exit0、isolation6 opt-in/0违规exit0、default NOT_RUN exit0；同一未改负控现123/2、exit1，两项失败准确命中未接线的README/三目录。额外独立实际请求/Node探针确认完整说明进入全部候选和首prompt、产物未预写、缺失模块被实际contained Node拒绝、同次Job空/ledger匹配、重复准备保留原模块字节，cleanupFailures0。没有恢复旧代码、没有第三轮实现、没有重试真实产品任务。
+
+源码src/native/scripts/helper与已有dirty树保持；本片只上传已审核两个测试文件及受影响文档，主HEAD/index不动；audit只读、取证export/本机页面均不入Git。B4.7.2真实失败证据及旧保留目录不删除、不据125/0认证真实多模型可用或免费。累计产品会话仍2/4、剩2，工程估算保持67/100、PARALLEL_WRITE=CLOSED、正式前端未进入。下一候选B4.7.3一次全新3会话duo需要额外允许1个、累计上限5后才可启动；保留原free pair/隔离demo/各90秒/无独立LAYA-Review/失败停止范围，不以本片“继续”重置计数或自动重试。证据：project-progress/b472a-model-evidence.json、b472a-rework-model-evidence.json、b472a-independent-probe.json、b472a-negative-wiring-first.log、b472a-negative-wiring-final.log、b472a-review-state.json和独立定向logs。
 
 2026-10-15 B4.7.2 一次完整真实free duo样本独立BLOCKED：用户明确允许新增1个产品原生执行会话，累计上限由3改4，历史已用1，本次剩余3；原两个free pair/新建隔离demo/每会话90秒/不收费或另启LAYA-Review/失败不自动重试继续有效。开始只读读取audit，核对工作快照与已上传db7aae4逐项一致、本机公开安装包仍1.18.35。官方模型表本次仍列Space Bunny Free及MiMo-V2.6-Flash Free为Free（https://opencode.ai/v2/docs/console/models/）；只作为当前公开价格，不作账户资格、额度或全流程费用证明。
 
@@ -917,18 +925,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-15T01:44:04+08:00",
+  "updatedAt": "2026-10-15T11:05:26+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "B4.7.2",
-    "name": "真实duo首会话权限中断，未交付",
-    "status": "blocked",
-    "summary": "一次真实样本已停：Space Bunny请求demo外aux读取被OpenCode自动拒绝，9.7秒后exit0但无目标文件；独立Node拒绝，整轮exit1。第二模型/集成未启动；Job空。累计2/4会话、剩2，无重试。"
+    "id": "B4.7.2a",
+    "name": "Demo准备与实际首请求接线独立通过",
+    "status": "done",
+    "summary": "仅test-only：README/目录骨架在首runtime前准备，同一说明完整进入请求；独立125/0，断线负控123/2 exit1。未预写产物、缺失交付仍拒绝。产品新增0，真实duo尚未通过。"
   },
   "next": {
-    "id": "B4.7.2a",
-    "name": "仅补demo内任务说明/目录骨架和受控回归，不放宽权限",
+    "id": "B4.7.3",
+    "name": "一次新完整真实duo；需追加1个会话、累计上限5",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1005,11 +1013,11 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
   "blockers": [
     {
       "id": "B47-HEADLESS-DELIVERY",
-      "severity": "实跑阻塞",
-      "title": "Headless权限拒绝后未交付目标文件",
-      "detail": "真实Space Bunny在空demo中转向读取外部aux，被OpenCode自动reject后退出，最后finish=tool-calls，无目标模块；当前文件路径修复仍有效，权限限制正常生效。累计上限4已用2，剩2。",
-      "next": "先以无模型测试补demo内任务说明/目录骨架，避免无必要目录外探查；不加auto/yolo或改变权限。新的完整3会话试验需另行明确次数。",
-      "kind": "真实未交付 / 不是Job停止失效"
+      "severity": "验收缺口",
+      "title": "Demo说明已接线；真实模型遵守与完整duo待验证",
+      "detail": "B4.7.2真实首会话权限拒绝后未交付的事实保留。B4.7.2a仅确认说明和目录在正确时机交付，不保证模型行为。累计4已用2、剩2，完整新duo需3。",
+      "next": "先明确允许新增1个会话、累计5后再跑一次新duo；不改权限、不自动重试，不伪造缺失产物。",
+      "kind": "真实行为/调用次数边界"
     },
     {
       "id": "B43-P3-CLEANUP",
@@ -1225,7 +1233,7 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "title": "真实 Agent 代表验收",
       "status": "partial",
       "deliverable": "成功、受阻与真实成本/停止证据",
-      "evidence": "历史首模块与B4.7.1b路径收口通过；B4.7.2真实首会话权限拒绝后未交付，完整duo未验收，累计2/4。"
+      "evidence": "B4.7.2a材料与准备接线独立PASS125/0；B4.7.2真实未交付事实保留，未再调用模型；累计2/4。"
     },
     {
       "id": "F0",
@@ -1243,12 +1251,11 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     }
   ],
   "checks": [
-    "B4.7.2真实entry一次exit1/BLOCKED：只有首任务执行，未交付，下游未启动",
-    "原生模型export：Space Bunny Free，5个assistant cost报告0，最后tool-calls；无真实MiMo成员/集成完成证据",
-    "独立facts：两个validated Job空、rootExitCode0/1、commands/control匹配，失败owned目录按策略保留",
-    "产品会话本次1、累计2/4、剩2；无自动重试、不改权限/用户配置/模型",
-    "源码/测试/runner无修改；B4.7.1b的96/0与typecheck是历史结果，本轮未重复/full suite未跑",
-    "Git只上传本轮裁定/路线文档；page/audit/export/取证副本不入Git；HEAD/index保留"
+    "B4.7.2a独立PASS：typecheck0、入口125/0、ownership60/0、isolation6/0、default NOT_RUN0",
+    "真实首请求seam：README/目录已备、产物缺失，完整说明进入prompt；独立contained Node拒绝缺失模块，Job空，清理完成",
+    "首次回归121/0未捕获断线；唯一返工后相同内存负控123/2 exit1，源码未被负控改写",
+    "本轮产品推理新增0，累计2/4、剩2；真实模型行为/完整duo仍未验收",
+    "仅两个测试文件与受影响文档变动；source/native/helpers/runner及HEAD/index保留；page/audit/export不入Git"
   ],
   "sources": [
     {
