@@ -1,18 +1,21 @@
-# 下一候选 — LAYA-ACTION.2 真实本地动作目标验收准备
+# 下一候选 — LAYA-CONTEXT.1 决策输入可见性收口
 
-更新日期：2026-10-15；事实/裁定只见 [PROJECT_BASELINE.md](PROJECT_BASELINE.md)。
+更新日期：2026-10-15；当前事实只见 [PROJECT_BASELINE.md](PROJECT_BASELINE.md)。
 
-## 已独立通过
+## 本轮结论
 
-LAYA-ACTION.1代码PASS，整体PASS WITH P2（既有B45负控定位失效）。OpenCode session ses_ec1c29b31ffe8q90kxh7SMjS03实际指定DeepSeek V4.1 Flash，首轮正常finish=stop；只改decision-loop/state-loop/b40a三文件，Codex独立审查与typecheck、decision429/0、state-loop198/0、CLI93/0、workbench419/0、协作96/0、计划61/0、阶段材料47/0通过。独立内存负控强制改为第一个目标，3个新断言失败/exit1，源文件未改。b40a的完整CLI链使用真实provider与原生形状受控响应，不再提供生成taskId/parameters；执行端/答案仍是fixture，不是真实模型验收。
-workflow有acceptanceMaterial时基本continue/wait/abort与complete具体目标同次形成候选表，按membership映射，多个目标不同key、单目标描述/表明确绑定；不默认任务。未知key/矛盾与额外目标参数拒绝，缺执行/criteria或空输出无完成候选；材料存在不等于语义/文件物理认证。旧无material的11动作/参数契约保留。复杂自由参数动作未原生收口，不宣称已全部可用。
+LAYA-ACTION.2 本轮真实3/3本地请求均选择continue，生产provider/decision loop解析和受控拒绝通过，未调用complete、任务状态未变；因此明确目标的正向验收NOT OBSERVED，整体BLOCKED。离线同tokenizer/build_sequence复算确认双目标state701 tokens只保留318、丢383，acceptance_material整段不在模型输入；五个选项marker和token span仍各自独立。此为证据可见性P1，不能仅据此断言三次continue的根因。服务已停/Job空/owned清理通过，固定缓存10文件摘要不变；无产品Agent/云模型/新增费用/生产修改。
 
-## 下一步先准备，不自动推理
+## 建议的最小切片（尚未授权实施）
 
-复用当前provider/decision loop与D:/AI/laya-cache固定离线服务，为少量真实next_action选择准备明确合成状态/同任务材料（包括至少两个不同to_verify目标），检验实际所选key能够映射明确目标、缺交付不会被接受。只使用新的内存任务/demo，不提交现有仓库代码或凭据，不调用产品Agent/云模型、不新增付费；记录真实checkpoint、响应、结果和Job退出。模型选wait/abort应如实记录，不能强制改答案或重试到通过。此文不授权POST；实际请求数/90秒期限/失败即停须由用户新确认，现有本地4次已用完、产品原生仍5/5。
-若要直接进入完整round，先按laya-round-budget.json复核预算：理想两步8次本地决策不是硬cap，条件对应上界13；产品执行/可支持Review/辅助CLI与原生内部费用另计，不绕过unknown availability/quota或伪造免费事实。无需新建runner/manager/第二大脑；没有新功能开发需要时不启动worker。
+下一候选LAYA-CONTEXT.1：先调查本机0.3.21实际编码预算与已有有界上下文能力，限定最小workflow输入压缩和超限拒绝方案；确保每个可完成候选的同任务criteria/output可进入实际输入，不能只把材料移到前面而截掉另一目标，也不靠放大checkpoint max_len、改温度、换模型或新建框架求通过。实施及新真实推理另行授权；本轮3次已耗尽、产品原生仍5/5，失败不重试。
 
-## 维护项与边界
+先只读本机0.3.21的_encode_state/build_sequence、固定配置、生产decision-loop/toDecisionState/material投影及所有workflow调用者，再核对官方同版本处理方法，复用已有有界材料/候选工具。明确每个候选最小必要字段和被保留的字节/token；不能只检查请求JSON有材料，不能把客户端字符上限当模型上限，不按完整marker就推断完整证据可见。
 
-B45旧负控匹配'|| groupRuntimeIncomplete;'，本片父快照def22fb已有不匹配且CLI未改；worker报告103/1，独立静态归因确认，列P2另行限定测试维护，不混入本片或回退安全门求绿。两个worker自建临时hook已按时间/内容确认后按名清理。历史foreign审计/临时文件未动。
-温度校准P2、PARALLEL_WRITE=CLOSED与正式前端未进入保持；工程估算68/100（界面70/30取整）不按测试数量增加。每任务只读audit，结束更新唯一基线/受影响文档与本机页并精确审核上传；页面/cache/audit/本机证据不入Git，主HEAD/index/其他dirty内容保持。
+如需实施，由OpenCode限定修改共享workflow请求构造与必要hermetic回归，Codex独立检查原生编码预算、同目标材料、未知/超限fail-closed以及旧通用参数入口兼容；不新建Tokenizer服务/manager/第二调度，不强制模型选择complete，不以fixture代替下一轮真实选择。具体方案和允许文件先调查后确定；新真实推理仍需单独明确次数。
+
+## 保留边界
+
+本轮3次许可已全部使用；累计本地真实8次（1失败+4通过+3本轮），产品会话5/5未增加。旧目标桥接代码和四预设独立PASS保持，动作正向选择仍待验证；B45旧负控与校准P2保留。PARALLEL_WRITE=CLOSED，正式前端未进入，工程估算68/100。
+
+仅文档/本机验收产物更新，无产品实现、配置或依赖变更；不跑fullsuite。每轮只读audit，刷新ignored本机页后精确审核上传；页面/cache/audit/本机证据不进Git，主HEAD/index/dirty保留。

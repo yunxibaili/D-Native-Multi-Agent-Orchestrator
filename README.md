@@ -1,6 +1,6 @@
 # LAYA Native Multi-Agent Orchestrator
 
-更新日期：2026-10-14
+更新日期：2026-10-15
 
 个人 Windows 工作台的本机多 Agent 编排后端。用户提交目标，LAYA 决定任务分工、具体 Agent × Model 与需要的能力，既有执行链负责准入、调度、隔离、证据和验证。
 
@@ -49,6 +49,8 @@ B3.1任务级原生Skill有界闭环独立PASS：显式 `--skill-catalog skills.
 本机独立进度页：`project-progress/index.html`，不进入 Git，不接 Runtime 控制。
 本机存在时用 `node project-progress/refresh.mjs` 刷新，或加 `--serve` 只读实时预览；每次任务推进必须同步。
 旧 temporary-dashboard 已保留本机源码备份；递归删除被工具安全策略拒绝，待用户手动删除；正式工作台前端需求仍待单独确认。
+
+最新本地动作验收发现输入长度阻塞：真实3次均continue，正向complete目标未验收；离线复算确认双目标交付材料被512-token预算截掉。先收口决策输入可见性，不追加调用或扩大产品阶段；准确状态与边界见唯一基线。
 
 ## 本地使用
 

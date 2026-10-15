@@ -87,6 +87,11 @@ $env:LAYA_REVISION = '55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851'
 有acceptanceMaterial时，复用有限choice：continue/wait/abort加每个eligible to_verify任务的complete候选；单目标complete的描述/表绑定该任务，多目标使用不同opaque key。请求与目标表同次构建，响应只能按同表membership得到payload；不解析任意key生成taskId、不默认首任务、不把provider参数合并成目标。未知key/不一致taskId/额外动作或目标参数拒绝；相符taskId及reason/rationale重述可兼容但不改变候选payload。缺执行/criteria或空输出不提供complete，这是材料存在检查，不认证文件真实性或语义质量；质量由LAYA判定、当前状态仍由原Verification验证。
 无material的通用旧请求保持11动作与参数路径。bounded workflow只提供continue/wait/abort/complete，复杂reassign/rework/改计划等自由参数动作不在本片原生支持范围；既有通用API并不因此被删除。独立typecheck及7个定向套件全绿，原生形状真实provider/CLI不再靠fixture注入目标；两个任务选第二个及独立first-target负控验证绑定确实承重。无真实LAYA/Agent调用，不把fixture验收当真实模型质量或整条生产round已认证。保留旧B45负控定位P2与温度P2，下一步真实本地目标验收另行授权。
 
+### 3.5 已验证的实际输入预算限制
+
+LAYA-ACTION.2 本轮真实3/3本地请求均选择continue，生产provider/decision loop解析和受控拒绝通过，未调用complete、任务状态未变；因此明确目标的正向验收NOT OBSERVED，整体BLOCKED。离线同tokenizer/build_sequence复算确认双目标state701 tokens只保留318、丢383，acceptance_material整段不在模型输入；五个选项marker和token span仍各自独立。此为证据可见性P1，不能仅据此断言三次continue的根因。服务已停/Job空/owned清理通过，固定缓存10文件摘要不变；无产品Agent/云模型/新增费用/生产修改。
+本机固定english配置max_len=512/head_max_len=192，_encode_state对dict保留序列化state前部；客户端50,000字符限制不等于服务端模型可见长度。实际两个候选的同任务output在state后段，token重放证明未进入输入；须先保证候选与材料能在真实编码预算内共存或明确拒绝。此记录不批准调整已安装模型/服务设置，不能用候选描述中的criteria替代未看到的交付output。
+
 ## 4. 当前请求约束
 
 支持 choice、score、noul，具体字段以 types.ts 和 laya.ts 的校验为准。
