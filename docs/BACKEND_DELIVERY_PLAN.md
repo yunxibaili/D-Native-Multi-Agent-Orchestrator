@@ -6,7 +6,7 @@
 依据：[后端需求](BACKEND_REQUIREMENTS.md)、[阶段草案](DRAFT_STAGED_ROLE_WORKFLOW.md)。
 2026-10-14用户单独授权B4.5a后，B4.5/B4.5a受控最小Git顺序协作范围独立通过；其后用户已授权B3.1原生Skill有界切片，现已独立通过；其后B3.2原生MCP选择与观察也已获授权并独立通过；本轮停止，不授权后续阶段。
 
-当前路线的最新范围：B4.7.3固定free duo代表样本已独立真实PASS（两模型/三任务/可执行产物/独立负控/Job空），累计产品会话5/5用尽。该样本不是整个后端验收，真实LAYA/Skill-MCP/动态额度等仍有缺口；B2.2显式候选接线代码已独立PASS（委派报告P2保留）；随后LAYA-ENV.1找回既有0.3.21并恢复固定缓存，真实离线CUDA加载/health独立通过，检查后服务已停止。随后LAYA-DECISION.1已获4次本地调用授权，首个中文分类因action协议元数据被客户端误作参数而拒绝，1/4后停止，余3项未跑；服务已停止/Job空。下一候选为另行授权的LAYA-COMPAT.1最小兼容修复，估算仍68/100，不自动推理或进入F0。事实/证据只见 [PROJECT_BASELINE.md](PROJECT_BASELINE.md)，建议范围见 [NEXT_TASK.md](NEXT_TASK.md)。下文旧说明不能覆盖最新边界。
+当前路线的最新范围：B4.7.3固定free duo代表样本已独立真实PASS（两模型/三任务/可执行产物/独立负控/Job空），累计产品会话5/5用尽。该样本不是整个后端验收，真实LAYA/Skill-MCP/动态额度等仍有缺口；B2.2显式候选接线代码已独立PASS（委派报告P2保留）；随后LAYA-ENV.1找回既有0.3.21并恢复固定缓存，真实离线CUDA加载/health独立通过，检查后服务已停止。随后LAYA-DECISION.1已获4次本地调用授权，首个中文分类因action协议元数据被客户端误作参数而拒绝，1/4后停止，余3项未跑；服务已停止/Job空。LAYA-COMPAT.1现已由OpenCode首轮修复并获Codex独立hermetic/捕获回放PASS；下一候选为另行授权的LAYA-DECISION.2真实本地四项验收，估算仍68/100，不自动推理或进入F0。事实/证据只见 [PROJECT_BASELINE.md](PROJECT_BASELINE.md)，建议范围见 [NEXT_TASK.md](NEXT_TASK.md)。下文旧说明不能覆盖最新边界。
 
 ## 成功效果
 

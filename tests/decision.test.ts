@@ -2061,6 +2061,238 @@ async function testChineseInput(): Promise<void> {
 
 let sentBytes = '';
 
+/**
+ * LAYA-COMPAT.1 -- the official `action` metadata on 0.3.21 answers.
+ *
+ * Laya 0.3.21 (the installed wheel and tag v0.3.21, commit 6ab71fb4) attaches an
+ * optional `action: {"act_probability": n}` object to the choice, score AND noul
+ * answers. Before this fix every real 0.3.21 response was rejected, because
+ * `readChoiceParameters` read `action` as an extra task parameter and refused the
+ * object. These cases are the regression.
+ *
+ * The body in `capturedBody()` is the REAL captured 0.3.21 response for the
+ * synthetic Chinese task, embedded here so the test is self-contained rather than
+ * depending on the ignored evidence file.
+ */
+async function testActionMetadataCompat(): Promise<void> {
+  function capturedBody(): unknown {
+    return {
+      model: 'laya-rl-agent',
+      answers: {
+        work_kind: {
+          type: 'choice',
+          choice: 'implementation',
+          probabilities: { implementation: 0.8087, review: 0.0074, research: 0.0873, debugging: 0.0966 },
+          confidence: 0.5335,
+          answer_confidence: 0.8087,
+          action: { act_probability: 1 },
+        },
+        complexity: {
+          type: 'score',
+          score: 1.8442,
+          legend: { '0': 'trivial', '1': 'small', '2': 'moderate', '3': 'large', '4': 'very large' },
+          probabilities: { '0': 0.0166, '1': 0.3112, '2': 0.5131, '3': 0.1294, '4': 0.0296 },
+          confidence: 0.2901,
+          answer_confidence: 0.5131,
+          action: { act_probability: 1 },
+        },
+        review_required: {
+          type: 'noul',
+          noul: 0.0045,
+          confidence: 0.9955,
+          answer_confidence: 0.9955,
+          action: { act_probability: 1 },
+        },
+      },
+      usage: { input_tokens: 188, output_tokens: 0 },
+      routing: {
+        model: 'multilingual',
+        repo: 'convaiinnovations/laya/multilingual',
+        reason: 'non-Latin script (han, 100% of letters); the English checkpoint cannot read it',
+        detection: { script: 'han', language: null },
+      },
+    };
+  }
+  const CAPTURED_TASK = '为一个全新的演示项目编写整数加法函数和单元测试。';
+
+  // 1. The full captured response is accepted and classified, and the action
+  //    metadata stays metadata: kept in `raw`, absent from `parameters`.
+  await withServer(jsonHandler(200, capturedBody()), async (baseUrl) => {
+    const provider = createLayaDecisionProvider({ baseUrl });
+    const r = await provider.decide(routingRequest({ task: CAPTURED_TASK }));
+    const kind = r.answers[WORK_KIND_ID];
+    if (kind?.type === 'choice') {
+      eq('captured 0.3.21 work_kind choice is validated', kind.choice, 'implementation');
+      eq('captured 0.3.21 choice has no parameters (action is not a parameter)', kind.parameters === undefined, true);
+      check(
+        'captured 0.3.21 choice parameters never carry action',
+        !('action' in (kind.parameters ?? {})),
+        JSON.stringify(kind.parameters),
+      );
+    } else {
+      check('captured 0.3.21 work_kind is a choice', false, kind?.type);
+    }
+    const complexity = r.answers[COMPLEXITY_ID];
+    if (complexity?.type === 'score') {
+      eq('captured 0.3.21 score is preserved', complexity.score, 1.8442);
+      eq('captured 0.3.21 level from rounded score', complexity.level, 'moderate');
+    } else {
+      check('captured 0.3.21 complexity is a score', false, complexity?.type);
+    }
+    const review = r.answers[REVIEW_ID];
+    eq('captured 0.3.21 noul is preserved', review?.type === 'noul' ? review.noul : null, 0.0045);
+
+    const rawAnswers = (r.raw as { answers: Record<string, { action?: { act_probability?: number } }> }).answers;
+    eq('raw retains the work_kind action metadata', rawAnswers.work_kind.action?.act_probability, 1);
+    eq('raw retains the complexity action metadata', rawAnswers.complexity.action?.act_probability, 1);
+    eq('raw retains the noul action metadata', rawAnswers.review_required.action?.act_probability, 1);
+
+    const c = await classifyTask(provider, { task: CAPTURED_TASK });
+    eq('captured 0.3.21 classification work_kind', c.work_kind, 'implementation');
+    eq('captured 0.3.21 classification complexity', c.complexity, 'moderate');
+    eq('captured 0.3.21 classification score', c.complexity_score, 1.8442);
+    eq('captured 0.3.21 classification review_required', c.review_required, false);
+  });
+
+  // 2. action metadata alongside real string task parameters: the parameters
+  //    survive, and the metadata neither becomes a parameter nor overrides the choice.
+  await withServer(
+    jsonHandler(
+      200,
+      goodBody(
+        goodAnswers({
+          work_kind: {
+            type: 'choice',
+            choice: 'implementation',
+            probabilities: { implementation: 0.8087, review: 0.0074, research: 0.0873, debugging: 0.0966 },
+            answer_confidence: 0.8087,
+            action: { act_probability: 1 },
+            taskId: 't1',
+            agentId: 'opencode',
+          },
+        }),
+      ),
+    ),
+    async (baseUrl) => {
+      const r = await createLayaDecisionProvider({ baseUrl }).decide(ROUTING);
+      const kind = r.answers[WORK_KIND_ID];
+      if (kind?.type === 'choice') {
+        eq('action does not override the chosen option', kind.choice, 'implementation');
+        eq('string task parameters are preserved beside action metadata', kind.parameters, { taskId: 't1', agentId: 'opencode' });
+        check('action is not folded into parameters', kind.parameters !== undefined && !('action' in kind.parameters), JSON.stringify(kind.parameters));
+      } else {
+        check('action+parameters answer is a choice', false, kind?.type);
+      }
+    },
+  );
+
+  // 2b. A response with no action at all behaves exactly as before.
+  await withServer(
+    jsonHandler(
+      200,
+      goodBody(goodAnswers({ work_kind: consistentChoice('implementation', { implementation: 0.8087, review: 0.0074, research: 0.0873, debugging: 0.0966 }) })),
+    ),
+    async (baseUrl) => {
+      const r = await createLayaDecisionProvider({ baseUrl }).decide(ROUTING);
+      eq('a no-action response still validates', r.answers[WORK_KIND_ID]?.type === 'choice' ? r.answers[WORK_KIND_ID].choice : null, 'implementation');
+    },
+  );
+
+  async function decideOverride(id: string, answer: Record<string, unknown>): Promise<{ ok: boolean; message: string }> {
+    let ok = false;
+    let message = '';
+    await withServer(jsonHandler(200, goodBody(goodAnswers({ [id]: answer }))), async (baseUrl) => {
+      try {
+        await createLayaDecisionProvider({ baseUrl }).decide(ROUTING);
+        ok = true;
+      } catch (e) {
+        message = (e as Error).message;
+      }
+    });
+    return { ok, message };
+  }
+
+  function choiceWithAction(action: unknown): Record<string, unknown> {
+    return {
+      type: 'choice',
+      choice: 'implementation',
+      probabilities: { implementation: 0.8087, review: 0.0074, research: 0.0873, debugging: 0.0966 },
+      answer_confidence: 0.8087,
+      action,
+    };
+  }
+
+  // 3. Malformed action metadata is refused as a schema failure.
+  const malformed: Array<[string, unknown, string]> = [
+    ['null', null, 'expected an object'],
+    ['an array', [1], 'expected an object'],
+    ['a string', 'act', 'expected an object'],
+    ['missing act_probability', {}, 'expected a probability'],
+    ['act_probability null', { act_probability: null }, 'expected a probability'],
+    ['act_probability a numeric string', { act_probability: '1' }, 'expected a probability'],
+    ['act_probability above 1', { act_probability: 1.4 }, 'expected a probability'],
+  ];
+  for (const [name, action, fragment] of malformed) {
+    const r = await decideOverride(WORK_KIND_ID, choiceWithAction(action));
+    check(`rejects choice action metadata: ${name}`, !r.ok && r.message.includes(fragment), r.ok ? 'accepted' : r.message.slice(0, 190));
+  }
+
+  // 3b. Out-of-range act_probability rejects on every answer kind.
+  const scoreWithAction = (action: unknown): Record<string, unknown> => ({
+    ...consistentScore({ '0': 0.0166, '1': 0.3112, '2': 0.5131, '3': 0.1294, '4': 0.0296 }, LEVELS),
+    action,
+  });
+  const noulWithAction = (action: unknown): Record<string, unknown> => ({ type: 'noul', noul: 0.0045, answer_confidence: 0.9955, action });
+  const rangeCases: Array<[string, string, Record<string, unknown>]> = [
+    ['choice', WORK_KIND_ID, choiceWithAction({ act_probability: -0.1 })],
+    ['score', COMPLEXITY_ID, scoreWithAction({ act_probability: 1.4 })],
+    ['noul', REVIEW_ID, noulWithAction({ act_probability: 2 })],
+  ];
+  for (const [kind, id, answer] of rangeCases) {
+    const r = await decideOverride(id, answer);
+    check(`rejects out-of-range act_probability on a ${kind} answer`, !r.ok && r.message.includes('expected a probability'), r.ok ? 'accepted' : r.message.slice(0, 190));
+  }
+
+  // 3c. A non-finite act_probability cannot be expressed in JSON, so it is
+  //     injected through the provider's own fetch seam rather than pretending
+  //     NaN survives JSON.stringify.
+  for (const [name, value] of [['NaN', NaN], ['Infinity', Infinity]] as Array<[string, number]>) {
+    const injected = goodBody(goodAnswers({ [WORK_KIND_ID]: choiceWithAction({ act_probability: value }) }));
+    const fetchImpl = (async () => ({ ok: true, status: 200, json: async () => injected, text: async () => '' })) as unknown as typeof fetch;
+    let ok = false;
+    let message = '';
+    try {
+      await createLayaDecisionProvider({ baseUrl: 'http://127.0.0.1:8077', fetchImpl }).decide(ROUTING);
+      ok = true;
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    check(`rejects non-finite act_probability: ${name}`, !ok && message.includes('expected a probability'), ok ? 'accepted' : message.slice(0, 190));
+  }
+
+  // 4. The action allowance did NOT open the door to arbitrary non-string task
+  //    parameters: an object or a number beside the answer still rejects, with or
+  //    without action metadata present.
+  const nonStringParams: Array<[string, string, unknown]> = [
+    ['a number taskId', 'taskId', 7],
+    ['an object note', 'note', { nested: true }],
+    ['a numeric sibling beside action metadata', 'taskId', 7],
+  ];
+  for (const [name, key, value] of nonStringParams) {
+    const withAction = name.includes('beside action');
+    const answer: Record<string, unknown> = {
+      type: 'choice',
+      choice: 'implementation',
+      probabilities: { implementation: 0.8087, review: 0.0074, research: 0.0873, debugging: 0.0966 },
+      answer_confidence: 0.8087,
+      ...(withAction ? { action: { act_probability: 1 } } : {}),
+      [key]: value,
+    };
+    const r = await decideOverride(WORK_KIND_ID, answer);
+    check(`still rejects non-string task parameter: ${name}`, !r.ok && r.message.includes('parameters must be strings'), r.ok ? 'accepted' : r.message.slice(0, 190));
+  }
+}
+
 async function main(): Promise<void> {
   await testGenericLayer();
   await testRequestValidation();
@@ -2070,6 +2302,7 @@ async function main(): Promise<void> {
   await testScoreRoundingBoundary();
   await testHighKBoundaries();
   await testNoulCriteria();
+  await testActionMetadataCompat();
   await testProviderOptionHardening();
   await testTransport();
   await testRoutingPreset();

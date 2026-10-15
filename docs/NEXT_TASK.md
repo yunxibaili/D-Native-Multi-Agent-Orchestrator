@@ -1,17 +1,18 @@
-# 下一候选 — LAYA-COMPAT.1 官方 action 元数据兼容单点
+# 下一候选 — LAYA-DECISION.2 修复后真实本地四项验收
 
-更新日期：2026-10-15。唯一事实与阶段结论见 [PROJECT_BASELINE.md](PROJECT_BASELINE.md)。当前LAYA-DECISION.1为BLOCKED，不重开已通过的缓存/health工作。
+更新日期：2026-10-15。唯一事实与阶段结论见 [PROJECT_BASELINE.md](PROJECT_BASELINE.md)。
 
-## 独立已证实
+## 已完成
 
-用户允许最多4次本地LAYA推理、每次90秒、仅合成demo、失败即停。实际POST=1，首个中文分类被现有provider以DECISION_SCHEMA拒绝：0.3.21返回action:{act_probability:1}，readChoiceParameters把该官方元数据当作必须为字符串的任务参数。真实raw work_kind=implementation不等于validated分类；英文/计划/pair余3项未运行，无重试。真实offline English/multilingual加载与GET通过，结束Job空/owned清理/服务停止。产品原生Agent会话累计仍5/5。
-本机安装包laya/agent.py与GitHub MCP官方v0.3.21固定tag（6ab71fb4ce6bfd6f189e9b689eaadd67103ed9b6）确认元数据形状，捕获响应离线回放复现。证据保存在ignored project-progress/laya-decision-evidence.json，不进Git，不改audit。
+LAYA-COMPAT.1由OpenCode（原生session ses_ec1f589bcffeXS1cuOTqhUA44l，实际opencode-go/deepseek-v4.1-flash）首轮实现，Codex独立PASS。只改src/decision/laya.ts与tests/decision.test.ts：可选action元数据在choice/score/noul共用边界校验，act_probability有限[0,1]；元数据不进入任务参数、不覆盖编排动作，raw保留；无action旧响应和字符串任务参数兼容，未知对象/数字任务参数仍拒绝。独立typecheck、decision429/0、initial-assignment-decision37/0、state-loop169/0通过。同一完整捕获JSON经修复前/后provider对照：前者DECISION_SCHEMA/action，后者正确分类、raw不变、无action参数；纯内存回放network=0。
+这不是重跑真实推理；前轮LAYA-DECISION.1实际1/4后停仍保留历史BLOCKED。无新增产品Agent会话、无新服务启动、未改Python环境/权重。
 
-## 最小实施候选（本轮尚未授权）
+## 下一有界候选（需另行授权真实本地推理）
 
-复用src/decision/laya.ts、既有DecisionAnswer与tests/decision.test.ts；先读所有参数消费者/测试，核对action与任务参数命名是否冲突，再按官方0.3.21协议最小接入元数据。保留未知对象/数值任务参数拒绝和现有答案空间/概率校验，不字符串化或跳过所有未知字段。若必要对action结构校验，仍限此边界；不新增provider/manager/router，不改Python包、权重或默认Agent。
-由OpenCode bounded implement、Codex独立审查，默认首轮+最多一次返工。至少运行typecheck、decision与initial-assignment-decision定向套件；新增hermetic捕获协议回归与非法任务参数负例。修复不自动许可再发真实推理请求，需确认新的有界验收范围后执行；不重跑完整live-decision-check（其默认不止4条请求）。
+建议明确授权最多4个新的本地POST（不是自动花前轮未用额度）：中文分类1次、英文分类1次、两个工作流候选选择1次、两个合成Agent×Model候选选择1次；每请求最多90秒，失败立即停止，不自动重试。只使用D:/AI/laya-cache现有固定revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851英语/多语言权重，HF离线；不发送现有仓库代码/凭据、不启动产品Agent/云模型、不新增费用、不调用真实Skill/MCP。
+直接复用既有provider/routing/plan-choice/initial-assignment与contained服务/健康/退出确认。只针对修复后结果/metadata与实际checkpoint/健康revision取证，不新增框架/manager、不开常驻服务；输入候选available仅合成测试事实，不认证真实账户可用性/免费。完整记录成功/失败/未运行，停止服务并验证Job空/owned清理。不得直接跑完整live-decision-check（它超出四项范围）；typed API兼容不是最优选型质量/Token收益或整条生产CLI验收。
 
-## 状态与结束动作
+## 持续边界与收尾
 
-工程估算保持68/100（100权重分母，非测试数；界面约70/30只是取整），PARALLEL_WRITE=CLOSED，正式前端未进入；temperature置信度校准P2保留。后续真实工具、动态额度与更广接力/完整用户链仍未验收。结束更新基线/受影响文档和本机进度页，精确审核后上传Git快照；project-progress、cache、audit不入Git，main/shared index/其他dirty内容保持。
+产品原生Agent会话累计仍5/5，本地LAYA授权不自动追加产品额度；PARALLEL_WRITE=CLOSED，正式前端未进入。温度校准P2仍保留；真实工具、动态额度、完整批准/监督与更广接力仍待后续。工程估算68/100（100权重分母；界面约70/30为取整）不因修复或测试数量增加。
+每任务先只读audit，完成后更新唯一基线/受影响文档与本机进度页、精确审核Git快照；project-progress/cache/audit不入Git，主HEAD/shared index/其他dirty文件保持。无需开发时不为运维取证启动worker。

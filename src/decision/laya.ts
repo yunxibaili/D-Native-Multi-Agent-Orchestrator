@@ -612,6 +612,36 @@ function requireNormalized(id: string, probabilities: Record<string, number>, wh
  * Uses bound (B), which does not grow with the size of the answer space.
  */
 /**
+ * Validates Laya's optional per-answer `action` metadata, if present.
+ *
+ * Laya 0.3.21 (verified against the installed 0.3.21 and tag v0.3.21,
+ * commit 6ab71fb4) attaches `"action": {"act_probability": 1}` to the work_kind
+ * choice, the complexity score AND the review_required noul alike. It is the
+ * provider's own record of how strongly the model acted on the answer, so it is
+ * METADATA, not a task parameter: receiving it on a real response must not turn
+ * an otherwise valid classification into a schema failure.
+ *
+ * The smallest honest boundary is therefore to recognise exactly this one
+ * official field and validate its shape, rather than to start accepting
+ * arbitrary objects among the string parameters. A present `action` must be a
+ * non-array object carrying a finite numeric `act_probability` in [0, 1];
+ * anything else is refused as DECISION_SCHEMA. `act_probability` is deliberately
+ * not exposed through any new API and is not used for admission or reliability
+ * decisions -- it is only checked for shape. The verbatim object remains in
+ * `response.raw`, which is where unvalidated provider detail already lives.
+ */
+function requireActionMetadata(id: string, raw: Record<string, unknown>): void {
+  const action = raw.action;
+  if (action === undefined) return;
+  if (!isRecord(action)) {
+    throw new DecisionSchemaError(
+      `answer "${id}" action metadata is ${describe(action)}, expected an object carrying a numeric act_probability`,
+    );
+  }
+  requireProbability(action.act_probability, `answer "${id}" action metadata act_probability`);
+}
+
+/**
  * Read a `choice` answer's parameters from its sibling keys.
  *
  * Reserved keys (`choice`, `probabilities`, `confidence`, `criteria`) belong to the
@@ -629,6 +659,10 @@ function readChoiceParameters(id: string, raw: Record<string, unknown>): { param
   // file reads off `raw`, not guessed.
   const RESERVED = new Set([
     'type', 'choice', 'score', 'noul', 'legend', 'probabilities', 'confidence', 'answer_confidence', 'criteria',
+    // Laya 0.3.21 attaches an optional per-answer `action` object (see
+    // requireActionMetadata). It is provider metadata, not a task parameter, so it
+    // is reserved here and never read into `parameters`.
+    'action',
   ]);
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(raw)) {
@@ -688,6 +722,11 @@ function validateAnswer(id: string, raw: Record<string, unknown>, question: Deci
       `answer "${id}" is of type ${describe(raw.type)}, but a ${question.type} question was asked`,
     );
   }
+
+  // Laya 0.3.21 adds an optional `action` metadata object to choice, score and
+  // noul answers alike. Validated once here so the same boundary applies to all
+  // three kinds, and so it is excluded from the choice `parameters` below.
+  requireActionMetadata(id, raw);
 
   // ---- choice: the reported option must be the most likely one ----
   if (question.type === 'choice') {

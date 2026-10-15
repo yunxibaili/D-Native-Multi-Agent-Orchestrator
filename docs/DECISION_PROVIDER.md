@@ -68,7 +68,7 @@ $env:LAYA_REVISION = '55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851'
 ### 3.1 真实决策兼容阻塞（LAYA-DECISION.1）
 
 用户随后明确授权最多4次合成任务本地推理。实际只发送首个中文classifyTask请求：真实multilingual返回work_kind=implementation及action:{act_probability:1}，当前客户端readChoiceParameters把action当额外字符串任务参数，DECISION_SCHEMA拒绝；没有可供上层使用的validated classification。失败即停，其余英文/计划/pair三项未运行，不把raw JSON当PASS。服务已停止，Job ActiveProcessesFinal=0、owned清理通过。
-本机0.3.21与[官方对应源码](https://github.com/NandhaKishorM/laya/blob/6ab71fb4ce6bfd6f189e9b689eaadd67103ed9b6/laya/agent.py#L892)均将action作为答案元数据返回；捕获响应无网络回放复现同一拒绝。LAYA-COMPAT.1待授权后仅修此兼容边界并补hermetic回归；不得把任意非字符串任务参数改为合法，也不修改上游安装包/权重或新建provider。修复通过前不认证真实LAYA决策接入，先前health PASS不变。
+本机0.3.21与[官方对应源码](https://github.com/NandhaKishorM/laya/blob/6ab71fb4ce6bfd6f189e9b689eaadd67103ed9b6/laya/agent.py#L892)均将action作为答案元数据返回；捕获响应无网络回放复现同一拒绝。LAYA-COMPAT.1现已最小修复并独立通过：validateAnswer统一校验可选action为非数组对象且act_probability为有限[0,1]数值，choice保留字段排除该元数据，raw原样保留；真正字符串任务参数保持，其他非字符串任务参数仍拒绝。独立typecheck、decision429/0、initial-assignment37/0、state-loop169/0及同份捕获JSON修复前/后对照均通过。本片未启动真实服务或新增推理；不提升成真实四项验收或可靠性指标。下一候选LAYA-DECISION.2须另行授权本地4项实测；温度校准P2保留。
 
 ## 4. 当前请求约束
 
