@@ -59,9 +59,13 @@ B3.1任务级原生Skill有界闭环独立PASS：显式 `--skill-catalog skills.
     npm run typecheck
 
 doctor 默认不查询模型目录；目录查询不是推理可调用或免费资格证明。
-启动已有本机 LAYA 服务后可仅分类：
+先用已有健康入口检查LAYA（只GET，不推理）：
 
-    laya-serve
+    node src/decision/check.ts --probe
+
+默认服务地址127.0.0.1:8077；当前只读核对连接被拒绝，需先定位已有服务/环境。上游默认端口可能不同，不擅自安装或启动。
+下列classify-only会调用真实LAYA模型，且当前round在分类前运行quota probes，不是无外部调用的健康检查：
+
     node src/cli/index.ts round "分析目标" --classify-only
 
 以下示例会调用真实 Agent，费用与数据边界仍受其配置影响，不是零费用承诺：

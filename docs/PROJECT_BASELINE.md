@@ -319,6 +319,11 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 
 ## 8. 最近独立证据与上传记录
 
+2026-10-15 B4.7.4 后端CLI接线只读核对完成（不是新增产品阶段封板）：直接复用createLayaDecisionProvider.probe，只向本机/health发送GET（共3次：provider健康检查及两次有界原因核对），无任务文本/认证/POST；ok=false、fetch failed，进一步有界GET确认ECONNREFUSED。当前PATH未找到laya-serve；miniconda3与Python312的distribution元数据未找到laya，只能说明这两个环境，不能推断全机未安装。未启动/安装服务、下载权重、读凭据或改用户配置。
+源码核对：round-cli已有真实LAYA分类、计划、pair和Skill/MCP选择入口；健康诊断已有decision/check.ts --probe，无需再造doctor/manager。seedRegistry仅从配置默认model、quota probe的modelHint及真实历史thread取模型；--model-pool是过滤与最终启动限制，不会为普通CLI注册声明中的新模型。独立纯值探针使用真实seedRegistry/parseUserModelPool/admitUserModelPoolPair和受控配置/线程输入，6项断言通过：同一2模型声明下空配置/空历史候选0、单配置1、双历史2。该证据不代表完整round、真实可用性或额度；首次探针对列表顺序误作假设而失败，改为比较精确集合后通过，未改生产代码。
+GitHub MCP成功读取NandhaKishorM/laya官方README（blob b1e4b90f4ba260ff7dc6bb5482cb39bdca37bb0a）与serve.py（blob c5eb2860d985118f90c1ff19ff78807505a5dd6c）：上游/health使用side-effect-free已加载agent accessor，非推理入口；上游默认端口8000与项目8077不同，不能将上游版本当本机安装或据此乱启服务。仅参考接口/运行方式，不引入依赖或迁移框架。
+本轮仅维护文档及ignored诊断/页面，src/tests/native/scripts原始hash保持；不需新开发worker，不跑full suite/真实模型，已有5次产品会话不重置。结论为“只读调查完成，真实LAYA接线就绪性受环境阻塞”；优先定位/恢复已有LAYA环境，代码侧下一候选B2.2只补显式用户声明池到既有registry的来源接线，仍保留unknown可用性/费用及全部Assignment/Spawn Gate拒绝。不得把目录枚举升级为授权或为跑通硬塞available quota。工程估算保持68/100，PARALLEL_WRITE=CLOSED，正式前端未开始。证据project-progress/b474-health-probe.json、b474-health-cause.json、b474-registry-probe.json及本轮审核状态仅本机ignored。已修正文档中Skill/MCP“未实现”的过时表述，实际仍仅advisory/观察，不认证真实工具调用。
+
 2026-10-15 B4.7.3 固定free duo代表性真实样本独立PASS（不封整个B4.7或后端）：用户明确追加1个产品原生会话，累计上限5、此前已用2，本轮一次新样本实际用3、累计5/5剩0。官方当日模型表仍列两个候选为Free，已审核工作快照与92e3ba5逐项一致，安装包公开元数据1.18.35。直接复用已审核entry及生产Workbench→Assignment→Session→Scheduler→Runtime→真实OpenCode，未注入fake执行器；协调选择与可用性/额度输入仍为明确标记的确定性测试驱动，不声称真实LAYA、账户额度或独立Review已运行。无源码实现缺口，未另开开发worker或改默认模型。
 
 实际按序3次任务/3个Workbench session/3个独立native session/3个Attempt，组内只有2个pair，集成复用成员1的Space Bunny：m1 ses_ec26d049affeoflO9TGh9cyyGi＝opencode/space-bunny-free（5个assistant）；m2 ses_ec26cafe3ffeopsMG8IAbr8aJs＝opencode/mimo-v2.6-flash-free（5个assistant）；integration ses_ec26ba625ffeLfxzoqb27Lrss7＝opencode/space-bunny-free（11个assistant）。独立sanitize export全部finish=stop、相应消息cost均0；费用只作原生报告，不证明账户账单或覆盖不可观察的内部调用。原生任务耗时21798/67900/55326ms，均<90秒且时间区间无重叠，无第四模型、额外LAYA/Review或自动重试。
@@ -937,18 +942,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-15T11:28:27+08:00",
+  "updatedAt": "2026-10-15T11:41:06+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "B4.7.3",
-    "name": "固定free duo真实代表样本独立通过",
+    "id": "B4.7.4",
+    "name": "后端CLI与LAYA接线只读核对完成",
     "status": "done",
-    "summary": "实际Space Bunny→MiMo→Space Bunny完成3任务/独立会话，生成模块、测试和可执行集成。Codex8案例+原始测试/集成实跑与2个错误副本负控通过，Job空/清理完成。本轮3、累计5/5，整体后端仍未验收。"
+    "summary": "确认8077本机LAYA连接被拒绝；普通CLI模型池只过滤、不新增模型。现有决策与健康入口可复用，无需重建大脑；6项候选来源断言通过。本轮产品调用0，真实双模型代表样本历史PASS保留。"
   },
   "next": {
-    "id": "B4.7-next-scope",
-    "name": "确认真实LAYA/工具与剩余后端最小闭环验收范围；暂不调用模型",
+    "id": "LAYA-ENV / B2.2",
+    "name": "定位已有LAYA环境；最小显式模型池候选接线（不伪造可用性/额度）",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1023,6 +1028,22 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     ]
   },
   "blockers": [
+    {
+      "id": "LAYA-LOCAL",
+      "severity": "当前使用阻塞",
+      "title": "默认LAYA服务未就绪",
+      "detail": "GET http://127.0.0.1:8077/health返回ECONNREFUSED；当前两个Python环境未发现laya包，不代表整机未安装。未调用推理/安装/改配置。",
+      "next": "先明确已有服务/venv位置和正确端口；若确实需要安装或模型推理，另定具体范围。",
+      "kind": "环境事实 / 不重写provider"
+    },
+    {
+      "id": "CLI-MODEL-CANDIDATES",
+      "severity": "当前使用缺口",
+      "title": "声明模型池不自动形成普通CLI候选",
+      "detail": "seedRegistry仅取配置model、probe modelHint和历史thread；2模型声明在空历史配置下候选0、单配置1、双历史2。代表duo采用显式测试驱动，不替代普通CLI验收。",
+      "next": "B2.2候选：仅显式用户声明池接入既有registry，记录声明来源；unknown仍unknown，不自动导入catalog或绕过quota/Assignment/最终启动门。",
+      "kind": "源码+纯值6断言 / 非真实可用性证据"
+    },
     {
       "id": "B47-REPRESENTATIVE-SCOPE",
       "severity": "范围限制",
@@ -1263,12 +1284,11 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     }
   ],
   "checks": [
-    "B4.7.3代表样本独立PASS：真实entry一次exit0，3任务/本地session/native session/Attempt，两个实际pair",
-    "原生export实际Space Bunny/MiMo/Space Bunny，5/5/11 assistant、finish stop、相应消息cost报告0；21.8/67.9/55.3秒且严格顺序",
-    "独立执行生成模块8案例、模型测试和集成程序exit0；减法副本下测试及集成均exit1（2负控）",
-    "原生6 + 独立5个validated控制记录均Job空；本次两个owned上下文清理完成，未改权限/源码/配置",
-    "本轮产品3、累计5/5、剩0，无额外LAYA/Review/模型重试；任何新调用需新明确范围",
-    "基线/页面数据同步；Git仅裁定/路线文档，page/audit/exports/demo副本不入Git；HEAD/index保留"
+    "2026-10-15只读接线核对：现有LAYA默认8077健康GET被拒绝连接；模型池只过滤候选，不为普通CLI新增模型。产品模型调用0，累计仍5/5。",
+    "真实seedRegistry+pool解析/准入纯值探针6项通过；首次顺序假设已更正，无产品代码修改",
+    "GitHub MCP读取官方LAYA README/health源码成功；仅参考，不当本机安装证据",
+    "本轮只维护文档与ignored页面/探针；不跑full suite、不调用模型/读凭据/改用户配置",
+    "B4.7.3历史代表样本独立PASS保留；工程估算68/100不增加、PARALLEL_WRITE=CLOSED"
   ],
   "sources": [
     {
@@ -1286,6 +1306,10 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     {
       "title": "需求与效果草案",
       "path": "docs/DRAFT_STAGED_ROLE_WORKFLOW.md"
+    },
+    {
+      "title": "现有LAYA接口与运行边界",
+      "path": "docs/DECISION_PROVIDER.md"
     }
   ]
 }

@@ -1,13 +1,13 @@
 # LAYA DecisionProvider 接口
 
-更新日期：2026-10-12
+更新日期：2026-10-15
 状态：当前源码参考。旧版本的本机测量和历史调研已归档，不作为本轮运行验证。
-当前阶段与授权只见唯一 [项目基线](PROJECT_BASELINE.md)；下述工作流扩展尚未实现。
+当前阶段与授权只见唯一 [项目基线](PROJECT_BASELINE.md)；已实现范围与真实验收边界分开，本文不自行裁定阶段。
 
 ## 1. 角色
 
 LAYA 是结构化任务级决策模型。它不仅用于分类，当前已有 Agent × Model 选择、
-任务级决策和 READ topology 等调用预设。未来需求增加 Skill/MCP 能力选择。
+任务级决策、工作流计划和 READ topology 等调用预设。B3.1/B3.2已有用户声明Skill/MCP候选的任务级advisory选择与有来源事件观察；真实加载/调用及限制强制仍未验收。
 底层 provider 只回答问题，不启动 Agent、不选择 native thread、不直接执行工具。
 
 DecisionRequest → DecisionProvider → 本地 laya-serve → 校验后的 DecisionResponse。
@@ -21,6 +21,8 @@ DecisionRequest → DecisionProvider → 本地 laya-serve → 校验后的 Deci
 | ../src/decision/routing.ts | 任务类型/复杂度等分类 |
 | ../src/decision/initial-assignment.ts | 从给定 Agent × Model 候选中选择 |
 | ../src/decision/execution-topology.ts | SOLO/PARALLEL_READ 预设 |
+| ../src/decision/plan-choice.ts | 从已校验的有界计划选择 |
+| ../src/decision/skill-choice.ts / mcp-choice.ts | 从用户声明且匹配Agent的工具候选选择；不认证真实执行 |
 | ../src/decision/errors.ts | 输入、schema、timeout、transport、unavailable 错误 |
 
 调用方声明答案空间，返回值必须属于该空间。不能编造模型/候选。
@@ -31,16 +33,19 @@ DecisionRequest → DecisionProvider → 本地 laya-serve → 校验后的 Deci
 默认地址 http://127.0.0.1:8077。provider 不自动启动 Python/CUDA 服务，
 没有隐式云端 fallback。非 loopback 地址需要显式 allowRemote 授权。
 
-手工启动已有安装：
+已有安装的运维启动示意（本轮未执行，不是安装授权）：
 
     laya-serve
+
+上游当前服务默认端口为8000，项目provider默认8077。先核对实际服务地址，保持loopback；不能把裸启动命令视为已对齐端口。无已有环境时先确认安装/权重范围，不由provider自动安装或启动。
 
 检查入口：
 
     node src/decision/check.ts --probe
     node src/decision/check.ts "summarize a repository"
 
-这些命令不是本轮执行记录。服务、checkpoint 和版本应以本机实际安装为准，
+其中--probe仅GET /health，不做分类推理；不带--probe的命令会调用真实LAYA模型，不能用于无推理排查。
+本轮只通过既有provider执行健康GET，8077连接被拒绝（ECONNREFUSED）；当前两个Python环境的distribution元数据未发现laya，不证明整机未安装。服务、checkpoint 和版本应以本机实际安装为准，
 不能把上游新版本的 MCP/SDK 能力直接视为本项目已接入。
 
 ## 4. 当前请求约束
@@ -73,8 +78,8 @@ usage 和 metadata 只记录实际返回值，缺失不编造成零。
     node tests/initial-assignment-decision.test.ts
     node tests/live-decision-check.ts
 
-最后一项需显式选择，依赖真实 laya-serve；本轮未运行上述测试。
-新增 Skill/MCP 选择的验收见 [后端需求 REQ-06](BACKEND_REQUIREMENTS.md)。
+最后一项需显式选择，依赖真实 laya-serve；本轮只读核对未运行上述测试。
+Skill/MCP 选择的完整验收见 [后端需求 REQ-06](BACKEND_REQUIREMENTS.md)。
 
 ## 7. 新需求接线边界
 
@@ -85,6 +90,11 @@ LAYA 决策包含两个层次：选择合适工作流/分工；再为各独立�
 候选 DAG 先校验，再提交；用户 fixed 是硬约束，不能作为可被模型评分覆盖的偏好。
 只有唯一候选时保持明确的无选择规则，不伪造 LAYA 已比较多个方案。
 
-Skill/MCP 的任务级决策、可用性与实际调用核对仍是后续能力，不借现有 skills boolean 冒充目录。
+Skill/MCP已有声明候选→任务级advisory选择→brief→事件名称观察；不借skills boolean冒充自动目录，不把名称匹配当真实工具认证或权限强制。
+普通round的模型候选由seedRegistry取配置model/probe modelHint/历史thread。--model-pool仅限制候选与最终启动，不新增模型；doctor目录不写registry。两个真实模型的测试驱动成功不能替代普通CLI候选接线或真实LAYA验收。
 请求的模型不等于服务端实际模型；DSH 未支持的逐请求选模型不能以提示词参数伪装实现。
 LAYA 失败沿既有可观察失败语义处理，不猜计划、不生成免费资格、不解除 fixed。
+
+## 8. 本轮只读外部依据
+
+GitHub MCP读取[官方README](https://github.com/NandhaKishorM/laya/blob/main/README.md)与[health源码](https://github.com/NandhaKishorM/laya/blob/main/laya/serve.py)。health读取已加载agent元数据，未调用Router.load或推理。以上是上游源码依据，不证明本机版本/安装兼容性；不引入框架或新依赖。
