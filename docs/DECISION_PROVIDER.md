@@ -126,6 +126,18 @@ LAYA-QUALITY.2真实验收BLOCKED（安全弃权，非错误完成）：用户�
 
 下一候选LAYA-BOUNDARY.1为只读职责收敛：基于官方“typed decision不等于执行许可”和shadow/unknown方法，保留四项已真实通过的分类/计划/具体pair接口，沿既有Verification/Review/HumanGate核对完成事实由谁认证、当前请求含义是否与模型适用范围一致。先提出复用现有证据权威的最小方案，不新增大脑/框架、不让wait默认变complete、不改模型或温度，也不再盲目追加同类推理。此为建议，尚未实施；如需改生产行为另行限定任务，任何真实新调用另行明确范围。
 
+### 3.10 决策建议、质量判断与状态权威（LAYA-BOUNDARY.1）
+
+LAYA-BOUNDARY.1只读职责审核完成：Verification是唯一状态写入权威，但不是自动测试/产物核验器；Workbench.completeTask把调用者的完成判断转成pass，原生LAYA选择complete的质量判断因此仍由模型承担。候选中有材料、状态可迁移，不等于质量已独立验证。历史QUALITY.2的安全wait与目标完成未验收保持，不能将状态权威误说成独立内容裁判。
+
+当前真实调用链：LAYA动作→同次候选目标映射→decisionCapabilities.complete→NativeWorkbench.completeTask→Orchestrator.applyVerification→translateVerification/TaskStore。独立整轮Review在workflow所有成员succeeded之前被executionIncomplete挡住，且runUnifiedReview只产报告不写Task；它不能倒过来解决第一个to_verify任务的验收。任务级applyReview/review-loop已有，可供显式调用，但当前CLI该路径没有自动接线；不需要另造ReviewManager。HumanGate是结果/选项投影，automaticPostRoundAction恒none，不是stdin执行器。
+
+既有--checkpoint只接受continue与stop <reason>：continue保持任务状态，继续让LAYA决定；stop保留成果并停止。没有显式人工accept入口，不能把continue暗改为验收或把安全wait默认为complete。这是个人工作台可用性/职责接线缺口，不是新发现的TaskStore安全绕过。
+
+下一候选B4.6b是最小显式人工验收检查点：复用--checkpoint/readline/同Attempt只读快照及wb.completeTask，不新建验证器、调度器或状态权威。新增accept <非空reason>仅在原检查点显式启用时生效；等待输入后重读当前Task及原子Attempt→RunResult，要求task/attempt身份一致、仍to_verify、实际执行及停止确认完整。缺失/更换/未知停止均拒绝，不用旧快照或latest-by-task拼接。记录来源user、taskId/attemptId和理由，不冒充LAYA决定、模型Review或实际测试事实；continue/stop及默认入口不改。accept后先重算原循环完成/就绪，末步已完成时不再多问LAYA，后续派发仍走原调度/配对/额度/资源/阶段门。
+
+B4.6b只是个人MVP的显式人工兜底，不替代用户要求的完整自动编排与独立质量验收；默认LAYA路线保持，不能把人工通过宣传为真实LAYA自动验收通过。本轮只读审核/文档，无产品源码或测试改动、无新推理/服务/worker/依赖；本地累计12、产品5/5不变，PARALLEL_WRITE=CLOSED，估算68/100不因方案增加信用。B4.6b尚未实施；当前已有授权只完成本片职责核对。
+
 ## 4. 当前请求约束
 
 支持 choice、score、noul，具体字段以 types.ts 和 laya.ts 的校验为准。

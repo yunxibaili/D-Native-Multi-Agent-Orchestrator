@@ -3,11 +3,11 @@
 更新日期：2026-10-15
 状态的唯一入口是 [项目基线](PROJECT_BASELINE.md)；本文描述差距与推进顺序，不另行封板。
 
-LAYA-QUALITY.2真实验收BLOCKED（安全弃权，非错误完成）：用户明确新增最多2次本地调用后，首例实际选择wait，两个任务均保持to_verify、complete/dispatch各0。原生English输入465 tokens，与固定tokenizer预检一致且材料零截断；正向目标完成仍NOT OBSERVED。按fail-stop仅用1/2即停止，矛盾材料第二例NOT RUN，未重试、未改答案；不能据此断言LAYA普遍不可用、候选过滤无效或确定等待根因。 本轮真实1POST+同服务1次健康GET；本地累计12次（历史11+本次1），产品Agent仍5/5，本轮产品/云模型/新增付费0。实际harness exit1是正向完成未观察后的fail-stop，非协议异常；provider/loop合法接收wait，未调complete或派发。首例未完成后本次授权关闭，未消耗的1次不自动重用。无生产实现/测试/native/安装/配置改动，不为本片重复typecheck/fullsuite；并行写CLOSED，工程估算68/100保持。温度校准警告保留，confidence不作质量或硬门保证。
+LAYA-BOUNDARY.1只读职责审核完成：Verification是唯一状态写入权威，但不是自动测试/产物核验器；Workbench.completeTask把调用者的完成判断转成pass，原生LAYA选择complete的质量判断因此仍由模型承担。候选中有材料、状态可迁移，不等于质量已独立验证。历史QUALITY.2的安全wait与目标完成未验收保持，不能将状态权威误说成独立内容裁判。 既有--checkpoint只接受continue与stop <reason>：continue保持任务状态，继续让LAYA决定；stop保留成果并停止。没有显式人工accept入口，不能把continue暗改为验收或把安全wait默认为complete。这是个人工作台可用性/职责接线缺口，不是新发现的TaskStore安全绕过。 下一候选B4.6b，仅建议显式人工accept，未实现；累计本地12/产品5、估算68/100、并行写CLOSED。
 
 调研结论采用“按当前状态过滤模型可见动作”，只参考[官方动态工具方法](https://docs.langchain.com/oss/python/langchain/agents#dynamic-tools)，不引入LangChain或第二套调度。GitHub MCP成功核对[同版本LAYA基准边界](https://github.com/NandhaKishorM/laya/blob/6ab71fb4ce6bfd6f189e9b689eaadd67103ed9b6/docs/benchmarks.md)与官方evals；typed-decisions专用权重面向四种合成业务流程，不据发布方成绩推断Coding验收可用，不下载或切换权重。
 
-下一候选LAYA-BOUNDARY.1为只读职责收敛：基于官方“typed decision不等于执行许可”和shadow/unknown方法，保留四项已真实通过的分类/计划/具体pair接口，沿既有Verification/Review/HumanGate核对完成事实由谁认证、当前请求含义是否与模型适用范围一致。先提出复用现有证据权威的最小方案，不新增大脑/框架、不让wait默认变complete、不改模型或温度，也不再盲目追加同类推理。此为建议，尚未实施；如需改生产行为另行限定任务，任何真实新调用另行明确范围。 当前事实与证据只见[唯一基线](PROJECT_BASELINE.md)。
+下一候选B4.6b是最小显式人工验收检查点：复用--checkpoint/readline/同Attempt只读快照及wb.completeTask，不新建验证器、调度器或状态权威。新增accept <非空reason>仅在原检查点显式启用时生效；等待输入后重读当前Task及原子Attempt→RunResult，要求task/attempt身份一致、仍to_verify、实际执行及停止确认完整。缺失/更换/未知停止均拒绝，不用旧快照或latest-by-task拼接。记录来源user、taskId/attemptId和理由，不冒充LAYA决定、模型Review或实际测试事实；continue/stop及默认入口不改。accept后先重算原循环完成/就绪，末步已完成时不再多问LAYA，后续派发仍走原调度/配对/额度/资源/阶段门。 B4.6b只是个人MVP的显式人工兜底，不替代用户要求的完整自动编排与独立质量验收；默认LAYA路线保持，不能把人工通过宣传为真实LAYA自动验收通过。本轮只读审核/文档，无产品源码或测试改动、无新推理/服务/worker/依赖；本地累计12、产品5/5不变，PARALLEL_WRITE=CLOSED，估算68/100不因方案增加信用。B4.6b尚未实施；当前已有授权只完成本片职责核对。 当前事实与证据只见[唯一基线](PROJECT_BASELINE.md)。
 
 ## 1. 推进原则
 

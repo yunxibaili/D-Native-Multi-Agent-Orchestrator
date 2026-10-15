@@ -51,6 +51,7 @@ README 是导航。本机 `project-progress/audit/` 是用户指定的只读第�
 | LAYA-ACTION.3 | BLOCKED：修复后真实3/3仍continue；494/278/276 tokens均无state截断，协议/安全通过，正向目标完成仍未观察；不追加重试 |
 | LAYA-QUALITY.1 | 候选资格过滤独立PASS：无ready不提供continue、wait/abort及明确complete保留；历史回放/负控/定向测试通过，无新增推理；真实模型质量仍待验收 |
 | LAYA-QUALITY.2 | 真实BLOCKED：首例wait、任务不变，465 tokens零截断；1/2后fail-stop，第二例未运行；Job空/清理通过，未追加重试 |
+| LAYA-BOUNDARY.1 | 只读审核完成：状态Verification不等于内容核验；现checkpoint无accept，整轮Review在workflow完成后才运行；下一建议复用显式人工验收，不追加推理 |
 | B2 overall | NOT SEALED；账户资格/硬金额预算/付费与全流程费用未验收 |
 | B4.6a | 最小同进程用户检查点独立通过；原报告文案P2在B5.1关闭，不等于完整监督/纠偏恢复 |
 | B5.1 | 独立 PASS WITH P2：已知session_failure的停止安全/具体model有界接力；仅受控当前链 |
@@ -372,6 +373,20 @@ LAYA-QUALITY.2真实验收BLOCKED（安全弃权，非错误完成）：用户�
 
 下一候选LAYA-BOUNDARY.1为只读职责收敛：基于官方“typed decision不等于执行许可”和shadow/unknown方法，保留四项已真实通过的分类/计划/具体pair接口，沿既有Verification/Review/HumanGate核对完成事实由谁认证、当前请求含义是否与模型适用范围一致。先提出复用现有证据权威的最小方案，不新增大脑/框架、不让wait默认变complete、不改模型或温度，也不再盲目追加同类推理。此为建议，尚未实施；如需改生产行为另行限定任务，任何真实新调用另行明确范围。
 
+### 5.23 状态验证与质量判断的职责收敛（2026-10-15）
+
+LAYA-BOUNDARY.1只读职责审核完成：Verification是唯一状态写入权威，但不是自动测试/产物核验器；Workbench.completeTask把调用者的完成判断转成pass，原生LAYA选择complete的质量判断因此仍由模型承担。候选中有材料、状态可迁移，不等于质量已独立验证。历史QUALITY.2的安全wait与目标完成未验收保持，不能将状态权威误说成独立内容裁判。
+
+当前真实调用链：LAYA动作→同次候选目标映射→decisionCapabilities.complete→NativeWorkbench.completeTask→Orchestrator.applyVerification→translateVerification/TaskStore。独立整轮Review在workflow所有成员succeeded之前被executionIncomplete挡住，且runUnifiedReview只产报告不写Task；它不能倒过来解决第一个to_verify任务的验收。任务级applyReview/review-loop已有，可供显式调用，但当前CLI该路径没有自动接线；不需要另造ReviewManager。HumanGate是结果/选项投影，automaticPostRoundAction恒none，不是stdin执行器。
+
+既有--checkpoint只接受continue与stop <reason>：continue保持任务状态，继续让LAYA决定；stop保留成果并停止。没有显式人工accept入口，不能把continue暗改为验收或把安全wait默认为complete。这是个人工作台可用性/职责接线缺口，不是新发现的TaskStore安全绕过。
+
+本轮受控离线探针复用QUALITY.2捕获wait，经真实provider/decision loop/NativeWorkbench后，任务不变、complete0/runtime0；当前accept语法实际invalid；可信调用者显式completeTask可使唯一指定to_verify任务succeeded，而planned任务仍被not-awaiting-verification拒绝。此探针没有真实执行/质量认证，不证明生产CLI可绕过材料门。独立b46检查点42/0、review-loop169/0、round-result346/0、unified-review130/0、workbench419/0均exit0，209版本文件前后hash不变。
+
+下一候选B4.6b是最小显式人工验收检查点：复用--checkpoint/readline/同Attempt只读快照及wb.completeTask，不新建验证器、调度器或状态权威。新增accept <非空reason>仅在原检查点显式启用时生效；等待输入后重读当前Task及原子Attempt→RunResult，要求task/attempt身份一致、仍to_verify、实际执行及停止确认完整。缺失/更换/未知停止均拒绝，不用旧快照或latest-by-task拼接。记录来源user、taskId/attemptId和理由，不冒充LAYA决定、模型Review或实际测试事实；continue/stop及默认入口不改。accept后先重算原循环完成/就绪，末步已完成时不再多问LAYA，后续派发仍走原调度/配对/额度/资源/阶段门。
+
+B4.6b只是个人MVP的显式人工兜底，不替代用户要求的完整自动编排与独立质量验收；默认LAYA路线保持，不能把人工通过宣传为真实LAYA自动验收通过。本轮只读审核/文档，无产品源码或测试改动、无新推理/服务/worker/依赖；本地累计12、产品5/5不变，PARALLEL_WRITE=CLOSED，估算68/100不因方案增加信用。B4.6b尚未实施；当前已有授权只完成本片职责核对。
+
 ## 6. 不可绕过的契约
 
 WorkerIdentity={taskId,agentId,modelId,sessionId}；不以模型品牌替代 Agent 能力事实。
@@ -401,6 +416,15 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 不新增 provider 网关、群聊平台、第二个调度器或通用工作流引擎来掩盖协议缺口。
 
 ## 8. 最近独立证据与上传记录
+
+2026-10-15 LAYA-BOUNDARY.1只读审核：LAYA-BOUNDARY.1只读职责审核完成：Verification是唯一状态写入权威，但不是自动测试/产物核验器；Workbench.completeTask把调用者的完成判断转成pass，原生LAYA选择complete的质量判断因此仍由模型承担。候选中有材料、状态可迁移，不等于质量已独立验证。历史QUALITY.2的安全wait与目标完成未验收保持，不能将状态权威误说成独立内容裁判。
+先读当前基准/调用者/audit，再经GitHub MCP成功读取官方固定v0.3.21 staged-adoption：typed decision不等于执行许可，应用保有执行/审核边界，shadow对照允许unknown；结合当前源码采用方法，不复制框架或调整权重。OpenCode官方agents文档仅核对角色与权限可分工，不视为本机新原生review能力已实测；未调用其他Agent。
+当前真实调用链：LAYA动作→同次候选目标映射→decisionCapabilities.complete→NativeWorkbench.completeTask→Orchestrator.applyVerification→translateVerification/TaskStore。独立整轮Review在workflow所有成员succeeded之前被executionIncomplete挡住，且runUnifiedReview只产报告不写Task；它不能倒过来解决第一个to_verify任务的验收。任务级applyReview/review-loop已有，可供显式调用，但当前CLI该路径没有自动接线；不需要另造ReviewManager。HumanGate是结果/选项投影，automaticPostRoundAction恒none，不是stdin执行器。
+既有--checkpoint只接受continue与stop <reason>：continue保持任务状态，继续让LAYA决定；stop保留成果并停止。没有显式人工accept入口，不能把continue暗改为验收或把安全wait默认为complete。这是个人工作台可用性/职责接线缺口，不是新发现的TaskStore安全绕过。
+本轮受控离线探针复用QUALITY.2捕获wait，经真实provider/decision loop/NativeWorkbench后，任务不变、complete0/runtime0；当前accept语法实际invalid；可信调用者显式completeTask可使唯一指定to_verify任务succeeded，而planned任务仍被not-awaiting-verification拒绝。此探针没有真实执行/质量认证，不证明生产CLI可绕过材料门。独立b46检查点42/0、review-loop169/0、round-result346/0、unified-review130/0、workbench419/0均exit0，209版本文件前后hash不变。
+下一候选B4.6b是最小显式人工验收检查点：复用--checkpoint/readline/同Attempt只读快照及wb.completeTask，不新建验证器、调度器或状态权威。新增accept <非空reason>仅在原检查点显式启用时生效；等待输入后重读当前Task及原子Attempt→RunResult，要求task/attempt身份一致、仍to_verify、实际执行及停止确认完整。缺失/更换/未知停止均拒绝，不用旧快照或latest-by-task拼接。记录来源user、taskId/attemptId和理由，不冒充LAYA决定、模型Review或实际测试事实；continue/stop及默认入口不改。accept后先重算原循环完成/就绪，末步已完成时不再多问LAYA，后续派发仍走原调度/配对/额度/资源/阶段门。
+B4.6b只是个人MVP的显式人工兜底，不替代用户要求的完整自动编排与独立质量验收；默认LAYA路线保持，不能把人工通过宣传为真实LAYA自动验收通过。本轮只读审核/文档，无产品源码或测试改动、无新推理/服务/worker/依赖；本地累计12、产品5/5不变，PARALLEL_WRITE=CLOSED，估算68/100不因方案增加信用。B4.6b尚未实施；当前已有授权只完成本片职责核对。
+本机证据laya-boundary-probe.json/tests.json/review-state.json及logs仅ignored，audit只读；本片没有产品实现，未启动OpenCode开发。文档维护后刷新本机页并对比，精确上传审核文档，不合main/改变共享index；不将受控probe升为真实质量或新模型结果。
 
 2026-10-15 LAYA-QUALITY.2真实运行与Codex独立裁定：LAYA-QUALITY.2真实验收BLOCKED（安全弃权，非错误完成）：用户明确新增最多2次本地调用后，首例实际选择wait，两个任务均保持to_verify、complete/dispatch各0。原生English输入465 tokens，与固定tokenizer预检一致且材料零截断；正向目标完成仍NOT OBSERVED。按fail-stop仅用1/2即停止，矛盾材料第二例NOT RUN，未重试、未改答案；不能据此断言LAYA普遍不可用、候选过滤无效或确定等待根因。
 同owned服务健康事实为固定revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851、English/multilingual实际CUDA、CPU fallback0；raw响应自身无revision，不补造。唯一validated Job记录ActiveProcessesFinal0、stopConfirmed=true、owned根已删除、cleanupFailures0。独立blocking connect明确ECONNREFUSED；最初connect_ex返回10035（WSAEWOULDBLOCK），未作为端口关闭证据，随后仅修正观察方法，没有重启服务或新增推理。10个缓存文件size/SHA256及209个可版本文件在维护文档前均不变。
@@ -1104,18 +1128,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-15T18:55:05+08:00",
+  "updatedAt": "2026-10-15T19:06:43+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "LAYA-QUALITY.2",
-    "name": "真实首例安全等待；明确目标完成仍未观察",
-    "status": "blocked",
-    "summary": "实际1/2后fail-stop，wait合法、465 tokens全量材料可见、任务未变；第二例未运行，Job空/清理通过，不再追试。"
+    "id": "LAYA-BOUNDARY.1",
+    "name": "只读职责核对完成；明确最小人工验收接线",
+    "status": "done",
+    "summary": "状态Verification不是内容裁判；现checkpoint continue不验收，整轮Review不能救前置验收。5套件/离线回放通过，无新增推理或实现。"
   },
   "next": {
-    "id": "LAYA-BOUNDARY.1",
-    "name": "只读收敛LAYA职责与既有验收权威；不追加推理",
+    "id": "B4.6b",
+    "name": "已有检查点增加显式人工accept，绑定当前Attempt并沿唯一Verification入口",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1191,11 +1215,19 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
   },
   "blockers": [
     {
+      "id": "EXPLICIT-USER-ACCEPTANCE",
+      "severity": "产品接线缺口",
+      "title": "用户检查点不能显式验收任务，continue仍依赖LAYA判断",
+      "detail": "状态Verification仅应用可信verdict；整轮Review等待workflow完成，HumanGate仅报告。当前没有人工accept执行入口，不能靠改写wait解决。",
+      "next": "B4.6b显式accept+非空理由/当前Attempt与停止事实复查/单一Verification/来源user；保持默认continue/stop语义。",
+      "kind": "最小人工兜底建议，不等于自动质量验收"
+    },
+    {
       "id": "LAYA-ACTION-DOMAIN",
       "severity": "实测受阻",
       "title": "资格过滤后仍未观察真实目标完成",
       "detail": "QUALITY.2首例实际wait，输入465 tokens全量可见；安全弃权而非错误完成，不能认证完成能力或推断普遍准确率。第二例未运行。",
-      "next": "停止同类追试，先只读收敛职责与现有Verification/Review/HumanGate的证据责任；不换权重/阈值、不默认complete。",
+      "next": "职责审核已完成；下一建议B4.6b显式人工accept作为个人MVP兜底，保持真实LAYA自动验收缺口，不再追加同类试跑。",
       "kind": "领域适配/正向验收缺口，不是新接线或containment故障"
     },
     {
@@ -1574,16 +1606,23 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "status": "blocked",
       "deliverable": "固定正确/矛盾材料，真实目标与安全拒绝分别验证",
       "evidence": "真实1POST选择wait，465 tokens零截断，complete0/任务不变；第二例NOT RUN；Job空/清理，累计本地12/产品5"
+    },
+    {
+      "id": "LAYA-BOUNDARY.1",
+      "title": "收敛LAYA/Verification/Review/HumanGate职责",
+      "status": "done",
+      "deliverable": "真实调用链、缺口与3文件内的最小显式人工验收建议",
+      "evidence": "受控捕获wait回放/可信状态入口/当前accept无效；42/169/346/130/419均0失败；无新模型调用"
     }
   ],
   "checks": [
-    "新增明确授权最多2；实际1POST+1GET，首例wait后fail-stop，第二例NOT RUN，无重试",
-    "真实provider/loop接受wait；两个任务保持to_verify，complete/dispatch各0，未猜测目标",
-    "实际English输入465 tokens与冻结请求/原生tokenizer一致，材料零截断，候选可区分且无continue",
-    "固定revision同服务实际CUDA/CPU fallback0；validated Job ActiveProcessesFinal0、owned根删除、cleanup0",
-    "blocking connection明确拒绝；不把最初connect_ex10035当关闭；10缓存摘要/209文件维护前不变",
-    "本轮产品/云模型0，本地累计12/产品5；本次fail-stop关闭授权，未消耗1次不自动重用",
-    "独立BLOCKED仅指正向完成未验收；历史代码PASS保持，工程估算68/100、并行写CLOSED；页面同步"
+    "research-before-work：官方同版本职责/分阶段接入+真实调用链复核；GitHub MCP成功",
+    "Verification只映射可信verdict和状态，不自动运行测试；completeTask请求pass不是独立质量核验",
+    "当前checkpoint continue非验收、accept无效；整轮Review后置且不改任务；HumanGate纯投影",
+    "捕获wait经真实provider/loop/Workbench离线回放不改任务；可信显式pass只改目标，planned拒绝；无真实模型",
+    "独立检查点42/review-loop169/round-result346/unified-review130/workbench419均0失败，209文件不变",
+    "下一建议复用现有检查点做显式人工accept，绑定当前Attempt/停止事实；尚未实现，不新增框架",
+    "本轮推理0，本地累计12/产品5，估算68/100，并行写CLOSED；基线与本机页同步"
   ],
   "sources": [
     {

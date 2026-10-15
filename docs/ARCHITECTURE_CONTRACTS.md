@@ -154,3 +154,13 @@ B2.1a已在最后workspace.prepare之后、取得preRunTask之后、resolveSessi
 ## B5.1 现有接力链的停止与来源
 
 不新增恢复manager/registry/调度权威。CLI workflow在已执行session_failure处交回canonical continuation；所有相关reassign入口先读同次原子Attempt/RunResult停止事实。false/absent停止确认不得迁移、发第二run或释放保护。具体pair逐字段比较，计数/重复限制不因换模型重置；来源model来自packet关联Attempt，新执行沿原Assignment/Scheduler/fresh session。恢复成功只to_verify，原完成/Review门不放宽。此处约束请求身份，不认证provider内部实际模型或外部副作用可重放。
+
+## 决策与验收职责澄清（2026-10-15只读核对）
+
+LAYA-BOUNDARY.1只读职责审核完成：Verification是唯一状态写入权威，但不是自动测试/产物核验器；Workbench.completeTask把调用者的完成判断转成pass，原生LAYA选择complete的质量判断因此仍由模型承担。候选中有材料、状态可迁移，不等于质量已独立验证。历史QUALITY.2的安全wait与目标完成未验收保持，不能将状态权威误说成独立内容裁判。
+
+当前真实调用链：LAYA动作→同次候选目标映射→decisionCapabilities.complete→NativeWorkbench.completeTask→Orchestrator.applyVerification→translateVerification/TaskStore。独立整轮Review在workflow所有成员succeeded之前被executionIncomplete挡住，且runUnifiedReview只产报告不写Task；它不能倒过来解决第一个to_verify任务的验收。任务级applyReview/review-loop已有，可供显式调用，但当前CLI该路径没有自动接线；不需要另造ReviewManager。HumanGate是结果/选项投影，automaticPostRoundAction恒none，不是stdin执行器。
+
+既有--checkpoint只接受continue与stop <reason>：continue保持任务状态，继续让LAYA决定；stop保留成果并停止。没有显式人工accept入口，不能把continue暗改为验收或把安全wait默认为complete。这是个人工作台可用性/职责接线缺口，不是新发现的TaskStore安全绕过。
+
+可信调用者可以经既有applyVerification应用显式verdict；此API不是任意输入的质量证明。若以后增加人工验收，必须明确用户来源、当前task/Attempt与停止事实，并复用同一入口；本轮未改变产品语义或新增authority。最小下一范围见NEXT_TASK，实际状态仍只见PROJECT_BASELINE。

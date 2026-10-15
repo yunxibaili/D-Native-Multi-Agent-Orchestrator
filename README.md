@@ -50,7 +50,7 @@ B3.1任务级原生Skill有界闭环独立PASS：显式 `--skill-catalog skills.
 本机存在时用 `node project-progress/refresh.mjs` 刷新，或加 `--serve` 只读实时预览；每次任务推进必须同步。
 旧 temporary-dashboard 已保留本机源码备份；递归删除被工具安全策略拒绝，待用户手动删除；正式工作台前端需求仍待单独确认。
 
-候选资格修复独立通过；随后LAYA-QUALITY.2真实首例选择wait，465 tokens材料全量可见，明确目标完成仍未验收。按fail-stop在1/2后停止，第二例未运行，Job空/清理通过。下一步先只读收敛LAYA与既有Verification/Review职责，不再盲目追试；准确状态见唯一基线。
+候选资格修复通过，但真实LAYA目标完成仍未验收（QUALITY.2首例安全wait后停止）。只读核对已确认：Verification是状态入口，不是自动内容裁判；现检查点continue也不代表验收。下一建议仅在已有检查点增加显式人工accept作为个人MVP兜底，默认LAYA路线不变，不宣称完整自动化已完成；详见唯一基线与下一任务。
 
 ## 本地使用
 
