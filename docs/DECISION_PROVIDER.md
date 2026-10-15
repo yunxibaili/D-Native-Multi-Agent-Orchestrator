@@ -70,6 +70,12 @@ $env:LAYA_REVISION = '55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851'
 用户随后明确授权最多4次合成任务本地推理。实际只发送首个中文classifyTask请求：真实multilingual返回work_kind=implementation及action:{act_probability:1}，当前客户端readChoiceParameters把action当额外字符串任务参数，DECISION_SCHEMA拒绝；没有可供上层使用的validated classification。失败即停，其余英文/计划/pair三项未运行，不把raw JSON当PASS。服务已停止，Job ActiveProcessesFinal=0、owned清理通过。
 本机0.3.21与[官方对应源码](https://github.com/NandhaKishorM/laya/blob/6ab71fb4ce6bfd6f189e9b689eaadd67103ed9b6/laya/agent.py#L892)均将action作为答案元数据返回；捕获响应无网络回放复现同一拒绝。LAYA-COMPAT.1现已最小修复并独立通过：validateAnswer统一校验可选action为非数组对象且act_probability为有限[0,1]数值，choice保留字段排除该元数据，raw原样保留；真正字符串任务参数保持，其他非字符串任务参数仍拒绝。独立typecheck、decision429/0、initial-assignment37/0、state-loop169/0及同份捕获JSON修复前/后对照均通过。本片未启动真实服务或新增推理；不提升成真实四项验收或可靠性指标。下一候选LAYA-DECISION.2须另行授权本地4项实测；温度校准P2保留。
 
+### 3.2 修复后四项真实接口验收（LAYA-DECISION.2）
+
+用户另行授权4次本地合成POST后，实际4/4全部经生产provider校验通过：中文分类implementation/moderate（multilingual，734ms）；英文implementation/small（english，52ms）；full/lean计划选lean（73ms）；具体pair选所列demo-code-agent×demo-code-model（59ms）。后两项同为english。无重试，action元数据留raw、不进入parameters。每项各1样本耗时不是性能或选型质量基准；候选availability是合成输入，没有实际调用Agent或认证免费/账户额度。
+响应本身routing证明checkpoint，但没有revision（metadata.revisions={}）；同一owned进程health确认english/multilingual都加载在实际cuda、device_is_preference=false、两revision均55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851，不能把health revision伪称逐响应字段。结束协同cancel/退出/validated Job ActiveProcessesFinal=0/owned根清理通过，服务未常驻。先前1/4失败记录保留为历史，当前4/4是新授权结果；不能反复运行旧脚本重用授权。
+真实typed接口通过不等于完整生产CLI/Review/工具/真实模型选型最优均已验收。温度校准P2仍保留，产品原生会话5/5不变；下一候选只读准备既有round整链验收和预算，新增推理/Agent调用另行授权。本片未改代码或重新跑typecheck/full suite。
+
 ## 4. 当前请求约束
 
 支持 choice、score、noul，具体字段以 types.ts 和 laya.ts 的校验为准。
