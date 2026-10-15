@@ -50,6 +50,7 @@ README 是导航。本机 `project-progress/audit/` 是用户指定的只读第�
 | LAYA-CONTEXT.1 | 代码独立PASS；统一保守512限制保留，原容量文案P2在QUALITY.1关闭。双目标实际编码全量可见，超限/未知响应在动作应用前拒绝，无新增真实推理 |
 | LAYA-ACTION.3 | BLOCKED：修复后真实3/3仍continue；494/278/276 tokens均无state截断，协议/安全通过，正向目标完成仍未观察；不追加重试 |
 | LAYA-QUALITY.1 | 候选资格过滤独立PASS：无ready不提供continue、wait/abort及明确complete保留；历史回放/负控/定向测试通过，无新增推理；真实模型质量仍待验收 |
+| LAYA-QUALITY.2 | 离线准备PASS：固定2案例/4个原生tokenizer编码核对通过，未授权入口拒绝通过；真实模型NOT RUN，待新增最多2次本地调用答复 |
 | B2 overall | NOT SEALED；账户资格/硬金额预算/付费与全流程费用未验收 |
 | B4.6a | 最小同进程用户检查点独立通过；原报告文案P2在B5.1关闭，不等于完整监督/纠偏恢复 |
 | B5.1 | 独立 PASS WITH P2：已知session_failure的停止安全/具体model有界接力；仅受控当前链 |
@@ -390,6 +391,12 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 不新增 provider 网关、群聊平台、第二个调度器或通用工作流引擎来掩盖协议缺口。
 
 ## 8. 最近独立证据与上传记录
+
+2026-10-15 LAYA-QUALITY.2离线准备：LAYA-QUALITY.2离线准备已通过，真实推理NOT RUN：只冻结两个最小案例，正确材料任一明确目标可完成、明显矛盾材料应拒绝；不指定必须选择第二目标，不改问题含义或强制complete。复用既有TaskStore/生产请求构造/provider/decision loop/Verification和owned contained服务清理，不新增生产实现或评测框架。
+本轮先按research-before-work读取当前实现与audit；GitHub MCP成功读取官方固定v0.3.21 staged-adoption，核对shadow记录、审定标签、歧义/unknown及有限放行边界；网页GitHub抓取404未当作MCP失败。参考LangChain官方动态工具过滤方法，不引入框架、换权重、拟合阈值或调温度。上游方法只指导验证，不证明本机模型会作正确选择。
+固定请求SHA256分别ee850d7e2b66f6e9447e478128f7f6779240d3ce9887480706d2e002a8439e83与69daf004d9ec39212083c94bb3857b58b4af8028b4a9ef03a25c6b716996fa3c，重复构造一致。实际固定tokenizer/build_sequence离线核对：English465/324、multilingual412/290 tokens，4项均无state截断、候选marker齐全且可区分，低于当前保守512线。未运行forward pass、未启动服务或产品Agent。入口在未授权时真实非零退出，位于服务/控制目录创建之前，状态与证据文件未改。
+拟申请新增最多2次本地LAYA POST，每次90秒，只用现有离线缓存/合成内存材料；首例未完成或任何错误立即停止、不重试，次例仅在首例实际完成后运行。首例wait/abort是安全但正向完成未观察，不能写PASS；次例错误complete必须BLOCKED且由shadow边界阻止错误状态变更。结束必须验证owned Job空/清理。当前仅已提出具体授权选项，尚未收到新增调用答复，inferenceAllowed=false；旧11次本地额度与产品5/5不重置，产品/云模型/新增付费均不允许。
+所有209个可版本文件在离线准备后hash未变；本轮仅维护现有基线/下一任务/路线/阶段文档与ignored页面。未启OpenCode worker，因为当前只需冻结合成请求和复用既有验收入口，没有产品代码缺口；没有用fixture冒充真实模型。本机证据laya-quality2-plan.json/cases.mjs/token-audit.json/review-state.json/check.mjs均ignored，audit只读。工程估算仍68/100，不因准备/测试数增加，历史ACTION.3真实完成缺口保留。
 
 2026-10-15 WORKFLOW-RESEARCH.1：按用户明确要求，将每个技术任务先调研固化为个人Skill research-before-work，并在全局AGENTS.md明确要求加载；项目AGENTS保留同一工作前置说明。实际先读本机skill-creator与官方Skills/AGENTS发现文档，GitHub MCP成功读取openai/skills对应实现；复用原生SKILL.md、agents/openai.yaml（自动选择开启）和现有全局指令，不加hook/服务/依赖。每个新任务先核对当前实现与至少一个相关在线一手来源，选型时查成熟实现；同任务有效证据复用，测试验证已发表方法在本机是否成立，不猜参数、不重复试模型求绿。委派带来源/复用入口/范围/验收与停止条件，保持OpenCode开发、Codex独立审核及指定模型。
 个人文件位于C:/Users/Admin/.codex/skills/research-before-work/与全局AGENTS.md，不属于本项目Git上传；官方quick_validate实际通过，元数据/唯一规则标记/既有路由逐字不变均已检查。没有另启Codex/OpenCode会话测试未来自动匹配，不能承诺所有未来会话已实测；当前会话已收到包含新全局规则的指令。无src/tests/native/scripts改动，无新推理/模型安装/全局服务配置修改；不消耗剩余额度，也不增加后端完成信用。基线/下一任务及本机页面同步后，仅上传受影响项目指令和文档，个人Skill与页面/audit仍不入项目Git。当前下一候选仍LAYA-QUALITY.2，真实调用未新增授权，估算68/100、PARALLEL_WRITE=CLOSED。
@@ -1081,18 +1088,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-15T17:22:49+08:00",
+  "updatedAt": "2026-10-15T18:41:32+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "WORKFLOW-RESEARCH.1",
-    "name": "每个任务先调研：个人Skill与默认规则已固化",
-    "status": "done",
-    "summary": "原生Skill校验通过，全局/项目指令明确接入；先证据再最小验证，不更换开发模型、不增加推理或后台服务。"
+    "id": "LAYA-QUALITY.2",
+    "name": "两个最小真实案例已冻结；离线准备通过",
+    "status": "partial",
+    "summary": "English465/324、多语言412/290 tokens均无截断；未授权入口拒绝。模型未启动，待新增最多2次本地调用范围答复。"
   },
   "next": {
-    "id": "LAYA-QUALITY.2",
-    "name": "冻结最小真实资格过滤验证；新增推理尚未授权",
+    "id": "LAYA-QUALITY.2-RUN",
+    "name": "授权后一次性实跑冻结案例；失败即停、不重试",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1544,15 +1551,23 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "status": "done",
       "deliverable": "原生Skill+全局规则+项目研究前置；无新框架",
       "evidence": "官方在线资料与GitHub MCP核对；quick_validate通过、metadata校验、既有路由不变；未实测未来新会话自动匹配"
+    },
+    {
+      "id": "LAYA-QUALITY.2",
+      "title": "最小真实资格过滤验收",
+      "status": "partial",
+      "deliverable": "固定正确/矛盾材料，真实目标与安全拒绝分别验证",
+      "evidence": "离线4项原生tokenizer通过、请求指纹固定、opt-in真实拒绝；真实推理NOT RUN，待新授权"
     }
   ],
   "checks": [
-    "先读本机skill-creator及官方Skills/AGENTS文档；GitHub MCP实际读取openai/skills",
-    "research-before-work原生Skill格式校验PASS，自动选择metadata开启，全局AGENTS显式加载",
-    "全局既有opencode-agent-routing块逐字不变；项目仅指令/基准/下一任务文档变更",
-    "同任务复用有效来源，优先已有实现与最小验证；不重复试验到绿、不猜协议/能力",
-    "本轮产品代码/测试/native未变，未新增推理/依赖/服务，不因规则增加后端68/100信用",
-    "下一候选仍LAYA-QUALITY.2，真实调用未新增授权；本机页同步、个人Skill和audit不入项目Git"
+    "按research-before-work先核对当前实现/官方staged-adoption及动态工具过滤文档；GitHub MCP读取成功",
+    "两个固定请求重复构造一致；无ready均不提供continue，每个目标与自身材料对应",
+    "同版本原生tokenizer4项：English465/324、多语言412/290，state零截断、marker齐全且可区分",
+    "未授权入口真实非零，服务/控制目录/证据文件未创建，状态未改；harness语法通过",
+    "209可版本文件离线准备后全未变；无产品代码缺口，不启worker，不重复typecheck/fullsuite",
+    "本轮LAYA/产品推理0，旧本地11/产品5不重置；拟新增最多2次具体授权选项待答复",
+    "基线/页面同步，估算68/100，并行写CLOSED；不能将准备通过当作真实模型质量通过"
   ],
   "sources": [
     {

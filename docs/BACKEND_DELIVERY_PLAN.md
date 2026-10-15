@@ -6,7 +6,7 @@
 依据：[后端需求](BACKEND_REQUIREMENTS.md)、[阶段草案](DRAFT_STAGED_ROLE_WORKFLOW.md)。
 2026-10-14用户单独授权B4.5a后，B4.5/B4.5a受控最小Git顺序协作范围独立通过；其后用户已授权B3.1原生Skill有界切片，现已独立通过；其后B3.2原生MCP选择与观察也已获授权并独立通过；本轮停止，不授权后续阶段。
 
-LAYA-QUALITY.1已由OpenCode首轮实现并获Codex独立PASS：无ready任务时不再提供continue，复用现有候选/观察/验证入口；本轮只做hermetic与历史捕获回放，没有新增模型推理。历史ACTION.3的真实目标完成缺口仍保留，不能将候选过滤当作模型质量已改善。当前累计本地11次/产品5次，工程估算68/100，并行写CLOSED。
+LAYA-QUALITY.2离线准备已通过，真实推理NOT RUN：只冻结两个最小案例，正确材料任一明确目标可完成、明显矛盾材料应拒绝；不指定必须选择第二目标，不改问题含义或强制complete。复用既有TaskStore/生产请求构造/provider/decision loop/Verification和owned contained服务清理，不新增生产实现或评测框架。 已固定2例及输入可见性，下一步只待明确新增调用授权；无新增推理/实现。历史模型完成缺口、68/100估算和并行写CLOSED保持。
 
 调研结论采用“按当前状态过滤模型可见动作”，只参考[官方动态工具方法](https://docs.langchain.com/oss/python/langchain/agents#dynamic-tools)，不引入LangChain或第二套调度。GitHub MCP成功核对[同版本LAYA基准边界](https://github.com/NandhaKishorM/laya/blob/6ab71fb4ce6bfd6f189e9b689eaadd67103ed9b6/docs/benchmarks.md)与官方evals；typed-decisions专用权重面向四种合成业务流程，不据发布方成绩推断Coding验收可用，不下载或切换权重。
 
