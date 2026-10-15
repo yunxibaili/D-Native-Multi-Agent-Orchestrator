@@ -47,8 +47,9 @@ README 是导航。本机 `project-progress/audit/` 是用户指定的只读第�
 | LAYA-ROUND.1 | 只读审核BLOCKED：原生动作输出缺complete必需taskId，协议反例复现；四预设PASS保持，无新推理/修复 |
 | LAYA-ACTION.1 | 代码独立PASS；整体PASS WITH P2（既有B45负控定位）。workflow候选明确绑定complete目标，原生形状CLI回归通过，无真实推理 |
 | LAYA-ACTION.2 | BLOCKED：真实3/3均continue；协议安全通过但正向目标未被选择，离线编码证明双目标验收材料被512-token预算截掉；无追加调用 |
-| LAYA-CONTEXT.1 | 代码独立PASS；整体PASS WITH P2（多语言实际容量注释错误/保守512）。双目标实际编码全量可见，超限/未知响应在动作应用前拒绝，无新增真实推理 |
+| LAYA-CONTEXT.1 | 代码独立PASS；统一保守512限制保留，原容量文案P2在QUALITY.1关闭。双目标实际编码全量可见，超限/未知响应在动作应用前拒绝，无新增真实推理 |
 | LAYA-ACTION.3 | BLOCKED：修复后真实3/3仍continue；494/278/276 tokens均无state截断，协议/安全通过，正向目标完成仍未观察；不追加重试 |
+| LAYA-QUALITY.1 | 候选资格过滤独立PASS：无ready不提供continue、wait/abort及明确complete保留；历史回放/负控/定向测试通过，无新增推理；真实模型质量仍待验收 |
 | B2 overall | NOT SEALED；账户资格/硬金额预算/付费与全流程费用未验收 |
 | B4.6a | 最小同进程用户检查点独立通过；原报告文案P2在B5.1关闭，不等于完整监督/纠偏恢复 |
 | B5.1 | 独立 PASS WITH P2：已知session_failure的停止安全/具体model有界接力；仅受控当前链 |
@@ -346,6 +347,20 @@ LAYA-ACTION.3 实际3/3本地请求仍选择continue，原生输入分别494/278
 只读GitHub MCP成功核对官方同版本README Honest limits、staged-adoption与evals：官方自述基础权重在其typed-decisions任务域表现有限，建议shadow/审定标签/独立留出评估后再放行；这些上游结论不是本项目准确率，也不证明本次continue的因果原因。本机evals是已存在的模块文件，不是目录；原生JSONL校验/评价可复用，不安装新依赖。CrewAI quickstart含_DemoAgent关键词/mock回退，未执行、不能当真实模型成功证据。
 下一候选LAYA-QUALITY.1：复用本机已安装laya.evals.py及原生validate/compare能力，先限定一小组领域验收样本和可独立核对的标签；多合理答案/保守行为或证据不足单列unknown，不把两个都可完成的任务硬指定其中一个当唯一真值。先调查/冻结输入、问题含义和接受标准，离线验证格式及已有捕获记录；不新建评测框架，不自动增加推理、调温度/阈值、下载新checkpoint、微调、改决策脑或用规则偷偷代替LAYA。若需新调用或实现，另行明确范围授权。
 
+### 5.21 先调研再验证动作资格（2026-10-15）
+
+调研结论采用“按当前状态过滤模型可见动作”，只参考[官方动态工具方法](https://docs.langchain.com/oss/python/langchain/agents#dynamic-tools)，不引入LangChain或第二套调度。GitHub MCP成功核对[同版本LAYA基准边界](https://github.com/NandhaKishorM/laya/blob/6ab71fb4ce6bfd6f189e9b689eaadd67103ed9b6/docs/benchmarks.md)与官方evals；typed-decisions专用权重面向四种合成业务流程，不据发布方成绩推断Coding验收可用，不下载或切换权重。
+
+复用boundActionCandidates与现有observation.ready：仅在有ready子任务时提供continue，始终保留wait/abort及每个有材料的明确complete目标。请求构造与候选表同次冻结，provider等待期间的状态变化不能补授未提供的key；最终资源/quota/fixed/session/停止门保持。无acceptanceMaterial的旧11动作路径不变，不强迫模型完成任务，也不把ready当实际准入。
+
+Codex独立typecheck及decision429/0、state-loop276/0、CLI98/0、workbench419/0、协作96/0、计划61/0、阶段材料47/0全部exit0，三份源码/测试在验证前后hash稳定。内存负控撤去ready条件后264/12、exit1，未修改源文件；三份历史真实响应离线回放：两个ready为空的旧continue被拒且dispatch0，有ready的旧continue仍可进入受控dispatch；不是新模型选择或准确率。
+
+官方同版本Apache-2.0公开12行fixture，经本机已安装laya.evals_cli validate实际exit0（4个question id）；只校验schema，不启动模型、不给项目Coding判断打分。第三方研究只作为适用域/顺序敏感性提醒，未采用代码、数据、阈值或模型；无新依赖、下载或框架。
+
+本轮LAYA/产品Agent推理均0，未启动服务；累计本地11次与产品会话5/5不变。历史LAYA-ACTION.3仍BLOCKED（正向目标完成NOT OBSERVED），本片仅候选资格/受控闭环独立PASS；真实判断质量、完整round/工具/费用未认证。english512/192、multilingual1024/256的文案P2已纠正，统一保守512拒绝逻辑不变，保留支持范围限制、温度校准P2及旧B45负控维护P2。估算68/100、PARALLEL_WRITE=CLOSED，正式前端未进入。
+
+下一候选LAYA-QUALITY.2：只在新增明确推理授权后，运行一次冻结的最小资格过滤验证，不重复大组试验。不改阈值/温度/模型，不用强制complete求通过；多个合理目标以接受集合记录，wait/abort如实保留，缺材料不得完成，有ready才允许continue。先离线检查请求与材料可见性，再提出精确次数/每次时限/失败即停范围；当前不启动任何新推理。
+
 ## 6. 不可绕过的契约
 
 WorkerIdentity={taskId,agentId,modelId,sessionId}；不以模型品牌替代 Agent 能力事实。
@@ -375,6 +390,12 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 不新增 provider 网关、群聊平台、第二个调度器或通用工作流引擎来掩盖协议缺口。
 
 ## 8. 最近独立证据与上传记录
+
+2026-10-15 LAYA-QUALITY.1 候选资格过滤独立PASS：用户要求先上网调查、减少实验、验证现成方法。GitHub MCP实际可用，核对官方固定v0.3.21资料/许可/公开fixture，结合LangChain动态工具状态过滤法；仅方法适配，不迁移框架。实际opencode-agent implement首轮session ses_ec14f0146ffe02gzwXPa9l5DDE，native导出50条assistant均opencode-go/deepseek-v4.1-flash、末条finish=stop、wrapper exit0且完整报告；未返工。worker精确修改decision-loop.ts/state-loop.test.ts/b40a-cli-workflow.test.ts三文件，无新增文件，其他206个版本化文件逐字节未变。
+复用boundActionCandidates与现有observation.ready：仅在有ready子任务时提供continue，始终保留wait/abort及每个有材料的明确complete目标。请求构造与候选表同次冻结，provider等待期间的状态变化不能补授未提供的key；最终资源/quota/fixed/session/停止门保持。无acceptanceMaterial的旧11动作路径不变，不强迫模型完成任务，也不把ready当实际准入。
+Codex独立typecheck及decision429/0、state-loop276/0、CLI98/0、workbench419/0、协作96/0、计划61/0、阶段材料47/0全部exit0，三份源码/测试在验证前后hash稳定。内存负控撤去ready条件后264/12、exit1，未修改源文件；三份历史真实响应离线回放：两个ready为空的旧continue被拒且dispatch0，有ready的旧continue仍可进入受控dispatch；不是新模型选择或准确率。
+本轮LAYA/产品Agent推理均0，未启动服务；累计本地11次与产品会话5/5不变。历史LAYA-ACTION.3仍BLOCKED（正向目标完成NOT OBSERVED），本片仅候选资格/受控闭环独立PASS；真实判断质量、完整round/工具/费用未认证。english512/192、multilingual1024/256的文案P2已纠正，统一保守512拒绝逻辑不变，保留支持范围限制、温度校准P2及旧B45负控维护P2。估算68/100、PARALLEL_WRITE=CLOSED，正式前端未进入。
+本机证据为project-progress/laya-quality-research.json、native-validate.json、native-export.json、review-state.json、independent-tests.json、captured-replay.json、negative-result.json及logs，全部ignored，不上传；audit只读。只上传三份已独立审核代码/测试与六份受影响文档；main/共享index/其他dirty保留。刷新本机页面并对比数据，不声称浏览器视觉验收。远端快照hash以上传后核验为准。
 
 2026-10-15 LAYA-ACTION.3 修复后真实动作验收独立BLOCKED（协议/安全/可见性通过，正向目标未观察）：用户新批准最多3次本地推理、每次90秒、失败即停不重试，仅离线缓存/合成内存任务，不运行产品Agent/云模型或发送仓库代码。执行前核对CONTEXT.1已审核三文件hash一致，使用一次性phase守卫，保留前轮证据。无worker/新实现。
 LAYA-ACTION.3 实际3/3本地请求仍选择continue，原生输入分别494/278/276 tokens；同一实际tokenizer回放确认三例状态均完整可见、材料字段存在、候选可区分，零state截断。生产provider/loop与守卫正确接收合法答案，complete调用0、Task状态未变，受控dispatch均拒绝真实执行；协议/安全/输入可见性通过，正向目标完成仍NOT OBSERVED，因此本片整体BLOCKED。不能据三例断言模型普遍不可用或确定其选择根因；也不能再以本轮材料缺失解释结果。
@@ -1057,18 +1078,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-15T16:21:54+08:00",
+  "updatedAt": "2026-10-15T16:44:27+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "LAYA-ACTION.3",
-    "name": "修复后真实动作：输入完整但目标完成未观察",
-    "status": "blocked",
-    "summary": "实际3次均continue；494/278/276 tokens全量材料可见，协议/安全与清理通过。转向最小领域验收方案，不追试。"
+    "id": "LAYA-QUALITY.1",
+    "name": "无ready不提供continue：已独立审核通过",
+    "status": "done",
+    "summary": "先研究官方动态过滤方法，复用现有ready/候选表；8项定向检查、历史响应回放与负控通过，未新增推理。真实目标完成仍待验收。"
   },
   "next": {
-    "id": "LAYA-QUALITY.1",
-    "name": "复用原生evals准备最小领域样本/标签；不新增推理",
+    "id": "LAYA-QUALITY.2",
+    "name": "冻结最小真实资格过滤验证；新增推理尚未授权",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1147,8 +1168,8 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "id": "LAYA-ACTION-DOMAIN",
       "severity": "实测受阻",
       "title": "材料完整时仍未观察到真实明确目标完成",
-      "detail": "3次实际continue，complete能力0次。状态零截断、协议/安全通过；不推断整体准确率或单一根因。",
-      "next": "复用官方现成evals，准备小型审定标签/接受标准与shadow对照；歧义单列，不盲目重跑或换权重。",
+      "detail": "历史ACTION.3实际3次continue，complete0；QUALITY.1已关闭无ready仍提供continue的资格缺口，但没有新增真实选择证据。历史记录不追溯改判。",
+      "next": "基于已发布状态过滤法，未来只做一组冻结的最小真实验证；新调用须明确授权，不盲目追试、换权重或强制complete。",
       "kind": "领域适配/正向验收缺口，不是新接线或containment故障"
     },
     {
@@ -1289,11 +1310,11 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     },
     {
       "id": "LAYA-CONSERVATIVE-WINDOW-P2",
-      "severity": "P2",
-      "title": "多语言实际容量注释不准确，统一保守512会拒绝部分可容纳请求",
-      "detail": "实际english512/192，multilingual1024/256；代码与报告把二者容量并称512有误。当前策略更严格，未放大实际预算。",
-      "next": "后续限定文案维护纠正；扩大预算需要单独验证。",
-      "kind": "事实说明/支持范围，不阻断本片安全保护"
+      "severity": "支持范围",
+      "title": "多语言仍使用保守512拒绝线（容量文案已纠正）",
+      "detail": "QUALITY.1已准确写明english512/192与multilingual1024/256，原文案P2关闭。统一512策略保持，可能拒绝多语言本可容纳的请求；不宣称任意服务配置被检测。",
+      "next": "扩大预算需单独验证；当前保留更保守支持范围，不阻断候选资格修复。",
+      "kind": "文案P2已关闭 / 有意的保守限制"
     }
   ],
   "tasks": [
@@ -1506,16 +1527,23 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "status": "blocked",
       "deliverable": "最多3次真实选择+状态效果+输入可见性与Job停止",
       "evidence": "实际3/3 continue，494/278/276 tokens零state截断；complete0/状态不变；Job空清理通过；累计本地11/产品5"
+    },
+    {
+      "id": "LAYA-QUALITY.1",
+      "title": "按现有ready事实过滤模型可见动作",
+      "status": "done",
+      "deliverable": "无ready不提供continue；wait/abort/明确目标及既有保护保持",
+      "evidence": "独立8项exit0，state-loop276/0、CLI98/0；3历史回放、负控12失败；原生evals validate12条仅格式；无新增推理"
     }
   ],
   "checks": [
-    "用户新授权最多3；实际3POST+1GET，无重试，产品Agent/云模型0",
-    "真实选择continue/continue/continue；生产provider/loop合法，complete0/所有任务状态未变",
-    "实际响应494/278/276 tokens；相同固定tokenizer回放均完整保留state、材料字段与distinct选项",
-    "同owned服务固定revision/实际CUDA；Job ActiveProcessesFinal0、owned根已删、端口关闭/cleanup0",
-    "209版本文件维护前无改；10缓存摘要一致；无实现不重复typecheck/fullsuite，diff check通过",
-    "GitHub MCP同版本官方说明强调领域评估/有审定标签再放行，本机evals可复用；不把mock示例当真机成功",
-    "整体BLOCKED但原代码PASS保持；旧许可耗尽，累计本地11/产品5，估算68/100，并行写CLOSED"
+    "研究官方同版本资料与动态工具过滤方法；实际GitHub MCP成功，未引入框架/新权重",
+    "opencode-agent implement：指定模型50条assistant全部一致、finish=stop、wrapper0；首轮完成",
+    "独立typecheck与decision429/state-loop276/CLI98/workbench419/协作96/计划61/阶段47均0失败",
+    "3个历史响应离线回放：无ready旧continue拒绝，有ready受控派发保留；不是新推理或准确率",
+    "内存负控去掉ready条件：264/12、exit1；源文件不变；原生evals格式验证12条exit0",
+    "文案容量P2关闭，保守512/校准/旧B45边界保留；ACTION.3真实目标完成仍未验收",
+    "本轮LAYA/产品推理0、累计本地11/产品5，工程估算68/100，并行写CLOSED；基线/页面同步"
   ],
   "sources": [
     {

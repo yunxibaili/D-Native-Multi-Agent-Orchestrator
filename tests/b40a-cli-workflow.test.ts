@@ -456,6 +456,35 @@ section('acceptance material: LAYA is given the objective, criteria and output')
 }
 
 // =========================================================================
+section('action eligibility: LAYA is offered continue only when a step is dispatchable');
+
+{
+  // The REAL production request builder over a REAL round: every bounded LAYA cycle is
+  // captured with the exact offered keys, and the fixture answers only an OFFERED key.
+  const r = await workflowRound({ planChoice: 'full', outputMode: 'unsatisfying' });
+  const offeredPerCycle = r.decisionRequests.map((req) =>
+    Object.keys(((req.questions[ORCHESTRATION_ACTION_ID] as { criteria?: Record<string, string> } | undefined)?.criteria) ?? {}));
+
+  // Cycle 1 runs while step 1 is planned and READY, so continue is on the table, and the
+  // offered continue really dispatched the first step.
+  check('eligibility: the first cycle (a ready planned step) offered continue',
+    offeredPerCycle.length >= 1 && offeredPerCycle[0]!.includes('continue'), JSON.stringify(offeredPerCycle));
+  // Once step 1 is to_verify, NOTHING is dispatchable: continue is gone, wait/abort stay,
+  // and the completion target the material can be judged against is still offered.
+  check('eligibility: a no-ready cycle never offers continue',
+    offeredPerCycle.length >= 2 && offeredPerCycle.slice(1).every((o) => !o.includes('continue')),
+    JSON.stringify(offeredPerCycle));
+  check('eligibility: a no-ready cycle still offers wait and abort',
+    offeredPerCycle.slice(1).every((o) => o.includes('wait') && o.includes('abort')), JSON.stringify(offeredPerCycle));
+  check('eligibility: a no-ready cycle still offers the exact completion target it can judge',
+    offeredPerCycle.slice(1).every((o) => o.some((k) => k !== 'continue' && k !== 'wait' && k !== 'abort')),
+    JSON.stringify(offeredPerCycle));
+  check('eligibility: the ready step really dispatched through the CLI loop',
+    r.requests.length === 1 && taskStatusW(r, 1) === 'to_verify' && r.report.ok === false,
+    `n=${r.requests.length} w1=${taskStatusW(r, 1)} ok=${String(r.report.ok)}`);
+}
+
+// =========================================================================
 section('unsatisfied output: LAYA must NOT accept, and downstream must not start');
 
 {

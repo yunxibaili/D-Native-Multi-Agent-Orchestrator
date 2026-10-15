@@ -235,21 +235,28 @@ function completeCandidateEntry(
 /**
  * The small, supported action space for a bounded workflow decision.
  *
- * `continue`/`wait`/`abort` are targetless. `complete` is offered once per
- * eligible `to_verify` task: the key binds the action AND its task, so a
- * provider cannot name a task that was not on the table. When exactly one task
- * is eligible the key is the bare `complete` (there is nothing to disambiguate);
- * when several are, each gets a distinct opaque key.
+ * LAYA-QUALITY.1: `continue` is targetless like `wait`/`abort`, but UNLIKE them it
+ * is offered only when the observation names a dispatchable child
+ * (`observation.ready`, already derived by observation.ts from the same facts the
+ * scheduler uses). With no ready child the action could not dispatch, so the model
+ * is never handed a no-op; a key that was not offered fails closed against this
+ * snapshot. `complete` is offered once per eligible `to_verify` task: the key binds
+ * the action AND its task, so a provider cannot name a task that was not on the
+ * table. When exactly one task is eligible the key is the bare `complete` (there is
+ * nothing to disambiguate); when several are, each gets a distinct opaque key.
  */
 function boundActionCandidates(
   observation: TaskObservation,
   material: AcceptanceMaterial,
 ): BoundActionCandidate[] {
-  const candidates: BoundActionCandidate[] = [
-    { key: 'continue', action: 'continue', taskId: null, description: ACTION_CRITERIA.continue },
-    { key: 'wait', action: 'wait', taskId: null, description: ACTION_CRITERIA.wait },
-    { key: 'abort', action: 'abort', taskId: null, description: ACTION_CRITERIA.abort },
-  ];
+  const candidates: BoundActionCandidate[] = [];
+  // No ready child means no dispatch edge for `continue` to reach, so it is simply
+  // not on the table. `wait` and `abort` always are.
+  if (observation.ready.length > 0) {
+    candidates.push({ key: 'continue', action: 'continue', taskId: null, description: ACTION_CRITERIA.continue });
+  }
+  candidates.push({ key: 'wait', action: 'wait', taskId: null, description: ACTION_CRITERIA.wait });
+  candidates.push({ key: 'abort', action: 'abort', taskId: null, description: ACTION_CRITERIA.abort });
   const eligible = observation.tasks.filter(
     (t) => t.status === 'to_verify' && completeCandidateEntry(material, t) !== null,
   );
@@ -279,9 +286,9 @@ function boundActionCandidates(
  * continue/wait/abort plus one `complete` key per eligible `to_verify` task,
  * and the evidence a `complete` judgement is made from travels in the SEPARATE
  * acceptance-material key. Carrying the rich view anyway is what pushed the
- * installed 512-token checkpoint into right-truncation, dropping the material
- * entirely (observed: 701 state tokens, 318 retained, acceptance_material
- * absent).
+ * installed english checkpoint's 512-token bound into right-truncation, dropping
+ * the material entirely (observed: 701 state tokens, 318 retained,
+ * acceptance_material absent).
  *
  * So the bounded projection keeps the facts a real choice needs — the task
  * statuses and the ready/running/blocked/awaiting sets — and drops the
@@ -331,18 +338,19 @@ function compactAcceptanceMaterial(material: AcceptanceMaterial): string {
 }
 
 /**
- * LAYA-CONTEXT.1: the fixed input budget of the currently supported native config.
+ * LAYA-CONTEXT.1: the conservative shared refusal bound for the supported native checkpoints.
  *
- * The installed LAYA 0.3.21 `english` (and `multilingual`) checkpoint truncates
- * the composed sequence at the `max_len` its shipped config pins, and that
- * truncation right-cuts the serialized state. Measured offline against the
- * pinned commit, `max_len` is 512, of which `head_max_len` 192 is consumed by
- * the options and instructions before any state.
+ * The installed LAYA 0.3.21 `english` checkpoint pins `max_len` 512 (`head_max_len`
+ * 192); `multilingual` pins `max_len` 1024 (`head_max_len` 256). Each right-cuts the
+ * composed sequence at its OWN `max_len`.
  *
- * The boundary is ambiguous — a request at exactly the budget may or may not
- * have content dropped — so this guard refuses AT the bound rather than
- * assuming the retained prefix was sufficient. A different checkpoint or
- * budget is NOT silently accepted: the current evidence only covers this one.
+ * This guard refuses at ONE bound — the english `max_len` of 512 — applied to BOTH
+ * checkpoints. That is deliberately stricter for `multilingual`, whose own capacity is
+ * larger: it is a conservative shared floor, NOT a claim that both checkpoints truncate
+ * at 512. The boundary is ambiguous — a request exactly at the bound may or may not have
+ * content dropped — so it refuses AT the bound rather than assuming the retained prefix
+ * was sufficient. No other configured budget or checkpoint is detected; an unlisted
+ * checkpoint is refused outright.
  */
 const BOUNDED_NATIVE_SUPPORTED_CHECKPOINTS: ReadonlySet<string> = new Set(['english', 'multilingual']);
 const BOUNDED_NATIVE_INPUT_BUDGET = 512;
@@ -361,8 +369,8 @@ const BOUNDED_NATIVE_INPUT_BUDGET = 512;
  *   - an unknown/unsupported checkpoint (only english/multilingual are covered);
  *   - missing / null / nonpositive / non-finite token metadata, because
  *     "could not see whether it fit" must not read as "it fit";
- *   - saturation at or past the fixed budget, because the boundary is ambiguous
- *     and the state may have been right-truncated.
+ *   - saturation at or past the conservative shared bound, because the boundary
+ *     is ambiguous and the state may have been right-truncated.
  *
  * WHAT IT DOES NOT DO: it never retries, never dispatches, never mutates, never
  * falls back to a default `complete`, and never treats a status as a pass.
@@ -401,9 +409,10 @@ function assertBoundedNativeVisibility(response: DecisionResponse): void {
   if (tokens >= BOUNDED_NATIVE_INPUT_BUDGET) {
     throw new DecisionValidationError(
       'token-budget-saturated',
-      `the bounded workflow request used ${tokens} input tokens, at or past the supported checkpoint budget of ` +
-        `${BOUNDED_NATIVE_INPUT_BUDGET}; the checkpoint right-truncates the serialized state at that budget, so the ` +
-        `acceptance material may not have reached the model. Refusing rather than judging on a possibly-dropped view`,
+      `the bounded workflow request used ${tokens} input tokens, at or past the conservative shared refusal bound of ` +
+        `${BOUNDED_NATIVE_INPUT_BUDGET} (the installed english checkpoint's own max_len, applied to both checkpoints); ` +
+        `that checkpoint right-truncates its state there, so the acceptance material may not have reached the model. ` +
+        `Refusing rather than judging on a possibly-dropped view`,
     );
   }
 }

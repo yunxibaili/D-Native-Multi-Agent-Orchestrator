@@ -1600,6 +1600,244 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // 15. LAYA-QUALITY.1: a bounded `continue` is offered only for a ready child.
+  //
+  // The published dynamic-tool principle (filter the model-visible action space by
+  // the CURRENT state) is already applied here to the `complete` targets; this slice
+  // applies the SAME principle to `continue`, REUSING the existing candidate builder
+  // and its immutable snapshot. `observation.ready` is derived by observation.ts from
+  // `depth > 0` planned/queued children with no unmet dependency, mirroring the
+  // scheduler - it is NOT re-derived here. Readiness is an OBSERVATION fact and never
+  // admission: the resource/quota/fixed/session/stop gates still own whether a ready
+  // child actually runs.
+  //
+  // EVIDENCE HONESTY: this is a producer-side eligibility change only. The captured
+  // ACTION.3 requests (two-to-verify-targets / missing-delivery with ready=[]) are
+  // read as HISTORICAL responses; nothing here is new model inference, and no old
+  // behaviour is rescored as model accuracy.
+  // ---------------------------------------------------------------------------
+  section('Laya-quality 15. bounded `continue` is offered only for a ready child');
+  {
+    /** A real TaskStore tree with explicit member statuses; `ready` is DERIVED, never hand-set. */
+    const storeWith = (
+      specs: ReadonlyArray<{
+        id: string;
+        move?: ReadonlyArray<'queued' | 'running' | 'to_verify' | 'blocked' | 'succeeded'>;
+        deps?: readonly string[];
+      }>,
+    ): TaskStore => {
+      const store = new TaskStore();
+      store.create({ taskId: 'r', parentTaskId: null, agentId: AGENT, taskType: impl, acceptanceCriteria: 'root' }, NOW);
+      for (const s of specs) {
+        store.create({
+          taskId: s.id, parentTaskId: 'r', agentId: AGENT, taskType: impl,
+          acceptanceCriteria: `work ${s.id}`, dependencies: s.deps ?? [],
+        }, NOW);
+      }
+      for (const s of specs) for (const step of s.move ?? []) store.transition(s.id, step, NOW);
+      return store;
+    };
+
+    /** The keys a bounded request built from this store would offer. */
+    const offeredFrom = (store: TaskStore, material: AcceptanceMaterial): string[] => {
+      const obs = observeTasks(store, { now: NOW, rootTaskId: 'r' });
+      const req = orchestrationDecisionRequest(obs, { acceptanceMaterial: material });
+      return Object.keys((req.questions['next_action'] as { criteria: Record<string, string> }).criteria);
+    };
+
+    // --- no ready child, TWO eligible completion targets: no continue, both kept ---
+    {
+      const o = makeTree([{ id: 't1', toVerify: true }, { id: 't2', toVerify: true }]);
+      const material = materialFor('two targets, no ready child', [
+        { taskId: 't1', criteria: 't1 :: member — deliverable: a', output: 't1 member deliverable produced' },
+        { taskId: 't2', criteria: 't2 :: member — deliverable: b', output: 't2 member deliverable produced' },
+      ]);
+      const obs = observeTasks(o.getStore(), { now: NOW, rootTaskId: 'r' });
+      const offered = offeredFor(o, material);
+      check('quality: no ready child means observation.ready is empty', obs.ready.length === 0, JSON.stringify(obs.ready));
+      check('quality: NO `continue` is offered without a dispatchable child', !offered.includes('continue'), offered.join(','));
+      check('quality: `wait` and `abort` are still offered', offered.includes('wait') && offered.includes('abort'), offered.join(','));
+      check('quality: BOTH distinct completion targets survive',
+        completeKeysIn(offered).some((k) => k.endsWith('t1')) && completeKeysIn(offered).some((k) => k.endsWith('t2')),
+        offered.join(','));
+
+      const completed: string[] = [];
+      const { provider } = nativeProvider((keys) => completeKeysIn(keys).find((k) => k.endsWith('t2')) ?? 'wait');
+      const cycle = await runDecisionCycle({
+        store: o.getStore(),
+        scheduler: new TaskScheduler({ orchestrator: o, cwd: dir }),
+        provider, rootTaskId: 'r', acceptanceMaterial: material,
+        capabilities: { complete: completeCapOf(o, completed) },
+      });
+      const dec = cycle.status === 'ok' ? cycle.decision : null;
+      check('quality: choosing the SECOND target reaches only that task\'s own verification',
+        dec?.action === 'complete' && dec.taskId === 't2' && completed.length === 1 && completed[0] === 't2',
+        JSON.stringify({ dec, completed }));
+      check('quality: the unselected target is untouched (no forced completion)',
+        o.getStore().get('t1')?.status === 'to_verify' && o.getStore().get('t2')?.status === 'succeeded',
+        `t1=${o.getStore().get('t1')?.status} t2=${o.getStore().get('t2')?.status}`);
+    }
+
+    // --- missing / empty execution material: EXACTLY wait+abort; a forged continue is refused ---
+    {
+      const cases: Array<{ label: string; material: AcceptanceMaterial }> = [
+        { label: 'missing execution', material: materialFor('missing', [{ taskId: 't1', criteria: 't1 :: member', output: 'x', executionMissing: true }]) },
+        { label: 'empty output', material: materialFor('empty', [{ taskId: 't1', criteria: 't1 :: member', output: '' }]) },
+        { label: 'no entry at all', material: materialFor('none', []) },
+      ];
+      for (const c of cases) {
+        const o = makeTree([{ id: 't1', toVerify: true }]);
+        const offered = offeredFor(o, c.material);
+        check(`quality: ${c.label} offers EXACTLY wait+abort (two choices, no fake question)`,
+          offered.length === 2 && offered.includes('wait') && offered.includes('abort'), offered.join(','));
+        const completed: string[] = [];
+        const before = JSON.stringify(o.getStore().all());
+        // The forged `continue` stands in for the historical ACTION.3 captured answer
+        // (ready=[]); it is refused against the request's OWN snapshot, before any
+        // completion, dispatch or mutation.
+        const cycle = await runDecisionCycle({
+          store: o.getStore(),
+          scheduler: new TaskScheduler({ orchestrator: o, cwd: dir }),
+          provider: rawProvider('continue'),
+          rootTaskId: 'r', acceptanceMaterial: c.material,
+          capabilities: { complete: completeCapOf(o, completed) },
+        });
+        check(`quality: ${c.label}: a forged continue is refused BEFORE complete/dispatch/mutation`,
+          cycle.status === 'invalid' && cycle.error.code === 'unoffered-action-key' && cycle.tick === null &&
+            completed.length === 0 && JSON.stringify(o.getStore().all()) === before,
+          cycle.status === 'invalid' ? cycle.error.code : cycle.status);
+      }
+    }
+
+    // --- a ready planned child: continue IS offered and reaches the dispatch path ---
+    {
+      const { runtime, requests } = fakeRuntime();
+      const o = new Orchestrator({ gate: gateSources(['r', 'c1', 'c2']), now, runtime, defaultCwd: dir });
+      seed(o, ['c1', 'c2']);
+      const material = materialFor('ready dispatch', []);
+      const obs = observeTasks(o.getStore(), { now: NOW, rootTaskId: 'r' });
+      const offered = offeredFor(o, material);
+      check('quality: a planned child with met dependencies IS ready', obs.ready.length === 2, JSON.stringify(obs.ready));
+      check('quality: `continue` is offered when a child can be dispatched', offered.includes('continue'), offered.join(','));
+
+      const { provider } = nativeProvider((keys) => (keys.includes('continue') ? 'continue' : 'wait'));
+      const cycle = await runDecisionCycle({
+        store: o.getStore(),
+        scheduler: new TaskScheduler({ orchestrator: o, cwd: dir, rootTaskId: 'r' }),
+        provider, rootTaskId: 'r', acceptanceMaterial: material,
+      });
+      check('quality: the offered continue reaches the EXISTING scheduler dispatch',
+        cycle.status === 'ok' && cycle.decision?.action === 'continue' && cycle.tick !== null && cycle.tick.admitted.length === 2,
+        cycle.status === 'ok' ? JSON.stringify(cycle.tick?.admitted) : cycle.status);
+      check('quality: the runtime really ran the ready children', requests.length === 2, `ran ${requests.length}`);
+      check('quality: they advanced to to_verify, not auto-succeeded',
+        o.getStore().get('c1')?.status === 'to_verify' && o.getStore().get('c2')?.status === 'to_verify',
+        `${o.getStore().get('c1')?.status}/${o.getStore().get('c2')?.status}`);
+    }
+
+    // --- snapshots that must NOT invent readiness ---
+    {
+      const noReadySnapshots: Array<{ label: string; store: TaskStore; material: AcceptanceMaterial }> = [
+        { label: 'root-only planned', store: storeWith([]), material: materialFor('root only', []) },
+        {
+          label: 'dependency-waiting planned',
+          store: storeWith([{ id: 'a', move: ['queued', 'running', 'to_verify'] }, { id: 'b', deps: ['a'] }]),
+          material: materialFor('dep wait', [{ taskId: 'a', criteria: 'a :: member', output: 'a produced' }]),
+        },
+        { label: 'blocked-only', store: storeWith([{ id: 'b', move: ['blocked'] }]), material: materialFor('blocked', []) },
+        { label: 'running-only', store: storeWith([{ id: 'c', move: ['queued', 'running'] }]), material: materialFor('running', []) },
+      ];
+      for (const s of noReadySnapshots) {
+        const obs = observeTasks(s.store, { now: NOW, rootTaskId: 'r' });
+        const offered = offeredFrom(s.store, s.material);
+        check(`quality: ${s.label} has no ready child`, obs.ready.length === 0, JSON.stringify(obs.ready));
+        check(`quality: ${s.label} offers no continue`, !offered.includes('continue'), offered.join(','));
+        check(`quality: ${s.label} still keeps wait+abort`, offered.includes('wait') && offered.includes('abort'), offered.join(','));
+      }
+
+      // A QUEUED child (not merely planned) with met dependencies is ready, and continue is offered.
+      const queued = storeWith([{ id: 'q', move: ['queued'] }]);
+      const qObs = observeTasks(queued, { now: NOW, rootTaskId: 'r' });
+      const qOffered = offeredFrom(queued, materialFor('queued ready', []));
+      check('quality: a queued child with met dependencies is ready', qObs.ready.includes('q'), JSON.stringify(qObs.ready));
+      check('quality: and continue is offered for it', qOffered.includes('continue'), qOffered.join(','));
+    }
+
+    // --- mixed: a ready child AND a to_verify target: continue plus the exact complete target ---
+    {
+      const store = storeWith([{ id: 'v1', move: ['queued', 'running', 'to_verify'] }, { id: 'p1' }]);
+      const material = materialFor('mixed', [{ taskId: 'v1', criteria: 'v1 :: member', output: 'v1 produced' }]);
+      const obs = observeTasks(store, { now: NOW, rootTaskId: 'r' });
+      const offered = offeredFrom(store, material);
+      check('quality: the mixed snapshot has a ready child', obs.ready.includes('p1'), JSON.stringify(obs.ready));
+      check('quality: the mixed snapshot retains continue', offered.includes('continue'), offered.join(','));
+      check('quality: and still offers the exact completion target unchanged',
+        completeKeysIn(offered).join(',') === 'complete', offered.join(','));
+    }
+
+    // --- a state change while the provider is thinking cannot grant an unoffered continue ---
+    {
+      const o = makeTree([{ id: 't1', toVerify: true }]);
+      const material = materialFor('async', [{ taskId: 't1', criteria: 't1 :: member', output: 't1 produced' }]);
+      const completed: string[] = [];
+      const cycle = await runDecisionCycle({
+        store: o.getStore(),
+        scheduler: new TaskScheduler({ orchestrator: o, cwd: dir }),
+        provider: rawProvider('continue', undefined, () => {
+          // A child that becomes ready ONLY after the request snapshot was built.
+          o.getStore().create({
+            taskId: 'late1', parentTaskId: 'r', agentId: AGENT, modelId: SB,
+            taskType: impl, acceptanceCriteria: 'late', budgetUnits: 10,
+          }, NOW);
+        }),
+        rootTaskId: 'r', acceptanceMaterial: material,
+        capabilities: { complete: completeCapOf(o, completed) },
+      });
+      check('quality: a later state change cannot retroactively grant an unoffered key',
+        cycle.status === 'invalid' && cycle.error.code === 'unoffered-action-key' && cycle.tick === null,
+        cycle.status === 'invalid' ? cycle.error.code : cycle.status);
+      check('quality: the late child exists but was never dispatched or completed',
+        o.getStore().get('late1')?.status === 'planned' && completed.length === 0, completed.join(','));
+    }
+
+    // --- readiness is an OBSERVATION fact; the RESOURCE gate still owns admission ---
+    {
+      const { runtime, requests } = fakeRuntime();
+      const gate = gateSources(['r', 'c1']);
+      const o = new Orchestrator({ gate, now, runtime, defaultCwd: dir });
+      seed(o, ['c1']);
+      // The child was spawned while a slot existed; the resource cap now admits none.
+      (gate as unknown as { maxConcurrentAgents: number }).maxConcurrentAgents = 0;
+      const material = materialFor('gated', []);
+      const obs = observeTasks(o.getStore(), { now: NOW, rootTaskId: 'r' });
+      const offered = offeredFor(o, material);
+      check('quality: the child is READY in the observation and continue is offered',
+        obs.ready.includes('c1') && offered.includes('continue'), `${JSON.stringify(obs.ready)} ${offered.join(',')}`);
+      const { provider } = nativeProvider((keys) => (keys.includes('continue') ? 'continue' : 'wait'));
+      const cycle = await runDecisionCycle({
+        store: o.getStore(),
+        scheduler: new TaskScheduler({ orchestrator: o, cwd: dir, rootTaskId: 'r' }),
+        provider, rootTaskId: 'r', acceptanceMaterial: material,
+      });
+      check('quality: offering continue did NOT bypass the resource gate (no agent ran)',
+        requests.length === 0, `ran ${requests.length}`);
+      check('quality: the gate withheld admission and the task stayed planned',
+        o.getStore().get('c1')?.status === 'planned' && cycle.status === 'ok',
+        `${o.getStore().get('c1')?.status}/${cycle.status}`);
+    }
+
+    // --- no-material legacy space is untouched: eleven actions, continue always present ---
+    {
+      const store = storeWith([{ id: 'v', move: ['queued', 'running', 'to_verify'] }]);
+      const obs = observeTasks(store, { now: NOW, rootTaskId: 'r' });
+      const legacyOffered = Object.keys((orchestrationDecisionRequest(obs).questions['next_action'] as { criteria: Record<string, string> }).criteria);
+      check('quality: a no-material request still offers eleven actions including continue',
+        legacyOffered.length === 11 && legacyOffered.includes('continue') && legacyOffered.includes('reassign'),
+        legacyOffered.join(','));
+    }
+  }
+
   rmSync(dir, { recursive: true, force: true });
 }
 

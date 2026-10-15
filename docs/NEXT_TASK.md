@@ -1,27 +1,27 @@
-# 下一候选 — LAYA-QUALITY.1 最小领域验收方案
+# 下一候选 — LAYA-QUALITY.2 最小真实资格过滤验收
 
-更新日期：2026-10-15；当前事实只见 [PROJECT_BASELINE.md](PROJECT_BASELINE.md)。
+更新日期：2026-10-15；当前事实只见[PROJECT_BASELINE.md](PROJECT_BASELINE.md)。
 
-## 当前实测结论
+## 本片已完成
 
-LAYA-ACTION.3 实际3/3本地请求仍选择continue，原生输入分别494/278/276 tokens；同一实际tokenizer回放确认三例状态均完整可见、材料字段存在、候选可区分，零state截断。生产provider/loop与守卫正确接收合法答案，complete调用0、Task状态未变，受控dispatch均拒绝真实执行；协议/安全/输入可见性通过，正向目标完成仍NOT OBSERVED，因此本片整体BLOCKED。不能据三例断言模型普遍不可用或确定其选择根因；也不能再以本轮材料缺失解释结果。
-同owned服务固定revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851、English/multilingual实际CUDA、CPU fallback0；结束validated Job ActiveProcessesFinal0、owned根已删、cleanupFailures0、health端口不再监听。3次许可已耗尽，不追试；累计本地真实11次（历史1+4+3+本轮3），产品Agent仍5/5，本轮产品/云模型调用0，源码/测试/安装/配置改动0。
-LAYA-CONTEXT.1代码独立PASS保持，不能把未完成真实目标验收理解成修复无效；这3次结果不足以认定LAYA整体不可用，也不能从confidence发明一个可靠阈值。
+LAYA-QUALITY.1已由OpenCode首轮实现并获Codex独立PASS：无ready任务时不再提供continue，复用现有候选/观察/验证入口；本轮只做hermetic与历史捕获回放，没有新增模型推理。历史ACTION.3的真实目标完成缺口仍保留，不能将候选过滤当作模型质量已改善。当前累计本地11次/产品5次，工程估算68/100，并行写CLOSED。
 
-## 已调查的复用方向
+调研结论采用“按当前状态过滤模型可见动作”，只参考[官方动态工具方法](https://docs.langchain.com/oss/python/langchain/agents#dynamic-tools)，不引入LangChain或第二套调度。GitHub MCP成功核对[同版本LAYA基准边界](https://github.com/NandhaKishorM/laya/blob/6ab71fb4ce6bfd6f189e9b689eaadd67103ed9b6/docs/benchmarks.md)与官方evals；typed-decisions专用权重面向四种合成业务流程，不据发布方成绩推断Coding验收可用，不下载或切换权重。
 
-只读GitHub MCP成功核对官方同版本README Honest limits、staged-adoption与evals：官方自述基础权重在其typed-decisions任务域表现有限，建议shadow/审定标签/独立留出评估后再放行；这些上游结论不是本项目准确率，也不证明本次continue的因果原因。本机evals是已存在的模块文件，不是目录；原生JSONL校验/评价可复用，不安装新依赖。CrewAI quickstart含_DemoAgent关键词/mock回退，未执行、不能当真实模型成功证据。
-- [官方同版本分阶段接入](https://github.com/NandhaKishorM/laya/blob/6ab71fb4ce6bfd6f189e9b689eaadd67103ed9b6/docs/staged-adoption.md)
-- [官方同版本evals格式与校验](https://github.com/NandhaKishorM/laya/blob/6ab71fb4ce6bfd6f189e9b689eaadd67103ed9b6/docs/evals.md)
-- [官方基础权重限制](https://github.com/NandhaKishorM/laya/blob/6ab71fb4ce6bfd6f189e9b689eaadd67103ed9b6/README.md#honest-limits)
+复用boundActionCandidates与现有observation.ready：仅在有ready子任务时提供continue，始终保留wait/abort及每个有材料的明确complete目标。请求构造与候选表同次冻结，provider等待期间的状态变化不能补授未提供的key；最终资源/quota/fixed/session/停止门保持。无acceptanceMaterial的旧11动作路径不变，不强迫模型完成任务，也不把ready当实际准入。
 
-## 最小下一任务（候选，尚未实施）
+Codex独立typecheck及decision429/0、state-loop276/0、CLI98/0、workbench419/0、协作96/0、计划61/0、阶段材料47/0全部exit0，三份源码/测试在验证前后hash稳定。内存负控撤去ready条件后264/12、exit1，未修改源文件；三份历史真实响应离线回放：两个ready为空的旧continue被拒且dispatch0，有ready的旧continue仍可进入受控dispatch；不是新模型选择或准确率。
 
-下一候选LAYA-QUALITY.1：复用本机已安装laya.evals.py及原生validate/compare能力，先限定一小组领域验收样本和可独立核对的标签；多合理答案/保守行为或证据不足单列unknown，不把两个都可完成的任务硬指定其中一个当唯一真值。先调查/冻结输入、问题含义和接受标准，离线验证格式及已有捕获记录；不新建评测框架，不自动增加推理、调温度/阈值、下载新checkpoint、微调、改决策脑或用规则偷偷代替LAYA。若需新调用或实现，另行明确范围授权。
-先选6–8个足够小、能由独立事实判断的代表样本，明确什么是材料充分、缺失、矛盾与待执行。只有存在唯一审定标签的样本进入原生单标签准确率；两个都可完成、wait/abort可合理保守等保留shadow记录和接受集合，不为凑分数指定目标。覆盖真实问题含义而不是暗示模型选择complete；冻结问题/候选/材料/评判规则，确认现有输入窗完整可见，原生validate只校验格式，不运行模型。
+原生laya.evals_cli validate通过官方同版本12行公开fixture（exit0）；仅证明格式/解析器复用，不是Coding样本标签、模型运行或准确率。没有建设新评测框架，没有用上游分数代替本项目结论。
 
-优先使用已有捕获响应做可复核比较，区分接口正确、材料可见、动作效果、模型判断质量。审定方案后才提出一次有明确调用上限的对比验收；不建设排行榜/新服务/监控平台，不以小数据校准或微调作为已授权工作。没有产品实现需求时不启动worker；如发现实际代码缺陷，再给OpenCode限定任务。
+## 最小下一任务（尚未授权真实调用）
+
+下一候选LAYA-QUALITY.2：只在新增明确推理授权后，运行一次冻结的最小资格过滤验证，不重复大组试验。不改阈值/温度/模型，不用强制complete求通过；多个合理目标以接受集合记录，wait/abort如实保留，缺材料不得完成，有ready才允许continue。先离线检查请求与材料可见性，再提出精确次数/每次时限/失败即停范围；当前不启动任何新推理。
+
+未来只验证必要事实：无ready时不能出现continue，无交付时不能完成；有材料时可选择的每个目标均明确绑定，选择任何合法目标只验证其自身，不指定“必须第二个”。完整材料可见与动作有效分开检查；wait/abort不是自动失败，不伪造唯一标签，不把受控答案当实际选择。不自动重跑原来三例；新调用前先给出可复核的固定输入和精确上限。
 
 ## 保留边界
 
-统一512拒绝策略与多语言实际1024配置的注释P2、旧B45负控P2和温度P2保留。PARALLEL_WRITE=CLOSED，复杂参数动作、真实完整round与正式前端未验收，工程估算68/100不变。每轮只读audit，维护唯一基线并刷新ignored页面，再精确审核上传；页面/cache/audit/本机证据不入Git，main/共享index/其他dirty保持。
+本轮LAYA/产品Agent推理均0，未启动服务；累计本地11次与产品会话5/5不变。历史LAYA-ACTION.3仍BLOCKED（正向目标完成NOT OBSERVED），本片仅候选资格/受控闭环独立PASS；真实判断质量、完整round/工具/费用未认证。english512/192、multilingual1024/256的文案P2已纠正，统一保守512拒绝逻辑不变，保留支持范围限制、温度校准P2及旧B45负控维护P2。估算68/100、PARALLEL_WRITE=CLOSED，正式前端未进入。
+
+每轮只读audit，维护唯一基线并刷新ignored页面，再精确审核上传；页面/cache/audit/本机证据不入Git，main/共享index/其他dirty保持。本片结束，不自动进入新阶段。
