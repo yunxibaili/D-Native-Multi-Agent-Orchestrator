@@ -54,7 +54,7 @@ B3.1任务级原生Skill有界闭环独立PASS：显式 `--skill-catalog skills.
 
 ## 最短个人使用流程（MVP-READINESS.1）
 
-当前可做本地预检；完整真实round仍待本地LAYA健康和新调用范围确认。下面先演示最小“实现→测试”，不是多模型/费用/真实质量已认证。请在项目外新建空目录（例如`D:\workbench-demo`），不要把现有仓库发送给模型。
+当前可做本地预检；LAYA无推理owned启动/健康/停止路径已复核通过，默认不保留服务常驻。完整真实round仍待新调用范围确认及按同一路径启动服务。下面先演示最小“实现→测试”，不是多模型/费用/真实质量已认证。请在项目外新建空目录（例如`D:\workbench-demo`），不要把现有仓库发送给模型。
 
 在该目录保存三个文件；这些是示例，不替你改本机Agent配置：
 
@@ -102,6 +102,7 @@ node .\src\cli\index.ts round $objective --config "$demo\orchestrator.json" --cw
     npm run typecheck
 
 doctor 默认不查询模型目录；目录查询不是推理可调用或免费资格证明。
+LAYA-HEALTH.1已复核现有缓存启动可用，检查结束后按计划停止。若当前8077无监听，生产Node客户端返回ECONNREFUSED；不要把之前Python短超时推断为服务挂死，也不要擅自终止foreign进程。启动方式与历史/本轮证据见[LAYA说明](docs/DECISION_PROVIDER.md#3-本地服务)。
 先用已有健康入口检查LAYA（只GET，不推理）：
 
     node src/decision/check.ts --probe

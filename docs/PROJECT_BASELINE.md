@@ -56,6 +56,7 @@ README 是导航。本机 `project-progress/audit/` 是用户指定的只读第�
 | B4.6a | 最小同进程用户检查点独立通过；原报告文案P2在B5.1关闭，不等于完整监督/纠偏恢复 |
 | B4.6b | 独立PASS：同进程显式人工accept，等待后同步重读当前Task/Attempt/RunResult/停止事实，经同一Verification；非LAYA自动质量验收 |
 | MVP-READINESS.1 | 只读收敛PASS；真实CLI三个本地预检/门规则核对通过，最短执行仍需LAYA健康和新调用范围；非完整真实round验收 |
+| LAYA-HEALTH.1 | 独立PASS：无监听/生产Node ECONNREFUSED定位，一次owned离线双checkpoint CUDA加载+health+停止；非推理验收、非默认常驻 |
 | B5.1 | 独立 PASS WITH P2：已知session_failure的停止安全/具体model有界接力；仅受控当前链 |
 | B5 overall | NOT SEALED；真实协议掉线、完整工作流恢复及更广错误分类未验收 |
 | B4.7 | B4.7.3固定free duo代表样本独立PASS：两个真实模型、三个独立任务/会话、共享顺序demo；整体仍NOT SEALED（真实LAYA/工具/全流程费用未验）；累计产品会话5/5、剩0 |
@@ -387,13 +388,23 @@ B4.6b已独立通过：仅在既有`--checkpoint`中新增`accept <非空理由>
 
 MVP-READINESS.1只读收敛完成；不是完整真实round已通过。最短路径是两个sequential步骤（实现→测试），固定一个已核验Agent×Model，显式计划/阶段确认，逐步用户accept，最后保留现有原生Review和HumanGate。无需新增调度器、平台或前端。`--workflow-choice`只固定计划，`--select fixed`只固定pair，`--checkpoint`只接管单步验收；三者均不能替代LAYA分类及派发决策。
 
-本轮健康观察未通过：初次默认HTTP客户端GET超时；随后仅纠正观察路径，用无代理的直连http.client访问127.0.0.1:8077/health，2秒同样TimeoutError。没有POST、没有启动/停止服务，不能由此断言端口关闭、无进程或确定根因；当前健康状态未确认。既往服务已停止记录仍仅是当时事实，不冒充当前新观测。
+前轮MVP-READINESS.1只观察到Python短超时；现已由LAYA-HEALTH.1完成生产Node/OS监听定位及一次owned恢复验证，详见下一节。
 
 正式round会先collectAll(DEFAULT_PROVIDERS)，再分类/计划/配对和动作；不是只查询选中pair的纯本地预检。quota unavailable仅表示无接口，本身不阻断；unknown/not_fetched/not_connected/exhausted按原门拒绝。声明新pair仍为pair-specific unknown，不能通过Agent安装事实或用户池声明伪造可调用。默认原生Review也是一次独立执行，用户模型池不替其保证免费；不关闭Review来宣称真实整链成功。
 
 本片新增本地LAYA推理/产品Agent会话均0，累计本地12、产品5/5不变；旧fail-stop未用调用不自动重用。B4.6b受控PASS及历史QUALITY.2的真实wait/BLOCKED保持。全流程费用/当前free资格、原生Review及模型内部辅助调用未认证；声明池不约束Review/原生内部调用，budget-units不是美元上限。PARALLEL_WRITE=CLOSED，正式前端未进入，工程估算68/100保持。
 
-下一候选LAYA-HEALTH.1先只读定位本机健康超时，再按明确owned边界判断最小恢复。复用现有venv/固定缓存/Job launcher；不换模型、温度或权重，不重装，不新增框架，不碰不属于本轮的listener/进程。此候选不授权推理或产品Agent调用；如需启动服务，应先给出具体启动/时限/清理范围，执行后以validated Job空和owned清理证明结束。健康就绪后，新的真实个人demo仍须明确worker/reviewer模型、费用、会话和本地POST上限。
+下一项是MVP-E2E.1：在新增明确调用授权后，用新建隔离demo验证一次真实CLI最短“实现→测试→显式用户验收→原生Review→HumanGate”。先冻结worker具体Agent×Model、reviewer入口/模型与费用、用户输入方式、本地POST/原生会话上限及失败即停条件；不能把两次worker算成全部调用，也不能自动返回accept冒充用户看过产物。当前产品5/5已用完，未开放任何新推理；模型免费资格/Review费用未知就停止，不通过删Review或伪造available跑通。需要服务时复用本次已验证的owned启动/结束路径，不建设新的常驻机制。
+
+### 5.25 当前LAYA健康与服务生命周期（2026-10-15）
+
+LAYA-HEALTH.1独立PASS（无推理、非常驻）：Windows监听查询成功且8077无listener，生产Node TCP立即ECONNREFUSED、provider健康探测ok=false。因此当前就绪缺口是没有服务在该端口监听；前轮Python的2秒超时保留为当时观察，不作为服务卡死或模型故障的证明，也未追定Python观察差异的原因。无需据此改协议、重装或换权重。
+
+按已说明范围仅启动一次owned contained服务，复用现有LAYA0.3.21及D:/AI/laya-cache固定revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851；离线预加载english/multilingual，startup等待上限90秒，唯一进入本轮服务的请求是GET /health，无POST/推理。生产provider.probe返回ok=true；两checkpoint实际cuda、device_is_preference=false、两revision正确、CPU fallback计数0。该健康结果不证明真实决策质量或完整round。
+
+检查后主动协同停止：validated Job记录terminated/ActiveProcessesFinal=0、stopConfirmed=true；owned根已删、cleanupFailures0；随后独立Node连接为ECONNREFUSED。服务未保留常驻，这是本片预定清理，不是健康恢复又失败。10个已下载权重/tokenizer/config文件size/SHA256前后不变，209可版本文件在文档维护前raw hash不变；无安装/升级/全局或Agent配置修改、无foreign进程终止。
+
+本轮本地LAYA推理0、产品Agent会话0，累计本地12/产品5/5不变，旧fail-stop余次不重用。B4.6b人工兜底受控PASS、历史QUALITY.2真实wait/BLOCKED及完整自动质量缺口保持；健康成功不增加工程信用。PARALLEL_WRITE=CLOSED，正式前端未进入，估算68/100。未跑typecheck/fullsuite/旧真实推理脚本；源码/测试/native/runner未改。
 
 ## 6. 不可绕过的契约
 
@@ -424,6 +435,14 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 不新增 provider 网关、群聊平台、第二个调度器或通用工作流引擎来掩盖协议缺口。
 
 ## 8. 最近独立证据与上传记录
+
+2026-10-15 LAYA-HEALTH.1运行与Codex独立核对：LAYA-HEALTH.1独立PASS（无推理、非常驻）：Windows监听查询成功且8077无listener，生产Node TCP立即ECONNREFUSED、provider健康探测ok=false。因此当前就绪缺口是没有服务在该端口监听；前轮Python的2秒超时保留为当时观察，不作为服务卡死或模型故障的证明，也未追定Python观察差异的原因。无需据此改协议、重装或换权重。
+research-before-work已先核对本机serve.py/已有ManagedProcess健康harness与正式provider。GitHub MCP成功读取固定官方serve.py（blob ed08d39a…），核对GET health仅访问resident状态、不Router.load或推理，preload发生在create_app构造前；Microsoft Get-NetTCPConnection官方文档用于区分本地Listen及OwningProcess。仅复用既有Job launcher、owned helper、取消/validated控制记录及离线缓存，不新建manager/服务框架，也无产品开发缺口需委派worker。
+按已说明范围仅启动一次owned contained服务，复用现有LAYA0.3.21及D:/AI/laya-cache固定revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851；离线预加载english/multilingual，startup等待上限90秒，唯一进入本轮服务的请求是GET /health，无POST/推理。生产provider.probe返回ok=true；两checkpoint实际cuda、device_is_preference=false、两revision正确、CPU fallback计数0。该健康结果不证明真实决策质量或完整round。
+检查后主动协同停止：validated Job记录terminated/ActiveProcessesFinal=0、stopConfirmed=true；owned根已删、cleanupFailures0；随后独立Node连接为ECONNREFUSED。服务未保留常驻，这是本片预定清理，不是健康恢复又失败。10个已下载权重/tokenizer/config文件size/SHA256前后不变，209可版本文件在文档维护前raw hash不变；无安装/升级/全局或Agent配置修改、无foreign进程终止。
+本轮本地LAYA推理0、产品Agent会话0，累计本地12/产品5/5不变，旧fail-stop余次不重用。B4.6b人工兜底受控PASS、历史QUALITY.2真实wait/BLOCKED及完整自动质量缺口保持；健康成功不增加工程信用。PARALLEL_WRITE=CLOSED，正式前端未进入，估算68/100。未跑typecheck/fullsuite/旧真实推理脚本；源码/测试/native/runner未改。
+下一项是MVP-E2E.1：在新增明确调用授权后，用新建隔离demo验证一次真实CLI最短“实现→测试→显式用户验收→原生Review→HumanGate”。先冻结worker具体Agent×Model、reviewer入口/模型与费用、用户输入方式、本地POST/原生会话上限及失败即停条件；不能把两次worker算成全部调用，也不能自动返回accept冒充用户看过产物。当前产品5/5已用完，未开放任何新推理；模型免费资格/Review费用未知就停止，不通过删Review或伪造available跑通。需要服务时复用本次已验证的owned启动/结束路径，不建设新的常驻机制。
+证据laya-health1-listeners/connect/cache-before/loaded/independent-verification/review-state与logs仅ignored；audit严格只读。只有六份受影响文档与本机页更新，页面/缓存/服务探针/审计日志不入Git；精确上传当前审核文档，主HEAD/共享index/其他dirty文件保持。
 
 2026-10-15 MVP-READINESS.1只读审核：MVP-READINESS.1只读收敛完成；不是完整真实round已通过。最短路径是两个sequential步骤（实现→测试），固定一个已核验Agent×Model，显式计划/阶段确认，逐步用户accept，最后保留现有原生Review和HumanGate。无需新增调度器、平台或前端。`--workflow-choice`只固定计划，`--select fixed`只固定pair，`--checkpoint`只接管单步验收；三者均不能替代LAYA分类及派发决策。
 Codex实际核对CLI构造/阶段门/provider/quota/Assignment/最终Review与报告调用链，并通过GitHub MCP读取固定LAYA0.3.21 staged-adoption（SHA 9f3bed9a…）；沿用应用掌握执行和显式Review、限定切片的方法，不复制上游示例fallback或引入依赖。Node官方readline只作既有TTY/close边界核对（在线页v26，本机v24.18.1，不采用新版API）。无实施缺口需要本轮改源码，故没有开发worker；不把只读调查包装成委派开发。
@@ -1150,18 +1169,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-15T12:15:56.838677+00:00",
+  "updatedAt": "2026-10-15T12:33:15.102684+00:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "MVP-READINESS.1",
-    "name": "最短个人使用链：只读收敛完成",
+    "id": "LAYA-HEALTH.1",
+    "name": "无推理健康定位与owned恢复：独立通过",
     "status": "done",
-    "summary": "真实CLI预检0/2/2与六状态门规则核对通过；当前LAYA直连health超时、产品会话5/5用尽，尚非完整真实round。"
+    "summary": "OS无监听/Node拒绝连接定位；固定离线双checkpoint实际CUDA+health通过；Job空/owned清理，服务按计划停止，无新推理。"
   },
   "next": {
-    "id": "LAYA-HEALTH.1",
-    "name": "先只读定位本机健康超时，限定owned恢复范围",
+    "id": "MVP-E2E.1",
+    "name": "明确新调用范围后，仅一次真实CLI隔离demo与用户验收",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1237,14 +1256,6 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
   },
   "blockers": [
     {
-      "id": "LAYA-HEALTH-NOT-CONFIRMED",
-      "severity": "环境就绪未确认",
-      "title": "本机LAYA健康GET超时",
-      "detail": "无代理直连127.0.0.1:8077/health在2秒内未响应；本片未启动/停止服务，不能证明当前端口关闭或确定根因。",
-      "next": "先只读定位；复用现有venv/固定缓存，任何owned启动需明确时限/清理范围，不终止foreign进程，不发推理。",
-      "kind": "就绪前提，非新协议/调度故障"
-    },
-    {
       "id": "LAYA-ACTION-DOMAIN",
       "severity": "实测受阻",
       "title": "资格过滤后仍未观察真实目标完成",
@@ -1257,7 +1268,7 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "severity": "证据缺口",
       "title": "真实LAYA四预设通过，完整round尚未耦合验收",
       "detail": "本片未运行产品Agent/完整生产CLI、验收材料/Review/工具链；候选pair为合成输入，不认证真实availability/free。",
-      "next": "只读复核既有整链与精确请求预算；需要新增真实调用时单独明确次数/费用/数据，不重建已有功能。",
+      "next": "健康路径已重新验证；完整CLI需新调用授权及worker/Review/费用/输入方式/上限，复用同一owned服务路径，不擅自实跑。",
       "kind": "验收边界 / 四项接口缺口已关闭"
     },
     {
@@ -1649,14 +1660,21 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "status": "done",
       "deliverable": "README示例/预检/受限执行模板；LAYA/quota/Review/新调用授权分别说明",
       "evidence": "真实CLI 3例0/2/2，child/fetch/task/transcript均0；6状态门纯值核对；直连health超时；源码未变、无推理"
+    },
+    {
+      "id": "LAYA-HEALTH.1",
+      "title": "无推理健康定位与owned恢复",
+      "status": "done",
+      "deliverable": "现有离线固定缓存/生产provider/Job启动-健康-停止路径",
+      "evidence": "OS无listener/Node ECONNREFUSED；一次双checkpoint实际CUDA health ok；Job Active0/owned删除/cleanup0；缓存10和版本文件209不变，推理0"
     }
   ],
   "checks": [
-    "research-before-work：当前CLI真实调用链+固定官方LAYA staged-adoption，GitHub MCP读取成功",
-    "真实CLI预检：合法exit0、缺确认exit2、计划改动后旧digest exit2；child/fetch/task/transcript均0",
-    "Spawn Gate六状态纯值核对；无接口unavailable不伪装为额度unknown或available",
-    "本机LAYA直连health超时；未启动/停止服务、不推理，不从timeout推断进程或端口关闭",
-    "源码/测试/native/runner不变，无新worker/推理；累计本地12/产品5，估算68/100，PARALLEL_WRITE CLOSED"
+    "research-before-work：固定官方serve.py经GitHub MCP成功读取；Microsoft监听查询文档及本机源码核对",
+    "启动前OS监听查询成功无8077 listener；生产Node即ECONNREFUSED，不把Python短超时当服务挂死",
+    "一次owned contained预加载固定english/multilingual，实际cuda/revision正确，生产provider健康ok，无POST",
+    "取消后validated Job ActiveProcessesFinal=0、owned根删除、cleanup0、Node连接ECONNREFUSED；服务未常驻",
+    "缓存10文件SHA与209版本文件在文档前不变；推理0，累计本地12/产品5，估算68/100，并行写CLOSED"
   ],
   "sources": [
     {

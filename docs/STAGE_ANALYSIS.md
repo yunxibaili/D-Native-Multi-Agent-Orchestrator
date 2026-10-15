@@ -13,9 +13,13 @@ B4.6b已独立通过：仅在既有`--checkpoint`中新增`accept <非空理由>
 
 MVP-READINESS.1只读收敛完成；不是完整真实round已通过。最短路径是两个sequential步骤（实现→测试），固定一个已核验Agent×Model，显式计划/阶段确认，逐步用户accept，最后保留现有原生Review和HumanGate。无需新增调度器、平台或前端。`--workflow-choice`只固定计划，`--select fixed`只固定pair，`--checkpoint`只接管单步验收；三者均不能替代LAYA分类及派发决策。
 
-本轮健康观察未通过：初次默认HTTP客户端GET超时；随后仅纠正观察路径，用无代理的直连http.client访问127.0.0.1:8077/health，2秒同样TimeoutError。没有POST、没有启动/停止服务，不能由此断言端口关闭、无进程或确定根因；当前健康状态未确认。既往服务已停止记录仍仅是当时事实，不冒充当前新观测。
+LAYA-HEALTH.1独立PASS（无推理、非常驻）：Windows监听查询成功且8077无listener，生产Node TCP立即ECONNREFUSED、provider健康探测ok=false。因此当前就绪缺口是没有服务在该端口监听；前轮Python的2秒超时保留为当时观察，不作为服务卡死或模型故障的证明，也未追定Python观察差异的原因。无需据此改协议、重装或换权重。
 
-下一候选LAYA-HEALTH.1先只读定位本机健康超时，再按明确owned边界判断最小恢复。复用现有venv/固定缓存/Job launcher；不换模型、温度或权重，不重装，不新增框架，不碰不属于本轮的listener/进程。此候选不授权推理或产品Agent调用；如需启动服务，应先给出具体启动/时限/清理范围，执行后以validated Job空和owned清理证明结束。健康就绪后，新的真实个人demo仍须明确worker/reviewer模型、费用、会话和本地POST上限。
+按已说明范围仅启动一次owned contained服务，复用现有LAYA0.3.21及D:/AI/laya-cache固定revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851；离线预加载english/multilingual，startup等待上限90秒，唯一进入本轮服务的请求是GET /health，无POST/推理。生产provider.probe返回ok=true；两checkpoint实际cuda、device_is_preference=false、两revision正确、CPU fallback计数0。该健康结果不证明真实决策质量或完整round。
+
+检查后主动协同停止：validated Job记录terminated/ActiveProcessesFinal=0、stopConfirmed=true；owned根已删、cleanupFailures0；随后独立Node连接为ECONNREFUSED。服务未保留常驻，这是本片预定清理，不是健康恢复又失败。10个已下载权重/tokenizer/config文件size/SHA256前后不变，209可版本文件在文档维护前raw hash不变；无安装/升级/全局或Agent配置修改、无foreign进程终止。
+
+下一项是MVP-E2E.1：在新增明确调用授权后，用新建隔离demo验证一次真实CLI最短“实现→测试→显式用户验收→原生Review→HumanGate”。先冻结worker具体Agent×Model、reviewer入口/模型与费用、用户输入方式、本地POST/原生会话上限及失败即停条件；不能把两次worker算成全部调用，也不能自动返回accept冒充用户看过产物。当前产品5/5已用完，未开放任何新推理；模型免费资格/Review费用未知就停止，不通过删Review或伪造available跑通。需要服务时复用本次已验证的owned启动/结束路径，不建设新的常驻机制。
 
 ## 1. 推进原则
 
