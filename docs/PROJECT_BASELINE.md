@@ -50,7 +50,7 @@ README 是导航。本机 `project-progress/audit/` 是用户指定的只读第�
 | LAYA-CONTEXT.1 | 代码独立PASS；统一保守512限制保留，原容量文案P2在QUALITY.1关闭。双目标实际编码全量可见，超限/未知响应在动作应用前拒绝，无新增真实推理 |
 | LAYA-ACTION.3 | BLOCKED：修复后真实3/3仍continue；494/278/276 tokens均无state截断，协议/安全通过，正向目标完成仍未观察；不追加重试 |
 | LAYA-QUALITY.1 | 候选资格过滤独立PASS：无ready不提供continue、wait/abort及明确complete保留；历史回放/负控/定向测试通过，无新增推理；真实模型质量仍待验收 |
-| LAYA-QUALITY.2 | 离线准备PASS：固定2案例/4个原生tokenizer编码核对通过，未授权入口拒绝通过；真实模型NOT RUN，待新增最多2次本地调用答复 |
+| LAYA-QUALITY.2 | 真实BLOCKED：首例wait、任务不变，465 tokens零截断；1/2后fail-stop，第二例未运行；Job空/清理通过，未追加重试 |
 | B2 overall | NOT SEALED；账户资格/硬金额预算/付费与全流程费用未验收 |
 | B4.6a | 最小同进程用户检查点独立通过；原报告文案P2在B5.1关闭，不等于完整监督/纠偏恢复 |
 | B5.1 | 独立 PASS WITH P2：已知session_failure的停止安全/具体model有界接力；仅受控当前链 |
@@ -362,6 +362,16 @@ Codex独立typecheck及decision429/0、state-loop276/0、CLI98/0、workbench419/
 
 下一候选LAYA-QUALITY.2：只在新增明确推理授权后，运行一次冻结的最小资格过滤验证，不重复大组试验。不改阈值/温度/模型，不用强制complete求通过；多个合理目标以接受集合记录，wait/abort如实保留，缺材料不得完成，有ready才允许continue。先离线检查请求与材料可见性，再提出精确次数/每次时限/失败即停范围；当前不启动任何新推理。
 
+### 5.22 候选过滤后真实选择仍为安全等待（2026-10-15）
+
+LAYA-QUALITY.2真实验收BLOCKED（安全弃权，非错误完成）：用户明确新增最多2次本地调用后，首例实际选择wait，两个任务均保持to_verify、complete/dispatch各0。原生English输入465 tokens，与固定tokenizer预检一致且材料零截断；正向目标完成仍NOT OBSERVED。按fail-stop仅用1/2即停止，矛盾材料第二例NOT RUN，未重试、未改答案；不能据此断言LAYA普遍不可用、候选过滤无效或确定等待根因。
+
+同owned服务健康事实为固定revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851、English/multilingual实际CUDA、CPU fallback0；raw响应自身无revision，不补造。唯一validated Job记录ActiveProcessesFinal0、stopConfirmed=true、owned根已删除、cleanupFailures0。独立blocking connect明确ECONNREFUSED；最初connect_ex返回10035（WSAEWOULDBLOCK），未作为端口关闭证据，随后仅修正观察方法，没有重启服务或新增推理。10个缓存文件size/SHA256及209个可版本文件在维护文档前均不变。
+
+本轮真实1POST+同服务1次健康GET；本地累计12次（历史11+本次1），产品Agent仍5/5，本轮产品/云模型/新增付费0。实际harness exit1是正向完成未观察后的fail-stop，非协议异常；provider/loop合法接收wait，未调complete或派发。首例未完成后本次授权关闭，未消耗的1次不自动重用。无生产实现/测试/native/安装/配置改动，不为本片重复typecheck/fullsuite；并行写CLOSED，工程估算68/100保持。温度校准警告保留，confidence不作质量或硬门保证。
+
+下一候选LAYA-BOUNDARY.1为只读职责收敛：基于官方“typed decision不等于执行许可”和shadow/unknown方法，保留四项已真实通过的分类/计划/具体pair接口，沿既有Verification/Review/HumanGate核对完成事实由谁认证、当前请求含义是否与模型适用范围一致。先提出复用现有证据权威的最小方案，不新增大脑/框架、不让wait默认变complete、不改模型或温度，也不再盲目追加同类推理。此为建议，尚未实施；如需改生产行为另行限定任务，任何真实新调用另行明确范围。
+
 ## 6. 不可绕过的契约
 
 WorkerIdentity={taskId,agentId,modelId,sessionId}；不以模型品牌替代 Agent 能力事实。
@@ -391,6 +401,12 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 不新增 provider 网关、群聊平台、第二个调度器或通用工作流引擎来掩盖协议缺口。
 
 ## 8. 最近独立证据与上传记录
+
+2026-10-15 LAYA-QUALITY.2真实运行与Codex独立裁定：LAYA-QUALITY.2真实验收BLOCKED（安全弃权，非错误完成）：用户明确新增最多2次本地调用后，首例实际选择wait，两个任务均保持to_verify、complete/dispatch各0。原生English输入465 tokens，与固定tokenizer预检一致且材料零截断；正向目标完成仍NOT OBSERVED。按fail-stop仅用1/2即停止，矛盾材料第二例NOT RUN，未重试、未改答案；不能据此断言LAYA普遍不可用、候选过滤无效或确定等待根因。
+同owned服务健康事实为固定revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851、English/multilingual实际CUDA、CPU fallback0；raw响应自身无revision，不补造。唯一validated Job记录ActiveProcessesFinal0、stopConfirmed=true、owned根已删除、cleanupFailures0。独立blocking connect明确ECONNREFUSED；最初connect_ex返回10035（WSAEWOULDBLOCK），未作为端口关闭证据，随后仅修正观察方法，没有重启服务或新增推理。10个缓存文件size/SHA256及209个可版本文件在维护文档前均不变。
+本轮真实1POST+同服务1次健康GET；本地累计12次（历史11+本次1），产品Agent仍5/5，本轮产品/云模型/新增付费0。实际harness exit1是正向完成未观察后的fail-stop，非协议异常；provider/loop合法接收wait，未调complete或派发。首例未完成后本次授权关闭，未消耗的1次不自动重用。无生产实现/测试/native/安装/配置改动，不为本片重复typecheck/fullsuite；并行写CLOSED，工程估算68/100保持。温度校准警告保留，confidence不作质量或硬门保证。
+下一候选LAYA-BOUNDARY.1为只读职责收敛：基于官方“typed decision不等于执行许可”和shadow/unknown方法，保留四项已真实通过的分类/计划/具体pair接口，沿既有Verification/Review/HumanGate核对完成事实由谁认证、当前请求含义是否与模型适用范围一致。先提出复用现有证据权威的最小方案，不新增大脑/框架、不让wait默认变complete、不改模型或温度，也不再盲目追加同类推理。此为建议，尚未实施；如需改生产行为另行限定任务，任何真实新调用另行明确范围。
+复用同任务已核实的官方资料/冻结请求/现有contained服务入口；未启动开发worker，因为本片没有产品代码缺口。两个冻结请求与4项tokenizer核对属于离线准备；本轮只有首例是真实模型证据，不能把未运行的第二例写成拒绝通过。本机laya-quality2-evidence.json、independent-facts.json、review-state.json、token-audit.json、run.log和plan/check/cases仅ignored；audit只读。只同步6份受影响文档及本机页，精确上传独立BLOCKED快照，不合入main/改变共享index。
 
 2026-10-15 LAYA-QUALITY.2离线准备：LAYA-QUALITY.2离线准备已通过，真实推理NOT RUN：只冻结两个最小案例，正确材料任一明确目标可完成、明显矛盾材料应拒绝；不指定必须选择第二目标，不改问题含义或强制complete。复用既有TaskStore/生产请求构造/provider/decision loop/Verification和owned contained服务清理，不新增生产实现或评测框架。
 本轮先按research-before-work读取当前实现与audit；GitHub MCP成功读取官方固定v0.3.21 staged-adoption，核对shadow记录、审定标签、歧义/unknown及有限放行边界；网页GitHub抓取404未当作MCP失败。参考LangChain官方动态工具过滤方法，不引入框架、换权重、拟合阈值或调温度。上游方法只指导验证，不证明本机模型会作正确选择。
@@ -1088,18 +1104,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-15T18:41:32+08:00",
+  "updatedAt": "2026-10-15T18:55:05+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
     "id": "LAYA-QUALITY.2",
-    "name": "两个最小真实案例已冻结；离线准备通过",
-    "status": "partial",
-    "summary": "English465/324、多语言412/290 tokens均无截断；未授权入口拒绝。模型未启动，待新增最多2次本地调用范围答复。"
+    "name": "真实首例安全等待；明确目标完成仍未观察",
+    "status": "blocked",
+    "summary": "实际1/2后fail-stop，wait合法、465 tokens全量材料可见、任务未变；第二例未运行，Job空/清理通过，不再追试。"
   },
   "next": {
-    "id": "LAYA-QUALITY.2-RUN",
-    "name": "授权后一次性实跑冻结案例；失败即停、不重试",
+    "id": "LAYA-BOUNDARY.1",
+    "name": "只读收敛LAYA职责与既有验收权威；不追加推理",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1177,9 +1193,9 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     {
       "id": "LAYA-ACTION-DOMAIN",
       "severity": "实测受阻",
-      "title": "材料完整时仍未观察到真实明确目标完成",
-      "detail": "历史ACTION.3实际3次continue，complete0；QUALITY.1已关闭无ready仍提供continue的资格缺口，但没有新增真实选择证据。历史记录不追溯改判。",
-      "next": "基于已发布状态过滤法，未来只做一组冻结的最小真实验证；新调用须明确授权，不盲目追试、换权重或强制complete。",
+      "title": "资格过滤后仍未观察真实目标完成",
+      "detail": "QUALITY.2首例实际wait，输入465 tokens全量可见；安全弃权而非错误完成，不能认证完成能力或推断普遍准确率。第二例未运行。",
+      "next": "停止同类追试，先只读收敛职责与现有Verification/Review/HumanGate的证据责任；不换权重/阈值、不默认complete。",
       "kind": "领域适配/正向验收缺口，不是新接线或containment故障"
     },
     {
@@ -1555,19 +1571,19 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     {
       "id": "LAYA-QUALITY.2",
       "title": "最小真实资格过滤验收",
-      "status": "partial",
+      "status": "blocked",
       "deliverable": "固定正确/矛盾材料，真实目标与安全拒绝分别验证",
-      "evidence": "离线4项原生tokenizer通过、请求指纹固定、opt-in真实拒绝；真实推理NOT RUN，待新授权"
+      "evidence": "真实1POST选择wait，465 tokens零截断，complete0/任务不变；第二例NOT RUN；Job空/清理，累计本地12/产品5"
     }
   ],
   "checks": [
-    "按research-before-work先核对当前实现/官方staged-adoption及动态工具过滤文档；GitHub MCP读取成功",
-    "两个固定请求重复构造一致；无ready均不提供continue，每个目标与自身材料对应",
-    "同版本原生tokenizer4项：English465/324、多语言412/290，state零截断、marker齐全且可区分",
-    "未授权入口真实非零，服务/控制目录/证据文件未创建，状态未改；harness语法通过",
-    "209可版本文件离线准备后全未变；无产品代码缺口，不启worker，不重复typecheck/fullsuite",
-    "本轮LAYA/产品推理0，旧本地11/产品5不重置；拟新增最多2次具体授权选项待答复",
-    "基线/页面同步，估算68/100，并行写CLOSED；不能将准备通过当作真实模型质量通过"
+    "新增明确授权最多2；实际1POST+1GET，首例wait后fail-stop，第二例NOT RUN，无重试",
+    "真实provider/loop接受wait；两个任务保持to_verify，complete/dispatch各0，未猜测目标",
+    "实际English输入465 tokens与冻结请求/原生tokenizer一致，材料零截断，候选可区分且无continue",
+    "固定revision同服务实际CUDA/CPU fallback0；validated Job ActiveProcessesFinal0、owned根删除、cleanup0",
+    "blocking connection明确拒绝；不把最初connect_ex10035当关闭；10缓存摘要/209文件维护前不变",
+    "本轮产品/云模型0，本地累计12/产品5；本次fail-stop关闭授权，未消耗1次不自动重用",
+    "独立BLOCKED仅指正向完成未验收；历史代码PASS保持，工程估算68/100、并行写CLOSED；页面同步"
   ],
   "sources": [
     {
