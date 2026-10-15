@@ -283,7 +283,19 @@ async function workflowRound(opts: {
         }
         answers[key] = answerFor(key, q as { type: string; criteria: unknown }, overrides);
       }
-      return new Response(JSON.stringify({ model: 'laya-fixture', answers, routing: {}, usage: {} }), {
+      /*
+       * LAYA-CONTEXT.1: the real provider always reports routing/usage, and the
+       * bounded visibility guard reads checkpoint + input tokens from it. The
+       * fixture must therefore send a supported checkpoint and an UNDER-budget token
+       * count, or every bounded cycle would (correctly) be refused. This is
+       * explicitly CONTROLLED fixture metadata, not a real tokenizer measurement.
+       */
+      return new Response(JSON.stringify({
+        model: 'laya-fixture',
+        answers,
+        routing: { model: 'english', reason: 'controlled fixture metadata', detection: { script: 'latin', language: 'en' }, revisions: {} },
+        usage: { input_tokens: 128, output_tokens: 0 },
+      }), {
         status: 200, headers: { 'content-type': 'application/json' },
       });
     }) as unknown as typeof fetch,

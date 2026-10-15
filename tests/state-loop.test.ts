@@ -46,6 +46,8 @@ import {
   runDecisionCycle,
   orchestrationDecisionRequest,
   extractAction,
+  ACCEPTANCE_MATERIAL_FIELD,
+  ORCHESTRATION_ACTION_ID,
 } from '../src/orchestration/decision-loop.ts';
 import type { AcceptanceMaterial } from '../src/orchestration/decision-loop.ts';
 import { createLayaDecisionProvider } from '../src/decision/laya.ts';
@@ -1111,8 +1113,19 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
         : { ok: false, code: applied.code, reason: applied.reason };
     };
 
-  /** A REAL Laya provider over a seam that emits ONLY native 0.3.21-shaped answers. */
-  const nativeProvider = (choose: (offered: readonly string[]) => string): { provider: DecisionProvider; seen: string[][] } => {
+  /**
+   * A REAL Laya provider over a seam that emits ONLY native 0.3.21-shaped answers.
+   *
+   * LAYA-CONTEXT.1: the seam now also reports the routing/usage metadata the native
+   * provider always sends, because the bounded visibility guard reads it. `meta`
+   * lets a test supply EXPLICITLY CONTROLLED metadata (checkpoint + input tokens);
+   * the default is a supported english checkpoint well under budget. This is
+   * controlled fixture metadata, NOT a real tokenizer measurement.
+   */
+  const nativeProvider = (
+    choose: (offered: readonly string[]) => string,
+    meta: { checkpoint?: string; inputTokens?: unknown; usage?: Record<string, unknown>; routing?: Record<string, unknown> } = {},
+  ): { provider: DecisionProvider; seen: string[][] } => {
     const seen: string[][] = [];
     const fetchImpl = (async (_url: unknown, init?: { body?: string }) => {
       const body = JSON.parse(String(init?.body ?? '{}')) as { questions?: Record<string, { type: string; criteria?: unknown }> };
@@ -1131,7 +1144,14 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
           action: { act_probability: 1 },
         };
       }
-      return new Response(JSON.stringify({ model: 'laya-test', answers, routing: {} }), {
+      const routing = meta.routing ?? {
+        model: meta.checkpoint ?? 'english',
+        reason: 'controlled fixture metadata',
+        detection: { script: 'latin', language: 'en' },
+        revisions: {},
+      };
+      const usage = meta.usage ?? { input_tokens: meta.inputTokens ?? 200, output_tokens: 0 };
+      return new Response(JSON.stringify({ model: 'laya-test', answers, routing, usage }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       });
@@ -1391,6 +1411,193 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
     check('LAYA-ACTION: a bounded request does NOT advertise unsupported parameter actions',
       !boundedOffered.some((k) => ['reassign', 'rework', 'retry', 'add_task', 'split_task', 'parallelize', 'replan'].includes(k)),
       boundedOffered.join(','));
+  }
+
+  // ---------------------------------------------------------------------------
+  // 14. LAYA-CONTEXT.1: the bounded request is compact and the native visibility
+  // guard is fail-closed before dispatch.
+  // ---------------------------------------------------------------------------
+  section('Laya-context 14. bounded request compacts metadata but preserves exact evidence');
+  {
+    const o = makeTree([{ id: 't1', toVerify: true }, { id: 't2', toVerify: true }]);
+    const objective = 'obj — 多行\nsecond line\ttab; tail: 末尾 ✓';
+    const criteria1 = 't1 :: member — deliverable: add\nmultiline criteria';
+    const output1 = 'line1: add(2, 3) returns 5\nДругая строка — 中文 ✓\nTAIL_SENTINEL_1';
+    const criteria2 = 't2 :: member — deliverable: subtract';
+    const output2 = 'subtract(8, 3) returns 5\nTAIL_SENTINEL_2';
+    const material = materialFor(objective, [
+      { taskId: 't1', criteria: criteria1, output: output1 },
+      { taskId: 't2', criteria: criteria2, output: output2 },
+    ]);
+    const obs = observeTasks(o.getStore(), { now: NOW, rootTaskId: 'r' });
+    const req = orchestrationDecisionRequest(obs, { acceptanceMaterial: material });
+    const state = req.state as Record<string, string>;
+    const projected = JSON.parse(state[ORCHESTRATION_ACTION_ID]!) as Record<string, unknown> & {
+      tasks?: Array<Record<string, unknown>>;
+    };
+    const projectedMaterial = JSON.parse(state[ACCEPTANCE_MATERIAL_FIELD]!) as {
+      objective: string;
+      entries: Array<Record<string, unknown>>;
+    };
+
+    check('compact: the bounded next_action carries only the status facts',
+      Object.keys(projected).sort().join(',') === 'awaitingVerification,blocked,ready,rootTaskId,running,tasks',
+      Object.keys(projected).join(','));
+    check('compact: each task is only {taskId,status}, and BOTH same-task targets survive',
+      Array.isArray(projected.tasks) && projected.tasks.length === 3 &&
+        projected.tasks.every((t) => Object.keys(t).sort().join(',') === 'status,taskId') &&
+        projected.tasks.some((t) => t.taskId === 't1') && projected.tasks.some((t) => t.taskId === 't2'),
+      JSON.stringify(projected.tasks));
+    const projectedText = JSON.stringify(projected);
+    check('compact: repeated provenance/state metadata is gone from the view',
+      !/agentId|retryCount|observedAt|artifactCount|unmetDependencies|generation|staleReason/.test(projectedText),
+      projectedText);
+    check('compact: the full general projection HAD that provenance (a real reduction)',
+      /agentId/.test(toDecisionState(obs)) && toDecisionState(obs).length > projectedText.length,
+      `full=${toDecisionState(obs).length} compact=${projectedText.length}`);
+
+    check('compact: the objective is preserved exactly',
+      projectedMaterial.objective === objective, JSON.stringify(projectedMaterial.objective));
+    const e1 = projectedMaterial.entries.find((e) => e.taskId === 't1');
+    const e2 = projectedMaterial.entries.find((e) => e.taskId === 't2');
+    check('compact: BOTH entries survive with exact criteria and output (unicode/multiline/tail)',
+      e1 !== undefined && e2 !== undefined &&
+        e1.acceptanceCriteria === criteria1 && e1.output === output1 &&
+        e2.acceptanceCriteria === criteria2 && e2.output === output2,
+      JSON.stringify(projectedMaterial.entries));
+    check('compact: the essential evidence flags survive',
+      e1 !== undefined && e1.executionMissing === false && e1.acceptanceCriteriaMissing === false &&
+        e1.outputTruncated === false && e1.boundedForRequest === false,
+      JSON.stringify(e1));
+    check('compact: per-entry provenance is dropped from the projection',
+      projectedMaterial.entries.every((e) =>
+        !('attemptId' in e) && !('agentId' in e) && !('modelId' in e) && !('transcriptPath' in e) &&
+        !('artifacts' in e) && !('runState' in e) && !('exitCode' in e) && !('runError' in e) && !('taskType' in e)),
+      JSON.stringify(projectedMaterial.entries[0]));
+
+    const legacy = orchestrationDecisionRequest(obs);
+    check('compact: a no-material legacy request is NOT compacted (full state + parameter contract)',
+      (legacy.state as Record<string, string>)[ORCHESTRATION_ACTION_ID] === toDecisionState(obs) &&
+        (legacy.state as Record<string, string>).action_parameters !== undefined &&
+        (legacy.state as Record<string, string>)[ACCEPTANCE_MATERIAL_FIELD] === undefined,
+      Object.keys(legacy.state as Record<string, string>).join(','));
+  }
+
+  section('Laya-context 14b. native token/checkpoint visibility is fail-closed before dispatch');
+  {
+    const oneEligible = (): { o: Orchestrator; material: AcceptanceMaterial } => {
+      const o = makeTree([{ id: 't1', toVerify: true }]);
+      const material = materialFor('guard', [{ taskId: 't1', criteria: 't1 :: member', output: 't1 produced' }]);
+      return { o, material };
+    };
+    type NativeMeta = Parameters<typeof nativeProvider>[1];
+    const runGuard = async (meta: NativeMeta): Promise<{
+      status: string; code: string | null; completed: string[];
+    }> => {
+      const { o, material } = oneEligible();
+      const completed: string[] = [];
+      const { provider } = nativeProvider(() => 'complete', meta);
+      const before = JSON.stringify(o.getStore().all());
+      const cycle = await runDecisionCycle({
+        store: o.getStore(),
+        scheduler: new TaskScheduler({ orchestrator: o, cwd: dir }),
+        provider,
+        rootTaskId: 'r',
+        acceptanceMaterial: material,
+        capabilities: { complete: completeCapOf(o, completed) },
+      });
+      const after = JSON.stringify(o.getStore().all());
+      check(`guard-silent: [${JSON.stringify(meta)}] changed nothing`,
+        after === before && completed.length === 0, `changed=${after !== before} completed=${completed.join(',')}`);
+      return { status: cycle.status, code: cycle.status === 'invalid' ? cycle.error.code : null, completed };
+    };
+
+    const rejects: Array<{ label: string; meta: NativeMeta; code: string }> = [
+      { label: 'input tokens AT the 512 budget', meta: { inputTokens: 512 }, code: 'token-budget-saturated' },
+      { label: 'input tokens OVER the budget', meta: { inputTokens: 900 }, code: 'token-budget-saturated' },
+      { label: 'missing token metadata', meta: { usage: {} }, code: 'token-visibility-unavailable' },
+      { label: 'null token metadata', meta: { usage: { input_tokens: null, output_tokens: 0 } }, code: 'token-visibility-unavailable' },
+      { label: 'invalid (string) token metadata', meta: { usage: { input_tokens: 'nope', output_tokens: 0 } }, code: 'token-visibility-unavailable' },
+      { label: 'zero token metadata', meta: { usage: { input_tokens: 0, output_tokens: 0 } }, code: 'token-visibility-unavailable' },
+      { label: 'unsupported checkpoint', meta: { checkpoint: 'typed-decisions', inputTokens: 100 }, code: 'unsupported-native-checkpoint' },
+      { label: 'unknown checkpoint', meta: { routing: {} }, code: 'unsupported-native-checkpoint' },
+    ];
+    for (const c of rejects) {
+      const r = await runGuard(c.meta);
+      check(`guard: ${c.label} is refused before dispatch ([${c.code}])`,
+        r.status === 'invalid' && r.code === c.code, `${r.status}/${String(r.code)}`);
+      check(`guard: ${c.label} dispatched/mutated nothing`, r.completed.length === 0, r.completed.join(','));
+    }
+
+    for (const checkpoint of ['english', 'multilingual'] as const) {
+      const { o, material } = oneEligible();
+      const completed: string[] = [];
+      const { provider, seen } = nativeProvider(
+        (offered) => (offered.includes('complete') ? 'complete' : 'wait'),
+        { checkpoint, inputTokens: 200 },
+      );
+      const cycle = await runDecisionCycle({
+        store: o.getStore(),
+        scheduler: new TaskScheduler({ orchestrator: o, cwd: dir }),
+        provider,
+        rootTaskId: 'r',
+        acceptanceMaterial: material,
+        capabilities: { complete: completeCapOf(o, completed) },
+      });
+      check(`guard: a valid ${checkpoint} answer under budget applies normally to the SAME target`,
+        cycle.status === 'ok' && completed.length === 1 && completed[0] === 't1' && seen.length === 1,
+        `${cycle.status} completed=${completed.join(',')}`);
+    }
+
+    // Evidence too long to fit is PRESERVED exactly in the projection (never sliced),
+    // and a request the provider reports as saturated is refused with no retry.
+    const longOutput = `${'LE'.repeat(2000)}\nTAIL_LONG_SENTINEL`;
+    {
+      const { o } = oneEligible();
+      const longMaterial = materialFor('long', [{ taskId: 't1', criteria: 't1 :: member', output: longOutput }]);
+      const obs = observeTasks(o.getStore(), { now: NOW, rootTaskId: 'r' });
+      const req = orchestrationDecisionRequest(obs, { acceptanceMaterial: longMaterial });
+      const parsed = JSON.parse((req.state as Record<string, string>)[ACCEPTANCE_MATERIAL_FIELD]!) as {
+        entries: Array<{ output: string }>;
+      };
+      check('guard: long material is preserved EXACTLY in the projection (no slicing)',
+        parsed.entries[0]?.output === longOutput, `len=${parsed.entries[0]?.output.length}`);
+    }
+    {
+      const { o, material } = oneEligible();
+      const completed: string[] = [];
+      const before = JSON.stringify(o.getStore().all());
+      const { provider, seen } = nativeProvider(() => 'complete', { inputTokens: 512 });
+      const cycle = await runDecisionCycle({
+        store: o.getStore(),
+        scheduler: new TaskScheduler({ orchestrator: o, cwd: dir }),
+        provider,
+        rootTaskId: 'r',
+        acceptanceMaterial: material,
+        capabilities: { complete: completeCapOf(o, completed) },
+      });
+      check('guard: a saturated request never completes, defaults, retries or mutates',
+        cycle.status === 'invalid' && cycle.error.code === 'token-budget-saturated' && completed.length === 0 &&
+          JSON.stringify(o.getStore().all()) === before && seen.length === 1,
+        `${cycle.status}/${cycle.status === 'invalid' ? cycle.error.code : ''} calls=${seen.length}`);
+    }
+
+    // A non-LAYA bounded seam is NOT subject to the native budget guard.
+    {
+      const { o, material } = oneEligible();
+      const completed: string[] = [];
+      const cycle = await runDecisionCycle({
+        store: o.getStore(),
+        scheduler: new TaskScheduler({ orchestrator: o, cwd: dir }),
+        provider: rawProvider('complete'),
+        rootTaskId: 'r',
+        acceptanceMaterial: material,
+        capabilities: { complete: completeCapOf(o, completed) },
+      });
+      check('guard: a non-LAYA bounded seam is unaffected by the native budget guard',
+        cycle.status === 'ok' && completed.length === 1 && completed[0] === 't1',
+        `${cycle.status}/${completed.join(',')}`);
+    }
   }
 
   rmSync(dir, { recursive: true, force: true });

@@ -36,8 +36,9 @@
  */
 
 import { buildDispatchReceipt, type DispatchReceipt } from './dispatch-receipt.ts';
-import type { DecisionProvider, DecisionRequest } from '../decision/types.ts';
+import type { DecisionProvider, DecisionRequest, DecisionResponse } from '../decision/types.ts';
 import { DecisionError } from '../decision/errors.ts';
+import { layaMetadata } from '../decision/laya.ts';
 import { observeTasks, toDecisionState, type ObserveOptions, type TaskObservation } from './observation.ts';
 import {
   applyDecision,
@@ -261,12 +262,150 @@ function boundActionCandidates(
       action: 'complete',
       taskId: task.taskId,
       description:
-        `accept task "${task.taskId}" (${task.taskType}) only if the SAME task's own recorded ` +
-        `execution output meets its own acceptance criteria; judge that evidence, never accept on ` +
-        `status alone. Criteria: ${entry.acceptanceCriteria}`,
+        `accept task "${task.taskId}" (${task.taskType}) only if the SAME task's own acceptance ` +
+        `material shows its own execution met its criteria; never accept on status alone. ` +
+        `Criteria: ${entry.acceptanceCriteria}`,
     });
   }
   return candidates;
+}
+
+/**
+ * LAYA-CONTEXT.1: the compact `next_action` status projection for a bounded request.
+ *
+ * The full `toDecisionState()` view is deliberately rich for the general
+ * vocabulary (dependencies, retries, staleness, generations, artifact counts).
+ * The bounded workflow decision reads none of that: its whole space is
+ * continue/wait/abort plus one `complete` key per eligible `to_verify` task,
+ * and the evidence a `complete` judgement is made from travels in the SEPARATE
+ * acceptance-material key. Carrying the rich view anyway is what pushed the
+ * installed 512-token checkpoint into right-truncation, dropping the material
+ * entirely (observed: 701 state tokens, 318 retained, acceptance_material
+ * absent).
+ *
+ * So the bounded projection keeps the facts a real choice needs — the task
+ * statuses and the ready/running/blocked/awaiting sets — and drops the
+ * provenance/duplication that is already stated per-entry in the material.
+ * Same-task identity (taskId) and status survive; a task's agent/model/type,
+ * dependencies, retries, staleness and artifact counts do not.
+ *
+ * This compacts the model-facing PROJECTION only. The authoritative
+ * observation, the candidate snapshot and the material records remain whole.
+ */
+function compactNextActionState(observation: TaskObservation): string {
+  return JSON.stringify({
+    rootTaskId: observation.rootTaskId,
+    ready: observation.ready,
+    running: observation.running,
+    blocked: observation.blocked,
+    awaitingVerification: observation.awaitingVerification,
+    tasks: observation.tasks.map((t) => ({ taskId: t.taskId, status: t.status })),
+  });
+}
+
+/**
+ * LAYA-CONTEXT.1: the compact acceptance material for a bounded request.
+ *
+ * The objective and BOTH (all) same-task entries are kept EXACTLY — criteria,
+ * output (multiline/unicode/tail included) and the essential honesty flags.
+ * Provenance that is not judged on (attemptId, agentId, modelId, taskType,
+ * transcriptPath, artifacts, runState, exitCode, runError) is dropped from the
+ * model-facing projection; those facts remain in the authoritative material and
+ * attempt/result stores. No field is summarised and no output is sliced here:
+ * a value the caller wants bounded is bounded by the caller, and the
+ * `outputTruncated`/`boundedForRequest` flags keep that visible to the model.
+ */
+function compactAcceptanceMaterial(material: AcceptanceMaterial): string {
+  return JSON.stringify({
+    objective: material.objective,
+    entries: material.entries.map((e) => ({
+      taskId: e.taskId,
+      acceptanceCriteria: e.acceptanceCriteria,
+      output: e.output,
+      executionMissing: e.executionMissing,
+      acceptanceCriteriaMissing: e.acceptanceCriteriaMissing,
+      outputTruncated: e.outputTruncated,
+      boundedForRequest: e.boundedForRequest,
+    })),
+  });
+}
+
+/**
+ * LAYA-CONTEXT.1: the fixed input budget of the currently supported native config.
+ *
+ * The installed LAYA 0.3.21 `english` (and `multilingual`) checkpoint truncates
+ * the composed sequence at the `max_len` its shipped config pins, and that
+ * truncation right-cuts the serialized state. Measured offline against the
+ * pinned commit, `max_len` is 512, of which `head_max_len` 192 is consumed by
+ * the options and instructions before any state.
+ *
+ * The boundary is ambiguous — a request at exactly the budget may or may not
+ * have content dropped — so this guard refuses AT the bound rather than
+ * assuming the retained prefix was sufficient. A different checkpoint or
+ * budget is NOT silently accepted: the current evidence only covers this one.
+ */
+const BOUNDED_NATIVE_SUPPORTED_CHECKPOINTS: ReadonlySet<string> = new Set(['english', 'multilingual']);
+const BOUNDED_NATIVE_INPUT_BUDGET = 512;
+
+/**
+ * LAYA-CONTEXT.1: fail-closed visibility defence for a bounded native decision.
+ *
+ * WHAT IT CAN SEE. The only token-visibility signal available AFTER a real
+ * response is the provider's own `usage.input_tokens`, read through the
+ * EXISTING `layaMetadata()` reader. TypeScript cannot compute this count before
+ * sending (there is no tokenizer here, and inventing a chars-per-token constant
+ * would be a fake guarantee), so this is a post-response refusal, not a
+ * pre-send bound. It consumes a decision request, then refuses to act.
+ *
+ * WHAT IT REFUSES, for a bounded request answered by the native provider:
+ *   - an unknown/unsupported checkpoint (only english/multilingual are covered);
+ *   - missing / null / nonpositive / non-finite token metadata, because
+ *     "could not see whether it fit" must not read as "it fit";
+ *   - saturation at or past the fixed budget, because the boundary is ambiguous
+ *     and the state may have been right-truncated.
+ *
+ * WHAT IT DOES NOT DO: it never retries, never dispatches, never mutates, never
+ * falls back to a default `complete`, and never treats a status as a pass.
+ *
+ * Generic non-LAYA seams are untouched: a provider whose answer did not come
+ * from Laya has no such budget metadata and keeps its existing behaviour, and
+ * the legacy (no-material) parameter path is never guarded here.
+ *
+ * EVIDENCE HONESTY: the unit fixtures that exercise this guard supply
+ * EXPLICITLY CONTROLLED metadata; that is a test of the guard's logic, not a
+ * real tokenizer measurement of any request.
+ */
+function assertBoundedNativeVisibility(response: DecisionResponse): void {
+  if (response.provider.name !== 'laya') return;
+  const meta = layaMetadata(response);
+
+  if (!BOUNDED_NATIVE_SUPPORTED_CHECKPOINTS.has(meta.checkpoint)) {
+    throw new DecisionValidationError(
+      'unsupported-native-checkpoint',
+      `the bounded workflow request was answered by native checkpoint ${JSON.stringify(meta.checkpoint)}, but ` +
+        `only english/multilingual are the currently verified configs; an unverified checkpoint's budget cannot ` +
+        `be assumed, so the decision is refused`,
+    );
+  }
+
+  const tokens = meta.inputTokens;
+  if (tokens === null || !Number.isFinite(tokens) || tokens <= 0) {
+    throw new DecisionValidationError(
+      'token-visibility-unavailable',
+      `the bounded workflow request was answered without a usable input-token count ` +
+        `(got ${JSON.stringify(meta.inputTokens)}); without it the request's fit against checkpoint ` +
+        `${JSON.stringify(meta.checkpoint)} cannot be verified, so the decision is refused rather than assumed to fit`,
+    );
+  }
+
+  if (tokens >= BOUNDED_NATIVE_INPUT_BUDGET) {
+    throw new DecisionValidationError(
+      'token-budget-saturated',
+      `the bounded workflow request used ${tokens} input tokens, at or past the supported checkpoint budget of ` +
+        `${BOUNDED_NATIVE_INPUT_BUDGET}; the checkpoint right-truncates the serialized state at that budget, so the ` +
+        `acceptance material may not have reached the model. Refusing rather than judging on a possibly-dropped view`,
+    );
+  }
 }
 
 /**
@@ -329,9 +468,12 @@ function buildOrchestrationRequest(
         },
       },
       state: {
-        [ORCHESTRATION_ACTION_ID]: toDecisionState(observation),
-        // B4.0b: the material a `complete` judgement is actually MADE from.
-        [ACCEPTANCE_MATERIAL_FIELD]: JSON.stringify(options.acceptanceMaterial),
+        // LAYA-CONTEXT.1: the bounded space reads statuses only, so the rich
+        // general projection is compacted here (see `compactNextActionState`).
+        [ORCHESTRATION_ACTION_ID]: compactNextActionState(observation),
+        // B4.0b: the material a `complete` judgement is actually MADE from,
+        // compacted to the judged facts (see `compactAcceptanceMaterial`).
+        [ACCEPTANCE_MATERIAL_FIELD]: compactAcceptanceMaterial(options.acceptanceMaterial),
       },
     },
     candidates,
@@ -543,6 +685,13 @@ export async function runDecisionCycle(options: DecisionLoopOptions): Promise<De
       },
     );
     const response = await options.provider.decide(built.request);
+    // LAYA-CONTEXT.1: for a BOUNDED request answered by the native provider, a
+    // post-response, fail-closed visibility check runs BEFORE the answer is read.
+    // If the request was not bounded (`candidates === null`) or the answer did not
+    // come from Laya, this is a no-op and the legacy/generic path is unchanged.
+    if (built.candidates !== null) {
+      assertBoundedNativeVisibility(response);
+    }
     // Resolve against the EXACT snapshot the request offered (`built.candidates`),
     // never a fresh derivation. `undefined` preserves the legacy parameter path.
     rawAction = extractAction(response, built.candidates ?? undefined);

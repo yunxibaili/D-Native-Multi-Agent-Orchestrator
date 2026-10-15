@@ -47,6 +47,7 @@ README 是导航。本机 `project-progress/audit/` 是用户指定的只读第�
 | LAYA-ROUND.1 | 只读审核BLOCKED：原生动作输出缺complete必需taskId，协议反例复现；四预设PASS保持，无新推理/修复 |
 | LAYA-ACTION.1 | 代码独立PASS；整体PASS WITH P2（既有B45负控定位）。workflow候选明确绑定complete目标，原生形状CLI回归通过，无真实推理 |
 | LAYA-ACTION.2 | BLOCKED：真实3/3均continue；协议安全通过但正向目标未被选择，离线编码证明双目标验收材料被512-token预算截掉；无追加调用 |
+| LAYA-CONTEXT.1 | 代码独立PASS；整体PASS WITH P2（多语言实际容量注释错误/保守512）。双目标实际编码全量可见，超限/未知响应在动作应用前拒绝，无新增真实推理 |
 | B2 overall | NOT SEALED；账户资格/硬金额预算/付费与全流程费用未验收 |
 | B4.6a | 最小同进程用户检查点独立通过；原报告文案P2在B5.1关闭，不等于完整监督/纠偏恢复 |
 | B5.1 | 独立 PASS WITH P2：已知session_failure的停止安全/具体model有界接力；仅受控当前链 |
@@ -331,6 +332,12 @@ OpenCode指定模型首轮实现、正常完成，Codex独立diff/8项定向检�
 LAYA-ACTION.2 本轮真实3/3本地请求均选择continue，生产provider/decision loop解析和受控拒绝通过，未调用complete、任务状态未变；因此明确目标的正向验收NOT OBSERVED，整体BLOCKED。离线同tokenizer/build_sequence复算确认双目标state701 tokens只保留318、丢383，acceptance_material整段不在模型输入；五个选项marker和token span仍各自独立。此为证据可见性P1，不能仅据此断言三次continue的根因。服务已停/Job空/owned清理通过，固定缓存10文件摘要不变；无产品Agent/云模型/新增费用/生产修改。
 下一候选LAYA-CONTEXT.1：先调查本机0.3.21实际编码预算与已有有界上下文能力，限定最小workflow输入压缩和超限拒绝方案；确保每个可完成候选的同任务criteria/output可进入实际输入，不能只把材料移到前面而截掉另一目标，也不靠放大checkpoint max_len、改温度、换模型或新建框架求通过。实施及新真实推理另行授权；本轮3次已耗尽、产品原生仍5/5，失败不重试。
 
+### 5.19 决策输入压缩与响应后可见性保护（2026-10-15）
+
+LAYA-CONTEXT.1代码独立PASS，整体PASS WITH P2：bounded workflow状态/材料只去掉重复元数据，同任务objective/criteria/output及缺失/截断标记完整保留；原生响应后、任何动作应用前检查checkpoint与token信息，缺失/非正/非有限/未知checkpoint或达到保守512线拒绝，不重试。无material旧11动作与非LAYA通用seam保持。离线实际tokenizer验证双目标原样本由丢383 tokens变为全量可见：English300状态tokens、完整序列494；multilingual完整序列442。中英文/Unicode/长材料共8回放，长材料确认超限；不是模型forward或真实选择验收。
+守卫在响应后生效，仍消耗一次决策调用，不是发请求前精确计数。实际固定english配置512/192，multilingual为1024/256；代码统一以512保守拒绝，多语言可能在本可容纳时被拒。源码注释和worker报告误把两者容量都写512，独立审核保留P2并在文档纠正，不把它提升为事实；后续限定维护纠正文案，当前不扩大预算。仅已固定配置假设内的有界保护，不认证任意服务配置/模型判断质量或完整round。
+下一候选LAYA-ACTION.3：使用修复后的生产provider/loop，准备最多3次新的本地合成动作/目标验收（双目标、缺交付、ready各一次），每次90秒，失败即停、不重试；目前未获新增推理授权。继续只用固定离线缓存，不调用产品Agent/云模型、不发送仓库代码、不新增付费。已有本地8次与产品5/5均保持；wait/abort/continue如实记，不改答案或自动追试。
+
 ## 6. 不可绕过的契约
 
 WorkerIdentity={taskId,agentId,modelId,sessionId}；不以模型品牌替代 Agent 能力事实。
@@ -360,6 +367,13 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 不新增 provider 网关、群聊平台、第二个调度器或通用工作流引擎来掩盖协议缺口。
 
 ## 8. 最近独立证据与上传记录
+
+2026-10-15 LAYA-CONTEXT.1 最小输入可见性修复独立PASS WITH P2：用户要求继续快速推进，授权本片开发但没有新增真实推理授权。Codex只读audit，GitHub MCP实际读取官方固定6ab71fb4的common.py（blob e533932001d3b328f705c8b0d5c3b4003df17010），核对dict右截断与head/state预算；当前搜索结果仅作线索，不据新版本增大max_len。不存在的docs/production.md读取失败不冒充MCP认证失败。
+实际opencode-agent implement两轮，均实际opencode-go/deepseek-v4.1-flash：首轮ses_ec18e65f0ffe5g5RB0iyhI1hdo因项目外安装源码read权限拒绝提前结束，wrapper0但native finish=tool-calls、零改动，未当完成；最后一次限定重派只用仓内证据，ses_ec18bdc16ffeRCNpGwTAI7MPx0正常finish=stop、49条assistant消息模型一致、完整报告。无第三轮/权限覆盖。worker仅改decision-loop.ts、state-loop.test.ts、b40a-cli-workflow.test.ts；未改CLI/配置/安装包/其他源码/依赖。
+LAYA-CONTEXT.1代码独立PASS，整体PASS WITH P2：bounded workflow状态/材料只去掉重复元数据，同任务objective/criteria/output及缺失/截断标记完整保留；原生响应后、任何动作应用前检查checkpoint与token信息，缺失/非正/非有限/未知checkpoint或达到保守512线拒绝，不重试。无material旧11动作与非LAYA通用seam保持。离线实际tokenizer验证双目标原样本由丢383 tokens变为全量可见：English300状态tokens、完整序列494；multilingual完整序列442。中英文/Unicode/长材料共8回放，长材料确认超限；不是模型forward或真实选择验收。
+独立typecheck、decision429/0、state-loop236/0、CLI93/0、workbench419/0、协作96/0、计划61/0、阶段材料47/0，全部实际exit0，前后源码hash稳定。内存load hook只移除assertBoundedNativeVisibility调用，state-loop变211/25、exit1，证明新守卫承重，源文件未改，hook按名删除。独立5个真实provider+受控fetch的continue探针：512/900/null/0均无dispatch，511仅到受控dispatch；不是网络/模型推理。
+守卫在响应后生效，仍消耗一次决策调用，不是发请求前精确计数。实际固定english配置512/192，multilingual为1024/256；代码统一以512保守拒绝，多语言可能在本可容纳时被拒。源码注释和worker报告误把两者容量都写512，独立审核保留P2并在文档纠正，不把它提升为事实；后续限定维护纠正文案，当前不扩大预算。仅已固定配置假设内的有界保护，不认证任意服务配置/模型判断质量或完整round。
+本轮实际LAYA/产品Agent调用0，服务未启动；8个tokenizer回放无forward，保留历史LAYA-ACTION.2的BLOCKED，不把本片代码通过改成其真实完成PASS。下一候选新真实验收尚未授权；68/100与PARALLEL_WRITE=CLOSED保持。证据laya-context-research.json、review-state/两个native-export、independent-tests/token-audit/continue-probe/negative-guard日志均本机ignored；audit只读，页面不入Git。更新基线和受影响路线后刷新页面，精确审核上传独立分支，main/共享index不动。
 
 2026-10-15 LAYA-ACTION.2 独立裁定BLOCKED（安全路径通过，正向完成未验收，发现材料截断P1）：用户明确批准最多3次新本地推理，每次90秒、失败即停不重试、仅离线缓存和合成内存任务。复用既有contained Python服务与生产provider/runDecisionCycle；未启动worker、未修改任何src/tests/native/scripts或Agent配置。三个实际选择依次continue/continue/continue，elapsed724/55/46ms为单次观察，不是性能基准；第一例5候选含2个明确目标，后两例仅3基本动作且无complete。原生response通过客户端校验，受控dispatch回执均拒绝真实执行，所有Task状态保持、complete能力0次；不以正常exit0/协议通过提升为目标完成PASS。
 离线使用实际固定english tokenizer及已安装common.build_sequence，无模型forward/POST，重现max_len512/head192：双目标state701仅保留318，丢383，acceptance_material整个字段未进入最终输入；另两例state432/431分别保留416，丢16/15。全部选项marker/span仍可区分；模型未选择complete不能单独归因于截断，但模型未收到交付output已足以阻止材料驱动验收认证。不得改答案或重试到绿。
@@ -1028,18 +1042,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-15T15:18:15+08:00",
+  "updatedAt": "2026-10-15T15:37:20+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "LAYA-ACTION.2",
-    "name": "真实动作验收：交付材料编码可见性受阻",
-    "status": "blocked",
-    "summary": "真实3次均continue，目标完成未观察；离线复算确认双目标验收材料被512-token预算截掉。无追加推理，Job空/清理通过。"
+    "id": "LAYA-CONTEXT.1",
+    "name": "决策材料可见性最小修复独立通过",
+    "status": "done",
+    "summary": "代码PASS；双目标实际编码全量可见，超限/未知响应动作前拒绝。保留多语言容量注释P2；无新增推理。"
   },
   "next": {
-    "id": "LAYA-CONTEXT.1",
-    "name": "调查并限定最小决策输入长度收口；实施/推理待授权",
+    "id": "LAYA-ACTION.3",
+    "name": "修复后真实本地动作验收准备；需新增推理授权",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1115,12 +1129,12 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
   },
   "blockers": [
     {
-      "id": "LAYA-STATE-TRUNCATION",
-      "severity": "P1",
-      "title": "双目标的交付材料未进入实际模型输入",
-      "detail": "固定512-token序列中，state701仅保留318；acceptance_material整段被截掉。实际模型3次均continue，无complete应用；不宣称截断已被证明是选择根因。",
-      "next": "先调查既有编码/上下文复用，限定紧凑状态和完整同任务证据可见/超限拒绝；不擅自增max_len或追加推理。",
-      "kind": "已复现输入可见性缺陷 / 正向验收阻塞"
+      "id": "LAYA-CONTEXT-LIVE",
+      "severity": "证据缺口",
+      "title": "输入可见性代码通过，真实完成目标仍待选择",
+      "detail": "原真实3次均continue；本片仅离线tokenizer/受控provider验证。小样本全量可见，长材料会拒绝；不等于真实目标完成。",
+      "next": "获新次数授权后最多3次本地合成验收，失败即停，不改答案，不调用产品Agent。",
+      "kind": "真实验收边界 / 原静默截断P1最小范围已关闭"
     },
     {
       "id": "LAYA-INTEGRATED-ROUND",
@@ -1257,6 +1271,14 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "detail": "worker报告103/1；父def22fb的CLI已不含旧marker，原测试仍引用，当前CLI未改。不是本片回归。",
       "next": "另行限定测试维护任务修正定位/反证，不为求绿改变生产安全门。",
       "kind": "既有测试维护"
+    },
+    {
+      "id": "LAYA-CONSERVATIVE-WINDOW-P2",
+      "severity": "P2",
+      "title": "多语言实际容量注释不准确，统一保守512会拒绝部分可容纳请求",
+      "detail": "实际english512/192，multilingual1024/256；代码与报告把二者容量并称512有误。当前策略更严格，未放大实际预算。",
+      "next": "后续限定文案维护纠正；扩大预算需要单独验证。",
+      "kind": "事实说明/支持范围，不阻断本片安全保护"
     }
   ],
   "tasks": [
@@ -1455,15 +1477,23 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "status": "blocked",
       "deliverable": "真实选择和应用、无交付保护、ready动作；最多3POST",
       "evidence": "3/3真实continue；协议/状态安全通过，完成目标NOT OBSERVED；双目标材料截断已离线复现；Job空/清理通过"
+    },
+    {
+      "id": "LAYA-CONTEXT.1",
+      "title": "决策输入压缩与动作前可见性保护",
+      "status": "done",
+      "deliverable": "保留同任务材料/拒绝不明与饱和native响应/旧入口兼容",
+      "evidence": "独立8项全绿+8实际tokenizer回放+5continue探针+负控25失败；第二轮指定模型正常完成；无新增真实推理；P2容量注释保留"
     }
   ],
   "checks": [
-    "本轮3POST+1GET均为实际本机LAYA，checkpoint english；无云模型/产品Agent/新增费用",
-    "真实选择continue/continue/continue；生产provider/loop校验通过，受控dispatch拒绝，无complete/无任务状态变化",
-    "离线实际tokenizer/build_sequence：双目标state701保留318、丢383，完整验收材料字段不可见；非模型forward",
-    "同owned服务固定revision/CUDA health；结束Job空、ActiveProcessesFinal0、owned根已删、端口不监听",
-    "10缓存摘要不变；维护前209个版本文件无改；未重跑typecheck/fullsuite；本轮许可耗尽，产品5/5不变",
-    "唯一基线与本机页同步；整体BLOCKED，估算68/100保持，下一实施/推理待授权"
+    "实际两轮opencode-agent implement均指定DeepSeek V4.1 Flash；首轮权限拒绝零改动，最后一轮finish=stop完成",
+    "worker仅改decision-loop/state-loop/b40a三个文件；无新依赖/框架/配置，旧11动作保持",
+    "独立typecheck及429/236/93/419/96/61/47全绿；真实exit0、source hash稳定",
+    "8个实际tokenizer回放：原双目标English494/多语言442，全部材料/不同候选可见；长材料确实超限",
+    "独立5个continue拒绝/准入探针；移除guard内存负控211/25、exit1，源文件未改",
+    "本轮真实LAYA/产品Agent0、未fullsuite；产品5/5与本地8次不变；估算68/100，并行写CLOSED",
+    "容量说明P2已独立纠正：实际多语言1024，代码统一保守拒绝线512；页面/cache/audit不入Git"
   ],
   "sources": [
     {
