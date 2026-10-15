@@ -63,7 +63,7 @@ doctor 默认不查询模型目录；目录查询不是推理可调用或免费�
 
     node src/decision/check.ts --probe
 
-默认服务地址127.0.0.1:8077；当前只读核对连接被拒绝，需先定位已有服务/环境。上游默认端口可能不同，不擅自安装或启动。
+默认服务地址127.0.0.1:8077；已找回现有LAYA0.3.21，并将固定英语/多语言缓存恢复至D:/AI/laya-cache，真实离线CUDA加载/健康GET通过。检查后服务已停止；重新启动配置见[LAYA说明](docs/DECISION_PROVIDER.md#3-本地服务)。本轮未执行真实决策，不能把health当预测验收。
 下列classify-only会调用真实LAYA模型，且当前round在分类前运行quota probes，不是无外部调用的健康检查：
 
     node src/cli/index.ts round "分析目标" --classify-only

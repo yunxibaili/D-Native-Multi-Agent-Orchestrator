@@ -1,20 +1,19 @@
-# 下一候选 — LAYA 本机服务就绪（先定位已有环境）
+# 下一候选 — 本地 LAYA 有界 typed 决策验收
 
 更新日期：2026-10-15
-唯一事实/状态/证据在 [PROJECT_BASELINE.md](PROJECT_BASELINE.md)。B2.2候选接线代码已独立PASS，整体PASS WITH P2：worker两轮尾部工具请求被拒，无完整最终报告，结论来自Codex独立代码/实跑。
+当前状态、事实/证据与估算只见 [PROJECT_BASELINE.md](PROJECT_BASELINE.md)。本片LAYA-ENV.1仅缓存恢复、离线加载与真实GET健康检查独立通过，不封整个后端。
 
-## 本片结束
+## 已完成
 
-显式模型池已经由普通round传到既有seedRegistry；合格声明补入精确pair、保留source，旧配置/probe/thread不覆盖。声明only保持pair-specific unknown，不能因为Agent可用、名字free或billing声明就启动；未知quota仍拒绝。新套件33/0、独立9断言、去保护与去CLI接线负控均承重；异常finally与清理失败真实非零通过。该能力不等于新的模型可调用认证，不继续堆叠框架。
+无需重装：既有C:/Users/Admin/laya-venv为LAYA0.3.21/Torch2.11.0+cu128。用户已明确D:/AI/laya-cache，英语与多语言固定revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851的10文件约1.52GB已下载并全部官方摘要校验通过；缓存加载前后均匹配。真实offline server+现有provider健康GET确认两checkpoint实际cuda、revision匹配、非device preference。三次contained Job均空/owned清理，检查后服务已停止，不是常驻启动或开机自启。
+启动配置见[DECISION_PROVIDER §3](DECISION_PROVIDER.md#3-本地服务)，复用现有Python/服务/客户端，不引入manager/服务安装器/框架。typed-decisions未下载；不要默认预加载全部checkpoint或重装依赖。
 
-## 下一项实际使用阻塞
+## 下一有界候选（需另行授权推理）
 
-先定位已有LAYA环境、启动方式与端口。已有provider/check.ts/workflow/pair/Skill-MCP入口全部复用，不重写决策模型。当前GET http://127.0.0.1:8077/health仍ok=false/fetch failed（上轮ECONNREFUSED）；PATH与两Python环境未发现laya不是全机未安装证明。上游默认8000与项目8077可能需对齐。
-优先只读明确已有服务/venv路径；没有环境时应明确局部安装目录、依赖/权重下载和仅loopback服务的范围，不能擅自全局安装、读凭据、改Agent配置、换云端或通过别的provider伪装LAYA。启动/真实推理前先落实具体授权，不用fixture宣称真实接通。
+最多4次本地LAYA请求：中文/英文分类各1次、从2个明确工作流选择1次、从2个明确Agent×Model候选选择1次。只使用新建合成demo文本，不发送既有仓库代码/凭据，不运行真实Agent/云端模型、不调用Skill/MCP、不改用户配置。复用现有routing/plan-choice/initial-assignment及响应校验；输入输出、实际checkpoint/revision、错误与耗时分开记录，不造任意DAG或第二大脑。
+授权之前只读/GET，不发送POST或forward pass。当前缓存恢复授权明确“不发推理请求”，不得由已通过health延伸授权。产品原生执行会话累计仍5/5，不能用LAYA本地测试重置或追加该额度。仅typed API兼容通过也不等于主观选型质量/完整生产CLI已验收。
 
-真实模型可调用/免费资格需具体证据：现有精确配置/probe/历史来源保持原规则；B2.2不会伪造新模型available。新实际调用须另定模型/次数/费用/数据范围，产品会话累计5/5、剩0。真实Skill/MCP、动态账户额度、完整批准/监督与更广掉线恢复仍是后续差距；估算保持68/100。
+## 保留边界
 
-## 工作流
-
-OpenCode bounded开发、Codex独立审核，默认首次+一次返工。今后worker日志只用明确owned路径或直接输出，不重试共享TEMP固定名写入或原地mutation；Codex负控使用内存钩子，不新增委派引擎。P2不阻断已独立通过的代码，也不冒充完整worker报告。
-PARALLEL_WRITE=CLOSED；不自动进入正式前端。每任务先只读audit，结束维护基线、刷新本机进度页并上传精确审核快照；project-progress/audit/page/exports均不入Git，主HEAD/index/dirty树保留。
+已安装加载器报告部分choice temperature被钳制、confidence未经校准（P2）；置信度只作提示，不当硬可靠性保证，不擅自升级/调参。真实Skill/MCP、动态账户额度、完整批准/监督与更广掉线恢复仍留后续；工程估算68/100不增加。PARALLEL_WRITE=CLOSED，正式前端未进入。
+本片是运维取证，不需要开发worker；授权的产品实现仍由OpenCode开发、Codex独立审核。每任务开始只读audit，结束更新唯一基线/受影响文档、本机进度页及精确Git审核快照。缓存不入Git，project-progress/audit/本机记录/页面均excluded；主HEAD/index与其他dirty文件保持。

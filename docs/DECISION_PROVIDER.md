@@ -33,20 +33,37 @@ DecisionRequest → DecisionProvider → 本地 laya-serve → 校验后的 Deci
 默认地址 http://127.0.0.1:8077。provider 不自动启动 Python/CUDA 服务，
 没有隐式云端 fallback。非 loopback 地址需要显式 allowRemote 授权。
 
-已有安装的运维启动示意（本轮未执行，不是安装授权）：
+本机既有环境为 `C:/Users/Admin/laya-venv`，LAYA0.3.21/Torch2.11.0+cu128。已按用户授权将英语与多语言固定权重恢复至 `D:/AI/laya-cache`，无重装或升级。本轮真实离线预加载与现有provider健康检查通过；检查后服务已停止，不是常驻配置。
 
-    laya-serve
+已验证的进程级配置如下；在单独PowerShell终端使用，不写用户/系统环境或Agent配置：
 
-上游当前服务默认端口为8000，项目provider默认8077。先核对实际服务地址，保持loopback；不能把裸启动命令视为已对齐端口。无已有环境时先确认安装/权重范围，不由provider自动安装或启动。
+```powershell
+$env:HF_HOME = 'D:\AI\laya-cache'
+$env:HF_HUB_CACHE = 'D:\AI\laya-cache\hub'
+$env:HF_HUB_OFFLINE = '1'
+$env:TRANSFORMERS_OFFLINE = '1'
+$env:HF_HUB_DISABLE_IMPLICIT_TOKEN = '1'
+$env:HF_HUB_DISABLE_TELEMETRY = '1'
+$env:HF_TOKEN = ''
+$env:HF_TOKEN_PATH = 'D:\AI\laya-cache\absent-token'
+$env:LAYA_HOST = '127.0.0.1'
+$env:LAYA_PORT = '8077'
+$env:LAYA_PRELOAD = '1'
+$env:LAYA_MODELS = 'english,multilingual'
+$env:LAYA_THREADS = '2'
+$env:LAYA_REVISION = '55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851'
+& 'C:\Users\Admin\laya-venv\Scripts\python.exe' -I -B -m laya.serve
+```
 
-检查入口：
+这段启动方式复用现有原生入口；本轮实际运维检查另经生产contained ManagedProcess执行并确认Job空。上游/本机裸服务默认8000且host为0.0.0.0，因此显式loopback/8077配置不能省略。只缓存english/multilingual，不能裸用默认全部checkpoint预加载；typed-decisions未下载。按已有启动配置预加载会占用本机GPU/内存，不等于发起推理。
+
+健康检查：
 
     node src/decision/check.ts --probe
-    node src/decision/check.ts "summarize a repository"
 
-其中--probe仅GET /health，不做分类推理；不带--probe的命令会调用真实LAYA模型，不能用于无推理排查。
-本轮只通过既有provider执行健康GET，8077连接被拒绝（ECONNREFUSED）；当前两个Python环境的distribution元数据未发现laya，不证明整机未安装。服务、checkpoint 和版本应以本机实际安装为准，
-不能把上游新版本的 MCP/SDK 能力直接视为本项目已接入。
+`--probe`仅GET /health。2026-10-15实跑返回loaded=[english,multilingual]、两个actual device均cuda、device_is_preference=false、revision均匹配；health warnings=[]。服务停止后再次连接失败是预期，不表示缓存丢失。未发送POST /v1/systemone，不声称预测质量/路由选择/全工作流已验收。无`--probe`的check命令或round会请求真实LAYA决策，须另有本轮授权；round还会先运行quota probes，不能当无外部调用健康检查。
+
+固定权重清单来自[官方55cf4c4e版本](https://huggingface.co/convaiinnovations/laya/tree/55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851)：10文件共1,524,397,210 bytes，下载后及离线加载后均核对官方LFS SHA256/Git blob匹配。只用未认证公共下载，未读取现有token；缓存不入Git。加载器对部分choice temperature给出钳制与confidence未经校准警告，即使health warnings=[]也不能忽略。保留P2，不为此擅自调参/升级或信任置信度硬门。不能把上游新版能力视为本机0.3.21已支持。
 
 ## 4. 当前请求约束
 

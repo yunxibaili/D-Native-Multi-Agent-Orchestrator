@@ -40,6 +40,7 @@ README 是导航。本机 `project-progress/audit/` 是用户指定的只读第�
 | B3 overall | 整体未封板；真实工具调用、强制限制与Skill加载尚未验收 |
 | B2.1 / B2.1a | 独立 PASS：用户声明池的候选/分配/最终同步启动准入受控闭环；两个历史P1已关闭 |
 | B2.2 | 候选来源接线代码独立PASS；整体PASS WITH P2（worker末尾报告未完成）；新增声明pair保持unknown，非可调用/额度证据 |
+| LAYA-ENV.1 | 既有0.3.21环境/固定缓存恢复及真实离线CUDA加载+health独立PASS；无推理，检查后已停止，不是常驻服务或决策验收 |
 | B2 overall | NOT SEALED；账户资格/硬金额预算/付费与全流程费用未验收 |
 | B4.6a | 最小同进程用户检查点独立通过；原报告文案P2在B5.1关闭，不等于完整监督/纠偏恢复 |
 | B5.1 | 独立 PASS WITH P2：已知session_failure的停止安全/具体model有界接力；仅受控当前链 |
@@ -290,6 +291,12 @@ orchestrator round "review the API" --cwd . --workflow sequential --mcp-catalog 
 同Agent不同已知model是新请求worker；pair逐字段比较、未知model保守，保留绝对handoff-max和已有显式原因/重复规则。沿唯一reassign/Assignment/dispatch执行，同Task新Attempt/新Session，来源取关联的Attempt与RunResult；保留部分输出/工具事实、截断与停止事实，提示核对已有成果，不保证外部副作用可重放。请求pair不认证Agent内部实际model，也不构成付费授权。
 workflow在该失败边界让出给既有canonical continuation，避免generic reassign预迁移/假来源；恢复成功仅进入to_verify，整个workflow仍待原Verification与下游，保持incomplete/非零，不自动完成或跨进程续跑。fixed、用户声明池、最终启动、stage及资源门继续适用。B5整体不封板，PARALLEL_WRITE=CLOSED。
 
+### 5.12 本机 LAYA 环境（2026-10-15）
+
+从历史Git da17f61找回并实际核对既有C:/Users/Admin/laya-venv：LAYA0.3.21、Torch2.11.0+cu128、Python3.12；无需重装。用户指定并批准D:/AI/laya-cache恢复英语/多语言固定revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851，10个必需文件1,524,397,210 bytes（约1.52GB），均通过大小与官方LFS SHA256或Git blob校验；不含typed-decisions。复用已安装huggingface_hub断点下载器，未新增依赖或自制传输协议。缓存与本机证据不入Git。
+真实0.3.21服务经既有contained ManagedProcess启动在127.0.0.1:8077、HF离线、LAYA_PRELOAD=1/MODELS=english,multilingual；实际provider GET /health通过：两个checkpoint均loaded、实际device均cuda（device_is_preference=false）、revision均匹配。仅健康GET，无POST/forward pass/真实Agent推理；未认证决策质量、Token收益或完整LAYA编排。服务为有界检查，结束已停止；重新运行前须按DECISION_PROVIDER中的显式进程级启动说明启动，不是已配置开机常驻。
+加载器对部分temperature给出钳制警告，受影响confidence未经校准；不据CUDA/health通过绕过验证。用户只授权缓存恢复与离线加载/health，后续本地真实决策仍需有界授权。PARALLEL_WRITE=CLOSED、产品原生会话仍5/5。
+
 ## 6. 不可绕过的契约
 
 WorkerIdentity={taskId,agentId,modelId,sessionId}；不以模型品牌替代 Agent 能力事实。
@@ -319,6 +326,11 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 不新增 provider 网关、群聊平台、第二个调度器或通用工作流引擎来掩盖协议缺口。
 
 ## 8. 最近独立证据与上传记录
+
+2026-10-15 LAYA-ENV.1 现有环境找回、固定缓存恢复与离线加载/health独立PASS（无推理，不封后端）：用户继续推进后从历史Git da17f61的DECISION_PROVIDER找回C:/Users/Admin/laya-venv，实际解释器/metadata确认laya0.3.21、torch2.11.0+cu128；当前默认C:/Users/Admin/.cache/huggingface/hub不存在。不能把此前只查base/Python312未找到升级成全机未安装。初次真实lazy服务（LAYA_PRELOAD=0、离线、127.0.0.1:8077）经现有provider GET健康通过、loaded=[]且警告无checkpoint；结束Job空/owned清理通过，不当作可推理证据。
+用户明确授权恢复固定版本英语/多语言、网络上限3GB/临时磁盘6GB、只离线加载和health无推理，并最终指定D:/AI/laya-cache。官方固定revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851公开metadata确认精确10文件、合计1,524,397,210 bytes；实际仅下载这些文件（typed-decisions未下载），复用现有huggingface_hub1.33.0/snapshot_download、token=False/禁隐式token/禁telemetry/禁XET，受控Job总30分钟与payload/磁盘预算，未安装/升级依赖。当前本机huggingface.co metadata和下载实际可达，不沿用历史网络受阻推断。下载payload计数1,524,397,210 bytes，缓存总1,524,403,676 bytes；全部10文件大小及官方LFS SHA256或Git blob哈希匹配。Windows无symlink支持只警告降级缓存，未开启开发者模式或管理员改系统。
+固定缓存离线预加载：真实已安装laya.serve，无fake Router或服务响应；进程级HF_HOME=D:/AI/laya-cache、HF_HUB_OFFLINE=1、TRANSFORMERS_OFFLINE=1、LAYA_MODELS=english,multilingual、LAYA_REVISION固定，provider唯一GET /health返回ok=true、两checkpoint实际cuda、device_is_preference=false、revision均固定值，cpu_fallback计数0、provider warnings=[]。stderr仍有受影响choice温度钳制/置信度未校准RuntimeWarning，列P2，不扩展到调参或包升级。加载后独立再次核对10个缓存文件均仍匹配官方摘要，未发生tokenizer配置改写。
+三次contained Job（lazy服务、下载、离线loaded服务）分别positive stop、ActiveProcessesFinal=0、owned根已删、cleanupFailures0。服务cancel后rootExitCode1属于协同终止事实，不伪称服务启动或推理失败；当前服务未保留常驻。诊断artifact初版stopped字段保持初始化false，与已确认stopConfirmed/validated Job0不一致，已在ignored helper及记录中按正面证据统一，不重跑服务制造通过。所有探针/缓存不入Git，audit只读，src/tests/native/scripts未改，不需开发worker；本轮仅事实/运行说明文档上传，不调用Agent/模型推理、不读既有凭据/改全局或Agent配置、不跑full suite。工程估算保持68/100，正式前端未进入。下一候选只在新有界授权后做本地LAYA typed决策兼容验收，不消耗或重置已用完的产品Agent5/5额度。证据见ignored laya-env-health.json、laya-cache-manifest.json、laya-cache-download-state/control.json、laya-env-loaded-health.json、laya-cache-post-load-verification.json、laya-env-review-state.json。
 
 2026-10-15 B2.2 显式用户模型池→普通CLI候选来源接线代码独立PASS，整体PASS WITH P2（仅委派报告收尾问题，不是生产正确性发现）。用户“继续推进”授权此有界片，不扩大真实推理/安装范围。复用seedRegistry/ModelRegistry、冻结池及admitUserModelPoolPair、buildQuotaCenter、现有Assignment/最终准入；仅改src/quota/index.ts、src/cli/round-cli.ts，新增hermetic tests/b22-model-pool-candidates.test.ts并登记既有test-timed runner。当前admitted free/included声明才补新entry，完整id/source保留，已有配置/probe/thread记录不覆盖。新增pair-specific unknown防止Agent安装/可用事实将声明模型自动提升；真实普通CLI测试确认声明进入initial selection但Assignment以no-available-agent拒绝、runtime0。未知quota仍quota-blocked/runtime0；已有probed固定pair与无池旧入口均完成原顺序链，pair不换。
 先本地核对全部调用者，再通过GitHub MCP检索/读取anomalyco/opencode固定revision37df62f4a1b6d89187a1169187a6cef10557c0ca配置文档与MIT License：显式允许/禁用候选方法可参考，仓库未归档、维护活跃；只采方法不复制/安装代码，Windows既有contained launcher不变，不引入manager/registry/路由器/依赖。
@@ -950,18 +962,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-15T12:19:19+08:00",
+  "updatedAt": "2026-10-15T12:43:23+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "B2.2",
-    "name": "显式模型池候选接线独立通过（保留委派收尾P2）",
+    "id": "LAYA-ENV.1",
+    "name": "固定缓存恢复与真实离线CUDA加载/健康检查通过",
     "status": "done",
-    "summary": "普通CLI现传冻结池到原seedRegistry；新声明pair可注册且保持unknown，不绕过额度/准入。新套件33/0、9独立断言、两负控和异常/删除失败传播通过。worker两轮实际DeepSeek均确认；末尾报告因工具拒绝未完成，未采信exit0。"
+    "summary": "已找回既有LAYA0.3.21；D:/AI/laya-cache的10文件约1.52GB全部官方摘要匹配。english/multilingual实际CUDA加载、固定revision，项目provider健康GET通过。三Job确认空并清理；服务已停止，无推理。"
   },
   "next": {
-    "id": "LAYA-ENV",
-    "name": "定位已有LAYA本机服务/venv与端口；缺失时先明确安装/推理范围",
+    "id": "LAYA-DECISION.1",
+    "name": "另行授权少量本地LAYA typed决策验收；不启动产品Agent",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1037,12 +1049,20 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
   },
   "blockers": [
     {
-      "id": "LAYA-LOCAL",
-      "severity": "当前使用阻塞",
-      "title": "默认LAYA服务未就绪",
-      "detail": "本轮仅健康GET再次ok=false/fetch failed、exit1；上轮原因ECONNREFUSED。两个Python环境未发现laya不代表全机缺失；未安装/启动/推理。",
-      "next": "先明确已有服务/venv位置和正确端口；若确实需要安装或模型推理，另定具体范围。",
-      "kind": "环境事实 / 不重写provider"
+      "id": "LAYA-REAL-DECISION",
+      "severity": "待真实验收",
+      "title": "环境/离线加载已过；真实typed决策仍未执行",
+      "detail": "真实english/multilingual已在cuda离线加载并通过现有provider健康GET，但本轮无POST/forward pass；检查后服务已停，不宣称常驻或工作流选择已验收。",
+      "next": "明确少量本地决策次数/输入，仅合成demo，不启动产品Agent；复用现有provider和选择预设。",
+      "kind": "边界 / 原8077与缓存定位阻塞已解决"
+    },
+    {
+      "id": "LAYA-CALIBRATION",
+      "severity": "P2",
+      "title": "部分checkpoint置信度温度未校准",
+      "detail": "0.3.21加载器对choice:11+温度0.10058钳到0.5并提示confidence未经校准；health warnings=[]不覆盖该stderr事实。",
+      "next": "置信度只作提示，不作为硬门/可靠性保证；后续决策验收观察，不擅自调参或升级。",
+      "kind": "已安装加载器警告 / 非本片阻断"
     },
     {
       "id": "MODEL-CALLABILITY",
@@ -1304,15 +1324,22 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "status": "done",
       "deliverable": "普通CLI使用冻结声明补现有registry；声明unknown不提升为可调用",
       "evidence": "33/0+9独立断言+双负控+异常/清理失败传播；委派末尾报告P2保留"
+    },
+    {
+      "id": "LAYA-ENV.1",
+      "title": "本机LAYA环境/缓存与离线加载",
+      "status": "done",
+      "deliverable": "复用既有venv恢复固定英语/多语言缓存并验证真实health",
+      "evidence": "10/10摘要；实际CUDA两checkpoint；三Job空/清理；0推理"
     }
   ],
   "checks": [
-    "B2.2代码独立PASS，整体PASS WITH P2；2轮真实implement实际模型均DeepSeek，末尾报告不当正常stop",
-    "typecheck0；b22 33/0；quota184、assignment235、collab96、spawn50、pool95，全部0失败",
-    "独立seed/buildQuotaCenter9断言；去保护exit1、去CLI接线31/2 exit1；均只改内存",
-    "setup异常exit1、2根目录自行清理；删除失败33/0仍exit1、ledger保留、父按名清理1根",
-    "isolation6opt-in/0违规，ownership60/0；AST runtime.run=1、新authority0；diff check通过",
-    "LAYA仅健康GET未通过；产品推理新增0、累计5/5；估算68/100不增加，页面/证据/audit不入Git"
+    "既有C:/Users/Admin/laya-venv确认LAYA0.3.21/Torch2.11.0+cu128；无重装、无开发worker",
+    "用户授权D:/AI/laya-cache；固定revision英语/多语言10文件，1,524,397,210 bytes，10/10官方摘要匹配",
+    "实际离线真实server+provider GET健康通过；两checkpoint实际cuda、revision固定、非device preference；无推理",
+    "lazy/下载/loaded三Job均确认ActiveProcessesFinal=0并清理owned根；服务已停止",
+    "置信度temperature钳制RuntimeWarning保留P2；不将health或CUDA当决策质量证明",
+    "src/tests/native/scripts未改，未跑full suite；产品Agent仍5/5，估算68/100不增加；本机页面/cache/audit/日志不入Git"
   ],
   "sources": [
     {
@@ -1337,6 +1364,8 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     }
   ]
 }
+```
+<!-- project-progress:end -->
 ```
 <!-- project-progress:end -->
 
