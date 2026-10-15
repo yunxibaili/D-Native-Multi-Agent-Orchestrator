@@ -55,6 +55,7 @@ README 是导航。本机 `project-progress/audit/` 是用户指定的只读第�
 | B2 overall | NOT SEALED；账户资格/硬金额预算/付费与全流程费用未验收 |
 | B4.6a | 最小同进程用户检查点独立通过；原报告文案P2在B5.1关闭，不等于完整监督/纠偏恢复 |
 | B4.6b | 独立PASS：同进程显式人工accept，等待后同步重读当前Task/Attempt/RunResult/停止事实，经同一Verification；非LAYA自动质量验收 |
+| MVP-READINESS.1 | 只读收敛PASS；真实CLI三个本地预检/门规则核对通过，最短执行仍需LAYA健康和新调用范围；非完整真实round验收 |
 | B5.1 | 独立 PASS WITH P2：已知session_failure的停止安全/具体model有界接力；仅受控当前链 |
 | B5 overall | NOT SEALED；真实协议掉线、完整工作流恢复及更广错误分类未验收 |
 | B4.7 | B4.7.3固定free duo代表样本独立PASS：两个真实模型、三个独立任务/会话、共享顺序demo；整体仍NOT SEALED（真实LAYA/工具/全流程费用未验）；累计产品会话5/5、剩0 |
@@ -382,7 +383,17 @@ B4.6b已独立通过：仅在既有`--checkpoint`中新增`accept <非空理由>
 
 本片是个人MVP同进程人工兜底，不是完整自动验收。历史LAYA-QUALITY.2真实wait/正向目标完成未观察的BLOCKED保持；不改答案、模型、温度或权重，不追加试跑。新增产品Agent/本地LAYA推理均0，累计本地12、产品5/5不变；开发worker两轮真实使用指定DeepSeek V4.1 Flash，不能把开发调用说成零模型调用。PARALLEL_WRITE=CLOSED，正式前端未进入，估算68/100保持。
 
-下一候选MVP-READINESS.1仅做最短个人使用链的只读收敛：复用当前CLI、阶段/模型池/检查点和交付视图，明确可执行命令、必要本机条件、尚缺真实证据与下一项硬阻塞；不再重建已完成模块，不自动新增推理或完整平台。后续真实整链调用仍需明确次数/费用/数据授权。
+### 5.24 最短个人使用链与当前就绪边界（2026-10-15）
+
+MVP-READINESS.1只读收敛完成；不是完整真实round已通过。最短路径是两个sequential步骤（实现→测试），固定一个已核验Agent×Model，显式计划/阶段确认，逐步用户accept，最后保留现有原生Review和HumanGate。无需新增调度器、平台或前端。`--workflow-choice`只固定计划，`--select fixed`只固定pair，`--checkpoint`只接管单步验收；三者均不能替代LAYA分类及派发决策。
+
+本轮健康观察未通过：初次默认HTTP客户端GET超时；随后仅纠正观察路径，用无代理的直连http.client访问127.0.0.1:8077/health，2秒同样TimeoutError。没有POST、没有启动/停止服务，不能由此断言端口关闭、无进程或确定根因；当前健康状态未确认。既往服务已停止记录仍仅是当时事实，不冒充当前新观测。
+
+正式round会先collectAll(DEFAULT_PROVIDERS)，再分类/计划/配对和动作；不是只查询选中pair的纯本地预检。quota unavailable仅表示无接口，本身不阻断；unknown/not_fetched/not_connected/exhausted按原门拒绝。声明新pair仍为pair-specific unknown，不能通过Agent安装事实或用户池声明伪造可调用。默认原生Review也是一次独立执行，用户模型池不替其保证免费；不关闭Review来宣称真实整链成功。
+
+本片新增本地LAYA推理/产品Agent会话均0，累计本地12、产品5/5不变；旧fail-stop未用调用不自动重用。B4.6b受控PASS及历史QUALITY.2的真实wait/BLOCKED保持。全流程费用/当前free资格、原生Review及模型内部辅助调用未认证；声明池不约束Review/原生内部调用，budget-units不是美元上限。PARALLEL_WRITE=CLOSED，正式前端未进入，工程估算68/100保持。
+
+下一候选LAYA-HEALTH.1先只读定位本机健康超时，再按明确owned边界判断最小恢复。复用现有venv/固定缓存/Job launcher；不换模型、温度或权重，不重装，不新增框架，不碰不属于本轮的listener/进程。此候选不授权推理或产品Agent调用；如需启动服务，应先给出具体启动/时限/清理范围，执行后以validated Job空和owned清理证明结束。健康就绪后，新的真实个人demo仍须明确worker/reviewer模型、费用、会话和本地POST上限。
 
 ## 6. 不可绕过的契约
 
@@ -413,6 +424,14 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 不新增 provider 网关、群聊平台、第二个调度器或通用工作流引擎来掩盖协议缺口。
 
 ## 8. 最近独立证据与上传记录
+
+2026-10-15 MVP-READINESS.1只读审核：MVP-READINESS.1只读收敛完成；不是完整真实round已通过。最短路径是两个sequential步骤（实现→测试），固定一个已核验Agent×Model，显式计划/阶段确认，逐步用户accept，最后保留现有原生Review和HumanGate。无需新增调度器、平台或前端。`--workflow-choice`只固定计划，`--select fixed`只固定pair，`--checkpoint`只接管单步验收；三者均不能替代LAYA分类及派发决策。
+Codex实际核对CLI构造/阶段门/provider/quota/Assignment/最终Review与报告调用链，并通过GitHub MCP读取固定LAYA0.3.21 staged-adoption（SHA 9f3bed9a…）；沿用应用掌握执行和显式Review、限定切片的方法，不复制上游示例fallback或引入依赖。Node官方readline只作既有TTY/close边界核对（在线页v26，本机v24.18.1，不采用新版API）。无实施缺口需要本轮改源码，故没有开发worker；不把只读调查包装成委派开发。
+独立真实CLI预检三例：有效计划/材料--stage-check exit0；缺--confirm exit2；改计划后旧digest exit2。每例child_process调用0、fetch调用0、Task文件/执行transcript0；仅本轮owned临时配置/目录，SessionStore创建的空目录随后一并回收，owned root已删除。未调用真实Agent/额度查询或读取用户配置/凭据内容。纯值Spawn Gate六状态核对：available和unavailable在其他合成准入事实成立时可过，unknown/not_fetched/not_connected拒绝、exhausted拒绝；不是实际额度/价格验证。
+本轮健康观察未通过：初次默认HTTP客户端GET超时；随后仅纠正观察路径，用无代理的直连http.client访问127.0.0.1:8077/health，2秒同样TimeoutError。没有POST、没有启动/停止服务，不能由此断言端口关闭、无进程或确定根因；当前健康状态未确认。既往服务已停止记录仍仅是当时事实，不冒充当前新观测。
+本片新增本地LAYA推理/产品Agent会话均0，累计本地12、产品5/5不变；旧fail-stop未用调用不自动重用。B4.6b受控PASS及历史QUALITY.2的真实wait/BLOCKED保持。全流程费用/当前free资格、原生Review及模型内部辅助调用未认证；声明池不约束Review/原生内部调用，budget-units不是美元上限。PARALLEL_WRITE=CLOSED，正式前端未进入，工程估算68/100保持。
+下一候选LAYA-HEALTH.1先只读定位本机健康超时，再按明确owned边界判断最小恢复。复用现有venv/固定缓存/Job launcher；不换模型、温度或权重，不重装，不新增框架，不碰不属于本轮的listener/进程。此候选不授权推理或产品Agent调用；如需启动服务，应先给出具体启动/时限/清理范围，执行后以validated Job空和owned清理证明结束。健康就绪后，新的真实个人demo仍须明确worker/reviewer模型、费用、会话和本地POST上限。
+证据mvp-readiness1-precheck/gate/review-state/start-files及logs仅ignored。所有209可版本文件在文档维护前raw hash不变；audit只读。新增/改动仅六份受影响文档，本机页刷新并与JSON比对；无产品源码/测试/runner/native/配置修改，不重跑typecheck/fullsuite或旧模型脚本。页面/demo探针/audit/缓存不入Git，精确上传当前六文档审核快照，保留主HEAD/共享index及原dirty tree。
 
 2026-10-15 B4.6b实际实现与Codex独立审核：B4.6b已独立通过：仅在既有`--checkpoint`中新增`accept <非空理由>`。等待输入后同步重读当前Task和原子Attempt→RunResult；状态、任务/Attempt/Worker身份、展示条件变化、执行证据缺失或停止未确认均拒绝。只有同一当前任务仍to_verify且树停止明确为true，才通过既有completeTask/applyVerification应用用户verdict；不直接写TaskStore、不新增authority。记录source=user、taskId/attemptId、理由及applied/refused，不把用户判断当LAYA决定、独立Review、产物或测试证明。末步accept后先重算all-succeeded，不额外问模型；后续派发仍走原固定pair/声明池/额度/资源/阶段门。continue/stop和无flag默认路径保持。
 Codex先核对仓内调用链，并成功用GitHub MCP读取固定LAYA0.3.21 staged-adoption（typed decision不等于执行许可），Node readline生命周期沿用本机既有API，不引入依赖。OpenCode implement首次+一次限定返工，原生session导出确认全部assistant为opencode-go/deepseek-v4.1-flash且最终finish=stop；Codex独立读实际diff和连接源码后重跑：typecheck: typecheck PASS；b46-workflow-checkpoint: 49 passed, 0 failed；b40a-cli-workflow: 159 passed, 0 failed；state-loop: 276 passed, 0 failed；round-result: 346 passed, 0 failed；workbench: 419 passed, 0 failed；b41-collab-group: 96 passed, 0 failed；b43-stage-material: 47 passed, 0 failed；b14-selection: 179 passed, 0 failed；b22-model-pool-candidates: 33 passed, 0 failed，全部exit0；内存负控屏蔽人工completeTask调用后真实CLI套件非零，未修改工作树。缺失ce.run分支如无可达测试入口仅作源码核对，不冒称物理测试。
@@ -1131,18 +1150,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-15T12:04:31.609477+00:00",
+  "updatedAt": "2026-10-15T12:15:56.838677+00:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "B4.6b",
-    "name": "显式人工验收检查点：独立通过",
+    "id": "MVP-READINESS.1",
+    "name": "最短个人使用链：只读收敛完成",
     "status": "done",
-    "summary": "OpenCode指定Flash首次+一次返工；Codex独立审核/定向测试/承重负控通过。仅用户verdict兜底，真实LAYA自动质量缺口保持。"
+    "summary": "真实CLI预检0/2/2与六状态门规则核对通过；当前LAYA直连health超时、产品会话5/5用尽，尚非完整真实round。"
   },
   "next": {
-    "id": "MVP-READINESS.1",
-    "name": "只读收敛个人最短使用链与剩余硬阻塞",
+    "id": "LAYA-HEALTH.1",
+    "name": "先只读定位本机健康超时，限定owned恢复范围",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1218,11 +1237,19 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
   },
   "blockers": [
     {
+      "id": "LAYA-HEALTH-NOT-CONFIRMED",
+      "severity": "环境就绪未确认",
+      "title": "本机LAYA健康GET超时",
+      "detail": "无代理直连127.0.0.1:8077/health在2秒内未响应；本片未启动/停止服务，不能证明当前端口关闭或确定根因。",
+      "next": "先只读定位；复用现有venv/固定缓存，任何owned启动需明确时限/清理范围，不终止foreign进程，不发推理。",
+      "kind": "就绪前提，非新协议/调度故障"
+    },
+    {
       "id": "LAYA-ACTION-DOMAIN",
       "severity": "实测受阻",
       "title": "资格过滤后仍未观察真实目标完成",
       "detail": "QUALITY.2首例实际wait，输入465 tokens全量可见；安全弃权而非错误完成，不能认证完成能力或推断普遍准确率。第二例未运行。",
-      "next": "人工accept兜底已独立通过；保持真实LAYA自动验收缺口，先收敛最短个人使用链，不追加同类试跑。",
+      "next": "人工accept兜底及最短使用链已收敛；真实LAYA自动质量缺口保留，不追加同类试跑。",
       "kind": "领域适配/正向验收缺口，不是新接线或containment故障"
     },
     {
@@ -1615,14 +1642,21 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "status": "done",
       "deliverable": "同Attempt用户accept→同步复查→既有Verification，末步无额外模型决策",
       "evidence": "typecheck: typecheck PASS；b46-workflow-checkpoint: 49 passed, 0 failed；b40a-cli-workflow: 159 passed, 0 failed；state-loop: 276 passed, 0 failed；round-result: 346 passed, 0 failed；workbench: 419 passed, 0 failed；b41-collab-group: 96 passed, 0 failed；b43-stage-material: 47 passed, 0 failed；b14-selection: 179 passed, 0 failed；b22-model-pool-candidates: 33 passed, 0 failed；内存负控非零、模型/session证据与scope独立核对；非真实LAYA自动质量验收"
+    },
+    {
+      "id": "MVP-READINESS.1",
+      "title": "最短个人使用链与阻塞收敛",
+      "status": "done",
+      "deliverable": "README示例/预检/受限执行模板；LAYA/quota/Review/新调用授权分别说明",
+      "evidence": "真实CLI 3例0/2/2，child/fetch/task/transcript均0；6状态门纯值核对；直连health超时；源码未变、无推理"
     }
   ],
   "checks": [
-    "research-before-work：固定官方LAYA职责资料+Node既有readline，仓内复用",
-    "B4.6b独立通过；仅显式用户验收，真实LAYA质量BLOCKED保持",
-    "typecheck: typecheck PASS；b46-workflow-checkpoint: 49 passed, 0 failed；b40a-cli-workflow: 159 passed, 0 failed；state-loop: 276 passed, 0 failed；round-result: 346 passed, 0 failed；workbench: 419 passed, 0 failed；b41-collab-group: 96 passed, 0 failed；b43-stage-material: 47 passed, 0 failed；b14-selection: 179 passed, 0 failed；b22-model-pool-candidates: 33 passed, 0 failed",
-    "内存负控屏蔽completeTask后套件失败，源文件hash不变",
-    "新增产品/本地推理0，累计本地12/产品5，估算68/100，并行写CLOSED；基线与本机页同步"
+    "research-before-work：当前CLI真实调用链+固定官方LAYA staged-adoption，GitHub MCP读取成功",
+    "真实CLI预检：合法exit0、缺确认exit2、计划改动后旧digest exit2；child/fetch/task/transcript均0",
+    "Spawn Gate六状态纯值核对；无接口unavailable不伪装为额度unknown或available",
+    "本机LAYA直连health超时；未启动/停止服务、不推理，不从timeout推断进程或端口关闭",
+    "源码/测试/native/runner不变，无新worker/推理；累计本地12/产品5，估算68/100，PARALLEL_WRITE CLOSED"
   ],
   "sources": [
     {

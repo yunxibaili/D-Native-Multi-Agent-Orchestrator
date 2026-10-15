@@ -52,6 +52,47 @@ B3.1任务级原生Skill有界闭环独立PASS：显式 `--skill-catalog skills.
 
 显式人工验收B4.6b已独立通过：现有`--checkpoint`支持`accept <理由>`，只对显示的当前Attempt经同一Verification应用用户判断；`continue`不等于验收，`stop`保留成果并停止。默认LAYA路线不变，其真实自动目标完成仍未验收；不宣称完整自动化完成。详见[唯一基线](docs/PROJECT_BASELINE.md)与[下一任务](docs/NEXT_TASK.md)。
 
+## 最短个人使用流程（MVP-READINESS.1）
+
+当前可做本地预检；完整真实round仍待本地LAYA健康和新调用范围确认。下面先演示最小“实现→测试”，不是多模型/费用/真实质量已认证。请在项目外新建空目录（例如`D:\workbench-demo`），不要把现有仓库发送给模型。
+
+在该目录保存三个文件；这些是示例，不替你改本机Agent配置：
+
+`plans.json`：
+```json
+{"kind":"sequential","plans":[{"id":"personal-demo","label":"implement then test","steps":[{"role":"implementation","taskType":"implementation","fileScope":"add.js","deliverable":"add.js exports add(a,b)"},{"role":"test","taskType":"test","fileScope":"add.test.js","deliverable":"add.test.js checks 2+3=5 and reports the actual command result"}]}]}
+```
+
+`stage.json`：
+```json
+{"stageId":"personal-demo-1","scope":"Only add.js and add.test.js in the new demo","requirement":"Create a tiny add function and verify its result.","acceptance":"The add function and its test run successfully; preserve command output","planRef":"personal-demo"}
+```
+
+仅预检用`orchestrator.json`，使SessionStore落到新demo，不读取默认用户配置：
+```json
+{"agents":{},"storeDir":"D:/workbench-demo/.orchestrator-state"}
+```
+
+从本项目根目录执行PowerShell命令。`--stage-check`与`--checkpoint`不能合用：
+```powershell
+$demo = 'D:\workbench-demo'
+$objective = 'Create a tiny add function and verify its result.'
+node .\src\cli\index.ts round $objective --config "$demo\orchestrator.json" --cwd $demo --workflow sequential --workflow-plan plans.json --workflow-choice personal-demo --stage stage.json --stage-check --json
+```
+
+预检应返回`stage=stage-check`、digest和有效计划；它不证明模型安装/登录/可调用/免费、LAYA健康或执行请求预算。CLI启动会创建配置中SessionStore的空目录；不会创建任务或发推理。缺确认或计划/目标/阶段改变后沿用旧digest，应在写前拒绝。
+
+**未来执行模板，本轮未执行且当前调用额度不允许直接运行：**先在demo配置中填写已核验原生Agent command/model，准备有来源/时间的用户模型池，核对Review入口与费用，再重新做预检取得digest。模型/池与费用资格不能从`-free`名称或旧目录推断。pool.json复用既有结构：policy为no-additional-charge，models逐项提供agentId/modelId/billing/source/observedAt/expiresAt；两个时间均为Unix毫秒。只有用户真实确认的free/included且未过期声明可准入，paid/unknown不获授权。以下变量需由该次明确授权确定：
+```powershell
+# $agent / $model 为真实完整ID；$digest来自相同计划/目标/材料的预检。
+# $reviewAgent也必须在本次费用和调用授权中；默认Review是codex。
+node .\src\cli\index.ts round $objective --config "$demo\orchestrator.json" --cwd $demo --workflow sequential --workflow-plan plans.json --workflow-choice personal-demo --stage stage.json --confirm $digest --model-pool pool.json --select fixed --agent $agent --model $model --checkpoint --no-handoff --execution-timeout 90000 --review-agent $reviewAgent --review-timeout 90000 --json
+```
+
+固定pair不替代LAYA；正式round仍有quota采集、分类和逐次动作请求。该两步成功路径至少涉及两次worker执行及一次原生Review，不能只按worker计模型会话；本地LAYA POST总量须单独限定并审计。用户每步可输入`accept <非空理由>`、`continue`或`stop <理由>`：accept经同一Verification应用用户判断，不冒充真实测试/产物证明；continue仍由原LAYA路线判断；stop保留已完成结果并阻止后续，不能跨进程恢复。
+
+不要通过`--no-review`把真实执行伪装为独立审核通过（帮助将其限定offline）。实际交付读stdout JSON的`roundResult`、`checkpoints`、`unifiedReview`与`roundResultPublished.path`；状态、Attempt/产物声明、真实测试输出分别核对。`storeDir`管执行存储，不代表最终`round-result.json`发布路径也随之改变；结果发布位置以报告为准。最终HumanGate后没有自动merge/付费/下一轮动作。
+
 ## 本地使用
 
 需要 Node >=22.6 和已安装的项目依赖；具体 Agent 安装、登录与能力以本机事实为准。

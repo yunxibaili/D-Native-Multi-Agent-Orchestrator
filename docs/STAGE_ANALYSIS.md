@@ -11,7 +11,11 @@ B4.6b已独立通过：仅在既有`--checkpoint`中新增`accept <非空理由>
 
 本片是个人MVP同进程人工兜底，不是完整自动验收。历史LAYA-QUALITY.2真实wait/正向目标完成未观察的BLOCKED保持；不改答案、模型、温度或权重，不追加试跑。新增产品Agent/本地LAYA推理均0，累计本地12、产品5/5不变；开发worker两轮真实使用指定DeepSeek V4.1 Flash，不能把开发调用说成零模型调用。PARALLEL_WRITE=CLOSED，正式前端未进入，估算68/100保持。
 
-下一候选MVP-READINESS.1仅做最短个人使用链的只读收敛：复用当前CLI、阶段/模型池/检查点和交付视图，明确可执行命令、必要本机条件、尚缺真实证据与下一项硬阻塞；不再重建已完成模块，不自动新增推理或完整平台。后续真实整链调用仍需明确次数/费用/数据授权。
+MVP-READINESS.1只读收敛完成；不是完整真实round已通过。最短路径是两个sequential步骤（实现→测试），固定一个已核验Agent×Model，显式计划/阶段确认，逐步用户accept，最后保留现有原生Review和HumanGate。无需新增调度器、平台或前端。`--workflow-choice`只固定计划，`--select fixed`只固定pair，`--checkpoint`只接管单步验收；三者均不能替代LAYA分类及派发决策。
+
+本轮健康观察未通过：初次默认HTTP客户端GET超时；随后仅纠正观察路径，用无代理的直连http.client访问127.0.0.1:8077/health，2秒同样TimeoutError。没有POST、没有启动/停止服务，不能由此断言端口关闭、无进程或确定根因；当前健康状态未确认。既往服务已停止记录仍仅是当时事实，不冒充当前新观测。
+
+下一候选LAYA-HEALTH.1先只读定位本机健康超时，再按明确owned边界判断最小恢复。复用现有venv/固定缓存/Job launcher；不换模型、温度或权重，不重装，不新增框架，不碰不属于本轮的listener/进程。此候选不授权推理或产品Agent调用；如需启动服务，应先给出具体启动/时限/清理范围，执行后以validated Job空和owned清理证明结束。健康就绪后，新的真实个人demo仍须明确worker/reviewer模型、费用、会话和本地POST上限。
 
 ## 1. 推进原则
 
