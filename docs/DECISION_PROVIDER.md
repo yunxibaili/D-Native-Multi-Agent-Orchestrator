@@ -98,6 +98,12 @@ LAYA-CONTEXT.1代码独立PASS，整体PASS WITH P2：bounded workflow状态/材
 守卫在响应后生效，仍消耗一次决策调用，不是发请求前精确计数。实际固定english配置512/192，multilingual为1024/256；代码统一以512保守拒绝，多语言可能在本可容纳时被拒。源码注释和worker报告误把两者容量都写512，独立审核保留P2并在文档纠正，不把它提升为事实；后续限定维护纠正文案，当前不扩大预算。仅已固定配置假设内的有界保护，不认证任意服务配置/模型判断质量或完整round。
 原生token信息由既有layaMetadata读取，bounded请求中在extractAction/applyDecision之前拒绝token-budget-saturated、token-visibility-unavailable或unsupported-native-checkpoint；无自动重试。非LAYA通用provider没有同样native预算证明，本片保持兼容，不将其fixture视作真实可见性认证。
 
+### 3.7 真实动作输出的领域适配尚未验收
+
+LAYA-ACTION.3 实际3/3本地请求仍选择continue，原生输入分别494/278/276 tokens；同一实际tokenizer回放确认三例状态均完整可见、材料字段存在、候选可区分，零state截断。生产provider/loop与守卫正确接收合法答案，complete调用0、Task状态未变，受控dispatch均拒绝真实执行；协议/安全/输入可见性通过，正向目标完成仍NOT OBSERVED，因此本片整体BLOCKED。不能据三例断言模型普遍不可用或确定其选择根因；也不能再以本轮材料缺失解释结果。
+只读GitHub MCP成功核对官方同版本README Honest limits、staged-adoption与evals：官方自述基础权重在其typed-decisions任务域表现有限，建议shadow/审定标签/独立留出评估后再放行；这些上游结论不是本项目准确率，也不证明本次continue的因果原因。本机evals是已存在的模块文件，不是目录；原生JSONL校验/评价可复用，不安装新依赖。CrewAI quickstart含_DemoAgent关键词/mock回退，未执行、不能当真实模型成功证据。
+参考：[同版本分阶段采用](https://github.com/NandhaKishorM/laya/blob/6ab71fb4ce6bfd6f189e9b689eaadd67103ed9b6/docs/staged-adoption.md)、[已有evals](https://github.com/NandhaKishorM/laya/blob/6ab71fb4ce6bfd6f189e9b689eaadd67103ed9b6/docs/evals.md)、[基础权重限制](https://github.com/NandhaKishorM/laya/blob/6ab71fb4ce6bfd6f189e9b689eaadd67103ed9b6/README.md#honest-limits)。先复用小样本/审定标签与未知桶，不凭模型置信度、成功HTTP或几个样本宣称自主编排可靠；不自动采用示例中的固定fallback或阈值。
+
 ## 4. 当前请求约束
 
 支持 choice、score、noul，具体字段以 types.ts 和 laya.ts 的校验为准。
