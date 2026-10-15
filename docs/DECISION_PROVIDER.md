@@ -128,15 +128,15 @@ LAYA-QUALITY.2真实验收BLOCKED（安全弃权，非错误完成）：用户�
 
 ### 3.10 决策建议、质量判断与状态权威（LAYA-BOUNDARY.1）
 
-LAYA-BOUNDARY.1只读职责审核完成：Verification是唯一状态写入权威，但不是自动测试/产物核验器；Workbench.completeTask把调用者的完成判断转成pass，原生LAYA选择complete的质量判断因此仍由模型承担。候选中有材料、状态可迁移，不等于质量已独立验证。历史QUALITY.2的安全wait与目标完成未验收保持，不能将状态权威误说成独立内容裁判。
+职责核对保留：Verification是状态入口，不是内容裁判；整轮Review在workflow完成后运行。人工accept是用户verdict，默认模型决策路线保持。
 
 当前真实调用链：LAYA动作→同次候选目标映射→decisionCapabilities.complete→NativeWorkbench.completeTask→Orchestrator.applyVerification→translateVerification/TaskStore。独立整轮Review在workflow所有成员succeeded之前被executionIncomplete挡住，且runUnifiedReview只产报告不写Task；它不能倒过来解决第一个to_verify任务的验收。任务级applyReview/review-loop已有，可供显式调用，但当前CLI该路径没有自动接线；不需要另造ReviewManager。HumanGate是结果/选项投影，automaticPostRoundAction恒none，不是stdin执行器。
 
-既有--checkpoint只接受continue与stop <reason>：continue保持任务状态，继续让LAYA决定；stop保留成果并停止。没有显式人工accept入口，不能把continue暗改为验收或把安全wait默认为complete。这是个人工作台可用性/职责接线缺口，不是新发现的TaskStore安全绕过。
+B4.6b已独立通过：仅在既有`--checkpoint`中新增`accept <非空理由>`。等待输入后同步重读当前Task和原子Attempt→RunResult；状态、任务/Attempt/Worker身份、展示条件变化、执行证据缺失或停止未确认均拒绝。只有同一当前任务仍to_verify且树停止明确为true，才通过既有completeTask/applyVerification应用用户verdict；不直接写TaskStore、不新增authority。记录source=user、taskId/attemptId、理由及applied/refused，不把用户判断当LAYA决定、独立Review、产物或测试证明。末步accept后先重算all-succeeded，不额外问模型；后续派发仍走原固定pair/声明池/额度/资源/阶段门。continue/stop和无flag默认路径保持。
 
-下一候选B4.6b是最小显式人工验收检查点：复用--checkpoint/readline/同Attempt只读快照及wb.completeTask，不新建验证器、调度器或状态权威。新增accept <非空reason>仅在原检查点显式启用时生效；等待输入后重读当前Task及原子Attempt→RunResult，要求task/attempt身份一致、仍to_verify、实际执行及停止确认完整。缺失/更换/未知停止均拒绝，不用旧快照或latest-by-task拼接。记录来源user、taskId/attemptId和理由，不冒充LAYA决定、模型Review或实际测试事实；continue/stop及默认入口不改。accept后先重算原循环完成/就绪，末步已完成时不再多问LAYA，后续派发仍走原调度/配对/额度/资源/阶段门。
+本片是个人MVP同进程人工兜底，不是完整自动验收。历史LAYA-QUALITY.2真实wait/正向目标完成未观察的BLOCKED保持；不改答案、模型、温度或权重，不追加试跑。新增产品Agent/本地LAYA推理均0，累计本地12、产品5/5不变；开发worker两轮真实使用指定DeepSeek V4.1 Flash，不能把开发调用说成零模型调用。PARALLEL_WRITE=CLOSED，正式前端未进入，估算68/100保持。
 
-B4.6b只是个人MVP的显式人工兜底，不替代用户要求的完整自动编排与独立质量验收；默认LAYA路线保持，不能把人工通过宣传为真实LAYA自动验收通过。本轮只读审核/文档，无产品源码或测试改动、无新推理/服务/worker/依赖；本地累计12、产品5/5不变，PARALLEL_WRITE=CLOSED，估算68/100不因方案增加信用。B4.6b尚未实施；当前已有授权只完成本片职责核对。
+下一候选MVP-READINESS.1仅做最短个人使用链的只读收敛：复用当前CLI、阶段/模型池/检查点和交付视图，明确可执行命令、必要本机条件、尚缺真实证据与下一项硬阻塞；不再重建已完成模块，不自动新增推理或完整平台。后续真实整链调用仍需明确次数/费用/数据授权。
 
 ## 4. 当前请求约束
 

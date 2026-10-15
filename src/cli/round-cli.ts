@@ -361,15 +361,21 @@ OPTIONS
   --review-agent <id>    who performs the round review (default: codex)
   --review-timeout <ms>  bound the round review (default: 300000)
   --no-review            skip the round review (offline runs only; reports not_requested)
-  --checkpoint           OPT-IN single-step USER checkpoint (B4.6a). Requires --workflow
+  --checkpoint           OPT-IN single-step USER checkpoint (B4.6a/B4.6b). Requires --workflow
                          sequential|collaborate. After each member really runs, and before it
                          is handed to LAYA's 'complete'/downstream dispatch, the round shows
                          that task's OWN attempt (role, criteria, bounded output, attemptId,
-                         requested pair, tree-stop fact) on stderr and asks you to 'continue'
-                         or 'stop <reason>'. 'continue' only lets the EXISTING verification and
-                         scheduling proceed - it sets no success and skips no fixed/model-pool/
-                         stage/resource gate. 'stop' records the reason, leaves the task in
-                         to_verify and starts nothing further. Non-TTY / EOF / error / invalid
+                         session, requested pair, tree-stop fact) on stderr and asks you to
+                         'continue', 'stop <reason>' or 'accept <reason>'.
+                         'continue' only lets the EXISTING verification and scheduling proceed -
+                         it sets no success and skips no fixed/model-pool/stage/resource gate.
+                         'stop' records the reason, leaves the task in to_verify and starts
+                         nothing further. 'accept <reason>' is YOUR explicit verdict that the
+                         DISPLAYED task is done: it is applied through the existing verification
+                         authority (never a direct write), after re-reading the live task and its
+                         atomic current attempt so a changed status/attempt/worker/stop fact is
+                         refused. It is NOT a LAYA decision, an independent review, or proof a
+                         test passed or an artifact exists. Non-TTY / EOF / error / invalid
                          answer / 60s timeout all STOP. No supervisor model is called.
   --handoff-max <n>      automatic agent switches allowed per task when an agent is out
                          of quota / unavailable (default: 2; 0 disables handoff)
@@ -787,7 +793,7 @@ export interface RoundCliOverrides {
    */
   readonly onWorkbenchSnapshot?: (snapshot: RoundWorkbenchObservation) => void;
   /**
-   * B4.6a: an OPT-IN, read-only USER-INPUT seam for the workflow checkpoint.
+   * B4.6a/B4.6b: an OPT-IN USER-INPUT seam for the workflow checkpoint.
    *
    * It receives a detached, frozen snapshot of plain values - never the Workbench, a
    * store, a registry, an assignment, a runtime or any callable - and returns the
@@ -796,6 +802,12 @@ export interface RoundCliOverrides {
    * STOP. Absent, the production terminal reader is used. It is only ever called when
    * `--checkpoint` was given, so a round without the flag reads no input and adds no
    * report field.
+   *
+   * The seam itself is still READ-ONLY: it cannot reach an authority, and its return is
+   * only a raw string. It is the CLI's gate - not this callback - that decides whether
+   * the answer is understood, re-reads the live task/attempt, and (for `accept`) applies
+   * the verdict through `wb.completeTask`. A callback cannot accept anything by claiming
+   * to; a changed/absent live fact is refused regardless of what it returns.
    */
   readonly checkpointInput?: (snapshot: WorkflowCheckpointSnapshot) => string | Promise<string>;
 }
@@ -2480,14 +2492,16 @@ export async function runRoundCli(
   };
 
   /*
-   * B4.6a: the OPT-IN single-step USER checkpoint state. Every value below is empty and
-   * unused unless `--checkpoint` was given, so a round without the flag behaves exactly
+   * B4.6a/B4.6b: the OPT-IN single-step USER checkpoint state. Every value below is empty
+   * and unused unless `--checkpoint` was given, so a round without the flag behaves exactly
    * as before: no input is read and no report field is added.
    *
-   * `checkpointStop` is the ONE fact the rest of the round reads: when it is non-null the
-   * user stopped, so the bounded loop ends AND the later handoff/continuation is not
-   * started. It is a report fact, never a second state authority: it does not touch a
-   * Task, a lease or the store.
+   * `checkpointStop` is the ONE fact the rest of the round reads: when it is non-null a
+   * stop (or a refused accept) ended the bounded loop, so the later handoff/continuation
+   * is not started. It is a report fact, never a second state authority: it does not touch
+   * a Task, a lease or the store. A successful `accept`, by contrast, goes through the
+   * EXISTING `wb.completeTask` -> `applyVerification` edge; the checkpoint holds no state
+   * authority of its own.
    */
   interface CheckpointEntry {
     readonly taskId: string;
@@ -2497,11 +2511,21 @@ export async function runRoundCli(
     readonly attemptId: string;
     readonly agentId: string;
     readonly modelId: string | null;
+    readonly sessionId: string | null;
     readonly output: string;
     readonly outputTruncated: boolean;
     readonly treeStopConfirmed: boolean | null;
-    readonly choice: 'continue' | 'stop';
+    readonly choice: 'continue' | 'stop' | 'accept';
+    /** For a `stop`, why; for a refused `accept`, the refusal; else null. */
     readonly stopReason: string | null;
+    /** B4.6b: the user's non-empty acceptance reason, when they chose accept. */
+    readonly acceptReason: string | null;
+    /** B4.6b: the ACTUAL outcome through the existing verification authority. */
+    readonly acceptOutcome: 'applied' | 'refused' | null;
+    /** B4.6b: which live re-check refused the accept, when it did. */
+    readonly acceptRefusal: string | null;
+    /** B4.6b: the provenance of the verdict - always the USER, never a model. */
+    readonly source: 'user';
   }
   const checkpointEntries: CheckpointEntry[] = [];
   const checkpointedAttempts = new Set<string>();
@@ -2544,7 +2568,7 @@ export async function runRoundCli(
     });
 
     /**
-     * B4.6a: the single-step user checkpoint.
+     * B4.6a/B4.6b: the single-step user checkpoint.
      *
      * It runs at the TOP of each loop iteration — after a member really ran (so it is
      * `to_verify` with a real `RunResult` correlated to the CURRENT attempt) and BEFORE
@@ -2553,11 +2577,30 @@ export async function runRoundCli(
      * no-progress re-read never re-prompts, and a task with no real run is skipped
      * rather than faked.
      *
-     * `continue` changes NOTHING about the round's gates; it only lets the existing
-     * verification/scheduling proceed. A stop (including any unreadable, errored,
-     * timed-out or invalid answer) returns a reason, and the caller ends the loop.
+     * THREE answers, and only three:
+     *   `continue` changes NOTHING about the round's gates; it only lets the existing
+     *              verification/scheduling proceed.
+     *   `stop`     ends the loop with a reason (as do any unreadable, errored,
+     *              timed-out or invalid answer).
+     *   `accept`   is an EXPLICIT USER VERDICT on the task SHOWN. It is applied ONLY
+     *              through the EXISTING completion authority (`wb.completeTask` ->
+     *              `applyVerification`), never by a direct store transition, and only
+     *              AFTER a synchronous re-read of the live facts.
+     *
+     * B4.6b RE-CHECK (the security-critical part). The displayed snapshot is DATA, never
+     * a trusted grant: a `checkpointInput` callback cannot accept anything merely by
+     * returning the word. AFTER the answer is read and BEFORE any pass is applied, the
+     * CURRENT Task and the atomic `currentActualOf` bundle are re-read, and the accept is
+     * refused unless the task still exists, is still `to_verify`, still carries the SAME
+     * acceptance criteria, still has the SAME current attempt / agent / model / session,
+     * still has that attempt's own RunResult, and reports a CONFIRMED process-tree stop.
+     * No latest-by-task join, no session guessed from a thread. All refusal paths STOP
+     * VISIBLY and never default to continue or success; there is deliberately NO await
+     * between the final check and `wb.completeTask`.
      */
-    const checkpointGate = async (): Promise<{ taskId: string; reason: string } | null> => {
+    const checkpointGate = async (): Promise<
+      { kind: 'stop'; taskId: string; reason: string } | { kind: 'accept' } | null
+    > => {
       if (o.checkpoint !== true) return null;
       for (const id of memberIds) {
         const task = wb.store.get(id);
@@ -2568,6 +2611,11 @@ export async function runRoundCli(
         checkpointedAttempts.add(actual.attemptId);
 
         const run = actual.run;
+        // The task's DECLARED worker as DISPLAYED, captured as primitives BEFORE the await,
+        // so a mutation of the live task while the user is deciding is detectable (the
+        // attempt record itself is frozen, so only the task-side identity can move).
+        const displayedTaskAgentId = task.agentId;
+        const displayedTaskModelId = task.modelId;
         const bounded = run.output.slice(0, CHECKPOINT_OUTPUT_MAX_CHARS);
         const snapshot: WorkflowCheckpointSnapshot = Object.freeze({
           taskId: id,
@@ -2577,12 +2625,29 @@ export async function runRoundCli(
           attemptId: actual.attemptId,
           agentId: actual.agentId,
           modelId: actual.modelId,
+          sessionId: actual.sessionId,
           output: bounded,
           outputTruncated: run.outputTruncated === true || bounded.length < run.output.length,
           treeStopConfirmed: run.cleanup?.treeStopConfirmed ?? null,
         });
-        const record = (choice: 'continue' | 'stop', stopReason: string | null): void => {
-          checkpointEntries.push({ ...snapshot, choice, stopReason });
+        const record = (
+          choice: 'continue' | 'stop' | 'accept',
+          extra: {
+            stopReason?: string | null;
+            acceptReason?: string | null;
+            acceptOutcome?: 'applied' | 'refused' | null;
+            acceptRefusal?: string | null;
+          } = {},
+        ): void => {
+          checkpointEntries.push({
+            ...snapshot,
+            choice,
+            stopReason: extra.stopReason ?? null,
+            acceptReason: extra.acceptReason ?? null,
+            acceptOutcome: extra.acceptOutcome ?? null,
+            acceptRefusal: extra.acceptRefusal ?? null,
+            source: 'user',
+          });
         };
 
         let raw: unknown;
@@ -2595,15 +2660,73 @@ export async function runRoundCli(
             : await createStdinCheckpointReader()(snapshot);
         } catch (e) {
           const reason = `the checkpoint answer could not be read (${thrownMessage(e)}); stopping this round`;
-          record('stop', reason);
-          return { taskId: id, reason };
+          record('stop', { stopReason: reason });
+          return { kind: 'stop', taskId: id, reason };
         }
         const decision = parseCheckpointAnswer(typeof raw === 'string' ? raw : '');
-        if (decision.action === 'continue') { record('continue', null); continue; }
-        if (decision.action === 'stop') { record('stop', decision.reason); return { taskId: id, reason: decision.reason }; }
-        const reason = `the checkpoint answer was not understood (${decision.detail}); stopping this round`;
-        record('stop', reason);
-        return { taskId: id, reason };
+        if (decision.action === 'continue') { record('continue'); continue; }
+        if (decision.action === 'stop') {
+          record('stop', { stopReason: decision.reason });
+          return { kind: 'stop', taskId: id, reason: decision.reason };
+        }
+        if (decision.action === 'invalid') {
+          const reason = `the checkpoint answer was not understood (${decision.detail}); stopping this round`;
+          record('stop', { stopReason: reason });
+          return { kind: 'stop', taskId: id, reason };
+        }
+
+        /*
+         * decision.action === 'accept'. Re-read the LIVE facts synchronously, AFTER the
+         * awaited answer, BEFORE applying anything. The snapshot above is only what the
+         * user was SHOWN; it authorises nothing on its own.
+         */
+        const refuseAccept = (detail: string): { kind: 'stop'; taskId: string; reason: string } => {
+          const reason = `the user's accept was refused: ${detail}; stopping this round (no task was marked done)`;
+          record('accept', {
+            acceptReason: decision.reason,
+            acceptOutcome: 'refused',
+            acceptRefusal: detail,
+            stopReason: reason,
+          });
+          return { kind: 'stop', taskId: id, reason };
+        };
+        const freshTask = wb.store.get(id);
+        if (freshTask === null) return refuseAccept(`task ${id} no longer exists`);
+        if (freshTask.status !== 'to_verify') {
+          return refuseAccept(`task ${id} is now ${freshTask.status}, not awaiting verification`);
+        }
+        if (freshTask.acceptanceCriteria !== snapshot.acceptanceCriteria) {
+          return refuseAccept(`the task's acceptance criteria changed while the answer was being read`);
+        }
+        if (freshTask.agentId !== displayedTaskAgentId || freshTask.modelId !== displayedTaskModelId) {
+          return refuseAccept(`the task's declared worker identity changed while the answer was being read`);
+        }
+        const freshActual = currentActualOf(id);
+        if (freshActual === null) return refuseAccept(`task ${id} has no current execution to verify`);
+        if (freshActual.attemptId !== snapshot.attemptId) {
+          return refuseAccept(`the current attempt changed (was ${snapshot.attemptId}, now ${freshActual.attemptId})`);
+        }
+        if (freshActual.run === null) {
+          return refuseAccept(`the current attempt ${freshActual.attemptId} has no RunResult`);
+        }
+        if (freshActual.agentId !== snapshot.agentId || freshActual.modelId !== snapshot.modelId ||
+          freshActual.sessionId !== snapshot.sessionId) {
+          return refuseAccept(`the current attempt's worker identity changed while the answer was being read`);
+        }
+        if (freshActual.run.cleanup?.treeStopConfirmed !== true) {
+          return refuseAccept(`the current attempt's process-tree stop is not confirmed`);
+        }
+        // The SOLE completion edge, and the EXISTING one: no direct TaskStore write, no
+        // await between the checks above and this call, and an explicit user reason.
+        const applied = wb.completeTask(
+          id,
+          `user accepted at the workflow checkpoint: ${decision.reason}`,
+        );
+        if (!applied.ok) {
+          return refuseAccept(`the existing verification authority refused (${applied.code}: ${applied.reason})`);
+        }
+        record('accept', { acceptReason: decision.reason, acceptOutcome: 'applied' });
+        return { kind: 'accept' };
       }
       return null;
     };
@@ -2628,14 +2751,23 @@ export async function runRoundCli(
           workflowStop = 'handoff-boundary';
           break;
         }
-        // B4.6a: the USER checkpoint sits between "a member really ran" and "LAYA may
-        // verify it and schedule downstream work". A stop ends the loop here.
+        // B4.6a/B4.6b: the USER checkpoint sits between "a member really ran" and "LAYA
+        // may verify it and schedule downstream work". A stop ends the loop here; an
+        // ACCEPT is applied through the existing verification authority, and then the
+        // loop re-checks the bounded workflow's OWN completion at the TOP before any
+        // further model decision (so a final member that just succeeded ends as
+        // all-succeeded WITHOUT an extra, actionless LAYA call).
         if (o.checkpoint === true) {
-          const stopped = await checkpointGate();
-          if (stopped !== null) {
-            workflowStop = 'user-stop';
-            checkpointStop = { taskId: stopped.taskId, reason: stopped.reason, blockedTaskIds: blockedByStop() };
-            break;
+          const result = await checkpointGate();
+          if (result !== null) {
+            if (result.kind === 'stop') {
+              workflowStop = 'user-stop';
+              checkpointStop = { taskId: result.taskId, reason: result.reason, blockedTaskIds: blockedByStop() };
+              break;
+            }
+            // A real user acceptance was applied. If downstream remains, the existing
+            // scheduler/decision path below still controls the next dispatch.
+            continue;
           }
         }
         const before = sig();
@@ -3224,11 +3356,12 @@ export async function runRoundCli(
       pending: workflowPending,
     };
     /*
-     * B4.6a: the USER checkpoint record — OPT-IN, so it exists ONLY when `--checkpoint`
-     * was given and a round without the flag is byte-identical to before. It holds what
-     * was shown, what the user chose, a stop reason (or null) and the tasks the stop
-     * withheld. It is a REPORT fact only: it is not a second task state, and it never
-     * certifies that an artifact exists or that a test passed.
+     * B4.6a/B4.6b: the USER checkpoint record - OPT-IN, so it exists ONLY when
+     * `--checkpoint` was given and a round without the flag is byte-identical to before.
+     * It holds what was shown, what the user chose (continue / stop / accept), the accept
+     * reason and its ACTUAL applied/refused outcome, and the tasks a stop withheld. It is
+     * a REPORT fact only: it is not a second task state, and it never certifies that an
+     * artifact exists or that a test passed.
      */
     if (o.checkpoint === true) {
       report.checkpoints = {
@@ -3237,16 +3370,25 @@ export async function runRoundCli(
         entries: checkpointEntries,
         stop: checkpointStop,
         /*
-         * B4.6a (P2): the note must state the REAL effect of a stop, not "every task is
-         * unverified". By the time the checkpoint is offered the plan may already contain
-         * tasks that LAYA verified (`succeeded`) in an EARLIER cycle; a stop withholds the
-         * step that is currently awaiting verification and starts nothing further, but it
-         * does not retract a verdict already reached. The two cases are worded separately.
+         * B4.6a (P2)/B4.6b: the note must state the REAL effect, and must not describe an
+         * `accept` as read-only. Three distinguishable cases are worded separately:
+         *   - a stop (as before): the awaiting step is left UNVERIFIED, prior verdicts kept;
+         *   - a real user ACCEPT: that task became succeeded on the USER's verdict, which
+         *     is not a LAYA decision, a model review, or proof of a test/artifact;
+         *   - continue-only: the checkpoint itself verified nothing.
          */
-        note:
-          checkpointStop !== null
-            ? 'OPT-IN user supervision only: no supervisor model was called. The user STOPPED at a checkpoint: the step awaiting verification is left UNVERIFIED, tasks verified BEFORE the stop keep their verdict, and nothing further runs. A stop is not a certification that any artifact exists or any test passed.'
-            : 'OPT-IN user supervision only: no supervisor model was called. The checkpoint itself verifies nothing: "continue" only let the existing LAYA verification/scheduling proceed, and no task became succeeded because of it. It is not a certification that any artifact exists or any test passed.',
+        note: (() => {
+          if (checkpointStop !== null) {
+            const refusedAccept = checkpointEntries.some((e) => e.acceptOutcome === 'refused');
+            return 'OPT-IN user supervision only: no supervisor model was called. The user STOPPED at a checkpoint'
+              + (refusedAccept ? ' (an accept was refused by a checkpoint recheck or the existing verification authority)' : '')
+              + ': the step awaiting verification is left UNVERIFIED, tasks verified BEFORE the stop keep their verdict, and nothing further runs. A stop is not a certification that any artifact exists or any test passed.';
+          }
+          if (checkpointEntries.some((e) => e.acceptOutcome === 'applied')) {
+            return 'OPT-IN user verification by the human: the user explicitly ACCEPTED the displayed task(s) through the existing verification authority, so that task became succeeded on the USER\'s verdict - NOT a LAYA decision, a model review, or proof that a test passed or an artifact exists. "continue" choices verify nothing themselves, and no supervisor model was called by the checkpoint.';
+          }
+          return 'OPT-IN user supervision only: no supervisor model was called. The checkpoint itself verifies nothing: "continue" only let the existing LAYA verification/scheduling proceed, and no task became succeeded because of it. It is not a certification that any artifact exists or any test passed.';
+        })(),
       };
     }
     /*

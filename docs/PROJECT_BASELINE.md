@@ -51,9 +51,10 @@ README 是导航。本机 `project-progress/audit/` 是用户指定的只读第�
 | LAYA-ACTION.3 | BLOCKED：修复后真实3/3仍continue；494/278/276 tokens均无state截断，协议/安全通过，正向目标完成仍未观察；不追加重试 |
 | LAYA-QUALITY.1 | 候选资格过滤独立PASS：无ready不提供continue、wait/abort及明确complete保留；历史回放/负控/定向测试通过，无新增推理；真实模型质量仍待验收 |
 | LAYA-QUALITY.2 | 真实BLOCKED：首例wait、任务不变，465 tokens零截断；1/2后fail-stop，第二例未运行；Job空/清理通过，未追加重试 |
-| LAYA-BOUNDARY.1 | 只读审核完成：状态Verification不等于内容核验；现checkpoint无accept，整轮Review在workflow完成后才运行；下一建议复用显式人工验收，不追加推理 |
+| LAYA-BOUNDARY.1 | 只读职责审核完成；状态Verification不等于内容核验，整轮Review仍在workflow完成后运行；显式人工兜底随后由B4.6b实现 |
 | B2 overall | NOT SEALED；账户资格/硬金额预算/付费与全流程费用未验收 |
 | B4.6a | 最小同进程用户检查点独立通过；原报告文案P2在B5.1关闭，不等于完整监督/纠偏恢复 |
+| B4.6b | 独立PASS：同进程显式人工accept，等待后同步重读当前Task/Attempt/RunResult/停止事实，经同一Verification；非LAYA自动质量验收 |
 | B5.1 | 独立 PASS WITH P2：已知session_failure的停止安全/具体model有界接力；仅受控当前链 |
 | B5 overall | NOT SEALED；真实协议掉线、完整工作流恢复及更广错误分类未验收 |
 | B4.7 | B4.7.3固定free duo代表样本独立PASS：两个真实模型、三个独立任务/会话、共享顺序demo；整体仍NOT SEALED（真实LAYA/工具/全流程费用未验）；累计产品会话5/5、剩0 |
@@ -373,19 +374,15 @@ LAYA-QUALITY.2真实验收BLOCKED（安全弃权，非错误完成）：用户�
 
 下一候选LAYA-BOUNDARY.1为只读职责收敛：基于官方“typed decision不等于执行许可”和shadow/unknown方法，保留四项已真实通过的分类/计划/具体pair接口，沿既有Verification/Review/HumanGate核对完成事实由谁认证、当前请求含义是否与模型适用范围一致。先提出复用现有证据权威的最小方案，不新增大脑/框架、不让wait默认变complete、不改模型或温度，也不再盲目追加同类推理。此为建议，尚未实施；如需改生产行为另行限定任务，任何真实新调用另行明确范围。
 
-### 5.23 状态验证与质量判断的职责收敛（2026-10-15）
+### 5.23 决策/验收职责与显式人工兜底（2026-10-15）
 
-LAYA-BOUNDARY.1只读职责审核完成：Verification是唯一状态写入权威，但不是自动测试/产物核验器；Workbench.completeTask把调用者的完成判断转成pass，原生LAYA选择complete的质量判断因此仍由模型承担。候选中有材料、状态可迁移，不等于质量已独立验证。历史QUALITY.2的安全wait与目标完成未验收保持，不能将状态权威误说成独立内容裁判。
+Verification只应用可信verdict，不自动测试内容；整轮Review后置且不改TaskStore，不能倒过来解决首个to_verify任务。LAYA-BOUNDARY.1已完成该职责核对，历史探针结果见§8。
 
-当前真实调用链：LAYA动作→同次候选目标映射→decisionCapabilities.complete→NativeWorkbench.completeTask→Orchestrator.applyVerification→translateVerification/TaskStore。独立整轮Review在workflow所有成员succeeded之前被executionIncomplete挡住，且runUnifiedReview只产报告不写Task；它不能倒过来解决第一个to_verify任务的验收。任务级applyReview/review-loop已有，可供显式调用，但当前CLI该路径没有自动接线；不需要另造ReviewManager。HumanGate是结果/选项投影，automaticPostRoundAction恒none，不是stdin执行器。
+B4.6b已独立通过：仅在既有`--checkpoint`中新增`accept <非空理由>`。等待输入后同步重读当前Task和原子Attempt→RunResult；状态、任务/Attempt/Worker身份、展示条件变化、执行证据缺失或停止未确认均拒绝。只有同一当前任务仍to_verify且树停止明确为true，才通过既有completeTask/applyVerification应用用户verdict；不直接写TaskStore、不新增authority。记录source=user、taskId/attemptId、理由及applied/refused，不把用户判断当LAYA决定、独立Review、产物或测试证明。末步accept后先重算all-succeeded，不额外问模型；后续派发仍走原固定pair/声明池/额度/资源/阶段门。continue/stop和无flag默认路径保持。
 
-既有--checkpoint只接受continue与stop <reason>：continue保持任务状态，继续让LAYA决定；stop保留成果并停止。没有显式人工accept入口，不能把continue暗改为验收或把安全wait默认为complete。这是个人工作台可用性/职责接线缺口，不是新发现的TaskStore安全绕过。
+本片是个人MVP同进程人工兜底，不是完整自动验收。历史LAYA-QUALITY.2真实wait/正向目标完成未观察的BLOCKED保持；不改答案、模型、温度或权重，不追加试跑。新增产品Agent/本地LAYA推理均0，累计本地12、产品5/5不变；开发worker两轮真实使用指定DeepSeek V4.1 Flash，不能把开发调用说成零模型调用。PARALLEL_WRITE=CLOSED，正式前端未进入，估算68/100保持。
 
-本轮受控离线探针复用QUALITY.2捕获wait，经真实provider/decision loop/NativeWorkbench后，任务不变、complete0/runtime0；当前accept语法实际invalid；可信调用者显式completeTask可使唯一指定to_verify任务succeeded，而planned任务仍被not-awaiting-verification拒绝。此探针没有真实执行/质量认证，不证明生产CLI可绕过材料门。独立b46检查点42/0、review-loop169/0、round-result346/0、unified-review130/0、workbench419/0均exit0，209版本文件前后hash不变。
-
-下一候选B4.6b是最小显式人工验收检查点：复用--checkpoint/readline/同Attempt只读快照及wb.completeTask，不新建验证器、调度器或状态权威。新增accept <非空reason>仅在原检查点显式启用时生效；等待输入后重读当前Task及原子Attempt→RunResult，要求task/attempt身份一致、仍to_verify、实际执行及停止确认完整。缺失/更换/未知停止均拒绝，不用旧快照或latest-by-task拼接。记录来源user、taskId/attemptId和理由，不冒充LAYA决定、模型Review或实际测试事实；continue/stop及默认入口不改。accept后先重算原循环完成/就绪，末步已完成时不再多问LAYA，后续派发仍走原调度/配对/额度/资源/阶段门。
-
-B4.6b只是个人MVP的显式人工兜底，不替代用户要求的完整自动编排与独立质量验收；默认LAYA路线保持，不能把人工通过宣传为真实LAYA自动验收通过。本轮只读审核/文档，无产品源码或测试改动、无新推理/服务/worker/依赖；本地累计12、产品5/5不变，PARALLEL_WRITE=CLOSED，估算68/100不因方案增加信用。B4.6b尚未实施；当前已有授权只完成本片职责核对。
+下一候选MVP-READINESS.1仅做最短个人使用链的只读收敛：复用当前CLI、阶段/模型池/检查点和交付视图，明确可执行命令、必要本机条件、尚缺真实证据与下一项硬阻塞；不再重建已完成模块，不自动新增推理或完整平台。后续真实整链调用仍需明确次数/费用/数据授权。
 
 ## 6. 不可绕过的契约
 
@@ -416,6 +413,12 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 不新增 provider 网关、群聊平台、第二个调度器或通用工作流引擎来掩盖协议缺口。
 
 ## 8. 最近独立证据与上传记录
+
+2026-10-15 B4.6b实际实现与Codex独立审核：B4.6b已独立通过：仅在既有`--checkpoint`中新增`accept <非空理由>`。等待输入后同步重读当前Task和原子Attempt→RunResult；状态、任务/Attempt/Worker身份、展示条件变化、执行证据缺失或停止未确认均拒绝。只有同一当前任务仍to_verify且树停止明确为true，才通过既有completeTask/applyVerification应用用户verdict；不直接写TaskStore、不新增authority。记录source=user、taskId/attemptId、理由及applied/refused，不把用户判断当LAYA决定、独立Review、产物或测试证明。末步accept后先重算all-succeeded，不额外问模型；后续派发仍走原固定pair/声明池/额度/资源/阶段门。continue/stop和无flag默认路径保持。
+Codex先核对仓内调用链，并成功用GitHub MCP读取固定LAYA0.3.21 staged-adoption（typed decision不等于执行许可），Node readline生命周期沿用本机既有API，不引入依赖。OpenCode implement首次+一次限定返工，原生session导出确认全部assistant为opencode-go/deepseek-v4.1-flash且最终finish=stop；Codex独立读实际diff和连接源码后重跑：typecheck: typecheck PASS；b46-workflow-checkpoint: 49 passed, 0 failed；b40a-cli-workflow: 159 passed, 0 failed；state-loop: 276 passed, 0 failed；round-result: 346 passed, 0 failed；workbench: 419 passed, 0 failed；b41-collab-group: 96 passed, 0 failed；b43-stage-material: 47 passed, 0 failed；b14-selection: 179 passed, 0 failed；b22-model-pool-candidates: 33 passed, 0 failed，全部exit0；内存负控屏蔽人工completeTask调用后真实CLI套件非零，未修改工作树。缺失ce.run分支如无可达测试入口仅作源码核对，不冒称物理测试。
+本片是个人MVP同进程人工兜底，不是完整自动验收。历史LAYA-QUALITY.2真实wait/正向目标完成未观察的BLOCKED保持；不改答案、模型、温度或权重，不追加试跑。新增产品Agent/本地LAYA推理均0，累计本地12、产品5/5不变；开发worker两轮真实使用指定DeepSeek V4.1 Flash，不能把开发调用说成零模型调用。PARALLEL_WRITE=CLOSED，正式前端未进入，估算68/100保持。
+下一候选MVP-READINESS.1仅做最短个人使用链的只读收敛：复用当前CLI、阶段/模型池/检查点和交付视图，明确可执行命令、必要本机条件、尚缺真实证据与下一项硬阻塞；不再重建已完成模块，不自动新增推理或完整平台。后续真实整链调用仍需明确次数/费用/数据授权。
+本机证据b46b-implement/rework.jsonl、两次native-export、independent-tests、negctl-result及review-state仅ignored；audit严格只读。产品改动限定两个CLI文件和两个既有hermetic套件，无native/生产配置/依赖/安装修改。受影响文档与本机页同步后仅精确上传审核快照，主HEAD/共享index/其他dirty文件保留，未合入main。以下BOUNDARY记录为当时历史，不代表当前仍无accept。
 
 2026-10-15 LAYA-BOUNDARY.1只读审核：LAYA-BOUNDARY.1只读职责审核完成：Verification是唯一状态写入权威，但不是自动测试/产物核验器；Workbench.completeTask把调用者的完成判断转成pass，原生LAYA选择complete的质量判断因此仍由模型承担。候选中有材料、状态可迁移，不等于质量已独立验证。历史QUALITY.2的安全wait与目标完成未验收保持，不能将状态权威误说成独立内容裁判。
 先读当前基准/调用者/audit，再经GitHub MCP成功读取官方固定v0.3.21 staged-adoption：typed decision不等于执行许可，应用保有执行/审核边界，shadow对照允许unknown；结合当前源码采用方法，不复制框架或调整权重。OpenCode官方agents文档仅核对角色与权限可分工，不视为本机新原生review能力已实测；未调用其他Agent。
@@ -1128,18 +1131,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-15T19:06:43+08:00",
+  "updatedAt": "2026-10-15T12:04:31.609477+00:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "LAYA-BOUNDARY.1",
-    "name": "只读职责核对完成；明确最小人工验收接线",
+    "id": "B4.6b",
+    "name": "显式人工验收检查点：独立通过",
     "status": "done",
-    "summary": "状态Verification不是内容裁判；现checkpoint continue不验收，整轮Review不能救前置验收。5套件/离线回放通过，无新增推理或实现。"
+    "summary": "OpenCode指定Flash首次+一次返工；Codex独立审核/定向测试/承重负控通过。仅用户verdict兜底，真实LAYA自动质量缺口保持。"
   },
   "next": {
-    "id": "B4.6b",
-    "name": "已有检查点增加显式人工accept，绑定当前Attempt并沿唯一Verification入口",
+    "id": "MVP-READINESS.1",
+    "name": "只读收敛个人最短使用链与剩余硬阻塞",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1215,19 +1218,11 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
   },
   "blockers": [
     {
-      "id": "EXPLICIT-USER-ACCEPTANCE",
-      "severity": "产品接线缺口",
-      "title": "用户检查点不能显式验收任务，continue仍依赖LAYA判断",
-      "detail": "状态Verification仅应用可信verdict；整轮Review等待workflow完成，HumanGate仅报告。当前没有人工accept执行入口，不能靠改写wait解决。",
-      "next": "B4.6b显式accept+非空理由/当前Attempt与停止事实复查/单一Verification/来源user；保持默认continue/stop语义。",
-      "kind": "最小人工兜底建议，不等于自动质量验收"
-    },
-    {
       "id": "LAYA-ACTION-DOMAIN",
       "severity": "实测受阻",
       "title": "资格过滤后仍未观察真实目标完成",
       "detail": "QUALITY.2首例实际wait，输入465 tokens全量可见；安全弃权而非错误完成，不能认证完成能力或推断普遍准确率。第二例未运行。",
-      "next": "职责审核已完成；下一建议B4.6b显式人工accept作为个人MVP兜底，保持真实LAYA自动验收缺口，不再追加同类试跑。",
+      "next": "人工accept兜底已独立通过；保持真实LAYA自动验收缺口，先收敛最短个人使用链，不追加同类试跑。",
       "kind": "领域适配/正向验收缺口，不是新接线或containment故障"
     },
     {
@@ -1613,16 +1608,21 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "status": "done",
       "deliverable": "真实调用链、缺口与3文件内的最小显式人工验收建议",
       "evidence": "受控捕获wait回放/可信状态入口/当前accept无效；42/169/346/130/419均0失败；无新模型调用"
+    },
+    {
+      "id": "B4.6b",
+      "title": "显式人工验收检查点",
+      "status": "done",
+      "deliverable": "同Attempt用户accept→同步复查→既有Verification，末步无额外模型决策",
+      "evidence": "typecheck: typecheck PASS；b46-workflow-checkpoint: 49 passed, 0 failed；b40a-cli-workflow: 159 passed, 0 failed；state-loop: 276 passed, 0 failed；round-result: 346 passed, 0 failed；workbench: 419 passed, 0 failed；b41-collab-group: 96 passed, 0 failed；b43-stage-material: 47 passed, 0 failed；b14-selection: 179 passed, 0 failed；b22-model-pool-candidates: 33 passed, 0 failed；内存负控非零、模型/session证据与scope独立核对；非真实LAYA自动质量验收"
     }
   ],
   "checks": [
-    "research-before-work：官方同版本职责/分阶段接入+真实调用链复核；GitHub MCP成功",
-    "Verification只映射可信verdict和状态，不自动运行测试；completeTask请求pass不是独立质量核验",
-    "当前checkpoint continue非验收、accept无效；整轮Review后置且不改任务；HumanGate纯投影",
-    "捕获wait经真实provider/loop/Workbench离线回放不改任务；可信显式pass只改目标，planned拒绝；无真实模型",
-    "独立检查点42/review-loop169/round-result346/unified-review130/workbench419均0失败，209文件不变",
-    "下一建议复用现有检查点做显式人工accept，绑定当前Attempt/停止事实；尚未实现，不新增框架",
-    "本轮推理0，本地累计12/产品5，估算68/100，并行写CLOSED；基线与本机页同步"
+    "research-before-work：固定官方LAYA职责资料+Node既有readline，仓内复用",
+    "B4.6b独立通过；仅显式用户验收，真实LAYA质量BLOCKED保持",
+    "typecheck: typecheck PASS；b46-workflow-checkpoint: 49 passed, 0 failed；b40a-cli-workflow: 159 passed, 0 failed；state-loop: 276 passed, 0 failed；round-result: 346 passed, 0 failed；workbench: 419 passed, 0 failed；b41-collab-group: 96 passed, 0 failed；b43-stage-material: 47 passed, 0 failed；b14-selection: 179 passed, 0 failed；b22-model-pool-candidates: 33 passed, 0 failed",
+    "内存负控屏蔽completeTask后套件失败，源文件hash不变",
+    "新增产品/本地推理0，累计本地12/产品5，估算68/100，并行写CLOSED；基线与本机页同步"
   ],
   "sources": [
     {

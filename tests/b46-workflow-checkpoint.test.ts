@@ -136,10 +136,18 @@ function probeFor(agentId: string, modelId: string, status: 'available' | 'exhau
   } as unknown as QuotaProbe;
 }
 
+interface CheckpointEntryReport {
+  taskId: string; status: string; role: string | null; acceptanceCriteria: string;
+  attemptId: string; agentId: string; modelId: string | null; sessionId: string | null;
+  output: string; outputTruncated: boolean; treeStopConfirmed: boolean | null;
+  choice: 'continue' | 'stop' | 'accept'; stopReason: string | null;
+  acceptReason: string | null; acceptOutcome: 'applied' | 'refused' | null; acceptRefusal: string | null;
+  source: 'user';
+}
 interface CheckpointsReport {
   enabled: boolean;
   prompts: number;
-  entries: Array<{ taskId: string; status: string; role: string | null; acceptanceCriteria: string; attemptId: string; agentId: string; modelId: string | null; output: string; outputTruncated: boolean; treeStopConfirmed: boolean | null; choice: 'continue' | 'stop'; stopReason: string | null }>;
+  entries: CheckpointEntryReport[];
   stop: { taskId: string; reason: string; blockedTaskIds: string[] } | null;
   note: string;
 }
@@ -385,6 +393,30 @@ section('collaboration stop: the first member blocks the rest, and its file surv
 }
 
 // =========================================================================
+section('collaboration accept: the user completes each DISPLAYED member, the group finishes');
+
+{
+  // The user accepts every member (and the integration). The checkpoint runs BEFORE LAYA can
+  // choose `complete`, so the group finishes on the USER's verdicts through the EXISTING
+  // verification authority, not a model completion.
+  const r = await collabRound({ checkpoint: true, checkpointInput: () => 'accept: member output reviewed' });
+  const cp = cpOf(r)!;
+  check('collab-accept: one prompt per attempt, every one applied through verification',
+    cp.entries.length === 3 && cp.entries.every((e) => e.choice === 'accept' && e.acceptOutcome === 'applied' && e.source === 'user' && e.acceptRefusal === null),
+    JSON.stringify(cp.entries.map((e) => `${e.choice}:${e.acceptOutcome}`)));
+  check('collab-accept: the group completes (3 runs, exit 0, ok)',
+    r.requests.length === 3 && r.exitCode === 0 && r.report.ok === true,
+    `n=${r.requests.length} exit=${r.exitCode} ok=${String(r.report.ok)}`);
+  check('collab-accept: the non-empty reason and attempt are traceable per task',
+    cp.entries.every((e) => e.acceptReason === 'member output reviewed' && e.attemptId.trim() !== '' && e.taskId.trim() !== '') &&
+      cp.entries.some((e) => e.taskId.endsWith('-m1')) && cp.entries.some((e) => e.taskId.endsWith('-int')),
+    JSON.stringify(cp.entries.map((e) => `${e.taskId}:${e.acceptReason}`)));
+  check('collab-accept: the note distinguishes a USER acceptance from a read-only checkpoint',
+    /ACCEPTED/i.test(cp.note) && /USER/.test(cp.note) && !/checkpoint itself verifies nothing/i.test(cp.note),
+    cp.note);
+}
+
+// =========================================================================
 section('detachment: the snapshot is frozen, plain, and reaches no authority');
 
 {
@@ -457,7 +489,8 @@ section('reader: fail-closed on non-TTY, and it releases so a child exits natura
 {
   const snapshot: WorkflowCheckpointSnapshot = Object.freeze({
     taskId: 't', status: 'to_verify', role: 'r', acceptanceCriteria: 'c',
-    attemptId: 'a', agentId: 'ag', modelId: null, output: 'o', outputTruncated: false, treeStopConfirmed: true,
+    attemptId: 'a', agentId: 'ag', modelId: null, sessionId: null,
+    output: 'o', outputTruncated: false, treeStopConfirmed: true,
   });
   // A non-TTY input must be refused WITHOUT waiting, and the answer validator must never
   // turn it into a continue.
@@ -473,6 +506,19 @@ section('reader: fail-closed on non-TTY, and it releases so a child exits natura
   check('reader: the pure validator accepts continue and stop <reason>',
     parseCheckpointAnswer('continue').action === 'continue' && parseCheckpointAnswer('stop too risky').action === 'stop',
     JSON.stringify([parseCheckpointAnswer('continue'), parseCheckpointAnswer('stop too risky')]));
+  // B4.6b: `accept <reason>` is a THIRD answer; a bare accept or a blank reason is invalid.
+  check('reader: the pure validator accepts accept <reason> (case/colon tolerant)',
+    parseCheckpointAnswer('accept looks good').action === 'accept' &&
+      (parseCheckpointAnswer('accept looks good') as { reason?: string }).reason === 'looks good' &&
+      parseCheckpointAnswer('ACCEPT: reviewed the deliverable').action === 'accept',
+    JSON.stringify([parseCheckpointAnswer('accept looks good'), parseCheckpointAnswer('ACCEPT: reviewed the deliverable')]));
+  check('reader: the pure validator rejects a bare accept and a blank accept reason',
+    parseCheckpointAnswer('accept').action === 'invalid' && parseCheckpointAnswer('accept    ').action === 'invalid',
+    JSON.stringify([parseCheckpointAnswer('accept'), parseCheckpointAnswer('accept    ')]));
+  check('reader: continue/stop defaults are unchanged by the new grammar',
+    parseCheckpointAnswer('continue').action === 'continue' && parseCheckpointAnswer('').action === 'invalid' &&
+      parseCheckpointAnswer('stop').action === 'invalid' && parseCheckpointAnswer('maybe').action === 'invalid',
+    JSON.stringify([parseCheckpointAnswer('continue'), parseCheckpointAnswer('')]));
 
   // A SEPARATE child that uses the reader and never calls process.exit: it can only exit
   // naturally if the readline/timer/listeners were really released.
@@ -506,7 +552,8 @@ section('reader: a TTY input that ends (EOF) rejects, never a default continue')
 {
   const snapshot: WorkflowCheckpointSnapshot = Object.freeze({
     taskId: 't', status: 'to_verify', role: 'r', acceptanceCriteria: 'c',
-    attemptId: 'a', agentId: 'ag', modelId: null, output: 'o', outputTruncated: false, treeStopConfirmed: true,
+    attemptId: 'a', agentId: 'ag', modelId: null, sessionId: null,
+    output: 'o', outputTruncated: false, treeStopConfirmed: true,
   });
   // A ref'd guard (setTimeout) keeps the process referenced while we await, so a reader
   // that never settles is reported as 'hung' instead of silently ending the process with an

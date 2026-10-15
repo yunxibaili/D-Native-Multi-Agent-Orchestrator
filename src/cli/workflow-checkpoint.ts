@@ -11,8 +11,9 @@
  *     primitives only; no Workbench, TaskStore, Runtime, scheduler or callable is
  *     reachable from it.
  *   - `parseCheckpointAnswer`: the ONE pure validator of the user's raw answer
- *     ("continue" or "stop <reason>"). It is deliberately strict: an unrecognised
- *     answer is `invalid`, never a default.
+ *     ("continue", "stop <reason>" or "accept <reason>"). It is deliberately strict:
+ *     an unrecognised answer, or an `accept`/`stop` with no reason, is `invalid`,
+ *     never a default.
  *   - `createStdinCheckpointReader`: the production reader, built on Node's own
  *     `readline`. It is opt-in by the caller, refuses when stdin is not a
  *     terminal, bounds the wait at `CHECKPOINT_TIMEOUT_MS`, and releases its
@@ -22,15 +23,25 @@
  * WHAT THIS IS NOT
  * ============================================================================
  * It is NOT a manager, a state machine, an authority, or a second completion
- * path. It reads nothing from the round and writes nothing to it. The round CLI
- * builds a snapshot, asks the user, validates the RAW answer here, and then
- * either lets the EXISTING LAYA verification/scheduling continue ("continue") or
- * stops its own bounded loop ("stop"). "continue" does not set `succeeded`, does
- * not skip a fixed pair / model-pool / stage / resource gate, and calls no
- * supervisor model. "stop" leaves the task in `to_verify` and starts nothing.
+ * path. This module itself reads nothing from the round and writes nothing to it;
+ * it only PARSES a raw answer. The round CLI builds a snapshot, asks the user,
+ * validates the RAW answer here, and then either lets the EXISTING LAYA
+ * verification/scheduling continue ("continue"), stops its own bounded loop
+ * ("stop"), or — for "accept" — re-checks the live task/attempt and, ONLY if it
+ * still matches what was shown, hands the acceptance to the EXISTING completion
+ * authority (`NativeWorkbench.completeTask` -> `applyVerification`). "continue"
+ * does not set `succeeded`, does not skip a fixed pair / model-pool / stage /
+ * resource gate, and calls no supervisor model. "stop" leaves the task in
+ * `to_verify` and starts nothing.
  *
- * The checkpoint is USER SUPERVISION, not an independent review: the reviewer
- * (`--review-agent`) is a different, separate step.
+ * "accept" is an EXPLICIT HUMAN verdict, NOT a LAYA choice, an independent Agent
+ * review, executed test proof, or physical artifact certification. It is only an
+ * input in the grammar here; applying it (and refusing it when the displayed facts
+ * no longer match) belongs to the CLI's checkpoint gate.
+ *
+ * The checkpoint is USER SUPERVISION (and, for accept, an explicit human verdict),
+ * not an independent review: the reviewer (`--review-agent`) is a different,
+ * separate step.
  */
 
 import { createInterface } from 'node:readline';
@@ -58,6 +69,12 @@ export interface WorkflowCheckpointSnapshot {
   readonly agentId: string;
   /** The requested model, or null when none was named. */
   readonly modelId: string | null;
+  /**
+   * The session bound to THIS attempt (the same atomic attempt record the ids above
+   * come from), or null when the runtime recorded none. Carried so an `accept` can be
+   * re-checked against the CURRENT worker identity, not just the displayed pair.
+   */
+  readonly sessionId: string | null;
   /** A bounded tail of this attempt's own output. */
   readonly output: string;
   /**
@@ -76,6 +93,7 @@ export interface WorkflowCheckpointSnapshot {
 export type CheckpointDecision =
   | { readonly action: 'continue' }
   | { readonly action: 'stop'; readonly reason: string }
+  | { readonly action: 'accept'; readonly reason: string }
   | { readonly action: 'invalid'; readonly detail: string };
 
 /** How much of this attempt's own output a snapshot may carry. */
@@ -87,15 +105,23 @@ export const CHECKPOINT_TIMEOUT_MS = 60_000;
 /**
  * Validate the user's RAW answer. Pure and total.
  *
- * Only two answers are accepted: `continue`, and `stop <reason>` with a NON-EMPTY
- * reason. Anything else — including a bare `stop`, a wrong word, an empty line, or
- * a non-string smuggled past the type — is `invalid`, and the caller treats
- * `invalid` as a STOP. There is deliberately NO default that lets a round proceed
- * without a real answer.
+ * Only three answers are accepted: `continue`, `stop <reason>` and `accept <reason>`,
+ * the last two with a NON-EMPTY reason. Anything else — including a bare `stop` or
+ * bare `accept`, a wrong word, an empty line, or a non-string smuggled past the type —
+ * is `invalid`, and the caller treats `invalid` as a STOP. There is deliberately NO
+ * default that lets a round proceed without a real answer.
  */
 export function parseCheckpointAnswer(raw: string): CheckpointDecision {
   const text = typeof raw === 'string' ? raw.trim() : '';
   if (text.toLowerCase() === 'continue') return { action: 'continue' };
+  const a = /^accept(?:[:\s]+([\s\S]+))?$/i.exec(text);
+  if (a !== null) {
+    const reason = (a[1] ?? '').trim();
+    if (reason === '') {
+      return { action: 'invalid', detail: 'an accept requires a reason: use "accept <reason>"' };
+    }
+    return { action: 'accept', reason };
+  }
   const m = /^stop(?:[:\s]+([\s\S]+))?$/i.exec(text);
   if (m !== null) {
     const reason = (m[1] ?? '').trim();
@@ -104,7 +130,7 @@ export function parseCheckpointAnswer(raw: string): CheckpointDecision {
     }
     return { action: 'stop', reason };
   }
-  return { action: 'invalid', detail: `expected "continue" or "stop <reason>" (got "${text.slice(0, 80)}")` };
+  return { action: 'invalid', detail: `expected "continue", "stop <reason>" or "accept <reason>" (got "${text.slice(0, 80)}")` };
 }
 
 /** Raised by the production reader when no trustworthy answer can be obtained. */
@@ -135,13 +161,17 @@ export function renderCheckpointPrompt(s: WorkflowCheckpointSnapshot): string {
     `  role        ${s.role ?? '(none declared)'}`,
     `  criteria    ${s.acceptanceCriteria}`,
     `  attempt     ${s.attemptId}`,
+    `  session     ${s.sessionId ?? '(none recorded)'}`,
     `  requested   ${s.agentId}/${s.modelId ?? '(no model named)'}  (request only; not a verified actual model)`,
     `  output      ${output}`,
     `  tree stop   ${s.treeStopConfirmed === null ? '(unknown)' : s.treeStopConfirmed ? 'confirmed' : 'NOT confirmed'}`,
-    '  read-only: nothing was verified, no task became succeeded, and no gate was opened.',
-    '  continue     -> let the existing LAYA verification/scheduling proceed',
+    '  continue     -> let the existing LAYA verification/scheduling proceed (this choice verifies nothing itself)',
     '  stop <reason> -> stop this round; the reason is recorded and nothing further runs',
-    'ANSWER (continue | stop <reason>): ',
+    '  accept <reason> -> YOU accept the DISPLAYED task as done. It is marked succeeded through the EXISTING',
+    '                     verification authority as YOUR explicit verdict - NOT a LAYA decision, a model review,',
+    '                     or proof that a test passed or an artifact exists. It is refused unless the current',
+    '                     attempt still matches, is awaiting verification, and its process-tree stop is confirmed.',
+    'ANSWER (continue | stop <reason> | accept <reason>): ',
   ].join('\n') + '\n';
 }
 

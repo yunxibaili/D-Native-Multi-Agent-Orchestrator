@@ -31,6 +31,10 @@ import { WORKFLOW_PLAN_ID } from '../src/decision/plan-choice.ts';
 import { ACCEPTANCE_MATERIAL_FIELD, ORCHESTRATION_ACTION_ID } from '../src/orchestration/decision-loop.ts';
 import type { QuotaProbe } from '../src/quota/index.ts';
 import type { WorkflowCheckpointSnapshot } from '../src/cli/workflow-checkpoint.ts';
+// B4.6b: existing class, wrapped on its PROTOTYPE by a test (restored in `finally`) so the
+// test can observe the live Workbench and simulate a fact changing WHILE the checkpoint
+// awaits the user's answer. No production hook is added for this.
+import { NativeWorkbench } from '../src/orchestration/index.ts';
 
 let passed = 0;
 let failed = 0;
@@ -83,7 +87,7 @@ function probeFor(agentId: string, status: 'available' | 'exhausted' | 'not_fetc
   } as unknown as QuotaProbe;
 }
 
-interface Round { report: Record<string, unknown>; requests: RunRequest[]; reviewRequests: RunRequest[]; decisionRequests: DecisionRequest[]; reportDir: string; exitCode: number }
+interface Round { report: Record<string, unknown>; requests: RunRequest[]; reviewRequests: RunRequest[]; decisionRequests: DecisionRequest[]; actionChoices: string[]; reportDir: string; exitCode: number }
 
 /** What the fixture provider ACTUALLY saw in the acceptance material, per cycle. */
 interface MaterialSeen { objective: string; entries: Array<{ taskId: string; acceptanceCriteria: string; output: string; executionMissing: boolean }> }
@@ -118,6 +122,12 @@ async function workflowRound(opts: {
   checkpoint?: boolean;
   /** B4.6a: control the user's raw answer (the CLI validates it, not this fixture). */
   checkpointInput?: (snapshot: WorkflowCheckpointSnapshot) => string | Promise<string>;
+  /**
+   * B4.6b: the process-tree stop fact the fixture runtime reports for every run.
+   * `undefined` keeps the previous behaviour (`true`); `false` reports an UNCONFIRMED stop;
+   * `null` omits the cleanup fact entirely (an UNKNOWN stop).
+   */
+  treeStopConfirmed?: boolean | null;
 } = {}): Promise<Round> {
   const dir = ownDir();
   // B4.0b P2-C: an OWNED publish dir, always. The production default is
@@ -127,6 +137,10 @@ async function workflowRound(opts: {
   const requests: RunRequest[] = [];
   const reviewRequests: RunRequest[] = [];
   const decisionRequests: DecisionRequest[] = [];
+  // B4.6b: the KEY the fixture provider actually chose for the decision action, per cycle.
+  // Recorded so a test can prove the model never chose a `complete` - an accept must work
+  // WITHOUT a model completion request.
+  const actionChoices: string[] = [];
 
   /*
    * A verdict that satisfies the EXISTING contract: verdict + non-empty reason +
@@ -179,6 +193,13 @@ async function workflowRound(opts: {
       const claimed = opts.outputMode === 'empty' ? ''
         : opts.outputMode === 'unsatisfying' ? `${marker}: wrote something, deliverable not demonstrated`
         : `${marker}: ${role} deliverable produced`;
+      // B4.6b: the process-tree stop fact. `undefined` => confirmed (previous behaviour);
+      // `false` => an UNCONFIRMED stop; `null` => the fact is UNKNOWN (present but not a
+      // boolean). The last two are reported so a user accept against them must be REFUSED.
+      const cleanup: RunResult['cleanup'] = {
+        rootKilled: false, descendantsReaped: false, note: '', processStart: 'started' as const,
+        treeStopConfirmed: opts.treeStopConfirmed === null ? (undefined as unknown as boolean) : (opts.treeStopConfirmed ?? true),
+      };
       const result: RunResult = {
         taskId: `t${runN}`, threadId: null, agentId: req.agentId,
         state: failedRun ? 'failed' : 'succeeded',
@@ -187,7 +208,7 @@ async function workflowRound(opts: {
         output: claimed, outputTruncated: false, transcriptPath: null,
         usage: {}, toolCalls: [],
         error: failedRun ? { code: 'NONZERO_EXIT', message: 'fixture failure' } : null,
-        diagnostics: [], cleanup: { rootKilled: false, descendantsReaped: false, note: '', treeStopConfirmed: true, processStart: 'started' },
+        diagnostics: [], cleanup,
       };
       return { result: async () => result } as unknown as RunHandle;
     },
@@ -278,7 +299,9 @@ async function workflowRound(opts: {
       for (const [key, q] of Object.entries(questions)) {
         if (key === ORCHESTRATION_ACTION_ID) {
           decisionRequests.push({ questions, state } as unknown as DecisionRequest);
-          answers[key] = nativeActionAnswer((q.criteria ?? {}) as Record<string, string>, state);
+          const actionAnswer = nativeActionAnswer((q.criteria ?? {}) as Record<string, string>, state);
+          actionChoices.push(String(actionAnswer.choice));
+          answers[key] = actionAnswer;
           continue;
         }
         answers[key] = answerFor(key, q as { type: string; criteria: unknown }, overrides);
@@ -336,7 +359,7 @@ async function workflowRound(opts: {
   const jsonStart = captured.indexOf('{');
   let report: Record<string, unknown> = {};
   if (jsonStart !== -1) { try { report = JSON.parse(captured.slice(jsonStart)); } catch { report = {}; } }
-  return { report, requests, reviewRequests, decisionRequests, reportDir, exitCode };
+  return { report, requests, reviewRequests, decisionRequests, actionChoices, reportDir, exitCode };
 }
 
 const workflowOf = (r: Round): Record<string, unknown> => (r.report.workflow ?? {}) as Record<string, unknown>;
@@ -587,10 +610,18 @@ section('report isolation: the caller\'s report dir is never touched');
 // answer is controlled through the `checkpointInput` seam, and the CLI validates it.
 // =========================================================================
 
+interface CheckpointEntryReport {
+  taskId: string; status: string; role: string | null; acceptanceCriteria: string;
+  attemptId: string; agentId: string; modelId: string | null; sessionId: string | null;
+  output: string; outputTruncated: boolean; treeStopConfirmed: boolean | null;
+  choice: 'continue' | 'stop' | 'accept'; stopReason: string | null;
+  acceptReason: string | null; acceptOutcome: 'applied' | 'refused' | null; acceptRefusal: string | null;
+  source: 'user';
+}
 interface CheckpointsReport {
   enabled: boolean;
   prompts: number;
-  entries: Array<{ taskId: string; status: string; role: string | null; acceptanceCriteria: string; attemptId: string; agentId: string; modelId: string | null; output: string; outputTruncated: boolean; treeStopConfirmed: boolean | null; choice: 'continue' | 'stop'; stopReason: string | null }>;
+  entries: CheckpointEntryReport[];
   stop: { taskId: string; reason: string; blockedTaskIds: string[] } | null;
   note: string;
 }
@@ -819,6 +850,260 @@ section('checkpoint production reader: a real non-TTY stdin stops after the firs
     r.report.ok === false && r.report.executionIncomplete === true && r.report.checkpoints !== undefined &&
       r.report.roundResult !== undefined && r.exitCode !== 0,
     `ok=${String(r.report.ok)} incomplete=${String(r.report.executionIncomplete)} exit=${r.exitCode}`);
+}
+
+// =========================================================================
+// B4.6b: the EXPLICIT USER ACCEPT. The user's verdict is applied through the SAME
+// `NativeWorkbench.completeTask` -> `applyVerification` edge the model's `complete`
+// uses, and ONLY for the task the user was shown. It is never a model completion.
+
+section('checkpoint accept: the user verdict completes a task through the EXISTING authority, no model complete');
+
+{
+  // `outputMode: 'unsatisfying'` means the fixture LAYA never sees material it would accept,
+  // so it can NEVER choose `complete` on its own. The round reaches all-succeeded ONLY
+  // because the USER accepted each displayed task - proving an accept needs no model completion.
+  const r = await workflowRound({
+    planChoice: 'full',
+    outputMode: 'unsatisfying',
+    checkpoint: true,
+    checkpointInput: () => 'accept: I reviewed the deliverable',
+  });
+  const cp = checkpointsOf(r)!;
+  check('accept: the workflow reached all-succeeded',
+    workflowOf(r).stop === 'all-succeeded' && r.report.ok === true && r.exitCode === 0,
+    `stop=${String(workflowOf(r).stop)} ok=${String(r.report.ok)} exit=${r.exitCode}`);
+  check('accept: all three members succeeded',
+    taskStatusW(r, 1) === 'succeeded' && taskStatusW(r, 2) === 'succeeded' && taskStatusW(r, 3) === 'succeeded',
+    `w1=${taskStatusW(r, 1)} w2=${taskStatusW(r, 2)} w3=${taskStatusW(r, 3)}`);
+  check('accept: one prompt per attempt, every one applied through verification',
+    cp.entries.length === 3 && cp.entries.every((e) => e.choice === 'accept' && e.acceptOutcome === 'applied' &&
+      e.acceptReason === 'I reviewed the deliverable' && e.acceptRefusal === null && e.stopReason === null && e.source === 'user'),
+    JSON.stringify(cp.entries.map((e) => `${e.choice}:${e.acceptOutcome}:${e.acceptReason}`)));
+  check('accept: traceable to the displayed task and attempt',
+    cp.entries.every((e) => e.taskId.trim() !== '' && e.attemptId.trim() !== '') &&
+      cp.entries.some((e) => e.taskId.endsWith('-w1')) && cp.entries.some((e) => e.taskId.endsWith('-w3')),
+    JSON.stringify(cp.entries.map((e) => e.taskId)));
+  check('accept: the model NEVER chose complete (no model completion was required)',
+    r.actionChoices.every((c) => !/complete/i.test(c)), JSON.stringify(r.actionChoices));
+  // The accept re-evaluates the workflow's OWN completion BEFORE any further model decision, so
+  // the three dispatch decisions are the ONLY native action requests. Asserting the EXACT count
+  // and choice (not `>= 3`) is the guard: an extra final `wait`/`continue` after the last accept
+  // would make this fail.
+  check('accept: the final accept sent NO extra native decision (exactly three dispatch continues)',
+    r.actionChoices.length === 3 && r.actionChoices.every((c) => c === 'continue'),
+    JSON.stringify(r.actionChoices));
+  check('accept: the report note names a USER acceptance, not a LAYA completion',
+    /ACCEPTED/i.test(cp.note) && /USER/.test(cp.note) && !/no task became succeeded because of it/i.test(cp.note),
+    cp.note);
+  const ur = r.report.unifiedReview as { status?: string } | undefined;
+  check('accept: the optional whole-round review still ran for the completed round',
+    ur?.status === 'completed' && r.reviewRequests.length === 1, `status=${String(ur?.status)} reviews=${r.reviewRequests.length}`);
+  check('accept: no stop was recorded', cp.stop === null, JSON.stringify(cp.stop));
+}
+
+// =========================================================================
+section('checkpoint accept: only the DISPLAYED task is completed; a later stop leaves the rest untouched');
+
+{
+  let prompts = 0;
+  const r = await workflowRound({
+    planChoice: 'full',
+    outputMode: 'unsatisfying',
+    checkpoint: true,
+    checkpointInput: () => { prompts += 1; return prompts === 1 ? 'accept step one is good' : 'stop step two is not acceptable'; },
+  });
+  const cp = checkpointsOf(r)!;
+  check('accept-then-stop: exactly two members ran', r.requests.length === 2, `n=${r.requests.length}`);
+  check('accept-then-stop: ONLY the displayed (first) member succeeded',
+    taskStatusW(r, 1) === 'succeeded' && taskStatusW(r, 2) === 'to_verify' && taskStatusW(r, 3) === 'planned',
+    `w1=${taskStatusW(r, 1)} w2=${taskStatusW(r, 2)} w3=${taskStatusW(r, 3)}`);
+  check('accept-then-stop: entry 1 is an applied accept, entry 2 is a stop',
+    cp.entries.length === 2 && cp.entries[0]!.choice === 'accept' && cp.entries[0]!.acceptOutcome === 'applied' &&
+      cp.entries[0]!.acceptReason === 'step one is good' &&
+      cp.entries[1]!.choice === 'stop' && cp.stop !== null && cp.stop.reason === 'step two is not acceptable',
+    JSON.stringify(cp.entries.map((e) => `${e.choice}:${e.stopReason ?? e.acceptReason}`)));
+  check('accept-then-stop: the round is not ok and incomplete',
+    r.report.ok === false && r.report.executionIncomplete === true, `ok=${String(r.report.ok)} incomplete=${String(r.report.executionIncomplete)}`);
+}
+
+// =========================================================================
+section('checkpoint accept refused: a live task/attempt fact changing while the answer is read never accepts');
+
+{
+  // The checkpoint is AWAITED, so a callback that changes the live facts is the simplest
+  // honest way to simulate "the state moved while the user was deciding". We reach the live
+  // Workbench through its PROTOTYPE (restored in `finally`); no production test hook exists.
+  const proto = NativeWorkbench.prototype as unknown as {
+    assignChildren: (this: NativeWorkbench, ...args: unknown[]) => unknown;
+  };
+  const originalAssign = proto.assignChildren;
+  let liveWb: NativeWorkbench | null = null;
+  proto.assignChildren = function (this: NativeWorkbench, ...args: unknown[]): unknown {
+    liveWb = this;
+    return originalAssign.apply(this, args);
+  };
+  try {
+    const runRefused = async (
+      mutate: (wb: NativeWorkbench, s: WorkflowCheckpointSnapshot) => void,
+    ): Promise<Round> => workflowRound({
+      planChoice: 'lean',
+      outputMode: 'unsatisfying',
+      checkpoint: true,
+      checkpointInput: (s) => { if (liveWb !== null) mutate(liveWb, s); return 'accept it looks done'; },
+    });
+
+    const scenarios: Array<{ label: string; mutate: (wb: NativeWorkbench, s: WorkflowCheckpointSnapshot) => void }> = [
+      {
+        label: 'acceptance criteria changed',
+        mutate: (wb, s) => { (wb.store.get(s.taskId) as unknown as { acceptanceCriteria: string }).acceptanceCriteria = 'CHANGED while awaiting'; },
+      },
+      {
+        label: 'task status changed',
+        mutate: (wb, s) => { (wb.store.get(s.taskId) as unknown as { status: string }).status = 'running'; },
+      },
+      {
+        label: 'current worker identity changed',
+        mutate: (wb, s) => { (wb.store.get(s.taskId) as unknown as { agentId: string }).agentId = 'intruder-agent'; },
+      },
+      {
+        label: 'declared model identity changed',
+        mutate: (wb, s) => { (wb.store.get(s.taskId) as unknown as { modelId: string | null }).modelId = 'intruder-model'; },
+      },
+    ];
+    for (const scenario of scenarios) {
+      const r = await runRefused(scenario.mutate);
+      const cp = checkpointsOf(r)!;
+      check(`refuse (${scenario.label}): the round stops on user-stop after ONE run`,
+        workflowOf(r).stop === 'user-stop' && r.requests.length === 1,
+        `stop=${String(workflowOf(r).stop)} n=${r.requests.length}`);
+      check(`refuse (${scenario.label}): the first member is NOT succeeded`,
+        taskStatusW(r, 1) !== 'succeeded', taskStatusW(r, 1));
+      check(`refuse (${scenario.label}): the report records a REFUSED accept with a reason`,
+        cp.entries[0]?.choice === 'accept' && cp.entries[0]?.acceptOutcome === 'refused' &&
+          (cp.entries[0]?.acceptRefusal ?? '').trim() !== '' && cp.entries[0]?.acceptReason === 'it looks done',
+        JSON.stringify(cp.entries[0]));
+      check(`refuse (${scenario.label}): no downstream member ran and the round is incomplete`,
+        r.requests.length === 1 && r.report.ok === false && r.report.executionIncomplete === true && r.exitCode !== 0,
+        `n=${r.requests.length} ok=${String(r.report.ok)} exit=${r.exitCode}`);
+      // B4.6b (P2): this refusal happened at a LOCAL re-check, BEFORE `completeTask`; the note
+      // must not claim the EXISTING verification authority refused it on its own.
+      check(`refuse (${scenario.label}): the note attributes the refusal to a checkpoint recheck`,
+        /checkpoint recheck/i.test(cp.note) && !/refused by the existing verification authority\)/.test(cp.note),
+        cp.note);
+    }
+  } finally {
+    proto.assignChildren = originalAssign;
+  }
+}
+
+// =========================================================================
+section('checkpoint accept refused: the ATOMIC attempt-evidence re-read refuses an absent or changed record');
+
+{
+  // These are the refusal paths that read the SAME atomic AttemptStore the snapshot was built
+  // from: the current evidence absent, a different attemptId, or a changed session/model
+  // identity, seen AFTER the snapshot was received but BEFORE any pass is applied. We reach the
+  // live Workbench through its PROTOTYPE (restored in `finally`) and wrap THAT instance's
+  // `evidence.get` for the SHOWN attempt only. FROZEN records are never mutated: a copied
+  // replacement record is returned instead. No production test hook is added.
+  const proto = NativeWorkbench.prototype as unknown as {
+    assignChildren: (this: NativeWorkbench, ...args: unknown[]) => unknown;
+  };
+  const originalAssign = proto.assignChildren;
+  let liveWb: NativeWorkbench | null = null;
+  const evidenceRestores: Array<{ readonly store: { get: (id: string) => unknown }; readonly original: (id: string) => unknown }> = [];
+  proto.assignChildren = function (this: NativeWorkbench, ...args: unknown[]): unknown {
+    liveWb = this;
+    return originalAssign.apply(this, args);
+  };
+  try {
+    const runRefused = async (
+      replace: (id: string, original: (id: string) => unknown) => unknown,
+    ): Promise<Round> => workflowRound({
+      planChoice: 'lean',
+      outputMode: 'unsatisfying',
+      checkpoint: true,
+      checkpointInput: (s) => {
+        if (liveWb !== null) {
+          const store = liveWb.evidence as unknown as { get: (id: string) => unknown };
+          const original = store.get;
+          evidenceRestores.push({ store, original });
+          const boundOriginal = original.bind(store);
+          store.get = (id: string) => (id === s.attemptId ? replace(id, boundOriginal) : boundOriginal(id));
+        }
+        return 'accept it looks done';
+      },
+    });
+
+    const asRecord = (v: unknown): Record<string, unknown> | null =>
+      v !== null && typeof v === 'object' ? (v as Record<string, unknown>) : null;
+
+    const scenarios: Array<{ label: string; replace: (id: string, original: (id: string) => unknown) => unknown }> = [
+      { label: 'current evidence absent', replace: () => undefined },
+      {
+        label: 'current attemptId changed',
+        replace: (id, original) => { const r = asRecord(original(id)); return r === null ? r : { ...r, attemptId: `${String(r.attemptId)}-replaced` }; },
+      },
+      {
+        label: 'current session identity changed',
+        replace: (id, original) => { const r = asRecord(original(id)); return r === null ? r : { ...r, sessionId: 'intruder-session' }; },
+      },
+      {
+        label: 'current model identity changed',
+        replace: (id, original) => { const r = asRecord(original(id)); return r === null ? r : { ...r, modelId: 'intruder-model' }; },
+      },
+    ];
+    for (const scenario of scenarios) {
+      const r = await runRefused(scenario.replace);
+      const cp = checkpointsOf(r)!;
+      check(`evidence-refuse (${scenario.label}): the round stops on user-stop after ONE run`,
+        workflowOf(r).stop === 'user-stop' && r.requests.length === 1,
+        `stop=${String(workflowOf(r).stop)} n=${r.requests.length}`);
+      check(`evidence-refuse (${scenario.label}): the first member is NOT succeeded`,
+        taskStatusW(r, 1) !== 'succeeded', taskStatusW(r, 1));
+      check(`evidence-refuse (${scenario.label}): the report records a REFUSED accept with a reason`,
+        cp.entries[0]?.choice === 'accept' && cp.entries[0]?.acceptOutcome === 'refused' &&
+          (cp.entries[0]?.acceptRefusal ?? '').trim() !== '' && cp.entries[0]?.acceptReason === 'it looks done',
+        JSON.stringify(cp.entries[0]));
+      check(`evidence-refuse (${scenario.label}): no downstream member ran and the round is incomplete`,
+        r.requests.length === 1 && r.report.ok === false && r.report.executionIncomplete === true && r.exitCode !== 0,
+        `n=${r.requests.length} ok=${String(r.report.ok)} exit=${r.exitCode}`);
+      check(`evidence-refuse (${scenario.label}): the note attributes the refusal to a checkpoint recheck`,
+        /checkpoint recheck/i.test(cp.note), cp.note);
+    }
+  } finally {
+    for (const restore of evidenceRestores) restore.store.get = restore.original;
+    proto.assignChildren = originalAssign;
+  }
+}
+
+// =========================================================================
+section('checkpoint accept refused: an unconfirmed or unknown process-tree stop never accepts');
+
+{
+  for (const variant of [{ label: 'unconfirmed', value: false }, { label: 'unknown', value: null }] as const) {
+    const r = await workflowRound({
+      planChoice: 'lean',
+      outputMode: 'unsatisfying',
+      checkpoint: true,
+      treeStopConfirmed: variant.value,
+      checkpointInput: () => 'accept it anyway',
+    });
+    const cp = checkpointsOf(r)!;
+    check(`stop-${variant.label}: the accept is refused and the round stops after ONE run`,
+      workflowOf(r).stop === 'user-stop' && r.requests.length === 1,
+      `stop=${String(workflowOf(r).stop)} n=${r.requests.length}`);
+    check(`stop-${variant.label}: the first member is NOT succeeded`,
+      taskStatusW(r, 1) === 'to_verify', taskStatusW(r, 1));
+    check(`stop-${variant.label}: the report records the refusal and no acceptance`,
+      cp.entries[0]!.choice === 'accept' && cp.entries[0]!.acceptOutcome === 'refused' &&
+        /stop/i.test(cp.entries[0]!.acceptRefusal ?? ''),
+      JSON.stringify(cp.entries[0]));
+    check(`stop-${variant.label}: the round is not ok and incomplete`,
+      r.report.ok === false && r.report.executionIncomplete === true && r.exitCode !== 0,
+      `ok=${String(r.report.ok)} exit=${r.exitCode}`);
+  }
 }
 
 // =========================================================================
