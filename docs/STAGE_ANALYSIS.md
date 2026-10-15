@@ -3,7 +3,7 @@
 更新日期：2026-10-15
 状态的唯一入口是 [项目基线](PROJECT_BASELINE.md)；本文描述差距与推进顺序，不另行封板。
 
-当前路线的最新范围：B4.7.3固定free duo代表样本已独立真实PASS（两模型/三任务/可执行产物/独立负控/Job空），累计产品会话5/5用尽。该样本不是整个后端验收，真实LAYA/Skill-MCP/动态额度等仍有缺口；后续B4.7.4只读核对已明确：LAYA默认8077连接被拒绝，普通CLI显式模型池不新增候选；优先处理已有服务就绪与B2.2最小候选接线，估算不增加，不自动开始F0或新模型调用。事实/证据只见 [PROJECT_BASELINE.md](PROJECT_BASELINE.md)，建议范围见 [NEXT_TASK.md](NEXT_TASK.md)。下文旧说明不能覆盖最新边界。
+当前路线的最新范围：B4.7.3固定free duo代表样本已独立真实PASS（两模型/三任务/可执行产物/独立负控/Job空），累计产品会话5/5用尽。该样本不是整个后端验收，真实LAYA/Skill-MCP/动态额度等仍有缺口；B2.2显式模型池候选接线代码已独立PASS（委派末尾报告P2保留）：新声明pair进入既有registry但保持unknown，缺可用性/额度仍拒绝；LAYA本机健康仍未通过，优先定位已有服务，估算不增加，不自动开始F0或新模型调用。事实/证据只见 [PROJECT_BASELINE.md](PROJECT_BASELINE.md)，建议范围见 [NEXT_TASK.md](NEXT_TASK.md)。下文旧说明不能覆盖最新边界。
 
 ## 1. 推进原则
 

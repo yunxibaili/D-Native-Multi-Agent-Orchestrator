@@ -90,4 +90,4 @@ Human Gate 后 automaticPostRoundAction=NONE。停止未确认不提前释放保
 真实 Agent 测试保持 opt-in，默认测试不得消费真实模型额度。
 旧需求、规划和审核明细保留在 [Git 历史](docs/STAGE_ANALYSIS.md#历史备份)，当前目录不复制报告。
 
-B2.1：`--model-pool <file>` 为显式用户声明策略，限制编排执行pair；并非实际免费或全流程费用保证，付费声明继续拒绝。最终启动检查P1已在B2.1a独立关闭：prepare后实际pair与当前声明再准入，拒绝不启动、不记虚假Attempt、不遗留pre-start claim。它仍不是实际账户免费、USD硬预算或全流程费用保证。状态/证据及下一片见唯一基线和NEXT_TASK。
+B2.1/B2.2：`--model-pool <file>` 为显式用户声明策略；当前admitted声明可补入普通CLI的既有registry（来源可追踪、pair保持unknown、已有来源不覆盖），并限制编排执行pair；并非实际免费或全流程费用保证，付费声明继续拒绝。最终启动检查P1已在B2.1a独立关闭：prepare后实际pair与当前声明再准入，拒绝不启动、不记虚假Attempt、不遗留pre-start claim。它仍不是实际账户免费、USD硬预算或全流程费用保证。状态/证据及下一片见唯一基线和NEXT_TASK。

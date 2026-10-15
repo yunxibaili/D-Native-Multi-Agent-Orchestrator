@@ -1,21 +1,20 @@
-# 下一候选 — LAYA 本机就绪与普通 CLI 显式模型候选
+# 下一候选 — LAYA 本机服务就绪（先定位已有环境）
 
 更新日期：2026-10-15
-事实/阶段/估算唯一见 [PROJECT_BASELINE.md](PROJECT_BASELINE.md)。B4.7.4只读核对已完成，不启动下一代码切片或推理。
+唯一事实/状态/证据在 [PROJECT_BASELINE.md](PROJECT_BASELINE.md)。B2.2候选接线代码已独立PASS，整体PASS WITH P2：worker两轮尾部工具请求被拒，无完整最终报告，结论来自Codex独立代码/实跑。
 
-## 已确认的两个问题
+## 本片结束
 
-1. 默认LAYA地址8077的GET /health返回ECONNREFUSED。当前PATH无laya-serve，两个可用Python环境未发现laya分发包；不能据此推断全机未安装。现有provider、--probe与工作流/pair/Skill-MCP决策入口已存在，不再造一份。
-2. 普通round的seedRegistry只取配置默认model、quota probe modelHint与历史thread。用户模型池只过滤，不创建新候选。独立纯值6断言证明：2模型声明在空配置/历史下候选0、单配置1、双历史2。B4.7.3代表样本使用显式测试驱动，不等于普通CLI已接通。
+显式模型池已经由普通round传到既有seedRegistry；合格声明补入精确pair、保留source，旧配置/probe/thread不覆盖。声明only保持pair-specific unknown，不能因为Agent可用、名字free或billing声明就启动；未知quota仍拒绝。新套件33/0、独立9断言、去保护与去CLI接线负控均承重；异常finally与清理失败真实非零通过。该能力不等于新的模型可调用认证，不继续堆叠框架。
 
-## 最小推进顺序
+## 下一项实际使用阻塞
 
-**LAYA环境**：先定位已有venv/启动方式及实际端口；上游默认8000与项目8077不同。复用现有GET健康检查，无任务文本/认证/推理。不能擅自安装依赖/权重、修改全局配置或启动未知服务。若需安装/启动，先形成明确的本机范围。
+先定位已有LAYA环境、启动方式与端口。已有provider/check.ts/workflow/pair/Skill-MCP入口全部复用，不重写决策模型。当前GET http://127.0.0.1:8077/health仍ok=false/fetch failed（上轮ECONNREFUSED）；PATH与两Python环境未发现laya不是全机未安装证明。上游默认8000与项目8077可能需对齐。
+优先只读明确已有服务/venv路径；没有环境时应明确局部安装目录、依赖/权重下载和仅loopback服务的范围，不能擅自全局安装、读凭据、改Agent配置、换云端或通过别的provider伪装LAYA。启动/真实推理前先落实具体授权，不用fixture宣称真实接通。
 
-**B2.2代码候选**：仅在用户显式--model-pool时，将明确声明的精确Agent×Model作为候选来源接到现有registry；优先复用seedRegistry和原池解析/最终准入。默认不传池行为不变；不自动导入doctor目录、不硬编码free名单、不改费用/availability事实。未知quota仍拒绝，已有fixed、pair唯一性和最终同步启动门保持。先hermetic证明完整候选/分配/拒绝语义，再审是否需要真实验收；不用真实模型为开发探路。不新建manager/router/第二registry或放宽Spawn Gate。此项为有界建议，未实施或独立PASS。
+真实模型可调用/免费资格需具体证据：现有精确配置/probe/历史来源保持原规则；B2.2不会伪造新模型available。新实际调用须另定模型/次数/费用/数据范围，产品会话累计5/5、剩0。真实Skill/MCP、动态账户额度、完整批准/监督与更广掉线恢复仍是后续差距；估算保持68/100。
 
-## 范围与授权
+## 工作流
 
-B4.7.3两真实模型/三任务代表样本历史PASS保留；产品会话累计5/5、剩0，不自动重试或重置。新推理须另定模型、次数、费用及数据范围。真实Skill/MCP、动态账户额度、完整用户批准/监督与更广掉线恢复仍是后续差距；工程估算保持68/100。
-不自动进入F0；正式前端需求仍待确认，页面仅本机只读展示。PARALLEL_WRITE=CLOSED。
-OpenCode负责授权的bounded实现，Codex独立审核，默认首次+一次返工。每次先只读audit，结束维护唯一基线/受影响文档、刷新本机进度页并上传审核快照；page/audit/exports不入Git，主HEAD/index/dirty树保留。
+OpenCode bounded开发、Codex独立审核，默认首次+一次返工。今后worker日志只用明确owned路径或直接输出，不重试共享TEMP固定名写入或原地mutation；Codex负控使用内存钩子，不新增委派引擎。P2不阻断已独立通过的代码，也不冒充完整worker报告。
+PARALLEL_WRITE=CLOSED；不自动进入正式前端。每任务先只读audit，结束维护基线、刷新本机进度页并上传精确审核快照；project-progress/audit/page/exports均不入Git，主HEAD/index/dirty树保留。

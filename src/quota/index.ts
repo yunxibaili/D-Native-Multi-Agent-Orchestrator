@@ -28,6 +28,10 @@ import { collectObservedUsage } from './observed.ts';
 import { evaluatePolicy } from './policy.ts';
 import { ModelRegistry } from './registry.ts';
 import { evaluateSpawnGate } from './spawn-gate.ts';
+// B2.2: the ONE user-declared model-pool admission predicate, imported directly from its
+// own module (never the orchestration barrel). It imports only `quota/registry.modelKey`,
+// so this is read-only reuse with no cycle and no second notion of model identity.
+import { admitUserModelPoolPair, type UserModelPool } from '../orchestration/model-pool.ts';
 import type {
   AgentStatusRow,
   FreeCreditView,
@@ -77,6 +81,14 @@ export interface BuildQuotaCenterOptions {
   /** Set when the caller already knows install state; else derived from probes. */
   installed?: Record<string, boolean>;
   freeModels?: FreeCreditView['freeModels'];
+  /**
+   * B2.2: opt-in USER-DECLARED model pool. When supplied, `seedRegistry` registers the
+   * exact pairs the pool's OWN admission predicate admits at the captured `now`, as
+   * DECLARATION-ONLY entries (honest provenance, availability `unknown`). The pool is
+   * admission, not evidence: it never makes a pair callable/free and never overwrites
+   * an existing config/probe/thread entry. Absent = byte-identical behaviour.
+   */
+  userModelPool?: UserModelPool;
   /**
    * R1-1: `multiAgentEnabled` REMOVED. The centre view's demo gate used to deny with
    * `multi-agent-not-implemented` unless a caller opted in, which is no longer a
@@ -251,6 +263,34 @@ function seedRegistry(opts: BuildQuotaCenterOptions, probes: QuotaProbe[], now: 
       },
       now,
     );
+  }
+
+  // 4. B2.2: user-declared model pool — ADMISSION, never evidence. Only a declaration
+  //    the ONE pure predicate admits AT THIS captured `now` contributes a candidate; a
+  //    paid / unknown / expired / not-yet-effective declaration contributes nothing (the
+  //    predicate refuses it). A new declaration-only pair is seeded with its HONEST
+  //    provenance and kept fail-closed: it is recorded as a PAIR-SPECIFIC `unknown` so a
+  //    later AGENT-family availability fact (applyPolicy's `setAgentAvailability`) can
+  //    never promote it to callable/available. A duplicate of an already-registered pair
+  //    is skipped ENTIRELY — config/probe/thread provenance and any pair/family facts are
+  //    preserved unchanged and no second row is created.
+  const pool = opts.userModelPool;
+  if (pool !== undefined) {
+    for (const decl of pool.models) {
+      if (!admitUserModelPoolPair(pool, { agentId: decl.agentId, modelId: decl.modelId }, now).allowed) continue;
+      if (registry.has(decl.agentId, decl.modelId)) continue;
+      registry.upsert(
+        {
+          agentId: decl.agentId,
+          modelId: decl.modelId,
+          provider: decl.agentId,
+          taskTypes: taskTypes(decl.agentId),
+          modelSource: `user model pool (declared: ${decl.source})`,
+        },
+        now,
+      );
+      registry.setModelAvailability(decl.agentId, decl.modelId, 'unknown');
+    }
   }
 
   return registry;

@@ -86,6 +86,10 @@ const SUITES = [
   // with fake adapters; the user's answer is supplied through the injected `checkpointInput`
   // seam, and a separate child proves the terminal reader releases so the process exits.
   'b46-workflow-checkpoint',
+  // B2.2: explicit `--model-pool` candidate-source wiring. Hermetic — the REAL
+  // `seedRegistry`/`buildQuotaCenter`/`applyPolicy` and the REAL `runRoundCli` are driven
+  // with fake adapters/probes and a fake provider; no real agent or model is started.
+  'b22-model-pool-candidates',
   'memory',
   'orchestration',
   'model-pool',

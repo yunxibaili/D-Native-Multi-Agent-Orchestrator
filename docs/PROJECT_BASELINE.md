@@ -39,6 +39,7 @@ README 是导航。本机 `project-progress/audit/` 是用户指定的只读第�
 | B3.2 | 独立 PASS：仅OpenCode用户声明Server/Tool候选→advisory请求→名称匹配事件观察；非真实MCP调用认证 |
 | B3 overall | 整体未封板；真实工具调用、强制限制与Skill加载尚未验收 |
 | B2.1 / B2.1a | 独立 PASS：用户声明池的候选/分配/最终同步启动准入受控闭环；两个历史P1已关闭 |
+| B2.2 | 候选来源接线代码独立PASS；整体PASS WITH P2（worker末尾报告未完成）；新增声明pair保持unknown，非可调用/额度证据 |
 | B2 overall | NOT SEALED；账户资格/硬金额预算/付费与全流程费用未验收 |
 | B4.6a | 最小同进程用户检查点独立通过；原报告文案P2在B5.1关闭，不等于完整监督/纠偏恢复 |
 | B5.1 | 独立 PASS WITH P2：已知session_failure的停止安全/具体model有界接力；仅受控当前链 |
@@ -268,7 +269,7 @@ orchestrator round "review the API" --cwd . --workflow sequential --mcp-catalog 
 
 ### 5.9 B2.1 / B2.1a 用户模型池与费用声明（受控最小闭环独立 PASS）
 
-显式 `--model-pool <file>` 只配合sequential/collaborate，不支持legacy/classify-only；无标志不启用新费用限制。只声明允许的具体Agent×Model，不注册新模型或修改availability/quota。保留旧静态池作兼容，历史名字带free/一次cost0不作为当前免费资格。
+显式 `--model-pool <file>` 只配合sequential/collaborate，不支持legacy/classify-only；无标志不启用新费用限制。B2.2补入候选来源：显式冻结池通过同一admitUserModelPoolPair后，为既有seedRegistry补入精确Agent×Model（来源user model pool + declaration source）；不覆盖配置/probe/thread已有记录。新增声明pair以pair-specific unknown保持，即使Agent family available也不提升为可调用；不伪造quota。无--model-pool保持旧路径。保留旧静态池作兼容，历史名字带free/一次cost0不作为当前免费资格。
 文件最多32KiB/32项，空池deny-all；格式为 `policy="no-additional-charge"` 与 `models` 数组，每项仅有agentId/modelId/billing/source/observedAt/expiresAt。billing可声明free/included/paid/unknown；source与期限随声明保留，paid/unknown/未来观察/过期/错Agent/未列pair拒绝。free/included仍只是用户声明，不认证账户额度、价格或免费资格，不承诺全流程零费用。Agent内部辅助模型、LAYA/审核及付费工具没有被本片完整约束；USD硬预算与付费授权未实现。
 同一纯值谓词用于初始候选、Assignment、reassign和既有Spawn Gate，fixed不替换且不构成支出授权；单候选按规则绑定，不向真实provider发单选问题。原始复合键碰撞可误放行不同pair的P1已修为逐项精确比较，registry身份定义未全局改写。
 **最终启动检查P1已在B2.1a独立关闭**：最后workspace.prepare await之后，取得实际preRunTask，再复用既有buildSpawnGateInput检查当前pair、费用声明有效期及原有条件；发生在session/thread解析和queued/running/lease/onStart/runtime状态提交之前。无新await或第二权威；拒绝携带真正denying gate，任务/issued lease不假运行，既有finally释放已取的pre-start claim。有效声明正常启动；无池旧入口不启用额外检查。该有效期是最终准入时的声明判断，不认证真实账户资格/实际费用，不做运行中到期杀停。
@@ -318,6 +319,13 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 不新增 provider 网关、群聊平台、第二个调度器或通用工作流引擎来掩盖协议缺口。
 
 ## 8. 最近独立证据与上传记录
+
+2026-10-15 B2.2 显式用户模型池→普通CLI候选来源接线代码独立PASS，整体PASS WITH P2（仅委派报告收尾问题，不是生产正确性发现）。用户“继续推进”授权此有界片，不扩大真实推理/安装范围。复用seedRegistry/ModelRegistry、冻结池及admitUserModelPoolPair、buildQuotaCenter、现有Assignment/最终准入；仅改src/quota/index.ts、src/cli/round-cli.ts，新增hermetic tests/b22-model-pool-candidates.test.ts并登记既有test-timed runner。当前admitted free/included声明才补新entry，完整id/source保留，已有配置/probe/thread记录不覆盖。新增pair-specific unknown防止Agent安装/可用事实将声明模型自动提升；真实普通CLI测试确认声明进入initial selection但Assignment以no-available-agent拒绝、runtime0。未知quota仍quota-blocked/runtime0；已有probed固定pair与无池旧入口均完成原顺序链，pair不换。
+先本地核对全部调用者，再通过GitHub MCP检索/读取anomalyco/opencode固定revision37df62f4a1b6d89187a1169187a6cef10557c0ca配置文档与MIT License：显式允许/禁用候选方法可参考，仓库未归档、维护活跃；只采方法不复制/安装代码，Windows既有contained launcher不变，不引入manager/registry/路由器/依赖。
+真实委派opencode-agent implement首次+一次有界test-only返工；原生session分别ses_ec247e7d2ffebD6rlZDGaMHaC1（44 assistant）与ses_ec23bd28affe9FEsVzTDYb8171（17 assistant），sanitize export逐条确认provider=opencode-go/model=deepseek-v4.1-flash。首次原生进程由持有原句柄的监视确认exit0，返工wrapper exit0；两次native末尾均finish=tool-calls而非stop，未收到完整最终报告。首次临时原地mutation命令、返工共享TEMP固定名日志命令被worker工具权限拒绝（错误仅记录The user rejected permission to use this specific tool call，不能据此推断用户亲自拒绝或具体内控原因）。未重试这些写入、未放宽权限；Codex以只改内存的registerHooks负控完成必要验证，不把exit0当交付PASS。报告完整性列P2，不发第三轮worker，不改变模型路由。
+首版测试缺异常finally：Codex在首次runRoundCli注入异常，子进程exit1且2个owned目录残留，已按记录确切路径回收。一次返工仅test：改用SessionStore移除不必要真实Agent factory discovery；整套catch/finally统一清理，唯一exit同时读取fatal/failed/cleanupFailures。相同异常注入后exit1、原错保留、2目录均已自行删除。删除失败注入时33/0仍exit1、ledger保留，父只清理1个记录根目录。所有故障注入均独立child/内存钩子，不改工作树或扫描/终止foreign进程。
+Codex独立实跑typecheck exit0；新套件33/0；quota184/0、assignment235/0、b41-collab-group96/0、spawn-gate-production50/0、model-pool95/0；real-agent-isolation 6 opt-in/0违规，ownership60/0。另有独立seedRegistry+buildQuotaCenter 9断言通过；去掉pair unknown保护时assert真实失败exit1；去掉normal CLI传池接线时31/2、exit1（两条真实wiring断言失败）。负控初次匹配两处由自身guard在测试前拒绝，已限定seed调用后命中，不当生产finding。AST确认runtime.run生产边1（orchestration/orchestrator.ts:1403），新增authority0，diff check通过。运行中与结束均保持主HEAD/index/其他dirty文件；audit只读，本机证据/page不入Git。
+LAYA仅运行已有decision/check.ts --probe健康GET，exit1、ok=false/fetch failed；未调用推理、未启动/安装服务、未读凭据/改用户或Agent配置。已授权产品会话仍5/5，本轮产品新增0，不跑full suite。新声明pair已能进registry不等于已能执行，真正的pair可用性/账户资格/动态额度/真实LAYA仍需独立证据。工程估算保持68/100，PARALLEL_WRITE=CLOSED，B2/B4/完整后端不封板，正式前端未开始。证据见本机ignored b22-task/rework-task、两轮jsonl/model-evidence、process-completion、independent-*.json/log、setup-fault-before/after、negative-availability/cli、architecture及review-state。
 
 2026-10-15 B4.7.4 后端CLI接线只读核对完成（不是新增产品阶段封板）：直接复用createLayaDecisionProvider.probe，只向本机/health发送GET（共3次：provider健康检查及两次有界原因核对），无任务文本/认证/POST；ok=false、fetch failed，进一步有界GET确认ECONNREFUSED。当前PATH未找到laya-serve；miniconda3与Python312的distribution元数据未找到laya，只能说明这两个环境，不能推断全机未安装。未启动/安装服务、下载权重、读凭据或改用户配置。
 源码核对：round-cli已有真实LAYA分类、计划、pair和Skill/MCP选择入口；健康诊断已有decision/check.ts --probe，无需再造doctor/manager。seedRegistry仅从配置默认model、quota probe的modelHint及真实历史thread取模型；--model-pool是过滤与最终启动限制，不会为普通CLI注册声明中的新模型。独立纯值探针使用真实seedRegistry/parseUserModelPool/admitUserModelPoolPair和受控配置/线程输入，6项断言通过：同一2模型声明下空配置/空历史候选0、单配置1、双历史2。该证据不代表完整round、真实可用性或额度；首次探针对列表顺序误作假设而失败，改为比较精确集合后通过，未改生产代码。
@@ -942,18 +950,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-15T11:41:06+08:00",
+  "updatedAt": "2026-10-15T12:19:19+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "B4.7.4",
-    "name": "后端CLI与LAYA接线只读核对完成",
+    "id": "B2.2",
+    "name": "显式模型池候选接线独立通过（保留委派收尾P2）",
     "status": "done",
-    "summary": "确认8077本机LAYA连接被拒绝；普通CLI模型池只过滤、不新增模型。现有决策与健康入口可复用，无需重建大脑；6项候选来源断言通过。本轮产品调用0，真实双模型代表样本历史PASS保留。"
+    "summary": "普通CLI现传冻结池到原seedRegistry；新声明pair可注册且保持unknown，不绕过额度/准入。新套件33/0、9独立断言、两负控和异常/删除失败传播通过。worker两轮实际DeepSeek均确认；末尾报告因工具拒绝未完成，未采信exit0。"
   },
   "next": {
-    "id": "LAYA-ENV / B2.2",
-    "name": "定位已有LAYA环境；最小显式模型池候选接线（不伪造可用性/额度）",
+    "id": "LAYA-ENV",
+    "name": "定位已有LAYA本机服务/venv与端口；缺失时先明确安装/推理范围",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1032,17 +1040,17 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "id": "LAYA-LOCAL",
       "severity": "当前使用阻塞",
       "title": "默认LAYA服务未就绪",
-      "detail": "GET http://127.0.0.1:8077/health返回ECONNREFUSED；当前两个Python环境未发现laya包，不代表整机未安装。未调用推理/安装/改配置。",
+      "detail": "本轮仅健康GET再次ok=false/fetch failed、exit1；上轮原因ECONNREFUSED。两个Python环境未发现laya不代表全机缺失；未安装/启动/推理。",
       "next": "先明确已有服务/venv位置和正确端口；若确实需要安装或模型推理，另定具体范围。",
       "kind": "环境事实 / 不重写provider"
     },
     {
-      "id": "CLI-MODEL-CANDIDATES",
-      "severity": "当前使用缺口",
-      "title": "声明模型池不自动形成普通CLI候选",
-      "detail": "seedRegistry仅取配置model、probe modelHint和历史thread；2模型声明在空历史配置下候选0、单配置1、双历史2。代表duo采用显式测试驱动，不替代普通CLI验收。",
-      "next": "B2.2候选：仅显式用户声明池接入既有registry，记录声明来源；unknown仍unknown，不自动导入catalog或绕过quota/Assignment/最终启动门。",
-      "kind": "源码+纯值6断言 / 非真实可用性证据"
+      "id": "MODEL-CALLABILITY",
+      "severity": "真实使用边界",
+      "title": "声明pair已注册，但不等于可调用/额度可用",
+      "detail": "B2.2独立证明新pair进入候选链后保持unknown、Assignment拒绝；已有合法probed pair可继续执行。没有从名称、声明或Agent安装态伪造证据。",
+      "next": "复用现有配置/真实probe/观察证据；后续真实pair验证须明确新费用/次数范围，不为跑通改成available。",
+      "kind": "非P1 / 不放宽保护"
     },
     {
       "id": "B47-REPRESENTATIVE-SCOPE",
@@ -1139,6 +1147,14 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "detail": "自有w44-eM6GD9无进程启动；其确切递归删除被自动审批blocked by policy拒绝，未绕过。",
       "next": "用户手动清理已记录目录；不阻塞路径修复或后端",
       "kind": "工具限制"
+    },
+    {
+      "id": "WORKER-REPORT-P2",
+      "severity": "P2",
+      "title": "开发worker末尾工具拒绝导致报告未收尾",
+      "detail": "两轮实际DeepSeek模型已核验、所需代码已落盘；尾部共享TEMP/原地mutation命令被拒绝，native finish=tool-calls，无完整最终报告。代码结论来自Codex独立diff/tests。",
+      "next": "后续任务仅用任务owned日志或直接命令输出；不重试被拒绝写入，不再发第三轮、不扩建委派框架。",
+      "kind": "委派报告局限 / 非生产功能阻断"
     }
   ],
   "tasks": [
@@ -1281,14 +1297,22 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "deliverable": "显式任务结果检查与继续/停止；不做跨进程恢复",
       "status": "done",
       "evidence": "独立93/42及历史TTY证据；原Review文案P2在B5.1经两次真实CLI停止probe关闭"
+    },
+    {
+      "id": "B2.2",
+      "title": "显式模型池候选来源",
+      "status": "done",
+      "deliverable": "普通CLI使用冻结声明补现有registry；声明unknown不提升为可调用",
+      "evidence": "33/0+9独立断言+双负控+异常/清理失败传播；委派末尾报告P2保留"
     }
   ],
   "checks": [
-    "2026-10-15只读接线核对：现有LAYA默认8077健康GET被拒绝连接；模型池只过滤候选，不为普通CLI新增模型。产品模型调用0，累计仍5/5。",
-    "真实seedRegistry+pool解析/准入纯值探针6项通过；首次顺序假设已更正，无产品代码修改",
-    "GitHub MCP读取官方LAYA README/health源码成功；仅参考，不当本机安装证据",
-    "本轮只维护文档与ignored页面/探针；不跑full suite、不调用模型/读凭据/改用户配置",
-    "B4.7.3历史代表样本独立PASS保留；工程估算68/100不增加、PARALLEL_WRITE=CLOSED"
+    "B2.2代码独立PASS，整体PASS WITH P2；2轮真实implement实际模型均DeepSeek，末尾报告不当正常stop",
+    "typecheck0；b22 33/0；quota184、assignment235、collab96、spawn50、pool95，全部0失败",
+    "独立seed/buildQuotaCenter9断言；去保护exit1、去CLI接线31/2 exit1；均只改内存",
+    "setup异常exit1、2根目录自行清理；删除失败33/0仍exit1、ledger保留、父按名清理1根",
+    "isolation6opt-in/0违规，ownership60/0；AST runtime.run=1、新authority0；diff check通过",
+    "LAYA仅健康GET未通过；产品推理新增0、累计5/5；估算68/100不增加，页面/证据/audit不入Git"
   ],
   "sources": [
     {

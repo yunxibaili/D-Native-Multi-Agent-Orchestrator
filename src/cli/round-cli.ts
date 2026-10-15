@@ -1197,7 +1197,20 @@ export async function runRoundCli(
     process.stderr.write(`quota probe failed: ${(e as Error).message}\n`);
     return 1;
   }
-  const registry: ModelRegistry = seedRegistry({ store: runtime.store, configs, descriptors }, probes, now);
+  // B2.2: an explicit `--model-pool` is threaded into the SAME `seedRegistry` the normal
+  // round uses, so its admitted user-declared (Agent x Model) pairs become exact
+  // declaration-only registry candidates (honest provenance, availability `unknown`).
+  // Absent, the options object is byte-identical to before.
+  const registry: ModelRegistry = seedRegistry(
+    {
+      store: runtime.store,
+      configs,
+      descriptors,
+      ...(modelPool !== null ? { userModelPool: modelPool } : {}),
+    },
+    probes,
+    now,
+  );
   const center = await buildQuotaCenter({
     store: runtime.store,
     configs,

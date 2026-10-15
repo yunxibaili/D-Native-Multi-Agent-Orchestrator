@@ -91,7 +91,7 @@ LAYA 决策包含两个层次：选择合适工作流/分工；再为各独立�
 只有唯一候选时保持明确的无选择规则，不伪造 LAYA 已比较多个方案。
 
 Skill/MCP已有声明候选→任务级advisory选择→brief→事件名称观察；不借skills boolean冒充自动目录，不把名称匹配当真实工具认证或权限强制。
-普通round的模型候选由seedRegistry取配置model/probe modelHint/历史thread。--model-pool仅限制候选与最终启动，不新增模型；doctor目录不写registry。两个真实模型的测试驱动成功不能替代普通CLI候选接线或真实LAYA验收。
+普通round的seedRegistry保留配置model/probe modelHint/历史thread来源；B2.2新增显式--model-pool来源，仅当前admitted声明补新pair、标来源并保持pair-specific unknown，已有来源不覆盖。普通CLI接线已受控独立验证，不把声明提升为真实可调用或额度；doctor目录仍不写registry。代表duo成功及受控接线不替代真实LAYA验收。
 请求的模型不等于服务端实际模型；DSH 未支持的逐请求选模型不能以提示词参数伪装实现。
 LAYA 失败沿既有可观察失败语义处理，不猜计划、不生成免费资格、不解除 fixed。
 
