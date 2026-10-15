@@ -41,6 +41,7 @@ README 是导航。本机 `project-progress/audit/` 是用户指定的只读第�
 | B2.1 / B2.1a | 独立 PASS：用户声明池的候选/分配/最终同步启动准入受控闭环；两个历史P1已关闭 |
 | B2.2 | 候选来源接线代码独立PASS；整体PASS WITH P2（worker末尾报告未完成）；新增声明pair保持unknown，非可调用/额度证据 |
 | LAYA-ENV.1 | 既有0.3.21环境/固定缓存恢复及真实离线CUDA加载+health独立PASS；无推理，检查后已停止，不是常驻服务或决策验收 |
+| LAYA-DECISION.1 | BLOCKED：授权4次，首个中文分类因官方action对象被误当字符串任务参数而拒绝，1/4后停；Job空/清理通过，余3项未运行 |
 | B2 overall | NOT SEALED；账户资格/硬金额预算/付费与全流程费用未验收 |
 | B4.6a | 最小同进程用户检查点独立通过；原报告文案P2在B5.1关闭，不等于完整监督/纠偏恢复 |
 | B5.1 | 独立 PASS WITH P2：已知session_failure的停止安全/具体model有界接力；仅受控当前链 |
@@ -297,6 +298,10 @@ workflow在该失败边界让出给既有canonical continuation，避免generic 
 真实0.3.21服务经既有contained ManagedProcess启动在127.0.0.1:8077、HF离线、LAYA_PRELOAD=1/MODELS=english,multilingual；实际provider GET /health通过：两个checkpoint均loaded、实际device均cuda（device_is_preference=false）、revision均匹配。仅健康GET，无POST/forward pass/真实Agent推理；未认证决策质量、Token收益或完整LAYA编排。服务为有界检查，结束已停止；重新运行前须按DECISION_PROVIDER中的显式进程级启动说明启动，不是已配置开机常驻。
 加载器对部分temperature给出钳制警告，受影响confidence未经校准；不据CUDA/health通过绕过验证。用户只授权缓存恢复与离线加载/health，后续本地真实决策仍需有界授权。PARALLEL_WRITE=CLOSED、产品原生会话仍5/5。
 
+### 5.13 本地 LAYA 真实决策协议阻塞（2026-10-15）
+
+LAYA-DECISION.1已获最多4次离线本地推理授权；首个中文分类真实POST返回后，现有客户端把0.3.21标准action:{act_probability:1}元数据误当任务参数，DECISION_SCHEMA拒绝。raw答案不是已验证结果，英文/计划/Agent×Model三项未运行，失败后无重试。服务已停止，validated Job ActiveProcessesFinal=0、owned根移除、cleanupFailures=0。安装包与官方v0.3.21源码及捕获响应离线回放共同确认；不是缓存或CUDA未加载。仅定位缺口，未改生产代码；下一候选LAYA-COMPAT.1需另行授权最小兼容修复与hermetic回归。产品会话5/5、PARALLEL_WRITE=CLOSED、68/100估算不变；温度校准P2保留。
+
 ## 6. 不可绕过的契约
 
 WorkerIdentity={taskId,agentId,modelId,sessionId}；不以模型品牌替代 Agent 能力事实。
@@ -326,6 +331,10 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 不新增 provider 网关、群聊平台、第二个调度器或通用工作流引擎来掩盖协议缺口。
 
 ## 8. 最近独立证据与上传记录
+
+2026-10-15 LAYA-DECISION.1 真实本地typed决策验收BLOCKED（1/4后停止，无重试）：用户单独明确允许最多4次本地推理、每次90秒、合成demo、失败即停，不启动产品Agent/云模型、不发送仓库代码、不新增费用。复用既有0.3.21服务、固定缓存与contained ManagedProcess，GET health确认english/multilingual实际cuda、固定revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851。第一条中文分类经真实classifyTask→provider POST /v1/systemone返回合法JSON与multilingual路由，raw work_kind=implementation；但客户端readChoiceParameters把官方答案元数据action:{act_probability:1}误当string参数，以DECISION_SCHEMA拒绝。没有validated classification，更不能用raw标签宣称分类通过。英文/计划/pair三项未发送，不自动重用剩余调用额度。
+根因取证：本机已安装laya/agent.py:892/902及GitHub MCP读取官方v0.3.21（tag解析6ab71fb4ce6bfd6f189e9b689eaadd67103ed9b6）的同位置均确认action为协议元数据；src/decision/laya.ts的RESERVED缺action，拒绝对象。离线捕获响应回放经真实provider/classifyTask稳定复现DECISION_SCHEMA，network=0；不放宽校验、不删响应字段造PASS。这里只定位兼容缺口，未修改生产实现、未启动开发worker。待用户授权LAYA-COMPAT.1再由OpenCode最小实现，Codex独立审查；保留未知对象/数字任务参数拒绝，不新增调度/manager或改安装包。官方源码：https://github.com/NandhaKishorM/laya/blob/6ab71fb4ce6bfd6f189e9b689eaadd67103ed9b6/laya/agent.py#L892 。
+本轮实际POST=1、validated结果=0、无自动重试、其余3项NOT RUN。finally确认cancel/真实退出/validated Job ActiveProcessesFinal=0/owned根删除/cleanupFailures=0，服务未保留常驻。0.3.21加载器置信度温度警告P2仍保留。源码/测试/native/scripts未改，不重跑typecheck/full suite；离线回放不是新增模型调用。本机证据与网页不入Git；产品Agent累计仍5/5、PARALLEL_WRITE=CLOSED、工程估算68/100不增加。证据：ignored laya-decision-evidence.json/laya-decision-review-state.json。旧LAYA-ENV.1的无推理结论仍只描述其历史范围。
 
 2026-10-15 LAYA-ENV.1 现有环境找回、固定缓存恢复与离线加载/health独立PASS（无推理，不封后端）：用户继续推进后从历史Git da17f61的DECISION_PROVIDER找回C:/Users/Admin/laya-venv，实际解释器/metadata确认laya0.3.21、torch2.11.0+cu128；当前默认C:/Users/Admin/.cache/huggingface/hub不存在。不能把此前只查base/Python312未找到升级成全机未安装。初次真实lazy服务（LAYA_PRELOAD=0、离线、127.0.0.1:8077）经现有provider GET健康通过、loaded=[]且警告无checkpoint；结束Job空/owned清理通过，不当作可推理证据。
 用户明确授权恢复固定版本英语/多语言、网络上限3GB/临时磁盘6GB、只离线加载和health无推理，并最终指定D:/AI/laya-cache。官方固定revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851公开metadata确认精确10文件、合计1,524,397,210 bytes；实际仅下载这些文件（typed-decisions未下载），复用现有huggingface_hub1.33.0/snapshot_download、token=False/禁隐式token/禁telemetry/禁XET，受控Job总30分钟与payload/磁盘预算，未安装/升级依赖。当前本机huggingface.co metadata和下载实际可达，不沿用历史网络受阻推断。下载payload计数1,524,397,210 bytes，缓存总1,524,403,676 bytes；全部10文件大小及官方LFS SHA256或Git blob哈希匹配。Windows无symlink支持只警告降级缓存，未开启开发者模式或管理员改系统。
@@ -962,18 +971,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-15T12:43:23+08:00",
+  "updatedAt": "2026-10-15T12:58:03+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "LAYA-ENV.1",
-    "name": "固定缓存恢复与真实离线CUDA加载/健康检查通过",
-    "status": "done",
-    "summary": "已找回既有LAYA0.3.21；D:/AI/laya-cache的10文件约1.52GB全部官方摘要匹配。english/multilingual实际CUDA加载、固定revision，项目provider健康GET通过。三Job确认空并清理；服务已停止，无推理。"
+    "id": "LAYA-DECISION.1",
+    "name": "本地LAYA真实决策协议验收阻塞",
+    "status": "blocked",
+    "summary": "已授权4次，首个中文请求因0.3.21 action元数据被当成任务参数而DECISION_SCHEMA拒绝；1/4后停止、余3项未跑。真实Job已空、服务停止、owned清理通过。"
   },
   "next": {
-    "id": "LAYA-DECISION.1",
-    "name": "另行授权少量本地LAYA typed决策验收；不启动产品Agent",
+    "id": "LAYA-COMPAT.1",
+    "name": "最小修复官方action元数据兼容边界与hermetic回归；需另行授权",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1049,12 +1058,12 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
   },
   "blockers": [
     {
-      "id": "LAYA-REAL-DECISION",
-      "severity": "待真实验收",
-      "title": "环境/离线加载已过；真实typed决策仍未执行",
-      "detail": "真实english/multilingual已在cuda离线加载并通过现有provider健康GET，但本轮无POST/forward pass；检查后服务已停，不宣称常驻或工作流选择已验收。",
-      "next": "明确少量本地决策次数/输入，仅合成demo，不启动产品Agent；复用现有provider和选择预设。",
-      "kind": "边界 / 原8077与缓存定位阻塞已解决"
+      "id": "LAYA-PROTOCOL-ACTION",
+      "severity": "P1",
+      "title": "官方action元数据被误当任务参数",
+      "detail": "0.3.21真实返回action:{act_probability:1}，当前readChoiceParameters RESERVED未包含action，首个中文分类DECISION_SCHEMA拒绝。原始标签非已验证决策。",
+      "next": "授权LAYA-COMPAT.1后最小兼容修复；保留非法任务参数拒绝，先hermetic回归，不自动重跑真实推理。",
+      "kind": "独立实测 + 安装源码/官方固定tag + 无网络回放"
     },
     {
       "id": "LAYA-CALIBRATION",
@@ -1331,15 +1340,22 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "status": "done",
       "deliverable": "复用既有venv恢复固定英语/多语言缓存并验证真实health",
       "evidence": "10/10摘要；实际CUDA两checkpoint；三Job空/清理；0推理"
+    },
+    {
+      "id": "LAYA-DECISION.1",
+      "title": "本地LAYA真实typed决策验收",
+      "status": "blocked",
+      "deliverable": "最多4次合成任务本地调用，不启动产品Agent",
+      "evidence": "1/4请求后因action协议兼容失败停止；余3项NOT RUN；Job空、owned清理通过"
     }
   ],
   "checks": [
-    "既有C:/Users/Admin/laya-venv确认LAYA0.3.21/Torch2.11.0+cu128；无重装、无开发worker",
-    "用户授权D:/AI/laya-cache；固定revision英语/多语言10文件，1,524,397,210 bytes，10/10官方摘要匹配",
-    "实际离线真实server+provider GET健康通过；两checkpoint实际cuda、revision固定、非device preference；无推理",
-    "lazy/下载/loaded三Job均确认ActiveProcessesFinal=0并清理owned根；服务已停止",
-    "置信度temperature钳制RuntimeWarning保留P2；不将health或CUDA当决策质量证明",
-    "src/tests/native/scripts未改，未跑full suite；产品Agent仍5/5，估算68/100不增加；本机页面/cache/audit/日志不入Git"
+    "用户明确授权4次本地推理/90秒/合成任务；实际POST=1，validated结果=0，失败即停、未重试",
+    "真实multilingual响应含action对象，与本机0.3.21及GitHub官方固定tag源码一致",
+    "捕获响应通过真实provider/classifyTask离线回放：DECISION_SCHEMA复现，network=0",
+    "服务cancel/退出/Job ActiveProcessesFinal=0/owned根删除/cleanupFailures=0均确认；未留常驻",
+    "src/tests/native/scripts未改；未跑typecheck/full suite；余3项未运行；未调用产品Agent/云端模型",
+    "产品Agent仍5/5，PARALLEL_WRITE=CLOSED，估算68/100不增加；网页/cache/audit/证据不入Git"
   ],
   "sources": [
     {

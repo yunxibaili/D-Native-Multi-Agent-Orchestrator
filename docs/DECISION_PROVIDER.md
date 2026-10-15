@@ -65,6 +65,11 @@ $env:LAYA_REVISION = '55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851'
 
 固定权重清单来自[官方55cf4c4e版本](https://huggingface.co/convaiinnovations/laya/tree/55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851)：10文件共1,524,397,210 bytes，下载后及离线加载后均核对官方LFS SHA256/Git blob匹配。只用未认证公共下载，未读取现有token；缓存不入Git。加载器对部分choice temperature给出钳制与confidence未经校准警告，即使health warnings=[]也不能忽略。保留P2，不为此擅自调参/升级或信任置信度硬门。不能把上游新版能力视为本机0.3.21已支持。
 
+### 3.1 真实决策兼容阻塞（LAYA-DECISION.1）
+
+用户随后明确授权最多4次合成任务本地推理。实际只发送首个中文classifyTask请求：真实multilingual返回work_kind=implementation及action:{act_probability:1}，当前客户端readChoiceParameters把action当额外字符串任务参数，DECISION_SCHEMA拒绝；没有可供上层使用的validated classification。失败即停，其余英文/计划/pair三项未运行，不把raw JSON当PASS。服务已停止，Job ActiveProcessesFinal=0、owned清理通过。
+本机0.3.21与[官方对应源码](https://github.com/NandhaKishorM/laya/blob/6ab71fb4ce6bfd6f189e9b689eaadd67103ed9b6/laya/agent.py#L892)均将action作为答案元数据返回；捕获响应无网络回放复现同一拒绝。LAYA-COMPAT.1待授权后仅修此兼容边界并补hermetic回归；不得把任意非字符串任务参数改为合法，也不修改上游安装包/权重或新建provider。修复通过前不认证真实LAYA决策接入，先前health PASS不变。
+
 ## 4. 当前请求约束
 
 支持 choice、score、noul，具体字段以 types.ts 和 laya.ts 的校验为准。
