@@ -76,6 +76,12 @@ $env:LAYA_REVISION = '55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851'
 响应本身routing证明checkpoint，但没有revision（metadata.revisions={}）；同一owned进程health确认english/multilingual都加载在实际cuda、device_is_preference=false、两revision均55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851，不能把health revision伪称逐响应字段。结束协同cancel/退出/validated Job ActiveProcessesFinal=0/owned根清理通过，服务未常驻。先前1/4失败记录保留为历史，当前4/4是新授权结果；不能反复运行旧脚本重用授权。
 真实typed接口通过不等于完整生产CLI/Review/工具/真实模型选型最优均已验收。温度校准P2仍保留，产品原生会话5/5不变；下一候选只读准备既有round整链验收和预算，新增推理/Agent调用另行授权。本片未改代码或重新跑typecheck/full suite。
 
+### 3.3 原生动作目标协议阻塞（LAYA-ROUND.1只读审核）
+
+官方/本机0.3.21 choice只返回所列choice与分布、confidence、answer_confidence、action元数据，不生成任意taskId/agentId兄弟参数。当前orchestrationDecisionRequest只提供动作名；输入action_parameters说明不等于输出参数机制。extractAction依赖answer.parameters，而validateDecision要求complete的taskId。受控官方格式complete经真实provider→runDecisionCycle得到malformed-decision，任务仍to_verify、dispatch=0；这是无网络协议反例，不是新真实模型complete实测。b40a fixture主动提供parameters.taskId，因此其93/0与真实协议阻塞可同时成立，不能将fixture能力移到原生LAYA。
+先前四预设真实PASS不变，但完整round为BLOCKED。最小方向是复用有限候选/精确映射，让LAYA选择包含已知任务目标的合法动作候选，再送同一验证/执行入口；不默认首任务、不把action元数据当编排动作、不引入生成大脑或新manager。仅建议，未实施；复杂自由参数动作需如实限制，不声称已支持全部动态改计划。
+两步顺序理想8次本地决策（1分类+1计划+2pair+4cycle），正常有界loop对应最多13；默认原生Review在可审核/支持时至多另1（否则可为0），quota CLI最多4条正常命令尝试及原生内部辅助另计，不能把理想值当实际硬cap。当前可用性/真实免费证据与产品5/5授权边界保留，未实跑/未改源码。
+
 ## 4. 当前请求约束
 
 支持 choice、score、noul，具体字段以 types.ts 和 laya.ts 的校验为准。

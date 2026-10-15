@@ -44,6 +44,7 @@ README 是导航。本机 `project-progress/audit/` 是用户指定的只读第�
 | LAYA-DECISION.1 | BLOCKED：授权4次，首个中文分类因官方action对象被误当字符串任务参数而拒绝，1/4后停；Job空/清理通过，余3项未运行 |
 | LAYA-COMPAT.1 | 独立PASS：官方action元数据兼容/任务参数隔离/非法输入拒绝；捕获响应离线回放通过，无新增真实推理 |
 | LAYA-DECISION.2 | 独立真实PASS：4/4本地typed调用，中英文分类/计划/pair均经生产provider校验；无产品Agent，非完整round，Job空/清理通过 |
+| LAYA-ROUND.1 | 只读审核BLOCKED：原生动作输出缺complete必需taskId，协议反例复现；四预设PASS保持，无新推理/修复 |
 | B2 overall | NOT SEALED；账户资格/硬金额预算/付费与全流程费用未验收 |
 | B4.6a | 最小同进程用户检查点独立通过；原报告文案P2在B5.1关闭，不等于完整监督/纠偏恢复 |
 | B5.1 | 独立 PASS WITH P2：已知session_failure的停止安全/具体model有界接力；仅受控当前链 |
@@ -313,6 +314,11 @@ LAYA-COMPAT.1由OpenCode指定DeepSeek V4.1 Flash首轮实现，Codex独立PASS�
 LAYA-DECISION.2在用户新授权4次后实际完成4/4：中文multilingual、英文english均分类implementation；计划选lean；具体pair选所列demo-code-agent×demo-code-model。实际耗时734/52/73/59ms仅为本次各1样本；中文complexity=moderate、英文small均保留，不作主观质量/速度保证。生产provider均完成答案空间、概率与action元数据校验，无重试。每响应routing提供实际checkpoint；revision缺失不补写，由同服务health确认两个固定revision及actual cuda。服务已停，validated Job ActiveProcessesFinal=0、owned清理无失败。
 仅真实决策接口与四个预设可用，不代表完整生产round/真实Skill-MCP/免费额度/接力全部验收；候选Agent×Model为合成输入，没有执行Agent。前轮1/4失败记录保持，当前4/4新验收PASS。置信度P2、产品原生5/5、PARALLEL_WRITE=CLOSED与68/100工程估算保留。下一候选LAYA-ROUND.1先只读核对既有整链与预算，不额外新增执行器或推理。
 
+### 5.16 完整round动作目标协议缺口（2026-10-15只读审核）
+
+四预设真实PASS不代表next_action带目标动作已打通。当前next_action只向0.3.21提供动作名，其choice decoder不生成taskId兄弟字段；输入action_parameters说明不能代替输出。extractAction依赖参数、complete要求taskId，受控官方响应形状经真实provider/decision loop导致malformed-decision，任务保持to_verify/无派发。现有fixture补taskId的成功链仅为受控证据。此为独立P1，未修改生产代码；下一候选LAYA-ACTION.1需授权后最小有界动作+目标选择映射，继续复用现有验证/状态权威，不凭空默认任务或换生成大脑。
+两步顺序理想8次本地决策、2次产品执行，默认审核另1；具体带假设预算见下方最新审核记录及ignored laya-round-budget.json，8不是硬cap（条件对应上界13）。quota辅助CLI和原生内部辅助调用另算。当前unknown可用性/真实免费资格及已用完产品5/5授权仍需处理，不绕过gate、不新增实跑；68/100估算、并行写CLOSED、校准P2与正式前端边界保持。
+
 ## 6. 不可绕过的契约
 
 WorkerIdentity={taskId,agentId,modelId,sessionId}；不以模型品牌替代 Agent 能力事实。
@@ -342,6 +348,13 @@ native process handle signaled 后实际退出码 259 合法；nonsignaled 的 2
 不新增 provider 网关、群聊平台、第二个调度器或通用工作流引擎来掩盖协议缺口。
 
 ## 8. 最近独立证据与上传记录
+
+2026-10-15 LAYA-ROUND.1 既有整链只读审核BLOCKED（新P1动作目标桥接缺口；四接口PASS保持）：用户要求继续审核，未授权实现/新增推理。先只读audit，沿runRoundCli、Workbench、Assignment/Session/Scheduler、decision-loop及验收/Review追踪；GitHub MCP成功读取官方v0.3.21固定tag6ab71fb4的agent.py/serve.py/router.py，并与本机0.3.21解码形状核对。没有启动worker/服务或模型任务。
+独立发现P1：orchestrationDecisionRequest的next_action只提供动作名，ACTION_PARAMETERS_FIELD只是输入说明；本机/官方0.3.21非生成式choice decoder只输出所列choice、分布、confidence、answer_confidence、action元数据，不生成taskId等新兄弟字段。serve/router转交预测并补routing，不补任务参数。extractAction依赖answer.parameters附加任务目标，而validateDecision对complete强制taskId（无默认目标）。因此选择complete也不能完成真实验收；reassign/rework等需参数动作同样有协议桥接缺口。不是action元数据修复回归，也不取消四预设真实PASS。
+受控协议反例（不是新真实推理）：真实TaskStore建合成to_verify状态，经真实provider（fetch seam按官方0.3.21协议形状返回complete）→runDecisionCycle，得status=invalid/code=malformed-decision/缺taskId，任务保持to_verify、dispatches=0；正控在fixture明确提供taskId后现有validateDecision可接受。官方源码静态证据与反例结合定位当前实现缺口，未宣称新模型实测complete。现有b40a fixture在233行主动补parameters.taskId/reason，所以其成功链不能提升为原生LAYA整链证明。独立现跑decision429/0、state-loop169/0、b40a-cli-workflow93/0全exit0；全绿与此协议缺口并不矛盾。所有209个版本化文件在调查/探针/测试后均逐字节未变；后续仅维护6文档/ignored页面。
+调用预算是带前提估算，不是新增授权：两步顺序、两份等步数候选计划、每任务>=2可用pair、Skill/MCP关、无handoff/retry/动态操作时，分类1+选计划1+选pair2+派发/验收cycle4=理想8次本地POST，现有cycle上限9使对应总上界13；两个成员duo且两份duo候选计划、恰好两pair时，分类1+计划1+成员pair1（最后成员唯一候选约束规则、集成继承不提问）+6cycle=理想9，上界15（cycle上限12），产品执行分别2/3次。默认原生Review在具备能力且允许审核时至多额外1次执行（withheld/不支持可为0）；--no-review省此调用但必须记录not_requested，不当Review PASS。普通collectAll还可能尝试OpenCode stats/providers list/--version与Codex doctor --json共至多4条CLI命令（正常非抛错分支；三个静态provider不启动CLI），命令次数不等于进程数或模型调用。原生内部辅助模型费用/次数未知，不能给虚假全流程零费用硬保证。
+另外两类运行前边界：普通registry对用户新声明pair显式unknown，catalogue/用户免费声明不证明callable；OpenCodeQuotaProvider本地accounting也不给真实额度，未知/unavailable需Assignment/Spawn Gate照常拒绝，不因准备实跑而伪造available/probe。产品原生会话仍5/5、本地4次已用完，无新增真实调用许可。先修动作目标桥接，再谈实际验收预算/资格；不对已封T/W阶段、完整后端或正式前端擅自裁定。工程估算68/100、PARALLEL_WRITE=CLOSED，temperature校准P2保留。
+最小下一候选LAYA-ACTION.1需实施授权：复用现有有限choice候选与initial-assignment的精确候选映射模式，让LAYA选择包含具体任务目标的有界动作候选，再映射为预先校验payload送同一validateDecision/applyVerification；先收口workflow必需complete+明确target，不靠调用者默认首任务/拼入猜测参数、不换生成模型/新建manager或第二调度。其他复杂参数动作如尚不支持必须明确标注，不冒充全部打通。证据：ignored laya-round-parameter-probe.json、laya-round-budget.json、laya-round-tests.json、laya-round-review-state.json；audit只读，无生产修复。
 
 2026-10-15 LAYA-DECISION.2 修复后四项真实本地typed决策独立PASS（不是完整生产round）：用户重新明确授权最多4个本地合成POST、每个90秒、失败即停/不重试，现有D:/AI/laya-cache固定权重、无云模型/产品Agent/仓库代码/新增费用。直接复用既有provider/routing/plan-choice/initial-assignment及已验证contained服务生命周期，无开发改动或worker。ignored验收脚本增加一次性授权phase守卫，运行后不能重用同一许可记录，不覆盖前轮失败证据。
 真实结果与客户端校验：中文classifyTask→implementation/moderate/review=false，multilingual，734ms；英文→implementation/small/review=false，english，52ms；decideWorkflowPlan在full/lean中选lean，english，73ms；decideInitialAssignment返回所列demo-code-agent×demo-code-model，english，59ms。正好GET health1次+POST4次，4个validatedResponse，raw action元数据保留且未进入parameters，未改变提示词/候选或重试。候选availability为明确合成事实，不冒充真实Agent/账户/免费资格。一次样本的语言间复杂度判断不同如实保留，单次耗时不是性能基准/最优选型证明；usage output_tokens=0符合非生成式接口，不声称节省外部Agent token。
@@ -992,18 +1005,18 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-15T13:49:33+08:00",
+  "updatedAt": "2026-10-15T14:01:40+08:00",
   "title": "LAYA 个人工作台",
   "scope": "新草案对应的后端完整使用效果；不包含正式产品前端",
   "current": {
-    "id": "LAYA-DECISION.2",
-    "name": "四项真实本地LAYA typed决策独立通过",
-    "status": "done",
-    "summary": "用户新授权4次，实际4/4通过；中英文分类、计划与具体pair选择均生产provider校验。实际checkpoint与health固定revision已取证；服务停止/Job空/owned清理通过。"
+    "id": "LAYA-ROUND.1",
+    "name": "完整round只读审核发现动作目标协议P1",
+    "status": "blocked",
+    "summary": "原生LAYA只选动作，不生成complete所需taskId；受控协议反例经真实provider/loop拒绝，无派发、任务仍to_verify。源码未改，四预设真实PASS保持。"
   },
   "next": {
-    "id": "LAYA-ROUND.1",
-    "name": "先只读准备既有round整链真实LAYA验收与调用预算",
+    "id": "LAYA-ACTION.1",
+    "name": "需授权：最小有界动作+目标候选桥接及hermetic回归",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1078,6 +1091,14 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
     ]
   },
   "blockers": [
+    {
+      "id": "LAYA-ACTION-TARGET",
+      "severity": "P1",
+      "title": "原生动作缺少complete必需目标参数",
+      "detail": "next_action只提供动作名，0.3.21不生成taskId；现有extractAction无法补齐，complete被malformed-decision拒绝。fixture成功由其主动补参数。",
+      "next": "授权最小有界动作/任务目标choice映射；继续同一validateDecision/applyVerification，不默认任务、不新增调度权威。",
+      "kind": "源码+官方固定tag+受控协议反例 / 非新真实推理"
+    },
     {
       "id": "LAYA-INTEGRATED-ROUND",
       "severity": "证据缺口",
@@ -1382,15 +1403,22 @@ B4.1 BLOCKED 快照为 f82f8c17bb7c42a477a627877c8038c525da918d，分支 codex/b
       "status": "done",
       "deliverable": "中英文分类+二选一计划+二选一具体pair",
       "evidence": "实际4/4POST校验通过；multilingual/english实际routing；同服务health固定revision/cuda；Job空清理"
+    },
+    {
+      "id": "LAYA-ROUND.1",
+      "title": "完整round接线与调用预算只读审核",
+      "status": "blocked",
+      "deliverable": "定位真实动作参数缺口、预算及准入前提",
+      "evidence": "官方0.3.21解码形状+真实provider/loop反例；现跑429/0、169/0、93/0；无模型调用"
     }
   ],
   "checks": [
-    "新授权4次本地POST，实际4/4通过，无重试、无产品Agent/云模型/仓库代码发送",
-    "中文implementation/moderate，英文implementation/small；计划lean；pair为所列demo-code-agent×demo-code-model",
-    "实际响应routing记录checkpoint；响应revision为空如实保留，同服务health确认两个固定revision与actual cuda",
-    "734/52/73/59ms各为单次观测，不当基准或选型最优证明；temperature未校准P2保留",
-    "服务cancel/真实退出/Job ActiveProcessesFinal=0/owned根删除/cleanupFailures=0；未常驻",
-    "源码/测试/native/scripts未改，未跑typecheck/full suite；产品会话仍5/5，并行写CLOSED，估算68/100；页面/证据/cache/audit不入Git"
+    "只读audit/源码/官方v0.3.21 agent/serve/router；未启动worker、服务或真实模型",
+    "反例：原生形状complete被缺taskId拒绝，to_verify保持、dispatch=0；正控fixture带目标可验证；不是新真实推理",
+    "独立现跑decision429/0、state-loop169/0、b40a-cli-workflow93/0，均exit0；fixture绿不能代替原生协议桥接",
+    "理想两步流程8本地决策/2产品执行，默认Review另1；条件上界13，quota CLI及内部辅助另算，不是预算硬cap",
+    "全部209版本文件调查后未变；仅维护6份文档/页面；无typecheck/full suite，产品会话仍5/5",
+    "估算68/100、PARALLEL_WRITE=CLOSED；四接口PASS与校准P2保持，页面/cache/audit/证据不入Git"
   ],
   "sources": [
     {
