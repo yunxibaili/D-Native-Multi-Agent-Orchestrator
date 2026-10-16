@@ -1,11 +1,11 @@
 # 后端需求 — LAYA 本机多 Agent 编排
 
-更新日期：2026-10-14
+更新日期：2026-10-16
 状态：用户确认的需求方向；本文不代表全部已实现或授权开始实现。
 范围：后端能力与对外契约。前端需求尚未讨论，进入前端阶段前必须提醒用户单独确认。
 
 **唯一当前状态基准：[PROJECT_BASELINE.md](PROJECT_BASELINE.md)。** 本文保存需求目标，
-不另设封板/授权表；实现切片与下一任务顺序见 [STAGE_ANALYSIS.md](STAGE_ANALYSIS.md)。
+不另设封板/授权表；实现切片与下一任务顺序见 [BACKEND_DELIVERY_PLAN.md](BACKEND_DELIVERY_PLAN.md)。
 这是个人工作台项目，先交付最小可用闭环；复用当前内核，不以企业级设计或非阻断 P2 拖住全部推进。
 
 ## 1. 产品目标
@@ -252,12 +252,12 @@ B5.1只验收已有明确session_failure的停止安全、具体pair/fresh sessi
 - [OpenRouter limits](https://openrouter.ai/docs/api_reference/limits)：说明限流与额度需分开识别；
   不表示项目已经接入 OpenRouter。
 
-实现差距和阶段边界见 [阶段分析](STAGE_ANALYSIS.md)，当前事实见 [项目基线](PROJECT_BASELINE.md)。
+实现差距和阶段边界见 [交付路线](BACKEND_DELIVERY_PLAN.md)，当前事实见 [项目基线](PROJECT_BASELINE.md)。
 
 ## 16. 两层任务分配（功能 A / 功能 B）
 
 本节把用户确认的两层任务分配正式记为后端需求。
-两层功能的已验证范围、实现缺口与封板状态只见 [项目基线 §5.4](PROJECT_BASELINE.md)，不在需求文档重复宣布完成。
+两层功能的已验证范围、实现缺口与封板状态只见 [项目基线](PROJECT_BASELINE.md)，不在需求文档重复宣布完成。
 计划输入契约：内置候选为有界 `full/lean`（顺序）与 `duo/trio`（协作）；需要适配具体项目时，用 opt-in 的
 结构化计划文件（`--workflow-plan <file>`，JSON，`kind` 为 `sequential|collaborate`，含 role/taskType/可选
 fileScope/deliverable/可选 dependencies 与协作的 integratorMember）替换内置候选。文件不命名 taskId/agent/model，
@@ -325,7 +325,7 @@ Git 项目的协作组采用一个受控隔离 worktree、组内顺序执行；�
 
 ## 18. 新草案：需求澄清、阶段批准与交付
 
-来源为 [DRAFT_STAGED_ROLE_WORKFLOW.md](DRAFT_STAGED_ROLE_WORKFLOW.md)；本轮用户授权纳入实施路线，
+来源为 [PRODUCT_DIRECTION.md](PRODUCT_DIRECTION.md)；本轮用户授权纳入实施路线，
 不等于所有建议细节已确认或功能已实现。状态见唯一基线，路线见 [BACKEND_DELIVERY_PLAN.md](BACKEND_DELIVERY_PLAN.md)。
 
 - 需求模糊时由 LAYA 集中组织必要调查与澄清，区分用户要求、建议、假设和未知；不直接臆造完整需求开写。
@@ -356,3 +356,17 @@ B2.1/B2.1a当前支持显式用户声明池、来源/期限、候选/分配/重�
 ## B5.1 已知会话失败的冻结边界
 
 停止事实与来源必须来自同Attempt的RunResult；false/缺失停止确认拒绝选择/迁移/第二run。same-Agent不同已知model可有界接力，未知model保守，fixed/池/费用/stage/resource门不豁免。恢复成功不自动验收，全workflow可保持unfinished/nonzero；请求模型不等于Agent实际模型，普通失败/超时/取消/静默不新增自动重试。
+
+
+## 19. Owner产品方向补充（2026-10-16；优先于旧草案的策略措辞）
+
+原REQ-01至REQ-14、全部AC及未来边界继续保留，本次不删需求。产品定位与当前取舍统一见[PRODUCT_DIRECTION](PRODUCT_DIRECTION.md)，研究出处见[20项索引](ENGINEERING_RESEARCH_REFERENCES.md)。正式Windows桌面工作台路线保持，具体UI需求需单独确认；本机进度页不是产品前端，不入Git。
+
+- 优先打通输入需求到Codex Native Review完成的真实闭环，不新建Planner/Workflow引擎、models.yaml、模型Registry或provider网关。
+- 已批准方向为首尾确认+异常中断；中间任务只有真实产物路径/范围/测试和费用合规才可自动流转。系统timeout/EOF/error不是用户主动stop；最终用户决定不自动填写。当前实现尚未具备此策略，本轮仅文档。
+- 代码质量验收从LAYA中剥离：同Task/Attempt的expectedArtifacts、allowedScope、真实测试命令/退出码和停止事实经既有Verification核验；最终仍有独立Native Review，不增加第二验收权威。LAYA继续做合法候选内任务级选择，不改写wait。
+- 实现Worker允许必要自测，独立Test Worker必须核对实际成果并执行测试；不得只复述前序输出。路径以实际workspace根目录相对位置明确，声明、磁盘事实与权限分别取证，不运行后搬文件伪装正确交付。
+- 自然语言需求可由现有已适配Agent生成2–3个有界JSON候选，复用parsePlanFile和plan-choice；在冻结计划/绑定digest前完成，生成调用单独授权计费，不让stage-check暗中推理。
+- 按角色标签预过滤既有模型/Skill/MCP候选后再交LAYA选择；原生加载与实际调用必须有证据，不新增工具平台。免费优先、额度与掉线接力、多会话、角色默认和协作组完整要求都保留，暂缓不等于取消。
+
+实施顺序见BACKEND_DELIVERY_PLAN，当前唯一下一项见NEXT_TASK；本节方向批准不自动授权开发或第四次真实Round。

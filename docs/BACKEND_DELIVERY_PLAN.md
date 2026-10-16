@@ -1,103 +1,46 @@
-# 后端交付计划 — 按新草案重排
+# 后端交付路线 — 先完成一个真实闭环
 
-更新日期：2026-10-15
+更新：2026-10-16。定位见 [产品方向](PRODUCT_DIRECTION.md)，全部需求见 [需求全集](BACKEND_REQUIREMENTS.md)，当前事实只在 [唯一基线](PROJECT_BASELINE.md)，唯一下一任务见 [NEXT_TASK](NEXT_TASK.md)。
 
-本文管理未来路线；当前状态、证据和估算数据只在 [PROJECT_BASELINE.md](PROJECT_BASELINE.md) 维护。
-依据：[后端需求](BACKEND_REQUIREMENTS.md)、[阶段草案](DRAFT_STAGED_ROLE_WORKFLOW.md)。
-2026-10-14用户单独授权B4.5a后，B4.5/B4.5a受控最小Git顺序协作范围独立通过；其后用户已授权B3.1原生Skill有界切片，现已独立通过；其后B3.2原生MCP选择与观察也已获授权并独立通过；本轮停止，不授权后续阶段。
+## 当前路线裁定
 
-职责核对保留：Verification是状态入口，不是内容裁判；整轮Review在workflow完成后运行。人工accept是用户verdict，默认模型决策路线保持。
+保留全部原始需求、Windows 正式桌面工作台路线和已有编排内核；不新建 Planner/Workflow engine、models.yaml、Registry 或模型网关。本轮只更新文档；下表是实施顺序，不能据此启动模型、开发或自动跨阶段。
 
-调研结论采用“按当前状态过滤模型可见动作”，只参考[官方动态工具方法](https://docs.langchain.com/oss/python/langchain/agents#dynamic-tools)，不引入LangChain或第二套调度。GitHub MCP成功核对[同版本LAYA基准边界](https://github.com/NandhaKishorM/laya/blob/6ab71fb4ce6bfd6f189e9b689eaadd67103ed9b6/docs/benchmarks.md)与官方evals；typed-decisions专用权重面向四种合成业务流程，不据发布方成绩推断Coding验收可用，不下载或切换权重。
+| 顺序 | 有界交付 | 复用入口 | 进入/完成条件 |
+|---|---|---|---|
+| **1 / MVP-E2E.1d（待下发实施）** | 检查点来源修复；首尾确认+异常中断策略；确定性路径/产物/真实测试检查 | workflow-checkpoint、round-cli、plan-file、completeTask/applyVerification | 离线负控与受影响回归通过，Codex 独立验收；不自动授权真实调用 |
+| 2 / 第四次真实 MVP（尚未授权） | 隔离 Demo 的实现→独立测试→Codex Native Review→Human Gate | 同一 Round、固定 pair、原生会话、Job containment | 先通过第1项；重新确认模型/费用/次数/数据，用户批准首尾和异常策略；不得从旧调用剩余额度继承 |
+| 3 / 自然语言候选准备 | 输入一句话，经现有 Agent 产生 2–3 个短计划 JSON，再由 LAYA 选择 | AgentAdapter/Runtime、parsePlanFile、plan-choice、planWithCandidates | 在计划冻结和 stage digest 之前，严格校验；生成调用另计预算，stage-check 不推理 |
+| 4 / 角色与工具最小过滤 | 角色标签过滤已存在的模型/Skill/MCP 候选，再交 LAYA 选择并原生加载 | ModelRegistry/Assignment/准入、skill-choice/mcp-choice、TaskIntent/brief | 不新建目录；实际加载、调用和拒绝分别取证，目录/声明不冒充工具成功 |
+| 5 / 使用反馈补齐 | 角色默认/prefer、额度与免费接力、模型掉线/部分写入恢复、多模型真实验收 | 现有 SelectionSpec、continuation、Lease/Attempt、费用池和工作区 | 按真实失败小片补齐；固定模型不静默替换，未知费用/停止安全先拒绝 |
+| 6 / 正式桌面体验 | 确认正式 UI 需求，然后将已验证后端能力接入既定桌面路线 | 当前后端对外契约 | 前端需求须与用户单独确认；本机进度页不计正式 UI 进度，不擅自改成 Web 产品 |
 
-B4.6b已独立通过：仅在既有`--checkpoint`中新增`accept <非空理由>`。等待输入后同步重读当前Task和原子Attempt→RunResult；状态、任务/Attempt/Worker身份、展示条件变化、执行证据缺失或停止未确认均拒绝。只有同一当前任务仍to_verify且树停止明确为true，才通过既有completeTask/applyVerification应用用户verdict；不直接写TaskStore、不新增authority。记录source=user、taskId/attemptId、理由及applied/refused，不把用户判断当LAYA决定、独立Review、产物或测试证明。末步accept后先重算all-succeeded，不额外问模型；后续派发仍走原固定pair/声明池/额度/资源/阶段门。continue/stop和无flag默认路径保持。
+## 第 1 项具体改动面（未实施）
 
-本片是个人MVP同进程人工兜底，不是完整自动验收。历史LAYA-QUALITY.2真实wait/正向目标完成未观察的BLOCKED保持；不改答案、模型、温度或权重，不追加试跑。新增产品Agent/本地LAYA推理均0，累计本地12、产品5/5不变；开发worker两轮真实使用指定DeepSeek V4.1 Flash，不能把开发调用说成零模型调用。PARALLEL_WRITE=CLOSED，正式前端未进入，估算68/100保持。
+| 改造 | 当前位置 | 最小方案 | 对底座的影响 |
+|---|---|---|---|
+| 每步强制输入/60秒与来源 | src/cli/workflow-checkpoint.ts:103、191、214；src/cli/round-cli.ts:2686、2734、2846 | 保留手动逐步模式；显式策略接入首尾确认+异常中断。系统 timeout/EOF/error 使用系统来源和类型化原因，不捏造用户 choice | 不放宽 Worker deadline、权限、停止或 Verification |
+| 产物/范围/测试 | src/orchestration/plan-file.ts:66、169、284；src/orchestration/workbench.ts:1436、1445 | 少量结构化 expectedArtifacts、allowedScope、测试要求，经任务创建/brief/同 Attempt 证据接线；在 completeTask 状态迁移前统一检查 | 复用 applyVerification；声明不是沙箱，检查失败不放行 |
+| 循环与终审 | src/cli/round-cli.ts:2358、2559、2846、4047；src/orchestration/unified-review.ts:566 | 同 Task/Attempt 真实结果通过后才能推进；不再用 LAYA complete 作代码质量裁判；保留最终 Native Review 的真实 verdict | 不新增调度边，不删 Review，不写假成功 |
 
-MVP-READINESS.1只读收敛完成；不是完整真实round已通过。最短路径是两个sequential步骤（实现→测试），固定一个已核验Agent×Model，显式计划/阶段确认，逐步用户accept，最后保留现有原生Review和HumanGate。无需新增调度器、平台或前端。`--workflow-choice`只固定计划，`--select fixed`只固定pair，`--checkpoint`只接管单步验收；三者均不能替代LAYA分类及派发决策。
+行号对应本次只读源码映射，后续实现前重新定位。不能通过仅检查文件存在、只读 write 事件或只认进程 exit=0 代替完整验收；shell 也可能写文件。范围检查是交付核验，不能自称替代文件系统沙箱。测试证据必须关联本次真实命令、cwd、退出码和结束原因，模型自述不是证据。
 
-LAYA-HEALTH.1独立PASS（无推理、非常驻）：Windows监听查询成功且8077无listener，生产Node TCP立即ECONNREFUSED、provider健康探测ok=false。因此当前就绪缺口是没有服务在该端口监听；前轮Python的2秒超时保留为当时观察，不作为服务卡死或模型故障的证明，也未追定Python观察差异的原因。无需据此改协议、重装或换权重。
+无测试要求的实现任务与必须独立测试的任务应分别表达，避免把所有任务强制变为相同质量门。实现 Worker 允许必要自测；测试 Worker 必须独立读取实际成果、运行并补充必要测试，不能只复述前一任务。禁止运行后搬文件伪装按路径交付。
 
-按已说明范围仅启动一次owned contained服务，复用现有LAYA0.3.21及D:/AI/laya-cache固定revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851；离线预加载english/multilingual，startup等待上限90秒，唯一进入本轮服务的请求是GET /health，无POST/推理。生产provider.probe返回ok=true；两checkpoint实际cuda、device_is_preference=false、两revision正确、CPU fallback计数0。该健康结果不证明真实决策质量或完整round。
+## 非当前阻塞的后续需求
 
-检查后主动协同停止：validated Job记录terminated/ActiveProcessesFinal=0、stopConfirmed=true；owned根已删、cleanupFailures0；随后独立Node连接为ECONNREFUSED。服务未保留常驻，这是本片预定清理，不是健康恢复又失败。10个已下载权重/tokenizer/config文件size/SHA256前后不变，209可版本文件在文档维护前raw hash不变；无安装/升级/全局或Agent配置修改、无foreign进程终止。
+完整需求澄清/阶段批准链、跨角色/同目标协作、免费优先、共享额度、掉线接力、Skill/MCP 实际加载、长材料引用、用户纠偏和恢复全部保留。不同功能的代表性历史样本见唯一基线；不能把 fixture、单次双模型演示或三次 PARTIAL MVP 升级为整个后端完成。
 
-下一项是MVP-E2E.1：在新增明确调用授权后，用新建隔离demo验证一次真实CLI最短“实现→测试→显式用户验收→原生Review→HumanGate”。先冻结worker具体Agent×Model、reviewer入口/模型与费用、用户输入方式、本地POST/原生会话上限及失败即停条件；不能把两次worker算成全部调用，也不能自动返回accept冒充用户看过产物。当前产品5/5已用完，未开放任何新推理；模型免费资格/Review费用未知就停止，不通过删Review或伪造available跑通。需要服务时复用本次已验证的owned启动/结束路径，不建设新的常驻机制。
+26 项既有 B5.1-WF 失败保持打开；有限豁免仅针对固定 pair/顺序/无接力的最小 MVP。新片触及其状态/停止路径时必须重新评估，不无条件扩大豁免，也不为追求全绿顺手修全部历史债务。
 
-## 成功效果
+## 研究与验证投入
 
-用户给出大概目标 → LAYA 组织必要研究和澄清 → 用户确认需求及预期效果 → 确认总体路线与当前阶段 →
-LAYA 在用户允许的 Agent × Model 池中选择职责、具体模型及必要 Skill/MCP → 既有执行链完成阶段 →
-监督发现需纠偏的问题时停止相关后续派工并交用户决定 → Codex 独立审核 → 交付实际成果、验证和遗留项 →
-用户验收或调整；不自动跨阶段实施。
+[20 项研究索引](ENGINEERING_RESEARCH_REFERENCES.md) 用于选择小机制；先复用项目实现，其次标准库和现有依赖。没有新增依赖、服务、基准集群或上下文平台计划。
 
-简单任务可以合并准备环节，不增加每条命令的审批。LAYA 仍是唯一任务级决策者，监督者不是新主管。
-保留功能 A（跨角色独立任务）和功能 B（同目标 2–3 模型分工共建）；人数与角色按需要决定。
-用户可限制模型池；免费优先与已授权付费可以作为可选策略，未知费用不能自动转成支出授权。
+下一实施任务的验证只覆盖检查点归属、确定性验收、同 Attempt、下游阻断和 Native Review 接线，并运行必要现有回归。文档任务不启动测试或模型；真实试跑只在新授权内验证已经离线证明的结论，失败即停，不反复试模型求通过。
 
-## 当前位置
+## 完成度与维护
 
-底层执行、停止、身份和受控工作流已建立。B4.2/B4.2a 的计划入口与合法多入口顺序执行已独立 PASS WITH P2。原 no-progress P1 关闭；
-该等待/拒绝报告分类 P2 已在 B4.3 中独立确认关闭，不重审全部历史阶段。
-还缺“需求 → 确认 → 阶段 → 用户成果”的产品闭环；结构化计划文件不是需求分析或用户批准。
+唯一基线保留原十项能力权重估算 68/100，未因研究和文档整理增分。它是历史规划信用，不是可用率、工时完成率或完整 MVP 成功概率；正式 UI 不在分母中，不能据此预测交付日期。
 
-## 重排后的任务
-
-| 顺序 / 编号 | 交付 | 复用与退出条件 |
-|---|---|---|
-| 已完成 / B4.2a | 合法依赖计划的顺序执行与资源拒绝报告主场景 | 独立 PASS WITH P2；完整状态见唯一基线。该分类 P2 已独立确认关闭 |
-| 已完成 / B4.3 → B4.3a | 最小阶段确认入口独立通过；显式绑定/材料交付与 legacy 写前拒绝收口 | 复用 plan-file、Human Gate、NextRoundInput；先支持用户显式提供/确认材料，不先建设自动需求分析平台。批准绑定阶段、范围和适用材料；未批准实现不启动 |
-| 已完成 / B4.4 | 最小有出处的交接和用户交付视图独立 PASS | 复用 brief/handoff、Task artifacts、同次 Attempt/RunResult、RoundResult；长材料可读，关键约束不只靠摘要；普通命令不冒充测试通过，未知/过期/受阻单列 |
-| 已完成 / B4.5 → B4.5a | Git项目顺序协作与审核前资源保护 | 单组隔离worktree、root+committed base、脏文件/产物/顺序/审核cwd验证通过；运行期保护和Windows scope归一化收口。限定受控范围，最终人工集成 |
-| 已完成 / B3.1 | 任务级原生Skill用户声明候选与advisory闭环 | 受控独立PASS；requested/admitted/工具观察分开，不证明真实加载或权限限制 |
-| 已完成 / B3.2 | 原生MCP任务级advisory选择与名称匹配观察 | 受控有界PASS；原生配置/连接/权限/真实调用和工具定义裁剪未认证，无新网关 |
-| 5 / B2.1 | 用户模型池、费用策略与消耗覆盖 | 复用 registry/selection/quota/Attempt；先明确允许池、费用证据与预算，不建设排行榜。固定付费模型不自动授权花钱，目录不证明免费 |
-| 6 / B4.6 | 检查点监督与用户纠偏 | B4.6a继续/停止及B4.6b显式用户accept已在同一Verification受控通过；最短使用链已收敛，先处理LAYA健康及真实调用授权；不承诺自动质量验收或跨进程恢复 |
-| 已交付子集 / B5.1 | 明确session_failure的停止安全与具体pair接力 | 受控当前CLI链通过；停止未知拒绝、同Task新Attempt/fresh session、成果保留与有界次数；真实错误分类/完整workflow与跨进程恢复后续 |
-| 8 / B4.7 | 代表性真实 Agent 验收 | 用户授权模型和费用后，以小任务验证功能 A、功能 B、一次失败/受阻交付；核对真实产物、身份、停止和总消耗，fixture 不替代真机证据 |
-| 9 / F0 | 正式工作台前端需求确认 | 本机进度页不等于产品前端。先一起确认操作流程、模型选择、阶段确认、成果查看，再决定 UI 实现 |
-
-角色默认/prefer、运行中改选、实时监督、完整崩溃恢复与写并行按实际使用价值后置，不作为以上最小闭环的框架前置条件。
-B4.7 的无推理探测或真实小样本可在相关接口稳定、用户已授权时提前穿插，无需等所有优化做完。
-
-## 阻塞如何处理
-
-- 原 B4.2 多入口 no-progress 与分类 P2 均已关闭。B4.3a 已独立 PASS：显式计划绑定、冻结、完整材料交付通过；无受支持 workflow 的阶段入口写前拒绝，保留无 stage 的旧执行。B4.4 最小交付视图亦已独立通过；B4.5/B4.5a最小Git协作和审核保护已独立通过；B3.1原生Skill有界切片也已独立通过；B3.2原生MCP选择与观察有界切片已独立通过，B2.1/B2.1a声明池最终准入及B4.6a同进程用户检查点已按最小范围交付，B5.1已按已知session_failure有界子集交付，下一候选B4.7需先明确模型/费用/数据。
-- Git项目协作：单worktree顺序路线已实现；Git子目录明确拒绝，未提交文件不自动带入。运行期retained claim及scope归一化已收口；不新增合并框架、不自动写并行。
-- DSH 无逐请求选模型：该协议不能承担要求两个不同指定模型的验收；选择已支持的实际 Agent，不伪造能力、不改全局模型。
-- 模型、额度和实际调用：未知即未知。用户池不足/未授权费用/真实环境不可用时停止相关真实验收，其他 hermetic 开发继续。
-- 草案中的理论边界不是全部当前缺陷；按相关任务覆盖代表性场景，不一次建设企业级治理平台。
-
-## 完成度口径
-
-以“新草案对应的后端完整使用效果”为分母，按执行、模型选择、工作流、阶段确认、成果、监督、工具、费用、恢复和真实验收十项加权。
-权重和已实现信用见唯一基线。当前后端信用为68/100，网页按5%档显示完成70%、剩30%（合理剩余30–50%）；本轮动作验收受阻不增加信用。完整需求/用户批准、真实模型/费用、原生工具及完整恢复仍不足，不按测试数加进度。
-
-这是规划判断，不是代码行数、通过测试数、工时预测或产品前端完成度；需求变化时必须重估并解释分母变化。
-
-## 更新方式
-
-每个任务结束：更新唯一基线的事实/证据/进度快照 → 更新受影响需求与路线 → 刷新本机进度页 → 再报告。
-页面只派生文档，不连接 Runtime、不派工、不授权。源文件、数据、预览脚本及旧 UI 备份均不进入 Git。
-本机目录存在时运行 `node project-progress/refresh.mjs`；需要实时查看时运行 `node project-progress/refresh.mjs --serve`。
-
-## 调研取舍
-
-2026-10-13 本会话通过 GitHub MCP repository search 核对 [Spec Kit](https://github.com/github/spec-kit) 和
-[OpenSpec](https://github.com/Fission-AI/OpenSpec)：两者 metadata 为 MIT、未归档且近期有推送。
-方法参考沿用草案的需求/计划/任务分离；本轮没有重新审计其全部源码、安全性或 Windows 运行，不安装、不复制框架。
-实际接线优先复用本项目已有 Planner、Human Gate、RoundResult、Workspace/Claim 和停止协议。
-
-B3.1受控证据仅支持用户声明Skill候选与advisory请求/工具观察；自动发现、真实MCP连接/权限/调用、真实加载及token节省不在已交付范围，不能以元数据代替费用/调用事实。
-
-## B2.1 实施后单点调整（2026-10-14）
-
-B2.1首次因prepare期间到期仍启动而BLOCKED的P1，现已在B2.1a独立关闭。用户声明池与最终同步启动准入受控最小闭环通过；B4.6a最小检查点已交付，B5.1有界子集已交付，下一候选B4.7待模型/费用/数据确认；不让付费账务平台、实时价格或全面策略阻塞本单点。free/included只作声明，付费与未知继续拒绝，真实资格/硬预算仍后置。唯一状态与证据见PROJECT_BASELINE。
-
-## B2.1a 收口后顺序（2026-10-14）
-
-最终启动前准入已受控独立PASS，继续按个人工具小片推进：B4.6a同进程检查点（最小已交付）→ B5.1模型中断的有界接力 → B4.7明确模型/费用/数据的真实代表验收。费用声明本身不作账户事实；硬预算或全面计费可按实际使用需求后补，不为此卡住当前监督切片。每片仍需用户下发，唯一状态见PROJECT_BASELINE。
-
-## B5.1 子集后的最小下一片
-
-B4.7先明确2个支持逐请求模型选择的真实pair、用户费用/数据范围、少量调用上限，再运行一个小型顺序/协作代表验收。DSH协议不支持逐请求模型，不伪造第二模型；fixture不替代真实证据。完整自动恢复可在真实失败形态明确后补，不建设企业级治理平台。正式前端仍先确认需求。
+每次任务结束更新唯一基线及其 project-progress JSON → 更新受影响需求/路线/NEXT_TASK → 刷新 ignored 本机进度页 → 报告真实证据。历史讨论已保存至 [归档提交](https://github.com/yunxibaili/D-Native-Multi-Agent-Orchestrator/tree/3f2b8a8d95374f60adbf666364f7b2180cdd84dd/docs)，当前目录不继续堆叠旧规划。

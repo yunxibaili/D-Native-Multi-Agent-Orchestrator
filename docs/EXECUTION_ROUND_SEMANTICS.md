@@ -64,8 +64,13 @@ sequential/collaborate及计划文件复用既有任务/验证/调度链，按�
 [项目基线](PROJECT_BASELINE.md)、
 [协作契约](R2_COORDINATION_CONTRACT.md)、
 [执行证据](DECISION_LOOP_EXECUTION_RESULT_CONTRACT.md)。
-历史 R1/R2 状态和测试数只在 [归档](STAGE_ANALYSIS.md#历史备份) 保留。
+历史 R1/R2 状态和测试数只在 [归档](https://github.com/yunxibaili/D-Native-Multi-Agent-Orchestrator/tree/3f2b8a8d95374f60adbf666364f7b2180cdd84dd/docs) 保留。
 
 ## 7. 已知session_failure的有界接力
 
 旧执行cleanup.treeStopConfirmed必须明确true，false/缺失先停止接力选择与身份迁移，并保持incomplete/非零。workflow失败边界交给同一个continuation driver，同Task新Attempt/fresh Session，保留部分输出、工具观察、截断/停止事实，提示核对现状，不能盲重放副作用。Agent×Model逐字段比较、unknown保守，handoff-max绝对上限与既有原因例外/重复守卫保留；fixed/用户池/最终准入不放宽。workflow恢复任务成功仍to_verify，整轮待原验证/下游，不自动resume全workflow。Review未完成原因如实区分保留资源/停止未知/用户stop/workflow/fan-out。
+
+
+## 2026-10-16 路线补充（尚未实施，不改变上述现有契约）
+
+Owner已批准首尾确认+异常中断与确定性产物/测试验收方向。当前每步checkpoint和completeTask行为尚未改变，系统超时被记user-stop仍是待修缺陷；不能把未来策略当当前事实。最小改造复用既有Verification、同Attempt与原生Review，不新增状态/调度权威，不放宽Job/权限/费用门。准确事实见[唯一基线](PROJECT_BASELINE.md)，下一有界任务见[NEXT_TASK](NEXT_TASK.md)。

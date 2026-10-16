@@ -79,7 +79,12 @@ Skill/MCP 的新增候选事实需明确契约，不能滥用旧 skills boolean�
 - ../src/orchestration/resource-claim.ts
 - ../src/orchestration/workspace.ts
 - ../src/orchestration/worker-identity.ts
-- [旧设计和历史审核](STAGE_ANALYSIS.md#历史备份)
+- [旧设计和历史审核](https://github.com/yunxibaili/D-Native-Multi-Agent-Orchestrator/tree/3f2b8a8d95374f60adbf666364f7b2180cdd84dd/docs)
 
 准确的状态枚举、转换和错误码以这些现有源码与对应测试为准；
 本文不以简化文字替代细粒度校验。
+
+
+## 2026-10-16 路线补充（尚未实施，不改变上述现有契约）
+
+Owner已批准首尾确认+异常中断与确定性产物/测试验收方向。当前每步checkpoint和completeTask行为尚未改变，系统超时被记user-stop仍是待修缺陷；不能把未来策略当当前事实。最小改造复用既有Verification、同Attempt与原生Review，不新增状态/调度权威，不放宽Job/权限/费用门。准确事实见[唯一基线](PROJECT_BASELINE.md)，下一有界任务见[NEXT_TASK](NEXT_TASK.md)。

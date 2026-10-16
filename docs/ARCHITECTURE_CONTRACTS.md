@@ -140,9 +140,9 @@ B4.0 顺序执行异构职责沿既有路径；B4.1 候选计划产生 N 个成�
 仓库子目录启动明确拒绝，用户脏文件不自动复制；最终人工集成保留。
 模型中断恢复后续复用停止确认与 handoff，不能借重试产生两个有效写入者。
 
-旧设计细节和历史审核在 [归档提交](STAGE_ANALYSIS.md#历史备份) 按原路径可查。
+旧设计细节和历史审核在 [归档提交](https://github.com/yunxibaili/D-Native-Multi-Agent-Orchestrator/tree/3f2b8a8d95374f60adbf666364f7b2180cdd84dd/docs) 按原路径可查。
 
-## B2.1 用户声明池的准入边界（实施，待单点收口）
+## B2.1 用户声明池的准入边界（既有实现，状态见唯一基线）
 
 用户池是冻结纯值，复用ModelRegistry身份与同一admitUserModelPoolPair；不建立第二registry/路由器。B2.2仅显式池当前admitted声明可补新entry，来源保留、已有配置/probe/thread不覆盖；新声明pair以pair-specific unknown保留，Agent可用事实不提升其为可调用，不写quota/free资格。不同字段组合的复合键文本可能碰撞，声明准入须逐项精确匹配agentId/modelId。Assignment仍accept-or-refuse，不替换fixed，不越过quota或资源门。
 B2.1a已在最后workspace.prepare之后、取得preRunTask之后、resolveSession/thread及状态提交/runtime之前复用同一buildSpawnGateInput进行同步检查；独立probe与内存负控确认到期/未列actual pair均无runtime/Attempt，原资源finally释放pre-start claim。无新增await或执行边；session解析到runtime之间没有新增Task/Session lookup，不破坏T1冻结。此为最终准入时的声明有效性判断，非真实账户/全流程费用保证。当前provenance会新增无池诊断行，默认不启用新限制不等于所有报告字节完全相同。
@@ -164,3 +164,8 @@ LAYA-BOUNDARY.1只读职责审核完成：Verification是唯一状态写入权�
 B4.6b已独立通过：仅在既有`--checkpoint`中新增`accept <非空理由>`。等待输入后同步重读当前Task和原子Attempt→RunResult；状态、任务/Attempt/Worker身份、展示条件变化、执行证据缺失或停止未确认均拒绝。只有同一当前任务仍to_verify且树停止明确为true，才通过既有completeTask/applyVerification应用用户verdict；不直接写TaskStore、不新增authority。记录source=user、taskId/attemptId、理由及applied/refused，不把用户判断当LAYA决定、独立Review、产物或测试证明。末步accept后先重算all-succeeded，不额外问模型；后续派发仍走原固定pair/声明池/额度/资源/阶段门。continue/stop和无flag默认路径保持。
 
 可信调用者可经既有applyVerification应用显式verdict；此API不是任意输入的质量证明。人工accept只在显示后的同步事实复查通过后调用该入口，不改默认模型决策、不增加完成权威。实际状态仍只见PROJECT_BASELINE。
+
+
+## 2026-10-16 路线补充（尚未实施，不改变上述现有契约）
+
+Owner已批准首尾确认+异常中断与确定性产物/测试验收方向。当前每步checkpoint和completeTask行为尚未改变，系统超时被记user-stop仍是待修缺陷；不能把未来策略当当前事实。最小改造复用既有Verification、同Attempt与原生Review，不新增状态/调度权威，不放宽Job/权限/费用门。准确事实见[唯一基线](PROJECT_BASELINE.md)，下一有界任务见[NEXT_TASK](NEXT_TASK.md)。
