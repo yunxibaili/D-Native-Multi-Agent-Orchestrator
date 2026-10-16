@@ -1,6 +1,6 @@
 # 产品方向与当前取舍
 
-更新：2026-10-16。本文保存 Owner 已确认的定位与路线取舍；当前实现、证据和阶段状态只见 [唯一基线](PROJECT_BASELINE.md)。需求全集见 [后端需求](BACKEND_REQUIREMENTS.md)，交付顺序见 [路线](BACKEND_DELIVERY_PLAN.md)。
+更新：2026-10-16。本文保存 Owner 已确认的定位与路线取舍；当前实现、证据和阶段状态只见 [唯一基线](PROJECT_BASELINE.md)。需求全集见 [后端需求](BACKEND_REQUIREMENTS.md)，交付顺序见 [路线](BACKEND_DELIVERY_PLAN.md)。新监督/机器完成契约状态：**Owner approved / Not yet implemented / Not yet tested**。
 
 ## 1. 要交付的个人工作台
 
@@ -26,8 +26,8 @@
 ## 3. 此次已裁定的最小路线
 
 1. **先打通一个真实闭环**：需求 → 已适配 Agent 产生内容/执行任务 → LAYA 选择/推进 → 真实交付与测试 → Codex Native Review → Human Gate。首个闭环可仍使用显式短计划；自然语言候选生成后补，不把两件事绑成大改造。
-2. **首尾确认 + 异常中断**：开始确认当前目标、范围、预算和计划；中间任务只在确定性检查满足后流转；失败、越界、费用不明、停止不明等立即中断；尾部由用户决定。timeout/EOF/输入错误是系统事件，不能伪记为 Owner stop/accept。此策略已获方向批准，**尚未实现**，不是删除安全门。
-3. **质量与模型决策分离**：LAYA 保留任务级选择权，不承担“文件是否存在、是否越界、测试真实退出码”的质量裁判。复用 completeTask → applyVerification，增加同 Task/Attempt 的确定性证据检查；不另建验证权威。通过后仍须真实独立 Native Review；测试绿不等于代码质量全通过。
+2. **默认整轮预授权 + 异常人工介入**（Round-level Preauthorization + Exception-driven Human Intervention）：Owner开始前一次性批准并绑定短计划、写入范围、具体Agent×Model或合格候选池、费用上限及工具权限；正常中间任务通过机器门禁后自动流转，不再逐步人工accept。异常停止自动推进并交人工；原生独立Review后最终Human Gate仍由Owner决定。旧--checkpoint保留严格监督/调试。timeout/断线不伪记user_stop，pending_user须先安全停止活动资源；不取消执行deadline/预算，也不承诺隔天恢复。此为正式未来默认，**尚未实现或测试**，不追认历史实验。
+3. **质量与模型决策分离**：LAYA保留任务级选择权，不能越过统一完成门禁。适用编码/文件交付任务必须证明精确expectedArtifacts、考虑原dirty及Windows链接/Junction的allowedScope、批准命令真实test exit0；模型PASS或总Session exit0均无效。复用completeTask→applyVerification，不另建验证权威；异步检查后提交前重新确认同Task/Attempt/RunResult及证据版本。三门是必要条件，最终Native Review仍必要。
 4. **自然语言生成候选是准备步骤**：经现有 AgentAdapter/Runtime 生成 2–3 个短 JSON 候选，复用 parsePlanFile 校验与 plan-choice 选择，随后冻结计划并计算 stage digest。不能让 stage-check 暗中推理；生成会话、费用和数据单独入预算。
 5. **工具使用最小复用**：角色标签过滤已有声明候选，再让 LAYA 选择；保持 ModelRegistry/费用准入、Skill/MCP intent 和原生加载路径，不新建工具路由或 provider 网关。
 
@@ -48,4 +48,10 @@
 
 不迁移 MetaGPT、AutoGen、OpenHands、LangGraph 等完整运行时；不新建 Planner、Workflow engine、Scheduler、Registry、Budget Manager、群聊总管或索引平台。不安装新依赖来替代已有能力，不用第二个主管绕过 LAYA，不开放并行写。
 
-外部材料只支持小机制借鉴，逐条出处与局限见 [研究索引](ENGINEERING_RESEARCH_REFERENCES.md)。原始 #1–#17 完整清单未提供；除 Owner 明确指定编号外，其余条目是本轮补选，不能当作 Owner 逐项确认的方案。
+外部材料只支持小机制借鉴，逐条出处与局限见 [研究索引](ENGINEERING_RESEARCH_REFERENCES.md)。原始 #1–#17 完整清单未提供；原20项中的补选标记保留，本次Owner新给出的Agentless/A2A/OpenAI Agents SDK另行追加，不冒称原清单已有。
+
+## 6. 实施顺序与当前授权
+
+先P0-1确定性完成门禁，再P0-2授权范围内默认自动推进，再P0-3异常等待/最终交付，最后P0-4另行授权的真实E2E；不能先放开自动流转再补机器门。旧MVP-E2E.1d合并建议已被替代，NEXT_TASK只指P0-1。后续P1自然语言计划、P2模型/Skill/MCP配置、P3正式桌面UI顺序保持。
+
+此次仅产品契约和文档更新，不授权实现P0-1、开发Worker或第四次Round。三次真实MVP仍PARTIAL，26项B5.1-WF失败/有限准入不变；不改历史实验的两次人工accept要求或缺失事实。

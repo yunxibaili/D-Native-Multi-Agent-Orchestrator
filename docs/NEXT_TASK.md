@@ -1,39 +1,53 @@
-# 唯一下一任务 — MVP-E2E.1d
+# 唯一下一实施任务 — P0-1 确定性完成门禁
 
-更新：2026-10-16。当前事实只见 [PROJECT_BASELINE](PROJECT_BASELINE.md)；本文件是有界任务说明，**等待 Owner 下发实施，不构成真实调用授权**。
+更新/Owner批准日期：2026-10-16。
+产品要求状态：**Owner approved / Not yet implemented / Not yet tested**。
+本轮只更新文档；本文件不授权自动开始实现、开发委派或第四次真实E2E。旧MVP-E2E.1d合并切片已被拆分路线取代。
 
-## 目标
+## 唯一目标
 
-一次补齐已经定位、直接阻挡第四次 MVP 的两个改动：
-1. checkpoint 区分真实 user_accept/user_stop 与系统 timeout/EOF/input_error；显式采用“首尾确认 + 异常中断”实验策略，合规中间任务自动流转。
-2. 在既有 Verification 链上加入确定性产物路径/允许范围/真实测试结果核验，避免 LAYA 以 complete 承担代码质量裁判；仍以真实 Codex Native Review 和 Human Gate 收尾。
+适用的编码/文件交付任务，在既有NativeWorkbench.completeTask → applyVerification链路提交Complete之前，统一核验：
+1. expectedArtifacts：相对于确认的实际Workspace根，精确文件存在；demo/add.js不能代根add.js，不自动搬移。
+2. allowedScope：真实增删改在批准范围内，基于本Attempt开始前快照处理历史dirty/untracked；覆盖shell修改、Windows大小写、链接/Junction，越界/归属不明失败关闭。
+3. trusted test：批准的具体测试命令真实执行、实际cwd正确、退出码0且未超时，证据关联同Task/Attempt/RunResult及产物版本。模型PASS文本、总Session exit0不是证据。
 
-第三次 MVP 为 PARTIAL：真实写入 workspace/demo/add.js、demo/add.test.js，测试2/0，计划要求根目录 add.js；Owner accept0/stop0，60秒系统超时却记 source=user；第二 Worker/Review 没运行。cwd 正确，路径偏移源于 Worker write 参数；不能只改 Demo 文案解决全部问题。
+编码任务缺测试要求/执行/可信证据不得自动完成；其他类型必须另有明确验收契约，不能静默放宽编码三门。必要条件通过不表示全质量已证明，最终Native Review不删。
 
-## 调查与复用
+## 调查和复用入口
 
-实施前复核 [研究索引 #11/#18/#19/#20](ENGINEERING_RESEARCH_REFERENCES.md) 和现有相关调用链；不用新增 Planner/Workflow/Verification authority。
-- workflow-checkpoint.ts:103/191/214：60秒策略、标准输入及系统失败。
-- round-cli.ts:2686/2734/2846：同 Attempt 检查点、恒 user 的错误归属、循环停止。
-- plan-file.ts:66/169/284：扩展现有计划格式的最少验收字段，未知/非法路径写前拒绝。
-- workbench.ts:1436/1445：completeTask 在 applyVerification 前的共享检查入口。
-- round-cli.ts:2358/2559/4047：真实 Attempt/RunResult、推进循环、终审接线；unified-review.ts:566 保持。
-- opencode.ts 的 toolFromPart / AgentSession.noteToolCall 保留原生 exitCode；不能用文本中的“测试通过”代替它。
+| 入口 | 本片只需处理 |
+|---|---|
+| src/orchestration/plan-file.ts:66/169/284；现有CandidateTask/commitPlan/TaskIntent/brief | 增加必要计划字段并沿现有任务创建链传播；parsePlanFile写前校验；同一normalizedPlanScope/digest绑定新增要求，防旧确认遗漏新字段 |
+| src/orchestration/workspace.ts:96/432；现有dispatch/executeTask与ResourceClaim | 取实际WorkspaceHandle.cwd；采集本次执行前后文件事实，不仅Git HEAD/status，不扫无关本机目录，不自动清dirty |
+| src/orchestration/workbench.ts:1436/1445；orchestration/orchestrator.ts:786；review-loop.ts:281 | 查清全部可达pass调用；在共享完成/验证边界拒绝缺证。异步检查后，提交前同步复核当前Task/Attempt/RunResult、工作区/授权与证据版本，不能只加CLI旁路判断 |
+| src/adapters/opencode.ts:418/427；src/runtime/session.ts:525/641；AttemptStore | 复用原生结构化工具证据；准确匹配命令/参数/cwd/退出码/结束原因。缺失或截断保持未知；若事件不足说明最小可信执行入口，不能用mock文本补成可信 |
+| src/cli/round-cli.ts:2358、完整工作流循环及4047 | 同Attempt证据接线、机器拒绝时下游不派发；保留最终runUnifiedReview。**不在本片启用新的默认自动推进策略** |
 
-## 实施与验收边界
+实施前复核[研究索引](ENGINEERING_RESEARCH_REFERENCES.md)中的SWE-bench、SWE-agent、Agentless与Windows/Node文件语义；资料是方法，不等于本机安全验证。
+可增加最少纯值类型/helper，但不新增Artifact平台、Test Runner系统、Workflow/Planner/Registry或Verification Authority。
 
-使用项目现有函数组织最终事实检查；必要时增加一个小纯值 helper，不建设新质量平台。expectedArtifacts 必须定位到实际 workspace 相对路径；allowedScope 检查真实变更，包含 shell 写入；测试要求绑定真实命令/cwd/退出码/超时/同 Attempt。不把进程树停止、费用资格、文件权限视为质量检查的替代品。
+## 本片离线验收（实施时执行，本轮未运行）
 
-通过检查后仍走同一 completeTask/applyVerification；不直接写 TaskStore。LAYA 保留合法候选内任务级决策，但不再决定文件/测试是否合格；wait 不改成假 PASS。现有逐步人工模式兼容；新策略显式启用，开始确认来自已绑定材料，末尾 Human Gate 保留，不能默认替 Owner 接受最终成果。
+| 场景 | 预期 |
+|---|---|
+| 根add.js及批准测试命令真实exit0 | 有效同Attempt证据经既有Verification通过 |
+| 仅demo/add.js或缺文件 | 不完成，不自动搬移，无下游run |
+| 新增/修改/删除越界，包含原dirty文件被再次改写 | 拒绝，保存实际差异，不清理或覆盖用户原成果 |
+| 原dirty文件本Attempt未改 | 不错误归因，但不自动忽略它的新改动 |
+| Windows大小写/相似前缀目录、链接/Junction逃逸、物理归属不明 | 正确比较或保守拒绝，不仅lowercase/startsWith放行 |
+| 指定测试exit非0/超时/未运行；错误命令或cwd；模型声称PASS/总session0 | 均不得作为可信测试通过 |
+| 测试后产物再次改变或证据版本失效 | 不用旧结果认证新产物 |
+| 旧/错误Attempt，身份变化，停止确认false/缺失 | 完成前同步拒绝，不迁移或放行 |
+| 经LAYA complete、现有人工accept或其他可达pass入口尝试绕过 | 都服从同一适用门禁，不新增成功权威 |
+| 有效实现/测试任务 | 原状态/身份/资源安全保持；受影响Review接线无回归 |
 
-离线至少覆盖：路径正确/错加目录/缺文件、越界变更、真实测试0/非0/未运行/超时、模型伪报、旧 Attempt/停止未知拒绝、通过后第二任务可推进、系统超时不记用户选择、异常阻断、最终 Review 真正被调用且缺 verdict 不通过。使用现有 fake runtime/fetch/输入 seam；新旧模板/门禁负控必须能检出目标问题。仅运行受影响定向套件、typecheck、git diff --check，不要求 full suite。
+前后文件事实不是“从未发生任何瞬时越界写”的证明；原生权限继续负责执行约束，无法可靠证明的场景报告限制/拒绝，不宣称全新沙箱。测试由实际受控进程运行、断言真实退出状态，fixture不冒充真实模型。
+用现有测试seam/owned临时工作区，正向+承重负控，再typecheck及受影响定向回归/git diff --check；不要求full suite，不调用真实LAYA/产品Agent/Native Review。
 
-Demo 配置明确“cwd根目录”与实现/独立测试职责，不预置目标文件，不搬旧产物。范围校验不是新沙箱；不能放宽目录外权限。保留26项既有失败及其固定/顺序/无接力豁免，不顺手修改接力架构。
+## 分工、范围与停止
 
-## 分工与停止
+将来Owner下发实施后，OpenCode经既有opencode-agent implement、实际模型opencode-go/deepseek-v4.1-flash完成有界改动；Codex调查/独立审核/复跑，最多首次+一次定向返工。本轮不调用该开发Worker。
+不得删除reuse-first、修改原生Agent安装或全局规则、放宽目录权限、改LAYA协议/权重、TaskStore状态权威、Job containment、并行写或最终Human Gate。
 
-授权实施后由 OpenCode 通过既有 opencode-agent implement，实际模型 opencode-go/deepseek-v4.1-flash；Codex 独立审核与复跑。最多首次实现+一次定向返工，不能因报告 PASS 就采信。当前文档任务没有启动该开发委派。
-
-不修改 LAYA 权重/协议、原生 Agent 安装、Scheduler/Registry、Human Gate 或 Job containment；PARALLEL_WRITE=CLOSED，automaticPostRoundAction=NONE。涉及必须新增执行权威或大改权限时停止。
-
-完成后更新唯一基线/NEXT_TASK/本机进度页并停止。**第四次真实 E2E 仍须单独核实模型/费用和重新授权；旧 POST/Worker/Review 额度不得继承。** 未来自然语言生成、角色工具过滤和正式桌面 UI 不纳入本任务。
+**完成P0-1后停止。** P0-2才处理模型/费用/工具的整轮绑定和默认自动流转；P0-3处理系统事件/pending等待；P0-4真实调用另行授权。不自动进入后续片。
+三次MVP仍PARTIAL，26项历史失败仍open，有限豁免不扩大。保持dirty tree、HEAD/index；未来上传需遵守届时Git授权。每片完成更新唯一基线/NEXT_TASK及ignored进度页。

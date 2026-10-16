@@ -1,8 +1,8 @@
-# 工程研究参考索引（20 项）
+# 工程研究参考索引（原20项 + Owner新增3项）
 
 核对日期：2026-10-16。用途：支撑 [产品方向](PRODUCT_DIRECTION.md) 和 [最小交付路线](BACKEND_DELIVERY_PLAN.md)，不是依赖安装清单、项目效果证明或引入授权。
 
-Owner 明确给出 #1、#11、#18–#20。原 #2–#10、#12–#17 清单未提供，以下相应条目为本轮按现有问题补选，并非还原未知原清单。“新增四份”实际只列出三个编号；按明确编号保持总数 20，不虚构第 21 项。
+上轮Owner明确给出#1、#11、#18–#20；原#2–#10、#12–#17清单未提供，其补选标记保留，并非还原未知清单。上轮“新增四份”只实际列三个编号，原20项没有虚构条目。本次2026-10-16新授权明确补充Agentless、OpenAI Agents SDK、A2A，新增为#21–#23，**不是声称它们已在上轮索引里**。
 
 分类由本索引定义：A 需求/计划/角色协作；B 模型/资源/成本准入；C 执行/产物/测试/审核；D 人工监督/停止/恢复；E 上下文/工具/复用。
 
@@ -32,6 +32,9 @@ Owner 明确给出 #1、#11、#18–#20。原 #2–#10、#12–#17 清单未提�
 | 18 | OpenHands | 2024 论文，2025 修订 | C/E | 原始摘要、仓库重定向、官方架构及 Skills 正文取得 |
 | 19 | SWE-bench | 2023 论文 | C | 原始摘要、官方 harness 文档及 grading 源码取得 |
 | 20 | Aider Repository Map | 2023 介绍；持续文档 | A/E | 官方介绍与文档正文取得 |
+| 21 | Agentless（本次Owner新增） | 2024论文 | C | 原始摘要取得；未通读PDF |
+| 22 | OpenAI Agents SDK HITL（本次Owner新增） | n.d.，持续文档；本次固定源码ref | D | Owner给出的官方页与OpenAI官方说明已取得；GitHub MCP正文成功 |
+| 23 | A2A Task Lifecycle（本次Owner新增） | 固定v1.0.1，页面未标年份 | D/C | 官方指定版本正文取得，不冒称本项目接入协议 |
 
 ## 1. MetaGPT（Owner 指定）
 
@@ -192,6 +195,48 @@ Owner 明确给出 #1、#11、#18–#20。原 #2–#10、#12–#17 清单未提�
 借鉴机制：按代码关联提供相关文件/接口签名，控制仓库上下文规模。适用：下游 Worker 获得关键接口和必要内容，减少无关材料。
 
 Repository Map **不等于自动提供完整 Diff**。目标文件的实际改动仍用本项目 Git/Workspace 获取；不能用 git diff --stat 代替必需代码内容。不引入新的仓库索引平台。核验状态：官方文档与介绍正文已取得；未测本项目 Token 节省，不承诺固定比例。
+
+## 21. Agentless（本次Owner明确新增）
+
+原始来源：[Agentless: Demystifying LLM-based Software Engineering Agents](https://arxiv.org/abs/2407.01489)。年份：2024。
+
+论文摘要事实：采用定位、修复、补丁验证三个阶段的简单流程，而非让模型自由决定复杂工具工作流。项目推导：复用已有执行链，将确定性验证做在共享完成入口，先完成最小闭环；这不是论文直接规定本项目三类门禁，更不是保证本项目效果。
+
+不采用：重建Agentless修复系统、benchmark集群或据论文费用/成绩推断本机结果。核验状态：原始摘要已实际取得，未逐页核验PDF，无本机安装/测试。
+
+## 22. OpenAI Agents SDK Human-in-the-loop（本次Owner明确新增）
+
+原始来源：[Owner指定官方SDK指南](https://openai.github.io/openai-agents-js/guides/human-in-the-loop/)；补充[OpenAI官方Guardrails and human review](https://developers.openai.com/api/docs/guides/agents/guardrails-approvals)。年份：n.d.，持续文档，2026-10-16访问。
+
+官方机制：需要批准的调用先返回interruption与state，由应用approve/reject，再从同一state继续；RunState可序列化以支持该SDK后续恢复。自动校验与人工批准是不同控制；实际副作用附近仍需要对应检查。
+
+项目推导：整轮预授权下系统验证与真实user_accept分开记，异常待人工不等于成功；任务完成最终提交前重验当前身份/证据。这些是结合本地调用链的选择，不代表SDK替我们提供TaskStore持久化，也不把政策自动判断伪记Owner输入。
+
+不采用：SDK包、Runner、RunState存储或第二审批系统。核验状态：上述官方正文均取得；GitHub MCP成功读取[固定源码](https://github.com/openai/openai-agents-js/blob/9687b544c8c873080e6ff7e7d294c0b353cd9ab6/docs/src/content/docs/guides/human-in-the-loop.mdx)，blob084ccd2dddb282b27085474e8a406e25e0ac5e98。未运行SDK或模型，不能据其resume能力宣称本项目可隔天恢复。
+
+## 23. A2A Task Lifecycle（本次Owner明确新增）
+
+原始来源：[Life of a Task v1.0.1](https://a2a-protocol.org/v1.0.1/topics/life-of-a-task/)。年份：官方页面未标，保留固定协议版本，2026-10-16访问。
+
+官方机制：Task有生命周期和身份；input-required/auth-required等中断与completed/failed/canceled等终态分开；上下文与任务/产物引用有关联，模糊产物可要求澄清。
+
+项目推导：system_timeout/input_disconnected/verification_failed/pending_user与真实用户accept/stop分开，复用当前事件/报告，不复制A2A状态为第二TaskStore。协议状态命名不是本机已实现字段，不把“等待输入”当“已完成”。
+
+不采用：A2A server/client、协议迁移或新的任务生命周期引擎。核验状态：指定官方正文已取得；本项目尚未实现或测试其协议。
+
+## 新产品契约的依据与工程推导（2026-10-16）
+
+新契约状态：**Owner approved / Not yet implemented / Not yet tested**。
+
+| 资料事实/官方机制 | 本项目工程选择 | 不可据此声称 |
+|---|---|---|
+| #1 MetaGPT、#2 ChatDev的角色/阶段交付思想 | 保留短计划、角色、真实交接，不让群聊替代执行 | 上游框架已接入或生成内容天然正确 |
+| #11 LangGraph中断恢复可重跑节点；#22 SDK有明确批准/恢复状态 | 系统等待与人工决定分开；不重复成功Worker；恢复前检查副作用 | 取消60秒计时器就有持久恢复 |
+| #23 A2A中断状态与终态不同 | pending_user只作安全待办结果，非任务成功、非第二状态权威 | 协议状态自动等于本项目Task枚举 |
+| #12 SWE-agent行动/观察轨迹；#19 SWE-bench执行与解析区分 | 批准测试命令的真实退出事实和同Attempt绑定；目标测试/保留回归各自核验 | Agent的PASS自述或Session0就是目标测试通过 |
+| #21 Agentless小阶段验证；#5 MAST多Agent失败研究 | P0-1机器门先于P0-2默认流转，P0-3再异常等待 | 论文证明本项目三门充分或保证准确率/省费 |
+
+P0-1文件边界的补充一手依据：[Node 24.x fs.realpath/lstat](https://nodejs.org/docs/latest-v24.x/api/fs.html#fspromisesrealpathpath-options)、[Win32 Reparse Points](https://learn.microsoft.com/en-us/windows/win32/fileio/reparse-points)，本次正文取得。它们说明路径解析与重解析点是物理文件语义；“不能只用字符串前缀/Git状态认证范围”是项目推导。未因此宣称已解决竞态、硬链接、并发外写或实现新沙箱；无法可靠确认时保守拒绝，实施时按实际Node/Windows版本核验。
 
 ## 核验限制与采用规则
 

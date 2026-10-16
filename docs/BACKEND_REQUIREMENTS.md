@@ -360,13 +360,62 @@ B2.1/B2.1a当前支持显式用户声明池、来源/期限、候选/分配/重�
 
 ## 19. Owner产品方向补充（2026-10-16；优先于旧草案的策略措辞）
 
-原REQ-01至REQ-14、全部AC及未来边界继续保留，本次不删需求。产品定位与当前取舍统一见[PRODUCT_DIRECTION](PRODUCT_DIRECTION.md)，研究出处见[20项索引](ENGINEERING_RESEARCH_REFERENCES.md)。正式Windows桌面工作台路线保持，具体UI需求需单独确认；本机进度页不是产品前端，不入Git。
+原REQ-01至REQ-14、全部AC及未来边界继续保留，本次不删需求。产品定位与当前取舍统一见[PRODUCT_DIRECTION](PRODUCT_DIRECTION.md)，研究出处见[研究索引](ENGINEERING_RESEARCH_REFERENCES.md)。正式Windows桌面工作台路线保持，具体UI需求需单独确认；本机进度页不是产品前端，不入Git。
 
 - 优先打通输入需求到Codex Native Review完成的真实闭环，不新建Planner/Workflow引擎、models.yaml、模型Registry或provider网关。
-- 已批准方向为首尾确认+异常中断；中间任务只有真实产物路径/范围/测试和费用合规才可自动流转。系统timeout/EOF/error不是用户主动stop；最终用户决定不自动填写。当前实现尚未具备此策略，本轮仅文档。
+- 已批准方向为首尾确认+异常中断；本条由下述§20正式细化为产品默认监督契约，并非仅显式实验选项。系统事件不是用户主动stop；最终用户决定不自动填写。当前实现尚未具备此策略，本轮仅文档。
 - 代码质量验收从LAYA中剥离：同Task/Attempt的expectedArtifacts、allowedScope、真实测试命令/退出码和停止事实经既有Verification核验；最终仍有独立Native Review，不增加第二验收权威。LAYA继续做合法候选内任务级选择，不改写wait。
 - 实现Worker允许必要自测，独立Test Worker必须核对实际成果并执行测试；不得只复述前序输出。路径以实际workspace根目录相对位置明确，声明、磁盘事实与权限分别取证，不运行后搬文件伪装正确交付。
 - 自然语言需求可由现有已适配Agent生成2–3个有界JSON候选，复用parsePlanFile和plan-choice；在冻结计划/绑定digest前完成，生成调用单独授权计费，不让stage-check暗中推理。
 - 按角色标签预过滤既有模型/Skill/MCP候选后再交LAYA选择；原生加载与实际调用必须有证据，不新增工具平台。免费优先、额度与掉线接力、多会话、角色默认和协作组完整要求都保留，暂缓不等于取消。
 
 实施顺序见BACKEND_DELIVERY_PLAN，当前唯一下一项见NEXT_TASK；本节方向批准不自动授权开发或第四次真实Round。
+
+## 20. 默认监督与确定性机器完成（Owner正式批准，2026-10-16）
+
+**Owner approved / Not yet implemented / Not yet tested**。
+本节覆盖此前与默认逐任务人工确认或模型完成判定冲突的建议；不删除REQ-01至REQ-14及既有验收目标，不篡改封存的实验结果。
+
+### 20.1 整轮预授权与异常人工介入
+
+未来默认采用 **Round-level Preauthorization + Exception-driven Human Intervention**：
+
+1. Owner在Round启动前一次性批准短计划、实际工作区及允许写入范围、具体Agent×Model或合格候选池、费用硬边界与工具权限；批准须与实际执行内容可验证绑定。
+2. 每个Task执行后经过已批准的确定性门禁；全部必要检查通过、下一任务仍在原授权内，才可自动启动。正常Task1→Task2不要求中途人工accept。
+3. 权限/费用/模型异常、文件越界、关键测试失败、证据缺失或重大需求/计划变更时，停止相关自动推进，进入人工处理；不因自动模式豁免费用、原生权限、身份或停止安全。
+4. 自动完成记录为预授权策略下的系统验证，不生成假的user_accept。Owner始终可以主动停止、拒绝或修改后续范围；范围改变需相应重确认。
+5. 全部任务通过后按既有路径运行独立Codex Native Review，再到最终Human Gate向Owner展示实际成果；最终不会自动开发下一轮、merge或付费。
+6. 旧--checkpoint逐任务人工确认模式保留供严格监督/调试，不再作为正常个人流程唯一方式。
+
+当前stage digest已绑定目标、材料和计划；模型/候选池、费用、工具权限及新增验收要求的完整绑定尚未实现，不能把现有digest描述成全部授权已覆盖。
+
+### 20.2 编码/文件交付Task完成前三类硬门槛
+
+| 必要门槛 | 完整要求 |
+|---|---|
+| **Expected Artifacts** | 文件真实存在；以确认的实际Workspace根解析精确相对路径；根add.js不接受demo/add.js等同名替代；不运行后搬移伪造完成 |
+| **Allowed Scope** | 实际新增/修改/删除均在批准范围；基于任务开始前文件基线，区分历史dirty/untracked与本次新改动；包括shell写入，不仅工具事件或普通git status；核对Windows大小写、物理根、符号链接/Junction，越界或归属不明失败关闭并保留证据 |
+| **Trusted Test Execution** | 按已批准的准确命令取得真实运行结果，实际cwd与执行来源可核，真实退出码0且未超时；对应同Task/Attempt/RunResult和产物版本。Agent称PASS、模型总结、总Session exit0或旧测试结果均不能替代 |
+
+编码/文件交付任务没有可信测试要求、未执行或证据不完整，不得自动按完成通过。其他任务类型必须有单独明确验收契约，不借“测试不适用”暗放编码任务。
+三门是完成的必要条件，不是全部代码质量的充分证明；独立Review仍必要。实现Worker可必要自测，Test Worker仍需独立核对、真实执行并必要时补测。
+
+优先在NativeWorkbench.completeTask及已有applyVerification统一接线，检查所有可达pass入口，不用CLI可绕过判断替代。异步文件/测试检查可提前做，但最终提交完成状态必须同步复查Task、Attempt、RunResult身份、当前工作区/授权及证据版本；变化或缺失则拒绝。
+LAYA保留任务级结构化决策，不越过门槛将缺产物/测试任务判成功，不修改wait为complete；TaskStore/Assignment/Scheduler/Orchestrator/AttemptStore/SessionRegistry/Job/Human Gate的单一职责保持。
+
+前后文件清单不证明从未瞬时越界写，也不能替代原生文件权限。无法可靠归属的并发外部修改、路径重定向或未知测试来源必须保守失败，不以理论推断冒充已验证安全，不自动回滚用户文件。
+
+### 20.3 系统事件、人工决定与恢复
+
+目标语义为user_accept、user_stop、system_timeout、input_disconnected、verification_failed、pending_user；实现优先复用既有事件/结果字段，非要求新增六种Task状态。
+只有Owner真实选择记录source=user；系统等待到期、EOF/通道错误和机器验证失败均记录系统来源与具体原因。pending_user表示活动执行资源已安全停止后等待人工，不是Task成功，也不是Worker/Reviewer长时间存活等待。
+默认监督不再以“人工超过60秒未答”终止并遗失待办；保留结果、证据和待人工原因。Worker/Reviewer/LAYA的执行timeout、POST和费用预算不取消；停止未确认仍保留保护，不能声称资源已释放。
+
+当前TaskStore与AttemptStore在内存中，已有磁盘运行记录不能安全恢复整轮。P0-3先保存最小待人工结果并明确恢复限制；取消计时器不等于隔天恢复。必要的后续缺口是可信恢复任务/Attempt/授权关联、重验实际工作区/费用/停止与防重复执行，不立即建通用恢复引擎。
+
+### 20.4 开发顺序与不追溯边界
+
+P0-1确定性门禁→P0-2预授权默认自动推进→P0-3异常等待与最终Human Gate→P0-4新授权真实闭环；P0-1通过前不开放新自动默认。
+后续P1自然语言计划→P2模型和Skill/MCP配置→P3正式Windows桌面UI顺序保持，前端需求另行确认；本机进度页不入Git。
+第三次真实MVP仍PARTIAL，26项B5.1-WF既有失败及固定pair/顺序/无接力有限准入保持；旧两次人工accept实验标准及未达成事实不追改。新实现触及相关共享路径时需重新评估，不能自动扩张历史豁免。
+本轮仅文档，未实现、未测试新契约；不委派开发、不调用真实模型、不自动第四次E2E，不因正式产品授权而继承旧真实调用额度。

@@ -1,12 +1,12 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-16。本次为 DOC-ROUTE.1 文档更新，不是产品阶段验收或真实调用授权。
+更新：2026-10-16。本次为 DOC-SUPERVISION.1 产品默认监督/机器完成契约文档更新，不是实现验收或真实调用授权。
 
 ## 1. 权责与当前结论
 
-本文唯一维护当前事实、阶段状态、证据与进度快照。[产品方向](PRODUCT_DIRECTION.md)管已确认定位/取舍；[后端需求](BACKEND_REQUIREMENTS.md)保留全部目标；[路线](BACKEND_DELIVERY_PLAN.md)管顺序；[NEXT_TASK](NEXT_TASK.md)只列下一有界任务；[研究索引](ENGINEERING_RESEARCH_REFERENCES.md)管来源，不各自宣布封板。
+本文唯一维护当前事实、阶段状态、证据与进度快照。[产品方向](PRODUCT_DIRECTION.md)管已确认定位/取舍；[后端需求](BACKEND_REQUIREMENTS.md)保留全部目标；[路线](BACKEND_DELIVERY_PLAN.md)管顺序；[阶段分析](STAGE_ANALYSIS.md)解释新策略；[NEXT_TASK](NEXT_TASK.md)只列下一有界任务；[研究索引](ENGINEERING_RESEARCH_REFERENCES.md)管来源，不各自宣布封板。
 
-**当前真实MVP为PARTIAL，MVP-E2E.1c为FIX_REQUIRED。** 检查点归属与确定性交付检查尚未修复；新策略方向已获Owner批准，但本轮只整理文档。唯一下一项MVP-E2E.1d等待下发实施。产品LAYA POST、Worker、Native Review和开发委派均未在本轮启动，旧剩余额度不继承。
+**当前真实MVP为PARTIAL，MVP-E2E.1c为FIX_REQUIRED。** 检查点归属与确定性交付检查尚未修复；新策略方向已获Owner批准，但本轮只整理文档。唯一下一项P0-1确定性完成门禁等待下发实施；旧MVP-E2E.1d合并任务已被依赖顺序替代。产品LAYA POST、Worker、Native Review和开发委派均未在本轮启动，旧剩余额度不继承。
 
 OpenCode主要开发、Codex独立审核；本轮文档由Codex整理，不代写生产实现。LAYA仍为任务级选择权威，TaskStore仍为任务状态权威。正式Windows桌面路线保持，具体UI需求/实现未开始。PARALLEL_WRITE=CLOSED、automaticPostRoundAction=NONE。
 
@@ -111,31 +111,43 @@ LAYA：既有Python环境0.3.21，缓存D:/AI/laya-cache，固定权重revision5
 
 ## 5. Owner新裁定与现有代码的差距
 
+Owner批准日期：2026-10-16。**Owner approved / Not yet implemented / Not yet tested**。正式未来默认覆盖旧“仅显式实验”建议，未改变当前生产或历史报告。
+
 | 项目 | 已批准方向 | 当前实现事实 |
 |---|---|---|
-| 监督策略 | 首尾确认+异常中断，中间符合路径/测试/费用约束后流转 | 现有--checkpoint仍每步输入，默认60秒；timeout/EOF/error统记user-stop缺陷未修 |
-| 质量验收 | 从LAYA移出文件/范围/测试裁判，复用Verification | completeTask仍把调用者判断传为pass；未结构化校验expectedArtifacts/allowedScope/实际test exit |
+| 监督策略 | 产品默认Round-level Preauthorization + Exception-driven Human Intervention；整轮绑定计划/范围/pair或池/费用/工具，正常中间任务机器验收后自动流转 | 现有--checkpoint仍每步输入，默认60秒；timeout/EOF/error统记user-stop缺陷未修 |
+| 质量验收 | 编码/文件交付必须精确expectedArtifacts、考虑原dirty/Windows重解析点的allowedScope、批准命令的真实test exit0；异步检查后完成提交复查身份/证据 | completeTask仍把调用者判断传为pass；未结构化校验expectedArtifacts/allowedScope/实际test exit |
 | 候选生成 | 现有Agent生成2–3个JSON，再LAYA选 | 当前支持用户/内置候选；自然语言自动填计划尚未接入 |
 | 资源工具 | 角色标签预过滤已有候选，再LAYA选择并原生加载 | 目录/intent已有最小接口，角色过滤与真实加载闭环未完成 |
 | 产品界面 | 保持Windows正式桌面路线 | 本机ignored只读进度页不等于正式UI，具体UI需求待用户确认 |
 
-共享最小修改接点：workflow-checkpoint.ts:103/191/214；round-cli.ts:2686/2734/2846；plan-file.ts:66/169/284；workbench.completeTask:1436→applyVerification:1445；currentActualOf:2358；最终Review调用round-cli:4047→unified-review:566。行号只用于本次映射，实施前重新定位。细化任务见NEXT_TASK，不在本轮开发。
+共享最小修改接点：workflow-checkpoint.ts:103/191/214；round-cli.ts:2686/2734/2846；plan-file.ts:66/169/284；workbench.completeTask:1436→applyVerification:1445；currentActualOf:2358；最终Review调用round-cli:4047→unified-review:566。行号只用于本次映射，实施前重新定位。细化任务见NEXT_TASK，不在本轮开发。P0-1还须覆盖review-loop.ts:281等可达applyVerification pass入口；CLI侧验证不能替代共享完成约束。
 
-首尾策略不得默认Owner最终accept；异常必须停。确定性核验失败不得触发后续任务或Native Review成功；通过后仍须真实独立Review合法verdict。路径检查不是替代OS权限，write事件不是完整Diff，测试摘要不是实际退出码。
+整轮预授权不能代替最终Owner决定；正常Task1→Task2未来无需人工accept，自动验证记system而非伪造user_accept；异常必须停。确定性核验失败不得触发后续任务或Native Review成功；通过后仍须真实独立Review合法verdict。路径检查不是替代OS权限，write事件不是完整Diff，测试摘要不是实际退出码。
+
+### 5.1 新语义与持久化缺口（未实施）
+
+目标语义：user_accept/user_stop只记真实Owner输入；system_timeout/input_disconnected/verification_failed记系统事实；pending_user是活动资源已确认安全停止后的待人工结果投影，不新增第二Task状态权威。旧--checkpoint保留严格监督/调试；默认不再因60秒未答遗失待办，但当前代码仍按旧逻辑结束后续。不是删除Worker/Reviewer/LAYA执行deadline、POST/费用预算或停止保护。
+
+源码复核：store.ts:11/119与attempt-store.ts头部声明内存存储；已有磁盘session/transcript/round-result不足以恢复权威Round。P0-3先保存待人工材料/引用并标明不支持跨进程恢复；真正恢复还缺Task/Attempt/授权关联恢复、工作区/预算/停止重验及防重复派发。不能把取消计时器说成次日恢复。
+
+stageBindingDigest现绑定材料、objective、workflow、planRef/planScope；模型/pool、费用、工具和新增验收字段尚未完整绑定。P0-1随新增计划字段补当前内容绑定，P0-2再完善整轮授权，不建第二授权/工作流平台。原生ToolCall.exitCode可缺失且工具历史有上限；不能把现有字段存在当可信测试已认证。
+
+新默认不改写第三次PARTIAL、accept0/stop0、Review0和历史source=user误记事实；26项B5.1-WF有限准入仍只适用原固定/顺序/无接力边界。
 
 ## 6. 唯一下一步与授权
 
-**MVP-E2E.1d：检查点归属/首尾策略+确定性交付验收，等待Owner下发实施。** 不自动委派，不自动第四次E2E，不修改模型或重新审计B1–B5。后续真实运行重新确认模型/免费或订阅资格、会话/POST/timeout/数据范围；free名称和pool声明不是当前账户事实。生产修改、真实产品推理、正式前端本轮均未授权。
+**P0-1：确定性完成门禁，等待Owner下发实施。** 门禁独立通过后再P0-2授权范围内默认自动推进，再P0-3异常等待/最终交付，最后P0-4另行授权的真实闭环；不能在P0-1先开放新默认。 不自动委派，不自动第四次E2E，不修改模型或重新审计B1–B5。后续真实运行重新确认模型/免费或订阅资格、会话/POST/timeout/数据范围；free名称和pool声明不是当前账户事实。生产修改、开发委派、真实产品推理、正式前端本轮均未授权。P1自然语言计划、P2模型/Skill/MCP配置、P3正式桌面UI顺序保持。
 
 ## 7. 文档更新与历史
 
-本次新增PRODUCT_DIRECTION、ENGINEERING_RESEARCH_REFERENCES（20项；非Owner原完整清单的条目标为补选）；更新路线/NEXT_TASK/README/需求导航和本基线；有效执行/架构契约保留。旧STAGE_ANALYSIS、DRAFT_STAGED_ROLE_WORKFLOW、GEMINI_WORKFLOW_GAP_RESEARCH_PROMPT从当前目录移除。
+上轮DOC-ROUTE.1已独立同步至codex/product-route-docs-20261016，commite8290d13a3f3f3f039e57e6d4762c23988da2700。更早13份文档的完整字节（含dirty/untracked）在归档分支codex/docs-before-renewal-20261016，commit3f2b8a8d95374f60adbf666364f7b2180cdd84dd；[历史文档](https://github.com/yunxibaili/D-Native-Multi-Agent-Orchestrator/tree/3f2b8a8d95374f60adbf666364f7b2180cdd84dd/docs)只供追溯，不是当前事实。原三份旧规划/提示词在上轮移除。
 
-删除前已将现有13份README/文档的完整字节（含dirty/untracked版本）归档并核对远端：分支codex/docs-before-renewal-20261016，commit3f2b8a8d95374f60adbf666364f7b2180cdd84dd。查阅[完整历史文档](https://github.com/yunxibaili/D-Native-Multi-Agent-Orchestrator/tree/3f2b8a8d95374f60adbf666364f7b2180cdd84dd/docs)。本次新文档使用独立索引提交至独立codex审核分支；不合并main、不提交生产代码/测试/凭据/本机忽略目录，准确最终SHA与清理结果以本次交付报告为准。
+本轮Owner明确要求重新建立STAGE_ANALYSIS，故同名文件仅保存当前P0依赖/监督语义理由，不恢复旧逐轮历史、不另立状态权威。更新需求§20、产品方向、P0-1→4路线、唯一P0-1任务和README。原20项研究保留，新增本次Owner给出的Agentless/A2A/OpenAI Agents SDK为#21–23，标明一手来源、版本、机制与项目推导。官方SDK资料本轮GitHub MCP读取成功，不引入SDK。
 
-研究：20项各有原URL/年份/机制/边界/状态；#1MetaGPT地址修正，#11保留历史并补当前Interrupts，#18OpenHands的EventStream与Skills机制分别归因官方文档，#19测试执行/解析分开，#20repomap不代替完整Diff。官方网页失败与MCP成功分别记录，不伪称全文/本机效果。
+本轮Git以已核对的e8290d1为父提交，在同一文档审核分支追加新提交，不改写远端历史、不合并main；只收允许的需求/计划文档。主HEAD/index、源码/测试及其他原dirty内容保留，授权文档更新；临时独立索引在仓库外并须清理。准确新SHA、远端与清理检查见本轮交付报告。
 
-本轮验证限于文档结构/链接/范围、Git归档/远端SHA、主HEAD/index/无关dirty字节及进度快照一致性。没有测试运行、产品或开发模型调用、组件升级、生产修改或新阶段封板。Git审核分支只同步文档，不能当当前所有dirty源码已上传。
+本次只做源码/一手资料映射、文档一致性/链接/范围、diff --check、远端SHA与进度快照核验。**没有运行测试或任何模型，没有实现P0-1，没有第四次E2E，没有组件升级或新阶段封板。** 审核分支只同步文档，不能当全部dirty源码已经上传。
 
 ## 8. 规划估算与本机快照
 
@@ -145,18 +157,18 @@ LAYA：既有Python环境0.3.21，缓存D:/AI/laya-cache，固定权重revision5
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-16T06:10:14.934Z",
+  "updatedAt": "2026-10-16T06:49:27.007Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "DOC-ROUTE.1",
-    "name": "产品方向、研究索引与文档归一",
+    "id": "DOC-SUPERVISION.1",
+    "name": "默认监督与机器完成契约更新",
     "status": "done",
-    "summary": "文档整理已完成；MVP-E2E.1c仍FIX_REQUIRED。下一项为检查点+确定性产物/测试验收，待下发实施；真实模型调用关闭。"
+    "summary": "Owner approved / Not yet implemented / Not yet tested。P0-1→P0-2→P0-3→P0-4已重排；唯一下一项P0-1待下发，第三次MVP仍PARTIAL，真实调用关闭。"
   },
   "next": {
-    "id": "MVP-E2E.1d",
-    "name": "检查点归属/首尾策略与确定性交付验收",
+    "id": "P0-1",
+    "name": "确定性完成门禁最小切片",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -233,24 +245,24 @@ LAYA：既有Python环境0.3.21，缓存D:/AI/laya-cache，固定权重revision5
   "blockers": [
     {
       "severity": "P1",
-      "kind": "直接闭环阻塞",
-      "title": "检查点来源错误与交付验收缺口",
-      "detail": "系统timeout被记source=user；根目录要求未被确定性核验，第三次写到demo/仍测试2/0。首尾策略与expectedArtifacts/allowedScope/真实test exit尚未实施。",
-      "next": "MVP-E2E.1d有界实现与独立离线验收，当前未下发开发。"
+      "kind": "首要完成门槛",
+      "title": "三类确定性门禁未实现",
+      "detail": "缺精确产物/dirty增量范围/可信测试执行统一核验；当前completeTask仍传调用者pass。",
+      "next": "仅实施P0-1；先门禁，不提前开放新默认流转。"
     },
     {
       "severity": "P1",
-      "kind": "真实验收尚未完成",
-      "title": "Native Review与完整Human Gate未到达",
-      "detail": "第三次真实LAYA POST2/3，Worker1/2、accept0/stop0、Review0/1；历史调用授权不继承。",
-      "next": "代码切片通过后，重新核实模型/费用并单独授权一次真实Round。"
+      "kind": "后续依赖",
+      "title": "预授权绑定、异常等待与真实闭环尚未完成",
+      "detail": "现有digest未全面绑定模型/费用/工具；系统超时仍误记user。默认自动流转须P0-1通过后分片实施，Task/Attempt内存不等于可恢复。",
+      "next": "依次P0-2、P0-3通过，再另行授权P0-4真实E2E。"
     },
     {
       "severity": "P2",
-      "kind": "有限豁免/后续需求",
-      "title": "26项B5.1-WF既有失败与工具/费用/恢复缺口",
-      "detail": "26项仍open，有限豁免仅固定pair/顺序/无接力MVP。真实Skill/MCP、共享额度、完整掉线恢复和正式桌面UI仍未完成。",
-      "next": "不扩大豁免；按真实反馈分片补齐，不阻塞无关文档更新。"
+      "kind": "历史风险保留",
+      "title": "26项B5.1-WF失败仍open",
+      "detail": "固定pair/顺序/无接力有限准入不扩大；历史PARTIAL和未完成Review不追认。",
+      "next": "新切片触及共享路径时有限复核，不修无关债务求全绿。"
     }
   ],
   "tasks": [
@@ -549,38 +561,66 @@ LAYA：既有Python环境0.3.21，缓存D:/AI/laya-cache，固定权重revision5
       "evidence": "本次仅文档核对；旧文档完整含dirty版本归档commit3f2b8a8；不宣称后端新增能力或真实MVP通过。"
     },
     {
-      "id": "MVP-E2E.1d",
-      "title": "检查点修复与确定性产物/测试验收",
+      "id": "DOC-SUPERVISION.1",
+      "title": "正式默认监督/确定性完成契约与路线",
+      "status": "done",
+      "deliverable": "需求§20、P0依赖、唯一下一任务、当前阶段分析和资料追加",
+      "evidence": "本轮只读源码/官方资料与文档检查；未实现或测试，历史68/100不变。"
+    },
+    {
+      "id": "P0-1",
+      "title": "确定性完成门禁",
       "status": "next",
-      "deliverable": "首尾确认+异常中断；source区分；exact paths/scope/test evidence→既有Verification→原生Review",
-      "evidence": "Owner方向裁定已写入文档；代码未实施、开发未委派，真实调用仍关闭。"
+      "deliverable": "Expected Artifacts + Allowed Scope + Trusted Test Execution→统一Verification",
+      "evidence": "Owner approved / Not yet implemented / Not yet tested；待单独下发实施。"
+    },
+    {
+      "id": "P0-2",
+      "title": "授权范围内默认自动推进",
+      "status": "planned",
+      "deliverable": "整轮绑定计划/范围/模型/费用/工具，机器验证后Task1→2",
+      "evidence": "依赖P0-1通过；不得伪造accept，不重复已成功Worker。"
+    },
+    {
+      "id": "P0-3",
+      "title": "异常等待与最终Human Gate",
+      "status": "planned",
+      "deliverable": "用户/系统来源区分，安全资源释放，pending结果与恢复限制",
+      "evidence": "依赖前两片；当前内存状态不支持安全隔天恢复。"
+    },
+    {
+      "id": "P0-4",
+      "title": "新授权真实闭环",
+      "status": "planned",
+      "deliverable": "Owner预授权→真实实现/独立测试→机器门→Native Review→Human Gate",
+      "evidence": "依赖前三片独立通过，模型/费用/次数/数据仍需新授权。"
     }
   ],
   "checks": [
     {
-      "name": "本次文档任务",
-      "source": "用户授权、当前源码映射与20项一手来源",
-      "result": "仅文档；不运行测试或模型"
+      "name": "Owner产品契约",
+      "source": "2026-10-16新授权",
+      "result": "Owner approved / Not yet implemented / Not yet tested"
     },
     {
-      "name": "真实MVP",
-      "source": "第三次Round保留证据",
-      "result": "PARTIAL；不升级PASS"
+      "name": "最近真实MVP",
+      "source": "第三次历史Round原证据",
+      "result": "PARTIAL不变，非本轮实跑"
     },
     {
-      "name": "下一实施片",
+      "name": "唯一下一实施任务",
       "source": "docs/NEXT_TASK.md",
-      "result": "MVP-E2E.1d待下发"
+      "result": "P0-1，未启动开发"
     },
     {
-      "name": "历史债务",
-      "source": "Recon有限准入与B5.1-WF证据",
-      "result": "26项既有失败仍open"
+      "name": "状态与恢复",
+      "source": "TaskStore/AttemptStore当前源码",
+      "result": "内存；pending保存不等于可恢复"
     },
     {
-      "name": "规划估算",
-      "source": "沿用原能力权重/分母",
-      "result": "68/100保持，不计本次文档信用"
+      "name": "历史风险",
+      "source": "26项既有B5.1-WF有限准入",
+      "result": "open，不扩大豁免"
     }
   ],
   "sources": [
@@ -589,23 +629,23 @@ LAYA：既有Python环境0.3.21，缓存D:/AI/laya-cache，固定权重revision5
       "path": "docs/PROJECT_BASELINE.md"
     },
     {
-      "title": "产品方向",
-      "path": "docs/PRODUCT_DIRECTION.md"
+      "title": "默认产品契约",
+      "path": "docs/BACKEND_REQUIREMENTS.md §20"
     },
     {
-      "title": "完整需求",
-      "path": "docs/BACKEND_REQUIREMENTS.md"
-    },
-    {
-      "title": "交付路线",
+      "title": "P0依赖路线",
       "path": "docs/BACKEND_DELIVERY_PLAN.md"
+    },
+    {
+      "title": "监督/恢复分析",
+      "path": "docs/STAGE_ANALYSIS.md"
     },
     {
       "title": "唯一下一任务",
       "path": "docs/NEXT_TASK.md"
     },
     {
-      "title": "20项一手研究",
+      "title": "原20+新增3项一手研究",
       "path": "docs/ENGINEERING_RESEARCH_REFERENCES.md"
     }
   ],

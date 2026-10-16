@@ -2,7 +2,7 @@
 
 Windows 本机个人项目：用户输入需求，LAYA 在授权候选中选择计划、具体 Agent × Model 与必要工具；已有编排器组织任务、独立会话、交接、执行、验证、原生独立 Review 和最终 Human Gate。支持跨角色分工与同目标2–3模型分工共建的方向，正式产品保持 **Windows 桌面工作台路线**。
 
-**当前尚未完成完整真实 MVP。** 第三次真实 Round 已写代码并测试2/0，但路径偏移且未获人工验收；第二 Worker 和 Native Review 未运行。下一步是检查点归属与确定性交付验收的小修复，不是再建工作流引擎。
+**当前尚未完成完整真实 MVP。** 第三次真实 Round 已写代码并测试2/0，但路径偏移且未获人工验收；第二 Worker 和 Native Review 未运行。下一步只做P0-1确定性完成门禁，再按依赖补预授权自动推进和异常等待，不是再建工作流引擎。
 
 ## 只看这几个入口
 
@@ -12,12 +12,13 @@ Windows 本机个人项目：用户输入需求，LAYA 在授权候选中选择�
 | [PRODUCT_DIRECTION](docs/PRODUCT_DIRECTION.md) | 产品定位、保留的全部方向与 Owner 当前取舍 |
 | [BACKEND_REQUIREMENTS](docs/BACKEND_REQUIREMENTS.md) | 完整原始后端需求，不因 MVP 暂缓删除 |
 | [BACKEND_DELIVERY_PLAN](docs/BACKEND_DELIVERY_PLAN.md) | 最小交付顺序与现有代码接点 |
-| [NEXT_TASK](docs/NEXT_TASK.md) | 唯一下一项：MVP-E2E.1d，等待下发实施 |
-| [ENGINEERING_RESEARCH_REFERENCES](docs/ENGINEERING_RESEARCH_REFERENCES.md) | 20项一手资料、出处、适用边界与核验状态 |
+| [STAGE_ANALYSIS](docs/STAGE_ANALYSIS.md) | 为什么先机器门禁、再自动流转/异常人工介入及恢复限制 |
+| [NEXT_TASK](docs/NEXT_TASK.md) | 唯一下一项：P0-1确定性完成门禁，等待下发实施 |
+| [ENGINEERING_RESEARCH_REFERENCES](docs/ENGINEERING_RESEARCH_REFERENCES.md) | 原20项保留，新增Agentless/A2A/OpenAI Agents SDK；出处与核验状态 |
 
 执行与安全契约继续保留：[架构](docs/ARCHITECTURE_CONTRACTS.md)、[LAYA接口](docs/DECISION_PROVIDER.md)、[Round语义](docs/EXECUTION_ROUND_SEMANTICS.md)、[执行证据](docs/DECISION_LOOP_EXECUTION_RESULT_CONTRACT.md)、[协作](docs/R2_COORDINATION_CONTRACT.md)。
 
-旧规划/草案/调查提示已从当前目录移除，含未提交内容的完整版本保存在 [Git归档提交](https://github.com/yunxibaili/D-Native-Multi-Agent-Orchestrator/tree/3f2b8a8d95374f60adbf666364f7b2180cdd84dd/docs)。归档不是当前能力声明。审核分支只同步文档，不代表当前全部 dirty 源码已提交。
+旧历史规划/草案/调查提示已从当前目录移除（STAGE_ANALYSIS按本次要求新建为当前策略分析，非恢复历史日志），含未提交内容的完整版本保存在 [Git归档提交](https://github.com/yunxibaili/D-Native-Multi-Agent-Orchestrator/tree/3f2b8a8d95374f60adbf666364f7b2180cdd84dd/docs)。归档不是当前能力声明。审核分支只同步文档，不代表当前全部 dirty 源码已提交。
 
 ## 最短个人流程：先做无推理预检
 
@@ -51,11 +52,13 @@ node .\src\cli\index.ts round $objective --config "$demo\orchestrator.json" --cw
 
 ## 真实执行仍需哪些条件
 
-下一实施片先通过离线独立审核，随后单独确认一次真实调用的模型、认证/费用、次数、时间、数据范围和首尾确认/异常策略。当前无真实推理授权，不自动继承历史剩余额度。
+新契约状态：**Owner approved / Not yet implemented / Not yet tested**。未来产品默认整轮预授权、正常任务经机器门自动流转、异常交人工；不是自动填写accept。旧--checkpoint保留严格监督/调试。P0-1门禁→P0-2完整授权绑定/自动推进→P0-3异常等待/最终Human Gate通过后，才单独确认P0-4真实调用的模型、认证/费用、次数、时间和数据范围。当前无真实推理授权，不自动继承历史剩余额度。
 
 真实路径仍是同一 CLI → LAYA → TaskStore/Assignment/Session/Scheduler → Native Runtime → Attempt/Verification → Codex Native Review → Human Gate；不能手工运行几个 Agent 再拼报告。固定 pair 不替代 LAYA，不从 free 名称推断资格，Review 也计会话和费用。
 
-已实现 --laya-post-max 3 是 Round 的请求尝试硬限，第4次发送前拒绝，失败不返还；不是金额或 Worker/Reviewer 会话上限。当前 --checkpoint 仍每步等待、默认60秒；首尾策略与来源修复尚未实现，详见 NEXT_TASK。最终 automaticPostRoundAction=NONE，不自动 merge/下一轮。
+已实现 --laya-post-max 3 是 Round 的请求尝试硬限，第4次发送前拒绝，失败不返还；不是金额或 Worker/Reviewer 会话上限。当前 --checkpoint 仍每步等待、默认60秒；新的默认监督与来源修复尚未实现，详见 NEXT_TASK。最终 automaticPostRoundAction=NONE，不自动 merge/下一轮。
+
+源码仍无统一expectedArtifacts/allowedScope/可信测试强门禁，默认流转尚未实现；系统timeout/input断开不能当Owner决定。未来pending_user要求先停止活动进程，但当前内存TaskStore/AttemptStore不支持安全跨进程恢复，不因取消60秒计时器承诺隔天续跑。三次历史MVP仍PARTIAL，26项既有失败及有限准入保留。
 
 ## 其他本地入口与维护
 
