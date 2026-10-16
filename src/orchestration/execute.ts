@@ -232,6 +232,18 @@ export function buildTaskPrompt(task: Task): string {
     lines.push('', 'Produced artifacts:');
     for (const a of task.artifacts) lines.push(`- ${a.name}: ${a.path}`);
   }
+  // P0-1: when this task carries a completion contract, the worker is told the exact
+  // artifact set, allowed scope and the approved test the ORCHESTRATOR will run. Its
+  // own claim of success is not evidence.
+  if (task.completionContract !== undefined) {
+    lines.push('', 'Completion contract (verified by the orchestrator; your prose is not evidence):');
+    lines.push(`- expected artifacts: ${task.completionContract.expectedArtifacts.join(', ')}`);
+    lines.push(`- allowed change scope: ${task.completionContract.allowedScope.join(', ')}`);
+    lines.push(
+      `- approved test (run by the orchestrator): ${task.completionContract.test.executable} ` +
+        `${task.completionContract.test.argv.join(' ')} (cwd ${task.completionContract.test.cwd})`,
+    );
+  }
   return lines.join('\n');
 }
 

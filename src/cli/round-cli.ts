@@ -166,6 +166,7 @@ import {
   type PlanFile,
   type PlanFileStep,
 } from '../orchestration/plan-file.ts';
+import type { CompletionContract } from '../orchestration/completion-contract.ts';
 import {
   COLLABORATION_MAX_MEMBERS,
   COLLABORATION_MIN_MEMBERS,
@@ -249,7 +250,12 @@ import {
   MIN_EXECUTION_TIMEOUT_MS,
   NODE_TIMER_MAX_MS,
 } from '../orchestration/execute.ts';
-import { createLayaDecisionProvider } from '../decision/laya.ts';
+import {
+  createLayaDecisionProvider,
+  createLayaPostBudget,
+  readLayaPostBudgetReport,
+  type LayaPostBudget,
+} from '../decision/laya.ts';
 import type { DecisionProvider } from '../decision/types.ts';
 import { classifyTask } from '../decision/routing.ts';
 import type { TaskClassification } from '../decision/routing.ts';
@@ -343,6 +349,14 @@ OPTIONS
                          anything, then stop.
   --laya-url <url>       laya-serve base URL (default: http://127.0.0.1:8077)
   --laya-timeout <ms>    decision timeout (default: 60000)
+  --laya-post-max <n>    OPT-IN per-ROUND cumulative HARD budget on LAYA POSTs (default:
+                         OFF = unchanged). A nonnegative whole number; 0 means NO POST at
+                         all (it is NOT "unlimited"). Every LAYA POST the round makes
+                         (classify, plan, assignment, each action cycle, skill/MCP choice)
+                         shares ONE counter; the (n+1)th is refused BEFORE it is sent. A
+                         failed, timed-out, aborted or unparseable request is NOT refunded,
+                         so the cap bounds actual transmissions, not just successes. The
+                         JSON report carries a truthful budget snapshot.
   --execution-timeout <ms>
                          NATIVE AGENT execution deadline in MILLISECONDS, enforced
                          inside the runtime by the agent session itself (default:
@@ -447,6 +461,13 @@ interface RoundOptions {
   checkpoint?: boolean;
   layaUrl: string;
   layaTimeoutMs: number;
+  /**
+   * MVP-E2E.1a: OPT-IN per-ROUND cumulative POST hard budget (`--laya-post-max`).
+   * Absent = no budget (existing behaviour). `0` means NO POST is allowed at all
+   * (it is NOT "unlimited"). One budget object is minted per round and shared by
+   * every provider the round builds.
+   */
+  layaPostMax?: number;
   /** R5-1 (P1-A): native EXECUTION deadline (RunRequest.timeoutMs), not a wait bound. */
   executionTimeoutMs: number;
   allowRemoteLaya: boolean;
@@ -669,6 +690,26 @@ function parse(argv: readonly string[]): RoundOptions | { error: string } {
     }
     const agentFlag = s('agent');
     const modelFlag = s('model');
+    // MVP-E2E.1a: the OPT-IN per-round POST budget. STRICTLY a nonnegative SAFE
+    // integer. A bare flag (missing value), a boolean, a negative, a fraction, NaN,
+    // Infinity, an unsafe integer or any partial junk ("3x", "1.5", "1e3", "") is a
+    // usage error raised HERE - before the stage gate, before any file read, provider
+    // call, quota probe or task write. `0` is valid and means NO POST at all.
+    const layaPostMaxRaw = flags['laya-post-max'];
+    let layaPostMax: number | undefined;
+    if (layaPostMaxRaw !== undefined) {
+      if (typeof layaPostMaxRaw !== 'string') {
+        return { error: '--laya-post-max requires a value: a nonnegative whole number of allowed POSTs (0 forbids every POST)' };
+      }
+      if (!/^[0-9]+$/.test(layaPostMaxRaw)) {
+        return { error: `--laya-post-max must be a nonnegative whole number (got "${layaPostMaxRaw}")` };
+      }
+      const parsedMax = Number(layaPostMaxRaw);
+      if (!Number.isSafeInteger(parsedMax)) {
+        return { error: `--laya-post-max must be a safe whole number (got "${layaPostMaxRaw}")` };
+      }
+      layaPostMax = parsedMax;
+    }
     if (select === 'fixed' && (agentFlag === undefined || modelFlag === undefined)) {
       return { error: '--select fixed requires BOTH --agent <id> and --model <full-id>' };
     }
@@ -693,6 +734,7 @@ function parse(argv: readonly string[]): RoundOptions | { error: string } {
       ...(checkpoint ? { checkpoint } : {}),
       layaUrl: s('laya-url') ?? 'http://127.0.0.1:8077',
       layaTimeoutMs: num('laya-timeout', 60_000),
+      ...(layaPostMax !== undefined ? { layaPostMax } : {}),
       // R5-1.1 (§6/P1-A): the NATIVE EXECUTION deadline — a different thing from the
       // Laya decision timeout above. Enforced INSIDE the runtime by the agent session
       // (real `timed_out` terminal), validated above at the CLI boundary.
@@ -746,6 +788,19 @@ function taskTypeFor(c: TaskClassification): TaskType {
  */
 export interface RoundCliOverrides {
   readonly provider?: DecisionProvider;
+  /**
+   * MVP-E2E.1a: a CONTROLLED TRANSPORT under the REAL provider.
+   *
+   * `--laya-post-max` must be enforced by the REAL `createLayaDecisionProvider`
+   * (the budget lives inside its `post`), not by a substituted brain. So a test that
+   * wants a budget AND controlled answers passes THIS - the fetch seam BELOW the real
+   * provider - and this command builds the real provider around it. It is deliberately
+   * NOT usable together with `provider` (see the refusal in `runRoundCli`): seating a
+   * substitute brain while claiming a budget would be an unenforced promise.
+   *
+   * `index.ts` passes nothing, so the CLI always uses the global fetch.
+   */
+  readonly layaFetchImpl?: typeof fetch;
   /**
    * R2-3: the provider PROBES, instead of running the real ones.
    *
@@ -826,9 +881,17 @@ export interface RoundCliOverrides {
  * re-parse of the file after it is frozen.
  */
 export function normalizedPlanScope(mode: string | undefined, planFile: PlanFile | null): unknown {
-  const stepScope = (s: { role: string; taskType: string; fileScope?: string; deliverable: string; dependencies?: readonly string[] }) => ({
+  const stepScope = (s: { role: string; taskType: string; fileScope?: string; deliverable: string; dependencies?: readonly string[]; completion?: CompletionContract }) => ({
     role: s.role, taskType: s.taskType, fileScope: s.fileScope ?? null,
     deliverable: s.deliverable, dependencies: [...(s.dependencies ?? [])],
+    // P0-1: the completion requirement is part of the CONTENT a stage confirmation
+    // binds, so a later change to the approved test or artifact set invalidates an old
+    // confirmation rather than sailing through it.
+    completion: s.completion === undefined ? null : {
+      expectedArtifacts: [...s.completion.expectedArtifacts],
+      allowedScope: [...s.completion.allowedScope],
+      test: { executable: s.completion.test.executable, argv: [...s.completion.test.argv], cwd: s.completion.test.cwd },
+    },
   });
   if (mode === 'sequential') {
     return planFile !== null
@@ -1181,12 +1244,39 @@ export async function runRoundCli(
   //
   // R2-3: an override replaces only Laya's ANSWER. It is checked first so a test can
   // drive the real round without `laya-serve`; the CLI never passes one.
+  //
+  // MVP-E2E.1a: the OPT-IN per-round POST budget. ONE object is minted here and handed
+  // to the provider (and to every provider this round builds), so the cap spans the WHOLE
+  // round. A substituted `provider` cannot enforce it, so that combination is refused
+  // BEFORE any probe, provider call or task rather than claiming a budget that would not
+  // apply; a controlled test instead injects `layaFetchImpl` BELOW the real provider.
+  if (o.layaPostMax !== undefined && overrides.provider !== undefined) {
+    const msg =
+      '--laya-post-max cannot be enforced on an injected provider override, so this round is ' +
+      'refused rather than claiming a budget that would not be applied. Remove the override ' +
+      'provider (the CLI then builds the real LAYA provider with the budget) or use the ' +
+      'layaFetchImpl transport seam, which sits below the real provider.';
+    if (o.json) w(JSON.stringify({ ok: false, stage: 'laya-post-max', error: msg }, null, 2));
+    else {
+      note(`laya post-budget refused: ${msg}`);
+      note('nothing was created or run.');
+    }
+    return 2;
+  }
+  const postBudget: LayaPostBudget | null =
+    o.layaPostMax === undefined ? null : createLayaPostBudget(o.layaPostMax);
+  /** Attaches the truthful budget snapshot to a machine report, only when a budget is on. */
+  const attachBudget = (target: Record<string, unknown>): void => {
+    if (postBudget !== null) target.layaPostBudget = readLayaPostBudgetReport(postBudget);
+  };
   let provider;
   try {
     provider = overrides.provider ?? createLayaDecisionProvider({
       baseUrl: o.layaUrl,
       allowRemote: o.allowRemoteLaya,
       timeoutMs: o.layaTimeoutMs,
+      ...(postBudget === null ? {} : { postBudget }),
+      ...(overrides.layaFetchImpl === undefined ? {} : { fetchImpl: overrides.layaFetchImpl }),
     });
   } catch (e) {
     process.stderr.write(`Laya provider could not be configured: ${(e as Error).message}\n`);
@@ -1243,7 +1333,9 @@ export async function runRoundCli(
   } catch (e) {
     const msg = `${(e as Error).name}: ${(e as Error).message}`;
     if (o.json) {
-      w(JSON.stringify({ ok: false, stage: 'classify', error: msg }, null, 2));
+      const failure: Record<string, unknown> = { ok: false, stage: 'classify', error: msg };
+      attachBudget(failure);
+      w(JSON.stringify(failure, null, 2));
     } else {
       note(`Laya classification failed: ${msg}`);
       note('Start laya-serve (default http://127.0.0.1:8077) and try again. Nothing was created or run.');
@@ -1253,7 +1345,9 @@ export async function runRoundCli(
 
   if (o.classifyOnly) {
     if (o.json) {
-      w(JSON.stringify({ ok: true, stage: 'classify-only', objective: o.objective, classification }, null, 2));
+      const summary: Record<string, unknown> = { ok: true, stage: 'classify-only', objective: o.objective, classification };
+      attachBudget(summary);
+      w(JSON.stringify(summary, null, 2));
     } else {
       w('Laya classification (nothing was planned, assigned or run)');
       w(`  work_kind        ${classification.work_kind}`);
@@ -1860,7 +1954,7 @@ export async function runRoundCli(
         const msg = `${(e as Error).name}: ${(e as Error).message}`;
         report.stage = 'plan';
         report.error = `execution topology refused: ${msg}`;
-        if (o.json) w(JSON.stringify(report, null, 2));
+        if (o.json) { attachBudget(report); w(JSON.stringify(report, null, 2)); }
         else note(`execution topology refused: ${msg}`);
         notifyWorkbenchSnapshot();
         return 1;
@@ -1871,7 +1965,7 @@ export async function runRoundCli(
       if (!materialized.ok) {
         report.stage = 'plan';
         report.error = `fan-out topology refused: ${materialized.code}: ${materialized.reason}`;
-        if (o.json) w(JSON.stringify(report, null, 2));
+        if (o.json) { attachBudget(report); w(JSON.stringify(report, null, 2)); }
         else note(`fan-out topology refused: ${materialized.code}: ${materialized.reason}`);
         notifyWorkbenchSnapshot();
         return 1;
@@ -1939,7 +2033,7 @@ export async function runRoundCli(
     const msg = `${(e as Error).name}: ${(e as Error).message}`;
     report.stage = 'plan';
     report.error = msg;
-    if (o.json) w(JSON.stringify(report, null, 2));
+    if (o.json) { attachBudget(report); w(JSON.stringify(report, null, 2)); }
     else note(`planning/assignment failed: ${msg}`);
     // T2-a.3: the failure path is a legitimate observation point — a refused initial
     // selection is exactly the state T2A2-5/T2A3-6 need to inspect, and it must show NO
@@ -2026,7 +2120,7 @@ export async function runRoundCli(
         const msg = `${(e as Error).name}: ${(e as Error).message}`;
         report.stage = 'skill-choice';
         report.error = `skill choice refused: ${msg}`;
-        if (o.json) w(JSON.stringify(report, null, 2));
+        if (o.json) { attachBudget(report); w(JSON.stringify(report, null, 2)); }
         else note(`skill choice refused: ${msg}; nothing was executed.`);
         notifyWorkbenchSnapshot();
         return 1;
@@ -2121,7 +2215,7 @@ export async function runRoundCli(
         const msg = `${(e as Error).name}: ${(e as Error).message}`;
         report.stage = 'mcp-choice';
         report.error = `mcp tool choice refused: ${msg}`;
-        if (o.json) w(JSON.stringify(report, null, 2));
+        if (o.json) { attachBudget(report); w(JSON.stringify(report, null, 2)); }
         else note(`mcp tool choice refused: ${msg}; nothing was executed.`);
         notifyWorkbenchSnapshot();
         return 1;
@@ -4171,6 +4265,7 @@ export async function runRoundCli(
   report.roundResultPublished = { ok: published.ok, path: published.path, code: published.code };
 
   if (o.json) {
+    attachBudget(report);
     w(JSON.stringify(report, null, 2));
   } else {
     w('EXECUTION ROUND');

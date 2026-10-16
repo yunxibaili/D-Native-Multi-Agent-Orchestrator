@@ -1,0 +1,57 @@
+# 产品方向与当前取舍
+
+更新：2026-10-16。本文保存 Owner 已确认的定位与路线取舍；当前实现、证据和阶段状态只见 [唯一基线](PROJECT_BASELINE.md)。需求全集见 [后端需求](BACKEND_REQUIREMENTS.md)，交付顺序见 [路线](BACKEND_DELIVERY_PLAN.md)。新监督/机器完成契约状态：**Owner approved / Not yet implemented / Not yet tested**。
+
+## 1. 要交付的个人工作台
+
+这是 Windows 本机多 Native Agent 工作台。用户输入需求，LAYA 在已授权候选中选择计划、角色、具体 Agent × Model，以及任务所需 Skill/MCP；现有编排内核落实执行、隔离、交接、验证和审核，交付实际代码、测试、报告与可追溯证据。
+
+正式产品继续采用既定的 **Windows 桌面工作台路线**。本次不改技术栈、不决定新的桌面框架、不改成群聊网页产品；正式 UI 的具体交互仍须与用户单独确认。`project-progress/` 仅为本机只读进度展示，忽略于 Git，不能派工、调用模型或批准执行。
+
+## 2. 原始需求全部保留
+
+| 用户效果 | 保留的要求 | 本轮取舍 |
+|---|---|---|
+| 自动接入本机 Agent | 发现安装、连接、能力、模型目录及用户配置；状态与来源可查 | 枚举不等于可调用或免费，不自动安装/登录 |
+| 精确选模型 | 用户自动/偏好/固定选择，项目/角色/任务层级；LAYA 选到 Agent 内的具体模型 | 不新增 models.yaml 或第二模型 Registry；未实现层级继续排期 |
+| 功能 A：跨角色分工 | 研究、前端、后端、测试、审核等独立任务和会话；角色随任务改变 | 不固定“四个 Agent”，复用现有计划 JSON、Assignment 和 Session |
+| 功能 B：同目标共建 | 2–3 个模型分工，独立 child task/session，指定成员承担集成并实际消费产物 | 先顺序执行；不复制同一 taskId，不把全部终态当验收 |
+| 免费优先 | 满足能力后优先免费/订阅内资源；用户可选已授权付费入口 | 不从模型名称推断免费，不将请求计数当金额硬限 |
+| 模型掉线与额度耗尽接力 | 保留部分成果，确认旧进程树停止后有界交接；固定选择不可静默换模 | 完整恢复、共享额度、真实失败分类继续保留，非本轮扩建 |
+| Skill/MCP 与节省消耗 | 按任务选择必要工具，原生加载，复用上下文和交付引用 | 先角色标签过滤既有目录，再交 LAYA；声明和观察不冒充成功加载 |
+| 需求到阶段交付 | 澄清需求、确认效果/范围、候选计划、当前阶段、真实交付、独立 Review、用户决定 | 简单任务压缩准备过程，不为每条命令设置审批 |
+
+原需求中的未来能力不因 MVP 暂缓而删除。需求条目和验收要求仍全部留在 BACKEND_REQUIREMENTS.md；历史草案的逐条讨论保存在已核对的 [文档归档](https://github.com/yunxibaili/D-Native-Multi-Agent-Orchestrator/tree/3f2b8a8d95374f60adbf666364f7b2180cdd84dd/docs)。
+
+## 3. 此次已裁定的最小路线
+
+1. **先打通一个真实闭环**：需求 → 已适配 Agent 产生内容/执行任务 → LAYA 选择/推进 → 真实交付与测试 → Codex Native Review → Human Gate。首个闭环可仍使用显式短计划；自然语言候选生成后补，不把两件事绑成大改造。
+2. **默认整轮预授权 + 异常人工介入**（Round-level Preauthorization + Exception-driven Human Intervention）：Owner开始前一次性批准并绑定短计划、写入范围、具体Agent×Model或合格候选池、费用上限及工具权限；正常中间任务通过机器门禁后自动流转，不再逐步人工accept。异常停止自动推进并交人工；原生独立Review后最终Human Gate仍由Owner决定。旧--checkpoint保留严格监督/调试。timeout/断线不伪记user_stop，pending_user须先安全停止活动资源；不取消执行deadline/预算，也不承诺隔天恢复。此为正式未来默认，**尚未实现或测试**，不追认历史实验。
+3. **质量与模型决策分离**：LAYA保留任务级选择权，不能越过统一完成门禁。适用编码/文件交付任务必须证明精确expectedArtifacts、考虑原dirty及Windows链接/Junction的allowedScope、批准命令真实test exit0；模型PASS或总Session exit0均无效。复用completeTask→applyVerification，不另建验证权威；异步检查后提交前重新确认同Task/Attempt/RunResult及证据版本。三门是必要条件，最终Native Review仍必要。
+4. **自然语言生成候选是准备步骤**：经现有 AgentAdapter/Runtime 生成 2–3 个短 JSON 候选，复用 parsePlanFile 校验与 plan-choice 选择，随后冻结计划并计算 stage digest。不能让 stage-check 暗中推理；生成会话、费用和数据单独入预算。
+5. **工具使用最小复用**：角色标签过滤已有声明候选，再让 LAYA 选择；保持 ModelRegistry/费用准入、Skill/MCP intent 和原生加载路径，不新建工具路由或 provider 网关。
+
+## 4. 保留的边界场景
+
+| 方面 | 后续实现时必须保持 |
+|---|---|
+| 需求与批准 | 区分用户要求/建议/假设；材料变化使旧确认失效；不因一次批准自动跨阶段 |
+| 上下文与来源 | 长材料可访问且完整交付；只交直接依赖所需材料和实际代码内容，不广播全部聊天 |
+| 角色与模型 | 实际能力/认证/配置/工具共同决定资格；请求模型与原生确认模型分别记录 |
+| 文件与副作用 | 区分路径声明、真实磁盘差异和执行权限；部分写入不自动回滚，未知外部副作用不盲重放 |
+| 证据与测试 | 绑定同 Task/Attempt/Session；真实测试命令、退出码、超时与未运行分开；摘要不能替代实际 Diff |
+| 停止与恢复 | root exit 不等于 tree stop；停止未确认不释放保护、不派接力；磁盘日志不等于跨进程恢复 |
+| 安全与费用 | 不可信材料不能批准任务；不读/传凭据；未知收费先停止；请求上限不替代金额授权 |
+| 用户交付 | 成功/部分/失败、实际产物、证据、未知、消耗及唯一建议下一步；最终动作 NONE |
+
+## 5. 明确不采用
+
+不迁移 MetaGPT、AutoGen、OpenHands、LangGraph 等完整运行时；不新建 Planner、Workflow engine、Scheduler、Registry、Budget Manager、群聊总管或索引平台。不安装新依赖来替代已有能力，不用第二个主管绕过 LAYA，不开放并行写。
+
+外部材料只支持小机制借鉴，逐条出处与局限见 [研究索引](ENGINEERING_RESEARCH_REFERENCES.md)。原始 #1–#17 完整清单未提供；原20项中的补选标记保留，本次Owner新给出的Agentless/A2A/OpenAI Agents SDK另行追加，不冒称原清单已有。
+
+## 6. 实施顺序与当前授权
+
+先P0-1确定性完成门禁，再P0-2授权范围内默认自动推进，再P0-3异常等待/最终交付，最后P0-4另行授权的真实E2E；不能先放开自动流转再补机器门。旧MVP-E2E.1d合并建议已被替代，NEXT_TASK只指P0-1。后续P1自然语言计划、P2模型/Skill/MCP配置、P3正式桌面UI顺序保持。
+
+此次仅产品契约和文档更新，不授权实现P0-1、开发Worker或第四次Round。三次真实MVP仍PARTIAL，26项B5.1-WF失败/有限准入不变；不改历史实验的两次人工accept要求或缺失事实。

@@ -13,6 +13,7 @@ import { mintFencingToken, modelKeyOf } from './assignment-lease.ts';
  */
 
 import type { TaskType } from '../quota/types.ts';
+import type { CompletionContract } from './completion-contract.ts';
 
 /**
  * Task lifecycle states. The first eight are IMPLEMENTED in 5C-1; the last
@@ -177,6 +178,13 @@ export interface Task {
    * of what was planned stays readable.
    */
   readonly generation: number;
+  /**
+   * P0-1: the typed COMPLETION CONTRACT this task must prove before `pass`. Present
+   * only when the governed plan-file path declared one (see completion-contract.ts).
+   * Its PRESENCE is the gate key: `applyVerification('pass')` enforces the contract
+   * exactly when it is here, and leaves a task without one on the pre-P0-1 path.
+   */
+  readonly completionContract?: CompletionContract;
 }
 
 /** The immutable inputs for creating a task. */
@@ -196,6 +204,8 @@ export interface TaskSpec {
    * keeps working unchanged.
    */
   generation?: number;
+  /** P0-1: the completion contract this task must prove before `pass`, if any. */
+  completionContract?: CompletionContract;
 }
 
 export interface CreateTaskResult {
@@ -269,6 +279,9 @@ agentId: spec.agentId,
       stale: false,
       staleReason: null,
       generation: spec.generation ?? 0,
+      // P0-1: carried through verbatim when present; omitted otherwise so a task
+      // without a contract stays byte-identical to its pre-P0-1 shape.
+      ...(spec.completionContract !== undefined ? { completionContract: spec.completionContract } : {}),
     },
   };
 }

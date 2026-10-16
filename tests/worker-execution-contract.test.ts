@@ -18,6 +18,10 @@ import {
   composeWorkerExecutionPrompt,
 } from '../src/orchestration/worker-execution-contract.ts';
 import { buildWorkBuddyArgs } from '../src/adapters/workbuddy.ts';
+// MVP-E2E.1b round 2: the recorded product failures were OpenCode runs, so the REAL
+// OpenCode transport is inspected (offline) rather than only the WorkBuddy argv builder.
+import { createOpenCodeAdapter } from '../src/adapters/opencode.ts';
+import type { LauncherSpec } from '../src/core/types.ts';
 
 let passed = 0;
 let failed = 0;
@@ -34,16 +38,30 @@ const CONTRACT_TEXT = WORKER_RECON_REUSE_CONTRACT.join('\n');
 // checking MEANING is present, not one exact string (which would make it a brittle
 // string-snapshot test, the thing §36 warns against).
 const SEMANTICS: ReadonlyArray<readonly [string, readonly string[]]> = [
-  ['inspect local repo truth', ['Inspect the relevant current truth', 'existing code, tests, interfaces']],
-  ['internal reuse search first', ['Search the repository for an existing helper', 'reuse']],
-  ['upstream / reference check', ['upstream / reference / open-source']],
+  ['inspect local repo truth in-scope', ['directly relevant code, tests and interfaces']],
+  ['internal reuse search first', ['prefer reusing a same-name module', 'reuse']],
+  ['external reference only when authorized', ['external public reference', 'never a mandatory prerequisite']],
   ['licence / compatibility verification', ['licence, API/version compatibility']],
   ['REUSE/ADAPT/WRAP/NEW decision', ['REUSE, ADAPT, WRAP, or NEW']],
   ['shared research does not waive recon', ['never means your recon is already done', 'evidence and leads only']],
   ['bounded recon', ['Keep recon bounded', 'stop as soon as']],
   ['external agent installs protected', ['Do not modify external Agent installations']],
-  ['recon precedes substantive work', ['Only after that recon and reuse decision']],
+  ['external installs not read just because installed', ['merely because it is installed']],
+  ['recon precedes substantive work', ['perform the requested task immediately']],
   ['role-neutral trigger (not "before editing files")', ['Before performing the substantive task']],
+  ['scoped to actual cwd/workspace only', ['actual process working directory', 'cwd / workspace']],
+  ['parents/siblings and control artifacts excluded', ['parent or sibling', 'harness, control, owned-root or launcher']],
+  ['audit logs / runtime evidence excluded', ['historical audit logs or runtime evidence']],
+  ['operational reference is not permission', ['operational path or artifact reference is not permission']],
+  ['NEW chosen explicitly when empty', ['choose NEW explicitly', 'need not prove']],
+  ['denial cannot be bypassed', ['never bypass a denial through another tool', 'never repeat an irrelevant probe']],
+  ['native stop -> precise blocker', ['report the precise blocker', 'never fabricate a delivery']],
+  ['native permission behaviour unchanged', ['Do not change native permission behaviour']],
+  ['real delivery required', ['actually create or change the requested files', 'paths, command, output and exit']],
+  ['plan/recon-only is not completion', ['plan or recon-only answer is not completion']],
+  ['read-only tasks not mutated', ['If the task is read-only, do not mutate']],
+  ['test task consumes real upstream artifacts', ['supplied upstream artifacts', 'runs the actual tests', 'never invents a pass']],
+  ['conflicting rule is a blocker not an override', ['conflicting higher-priority native or task rule', 'never a permission to override']],
   ['final reuse evidence requested', ['Reuse decision: REUSE / ADAPT / WRAP / NEW']],
 ];
 
@@ -233,8 +251,8 @@ section('T2B. the execution contract reaches every execution Worker, and only Wo
   const p = buildRunRequest({ task: baseTask(), cwd: 'C:/w' }).request.prompt;
   check('T2B-13: the delivered instruction forbids modifying external Agent installs',
     p.includes('Do not modify external Agent installations'), 'rule absent');
-  check('T2B-13: while still permitting reading/referencing them',
-    p.includes('Reading or referencing them is fine'), 'over-restrictive');
+  check('T2B-13: and refuses to read an external install merely because it is installed',
+    p.includes('merely because it is installed'), 'over-permissive');
   check('T2B-13: and scopes changes to the project only',
     p.includes("only this project's own scope may be changed"), 'scope rule absent');
 }
@@ -255,7 +273,7 @@ section('T2B. the execution contract reaches every execution Worker, and only Wo
   });
   const p = withResearch.request.prompt;
   check('T2B-14: the contract still arrives when shared research is present',
-    p.includes('Keep recon bounded') && p.includes('Only after that recon'), 'contract missing');
+    p.includes('Keep recon bounded') && p.includes('perform the requested task immediately'), 'contract missing');
   check('T2B-14: and it states research is evidence/leads, not completion',
     p.includes('never means your recon is already done'), 'waiver semantics absent');
   check('T2B-14: the shared research itself is preserved for the Worker to read',
@@ -387,6 +405,195 @@ section('T2B. what is actually proven (delivery, not model compliance)');
     'composer parses output text');
   check('T2B-23: the Worker is asked for brief reuse evidence, not a report',
     p.includes('a few lines, not a report'), 'over-demanding wording');
+}
+
+// ===========================================================================
+// MVP-E2E.1b — bounded scope, explicit NEW, denial and real delivery.
+// ===========================================================================
+//
+// The recorded product failures shared ONE instruction defect: the delivered contract told a
+// Worker to "search the repository" and treated reading external installs as "fine", never
+// bounding recon to the actual cwd, never making an empty-project NEW decision explicit,
+// never forbidding denial-bypass, and never demanding real filesystem delivery. Every check
+// below reads the FINAL outgoing production RunRequest (and, where relevant, the adapter
+// argv), not the source template. They prove the WORDING is delivered; a fake Worker cannot
+// prove model compliance and none is pretended here.
+section('MVP-E2E.1b. delivered scope, NEW, denial and delivery wording');
+
+/** The FINAL prompt the production request constructor emits for a task. */
+const deliveredPrompt = (over: Partial<Task> = {}, prompt?: string): string =>
+  buildRunRequest({
+    task: baseTask(over),
+    cwd: 'C:/workspace',
+    ...(prompt === undefined ? {} : { prompt }),
+  }).request.prompt;
+
+// --- scope is the actual cwd, never parents/siblings/control artifacts/runtime evidence ---
+{
+  const p = deliveredPrompt();
+  check('E2E1b-1: recon is bounded to the actual cwd/workspace',
+    p.includes('actual process working directory') && p.includes('cwd / workspace'), 'cwd scope absent');
+  check('E2E1b-2: parents/siblings and harness/control/owned-root/launcher artifacts are excluded',
+    p.includes('parent or sibling') && p.includes('harness, control, owned-root or launcher'), 'exclusions absent');
+  check('E2E1b-3: historical audit logs and runtime evidence are excluded',
+    p.includes('historical audit logs or runtime evidence'), 'evidence exclusion absent');
+  check('E2E1b-4: an operational path/artifact reference is not permission',
+    p.includes('operational path or artifact reference is not permission'), 'permission caveat absent');
+  check('E2E1b-4: external checks are never a mandatory empty-project prerequisite',
+    p.includes('never a mandatory prerequisite') && p.includes('external public reference'), 'prerequisite rule absent');
+}
+
+// --- empty workspace: a different new filename must be choosable as NEW without proving absence ---
+{
+  const p = deliveredPrompt({}, 'Create src/feature/brand-new-widget.ts, a widget that does not exist yet.');
+  check('E2E1b-5: an empty-scope new file can be chosen NEW explicitly',
+    p.includes('choose NEW explicitly') && p.includes('need not prove'), 'NEW guidance absent');
+  check('E2E1b-5: and recon stops so the requested task is performed immediately',
+    p.includes('perform the requested task immediately'), 'stop-and-work absent');
+  check('E2E1b-5: the original new-file task body survives behind the delimiter',
+    p.includes('--- TASK (unchanged) ---') && p.includes('src/feature/brand-new-widget.ts'), 'task body lost');
+}
+
+// --- existing project: same-name / reusable module, research is evidence only ---
+{
+  const p = deliveredPrompt();
+  check('E2E1b-6: a same-name or reusable module is preferred before writing new code',
+    p.includes('same-name module or an existing reusable module'), 'reuse-first absent');
+  check('E2E1b-7: existing research is evidence, never automatic proof of correctness',
+    p.includes('never automatic proof of correctness') && p.includes('evidence and leads only'), 'proof caveat absent');
+}
+
+// --- denial: no bypass, no irrelevant repeats, native permissions untouched ---
+{
+  const p = deliveredPrompt();
+  check('E2E1b-8: denial-bypass and irrelevant repeats are forbidden',
+    p.includes('never bypass a denial through another tool') && p.includes('never repeat an irrelevant probe'),
+    'bypass rule absent');
+  check('E2E1b-9: a native stop yields a precise blocker, never fabrication',
+    p.includes('report the precise blocker') && p.includes('never fabricate a delivery'), 'blocker rule absent');
+  check('E2E1b-10: native permission behaviour must not be changed',
+    p.includes('Do not change native permission behaviour'), 'permission tampering rule absent');
+}
+
+// --- delivery: real writes with evidence; read-only tasks untouched ---
+{
+  const p = deliveredPrompt();
+  check('E2E1b-11: writing tasks require real filesystem delivery with evidence',
+    p.includes('actually create or change the requested files') && p.includes('paths, command, output and exit'),
+    'delivery rule absent');
+  check('E2E1b-12: a plan/recon-only answer is not completion',
+    p.includes('plan or recon-only answer is not completion'), 'completion rule absent');
+  check('E2E1b-13: read-only tasks must not be mutated',
+    p.includes('If the task is read-only, do not mutate'), 'read-only guard absent');
+}
+
+// --- readonly/research/review semantics stay protected; review transport profile preserved ---
+{
+  for (const taskType of ['research', 'review', 'test'] as const) {
+    const built = buildRunRequest({ task: baseTask({ taskType }), cwd: 'C:/workspace' });
+    check(`E2E1b-14: a ${taskType} execution still carries the read-only guard`,
+      built.request.prompt.includes('If the task is read-only, do not mutate'), 'guard missing');
+  }
+  check('E2E1b-14: the review TRANSPORT profile is preserved for a review task',
+    buildRunRequest({ task: baseTask({ taskType: 'review' }), cwd: 'C:/workspace' }).request.mode === 'review',
+    'review transport profile lost');
+}
+
+// --- test task: real upstream artifacts, actual tests, and rule conflicts are blockers ---
+{
+  const upstream = 'Upstream handoff: real artifacts at artifacts/tokenizer.json (produced by task t0).';
+  const p = deliveredPrompt({ taskType: 'test' }, upstream);
+  check('E2E1b-15: a test task must consume the real supplied upstream artifacts',
+    p.includes('supplied upstream artifacts') && p.includes('runs the actual tests'), 'test-task rule absent');
+  check('E2E1b-15: and never invent a pass',
+    p.includes('never invents a pass'), 'fake-pass rule absent');
+  check('E2E1b-15: the upstream handoff artifact reference is preserved for the Worker',
+    p.includes('artifacts/tokenizer.json'), 'upstream artifact lost');
+  check('E2E1b-16: a conflicting higher-priority rule is a blocker, not an override',
+    p.includes('conflicting higher-priority native or task rule') && p.includes('never a permission to override'),
+    'conflict rule absent');
+}
+
+// --- the FINAL outgoing adapter argv, byte-for-byte, including the new wording ---
+{
+  const body = 'ORIGINAL_BODY_MARKER\n  keep my whitespace  \n';
+  const built = buildRunRequest({ task: baseTask(), cwd: 'C:/workspace', prompt: body });
+  const args = buildWorkBuddyArgs({ ...built.request });
+  const promptArg = args[args.length - 1]!;
+  check('E2E1b-17: the adapter argv carries the FINAL composed prompt verbatim',
+    promptArg === built.request.prompt, 'argv altered the prompt');
+  check('E2E1b-17: the original task body is byte-preserved in the outgoing argv',
+    promptArg.includes(body) && promptArg.endsWith(body), 'task body changed in argv');
+  check('E2E1b-17: the outgoing argv carries the new bounded-scope / NEW wording',
+    promptArg.includes('actual process working directory') && promptArg.includes('choose NEW explicitly'),
+    'new wording absent from outgoing argv');
+  check('E2E1b-17: exactly ONE argv element carries the contract (no adapter policy copy)',
+    args.filter((a) => a.includes('choose NEW explicitly')).length === 1, 'adapter duplicated policy');
+}
+
+// --- honesty: wording delivery is proved; no Worker output is parsed for compliance ---
+{
+  const src = readFileSync(new URL('../src/orchestration/worker-execution-contract.ts', import.meta.url), 'utf8');
+  check('E2E1b-18: compliance is never inferred by parsing Worker output in production code',
+    !/REUSE:\s*['"]|includes\(['"]REUSE/.test(src), 'composer parses output');
+}
+
+// --- the REAL OpenCode transport argv is the true boundary (offline, no spawn) ---
+//
+// E2E1b-17 above proves the WorkBuddy argv builder forwards the composed prompt. But the
+// recorded product failures were actual OpenCode runs, and `buildWorkBuddyArgs` is a
+// different family's builder, so it is only a proxy. Here the REAL OpenCode transport is
+// built through the existing `createOpenCodeAdapter` with an INERT `LauncherSpec`: no
+// discovery, and `createTransport` never calls `start()` and never spawns anything. Its
+// stored options are read through a narrow test-only cast — `opts` is a TypeScript
+// `private` field (not a `#` field), so the real argv boundaries are observable without a
+// mock builder and without adding a production export. `commandLine` alone would be a
+// lossy joined string; `opts.args` preserves each argv element.
+{
+  const inert: LauncherSpec = {
+    kind: 'native',
+    command: 'C:/inert/opencode.exe',
+    prefixArgs: [],
+    target: 'C:/inert/opencode.exe',
+    buildsCommandString: false,
+  };
+  const adapter = createOpenCodeAdapter({ launcher: inert });
+  const body = 'ORIGINAL_OPENCODE_BODY_MARKER\n  keep my whitespace  \n';
+  const built = buildRunRequest({
+    task: baseTask({ agentId: 'opencode', modelId: 'opencode/space-bunny-free' }),
+    cwd: 'C:/actual-cwd',
+    prompt: body,
+  });
+  // The REAL transport is built; it is never started and nothing is spawned.
+  const transport = adapter.createTransport(built.request);
+  check('E2E1b-19: the OpenCode transport is the real CliJsonlTransport',
+    transport.kind === 'cli-jsonl', transport.kind);
+  const { args, cwd } = (transport as unknown as {
+    opts: { args: readonly string[]; cwd: string };
+  }).opts;
+
+  check('E2E1b-19: argv[1] is the EXACT composed prompt (run subcommand unchanged)',
+    args[0] === 'run' && args[1] === built.request.prompt, `run=${args[0]} promptMatch=${args[1] === built.request.prompt}`);
+  const dirArg = args[args.indexOf('--dir') + 1];
+  check('E2E1b-19: --dir carries the ACTUAL cwd (and the transport spawns there)',
+    dirArg === 'C:/actual-cwd' && cwd === 'C:/actual-cwd', `--dir=${String(dirArg)} cwd=${cwd}`);
+  const modelArg = args[args.indexOf('--model') + 1];
+  check('E2E1b-19: the fixed model arg is passed through unchanged',
+    modelArg === 'opencode/space-bunny-free', String(modelArg));
+  check('E2E1b-19: the original task body is byte-preserved at the prompt boundary',
+    args[1]!.includes(body) && args[1]!.endsWith(body), 'task body changed in argv');
+
+  // No scope-widening or permission-bypass switch was appended by any layer. Proving the
+  // flag set is EXACTLY the expected one is stronger than a denylist alone; the denylist
+  // then names the specific plan/read-only/bypass/continue-loop classes this defect was
+  // about, so a future addition is a red test rather than a silent widening.
+  const flags = args.filter((a) => a.startsWith('--'));
+  const unexpected = flags.filter((f) => !['--format', '--dir', '--model'].includes(f));
+  check('E2E1b-19: the argv carries NO extra switch beyond format/dir/model',
+    unexpected.length === 0, `unexpected flags: ${unexpected.join(', ')}`);
+  check('E2E1b-19: no plan/read-only/permission-bypass/continue-loop switch was added',
+    !args.some((a) => /^--(plan|read-only|permission|dangerously|bypass|yolo|continue|loop|sandbox|fork|auto)/i.test(a)),
+    args.filter((a) => a.startsWith('--')).join(' '));
 }
 
 process.stdout.write(`\n${passed} passed, ${failed} failed\n`);

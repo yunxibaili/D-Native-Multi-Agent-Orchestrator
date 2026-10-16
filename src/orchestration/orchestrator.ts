@@ -65,6 +65,11 @@ import {
   type TaskResultSummary,
 } from './task-result.ts';
 import { runGit } from './git.ts';
+// P0-1: the completion gate's fact-gathering helpers (value-only) and the pure decision.
+import { captureWorkspaceManifest, manifestDigest, type WorkspaceManifest } from './workspace-manifest.ts';
+import { buildCompletionEvidence, runFingerprintOf, DEFAULT_COMPLETION_TEST_TIMEOUT_MS, type CompletionEvidence } from './completion-evidence.ts';
+import { completionContractDigest } from './completion-contract.ts';
+import { evaluateCompletionGate } from './completion-gate.ts';
 
 import type { TaskType } from '../quota/types.ts';
 // The THREE types this file uses but which the R2-3 observation edit dropped from the
@@ -190,6 +195,11 @@ export interface OrchestrationOptions {
    * answer for a task that only reads, and skips the check entirely.
    */
   resourceClaims?: (task: Task) => { mode: ResourceClaimMode; scope: ResourceScope } | null;
+  /**
+   * P0-1: how long the approved completion test may run before it is stopped and its
+   * result rejected. Defaults to 120s; tests shrink it.
+   */
+  completionTimeoutMs?: number;
 }
 
 export interface ExecuteTaskRequest {
@@ -334,6 +344,17 @@ export class Orchestrator {
   /** R2-1: per-task resource intent. `null` = no claim, and the check is skipped. */
   private readonly resourceClaims: ((task: Task) => { mode: ResourceClaimMode; scope: ResourceScope } | null) | null;
   /**
+   * P0-1: the completion evidence produced by the REAL dispatch, keyed by taskId.
+   *
+   * Like `lastObservations`, this is a READ-ONLY cache of execution facts — not a
+   * state authority and not persisted. It is written only inside `executeTask` from
+   * what the actual run and the actual contained test produced, and read only by the
+   * shared `applyVerification('pass')` gate. A caller cannot register an entry, so a
+   * forged outcome cannot mint a pass.
+   */
+  private readonly completionEvidence = new Map<string, CompletionEvidence>();
+  private readonly completionTimeoutMs: number;
+  /**
    * Live child count = tasks in a non-terminal state. Counted from the store, not
    * from a separate counter, so it cannot drift from the authoritative state.
    */
@@ -376,6 +397,7 @@ export class Orchestrator {
     this.workspaceMode = options.workspaceMode ?? ((task) => (this.workspace === null ? 'none' : defaultWorkspaceMode(task)));
     this.workspaceOwnerOf = options.workspaceOwner ?? null;
     this.resourceClaims = options.resourceClaims ?? null;
+    this.completionTimeoutMs = options.completionTimeoutMs ?? DEFAULT_COMPLETION_TEST_TIMEOUT_MS;
   }
 
   /** The workspace manager, when one is configured. Lifecycle authority only. */
@@ -784,6 +806,19 @@ export class Orchestrator {
    * pretending to re-dispatch.
    */
   applyVerification(taskId: string, outcome: VerificationOutcome): MutateOutcome {
+    // P0-1: the ONE shared completion boundary. Every reachable route into `pass` —
+    // the decision brain's `complete`, a human/checkpoint accept, the review loop —
+    // funnels through here, so a task that declares a completion contract is checked
+    // against REAL evidence before it may succeed. `rework`/`reject` are untouched.
+    if (outcome.verdict === 'pass') {
+      const task = this.store.get(taskId);
+      if (task !== null && task.completionContract !== undefined) {
+        const refusal = this.completionRefusal(task);
+        if (refusal !== null) {
+          return { ok: false, code: refusal.code, reason: refusal.reason };
+        }
+      }
+    }
     const translated = translateVerification(outcome);
     // P6-D0 UN-RESERVES `rework`. The transition has been in the table since 5C-1
     // (which reserved it deliberately), so applying it needs no new rule here -
@@ -794,6 +829,54 @@ export class Orchestrator {
     // execution edge, and inlining a re-dispatch is exactly how a second
     // execution path appears.
     return this.mutate(taskId, translated.to, translated.reason);
+  }
+
+  /**
+   * P0-1: the synchronous completion decision for a contracted task.
+   *
+   * Reads the current TASK identity/lease and RE-READS the workspace at this instant,
+   * so a reassignment, a new run, or any file change after the proof was gathered
+   * invalidates it. The decision itself is the import-free `evaluateCompletionGate`,
+   * so the gate is a value and cannot reach any authority. Returns null when the pass
+   * may proceed.
+   */
+  private completionRefusal(task: Task): { code: string; reason: string } | null {
+    const contract = task.completionContract;
+    if (contract === undefined) return null;
+    const evidence = this.completionEvidence.get(task.taskId) ?? null;
+    // Re-read the workspace ONLY when there is evidence to compare against; a missing
+    // evidence record must not depend on a filesystem read to be refused.
+    const currentWorkspaceDigest = evidence === null
+      ? null
+      : manifestDigest(captureWorkspaceManifest(evidence.workspaceRoot));
+    const result = evaluateCompletionGate({
+      contractPresent: true,
+      task: {
+        taskId: task.taskId,
+        leaseVersion: task.leaseVersion,
+        agentId: task.agentId,
+        modelId: task.modelId,
+        contractDigest: completionContractDigest(contract),
+      },
+      evidence: evidence === null
+        ? null
+        : {
+            contractDigest: evidence.contractDigest,
+            taskId: evidence.taskId,
+            leaseVersion: evidence.leaseVersion,
+            agentId: evidence.agentId,
+            modelId: evidence.modelId,
+            workspaceDigest: evidence.workspaceDigest,
+            unsafeWorkspace: evidence.unsafeWorkspace,
+            testCode: evidence.test.code,
+            testTimedOut: evidence.test.timedOut,
+            testTreeStopConfirmed: evidence.test.treeStopConfirmed,
+            missingArtifacts: evidence.missingArtifacts,
+            outOfScope: evidence.outOfScope,
+          },
+      currentWorkspaceDigest,
+    });
+    return result.ok ? null : { code: result.code, reason: result.reason };
   }
 
   /**
@@ -1210,6 +1293,15 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
     // place gives it back, on every exit including a throw. Release stays tied to
     // EXECUTION resource ownership - it happens when the run settles, not when the task
     // is verified - so verification semantics are untouched.
+    //
+    // P0-1: the BASELINE manifest is captured HERE - after the workspace is prepared
+    // and the claim is taken, but BEFORE the sealed session→runtime freeze below. It is
+    // synchronous, so it adds no await to the freeze region, and it sees the real
+    // workspace including preexisting dirty and ignored files.
+    const completionContract = task.completionContract;
+    const baselineManifest: WorkspaceManifest | null = completionContract === undefined
+      ? null
+      : captureWorkspaceManifest(resolvedCwd);
     try {
 
       // ---- TeamRun T1-e/T1-g freeze point: pre-runtime context validation -------
@@ -1559,6 +1651,50 @@ this.liveHandles.delete(task.taskId);
 
       // ---- write the result back to the lifecycle ----
       const applied = this.applyRunResult(task.taskId, result, dispatchedLease, req.translate ?? {});
+      // ---- P0-1: gather completion evidence while the WRITE claim is still held ----
+      //
+      // The approved test runs AFTER the agent and BEFORE the claim is released, so a
+      // writer cannot slip into the workspace between the run and the proof. Evidence
+      // is gathered only from a successful run; a failed/cancelled run leaves the gate
+      // with nothing to accept. A gathering failure deletes any prior entry so the
+      // gate refuses rather than reusing a stale proof.
+      if (completionContract !== undefined && baselineManifest !== null && result.state === 'succeeded') {
+        try {
+          const afterRun = captureWorkspaceManifest(resolvedCwd);
+          const evidence = await buildCompletionEvidence({
+            taskId: task.taskId,
+            leaseVersion: dispatchedLease.leaseVersion,
+            agentId: running.task.agentId,
+            modelId: running.task.modelId,
+            contract: completionContract,
+            workspaceRoot: resolvedCwd,
+            before: baselineManifest,
+            afterRun,
+            runFingerprint: runFingerprintOf({
+              taskId: task.taskId,
+              agentId: result.agentId,
+              modelId: running.task.modelId,
+              startedAt: result.startedAt,
+              endedAt: result.endedAt,
+              state: result.state,
+              exitCode: result.exitCode,
+            }),
+            timeoutMs: this.completionTimeoutMs,
+            now: this.now(),
+          });
+          this.completionEvidence.set(task.taskId, evidence);
+        } catch (e) {
+          log.warn('completion evidence gathering failed; completion will be refused', {
+            taskId: task.taskId,
+            error: (e as Error).message,
+          });
+          this.completionEvidence.delete(task.taskId);
+        }
+      } else if (completionContract !== undefined) {
+        // A run that did not succeed cannot produce completion evidence; drop any stale
+        // entry so a later mismatched pass cannot reuse it.
+        this.completionEvidence.delete(task.taskId);
+      }
       if (!applied.ok) {
         // R2-2 / F5: STATE is refused, EVIDENCE IS NOT.
         //

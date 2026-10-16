@@ -21,6 +21,7 @@
 
 import type { Task } from './task.ts';
 import type { RunResult } from '../core/types.ts';
+import type { CompletionContract } from './completion-contract.ts';
 
 export interface TaskHandoff {
   readonly taskId: string;
@@ -251,6 +252,12 @@ export function buildTaskBrief(input: {
    * does not have is reported and the work continues, never fabricated.
    */
   mcpTools?: readonly string[];
+  /**
+   * P0-1: the typed completion contract, rendered so the worker knows the exact
+   * artifact set, the allowed change scope, and the ONE approved command that will be
+   * run — a request the orchestrator will really execute, not the model's own test.
+   */
+  completion?: CompletionContract;
 }): string {
   const lines: string[] = [
     'Work:',
@@ -267,6 +274,14 @@ export function buildTaskBrief(input: {
   if (input.constraints !== undefined && input.constraints.length > 0) {
     lines.push('', 'Constraints:');
     for (const c of input.constraints) lines.push(`- ${c}`);
+  }
+  if (input.completion !== undefined) {
+    lines.push('', 'Completion contract (the orchestrator verifies these; your prose is not evidence):');
+    lines.push('- expected artifacts (exact paths at the workspace root):');
+    for (const a of input.completion.expectedArtifacts) lines.push(`    ${a}`);
+    lines.push('- allowed change scope (any add/modify/delete outside this is refused):');
+    for (const s of input.completion.allowedScope) lines.push(`    ${s}`);
+    lines.push(`- approved test (run by the orchestrator, not by you): ${input.completion.test.executable} ${input.completion.test.argv.join(' ')} (cwd ${input.completion.test.cwd})`);
   }
   for (const h of input.handoffs ?? []) {
     lines.push('', `Handoff from task ${h.taskId} (${h.taskType}, status: ${h.status}):`);

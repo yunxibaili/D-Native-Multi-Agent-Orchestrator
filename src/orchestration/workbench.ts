@@ -1949,6 +1949,9 @@ unDecisionCycle can read a real TickResult. */
       skills: this.taskIntents.get(taskId)?.skills,
       // B3.2: the same rule for the advisory native MCP tools.
       mcpTools: this.taskIntents.get(taskId)?.mcpTools,
+      // P0-1: the task's typed completion contract, so a worker told to deliver a file
+      // is also told the exact artifact set, scope and approved test.
+      ...(task.completionContract !== undefined ? { completion: task.completionContract } : {}),
       handoffs,
     });
   }

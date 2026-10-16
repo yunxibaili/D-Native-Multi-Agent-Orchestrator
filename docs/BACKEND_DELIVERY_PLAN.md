@@ -1,99 +1,75 @@
-# 后端交付计划 — 按新草案重排
+# 后端交付路线 — 机器完成门禁优先
 
-更新日期：2026-10-15
+更新：2026-10-16。Owner批准日期：2026-10-16。状态：**Owner approved / Not yet implemented / Not yet tested**。
+本文记录未来实施顺序，不授权本轮开发或真实调用。事实只见[唯一基线](PROJECT_BASELINE.md)，需求见[BACKEND_REQUIREMENTS](BACKEND_REQUIREMENTS.md)，唯一下一项见[NEXT_TASK](NEXT_TASK.md)。
 
-本文管理未来路线；当前状态、证据和估算数据只在 [PROJECT_BASELINE.md](PROJECT_BASELINE.md) 维护。
-依据：[后端需求](BACKEND_REQUIREMENTS.md)、[阶段草案](DRAFT_STAGED_ROLE_WORKFLOW.md)。
-2026-10-14用户单独授权B4.5a后，B4.5/B4.5a受控最小Git顺序协作范围独立通过；其后用户已授权B3.1原生Skill有界切片，现已独立通过；其后B3.2原生MCP选择与观察也已获授权并独立通过；本轮停止，不授权后续阶段。
+## 1. 正式默认产品契约
 
-职责核对保留：Verification是状态入口，不是内容裁判；整轮Review在workflow完成后运行。人工accept是用户verdict，默认模型决策路线保持。
+默认采用 **Round-level Preauthorization + Exception-driven Human Intervention**：
+Owner开始前批准绑定的短计划、文件范围、具体Agent×Model或合格候选池、费用上限和工具权限；
+每个任务通过确定性门禁后，原范围内自动进入下一任务；正常Task1→Task2不再要求人工accept。
+异常停止并交人工；所有任务完成后真实Codex Native Review，再最终Human Gate，由Owner决定。
+自动推进记录为预授权策略下的系统验证结果，不伪造user_accept。旧--checkpoint保留严格监督/调试用途。
 
-调研结论采用“按当前状态过滤模型可见动作”，只参考[官方动态工具方法](https://docs.langchain.com/oss/python/langchain/agents#dynamic-tools)，不引入LangChain或第二套调度。GitHub MCP成功核对[同版本LAYA基准边界](https://github.com/NandhaKishorM/laya/blob/6ab71fb4ce6bfd6f189e9b689eaadd67103ed9b6/docs/benchmarks.md)与官方evals；typed-decisions专用权重面向四种合成业务流程，不据发布方成绩推断Coding验收可用，不下载或切换权重。
+这是未来**默认**，覆盖旧“仅显式实验策略”的建议；当前生产尚未改变。在以下三个离线切片全部通过前，不提前启用新默认。
 
-B4.6b已独立通过：仅在既有`--checkpoint`中新增`accept <非空理由>`。等待输入后同步重读当前Task和原子Attempt→RunResult；状态、任务/Attempt/Worker身份、展示条件变化、执行证据缺失或停止未确认均拒绝。只有同一当前任务仍to_verify且树停止明确为true，才通过既有completeTask/applyVerification应用用户verdict；不直接写TaskStore、不新增authority。记录source=user、taskId/attemptId、理由及applied/refused，不把用户判断当LAYA决定、独立Review、产物或测试证明。末步accept后先重算all-succeeded，不额外问模型；后续派发仍走原固定pair/声明池/额度/资源/阶段门。continue/stop和无flag默认路径保持。
+## 2. P0实施顺序与准入
 
-本片是个人MVP同进程人工兜底，不是完整自动验收。历史LAYA-QUALITY.2真实wait/正向目标完成未观察的BLOCKED保持；不改答案、模型、温度或权重，不追加试跑。新增产品Agent/本地LAYA推理均0，累计本地12、产品5/5不变；开发worker两轮真实使用指定DeepSeek V4.1 Flash，不能把开发调用说成零模型调用。PARALLEL_WRITE=CLOSED，正式前端未进入，估算68/100保持。
+| 顺序 | 有界交付 | 依赖 | 最小验收及停止条件 |
+|---|---|---|---|
+| **P0-1：确定性完成门禁** | PlanFile交付路径/允许范围/可信测试要求；实际Workspace与同Attempt证据；completeTask/applyVerification统一约束 | 唯一最近实施任务，待单独下发 | 精确路径、真实增删改归属、真实测试exit0；缺失/过期/错误Attempt/停止未知/越界均拒绝完成和下游；有效任务可完成。**不启用默认自动推进** |
+| **P0-2：授权范围内自动推进** | 复用stage/冻结计划，绑定模型/候选池、费用、工具及P0-1要求；机器通过后推进 | P0-1独立通过 | 开始前真实Owner批准；Task1→Task2无需人工accept；任何边界变化立即停；旧checkpoint可用、不重跑成功Worker，不新增执行边 |
+| **P0-3：异常等待与最终Human Gate** | 区分系统/用户来源；安全释放活动执行资源、保存待人工材料；原生Review后交付 | P0-1、P0-2通过；可提前设计事件字段但不提前开默认 | timeout/断线不是user_stop；默认不因60秒未答而丢失待办；验证Job停止/费用deadline继续有效；保存pending结果不等于跨进程恢复；最终动作NONE |
+| **P0-4：一次新的真实闭环** | Owner预授权→LAYA决策→Worker1实现→机器验证→Worker2独立测试→机器验证→Codex Native Review→Human Gate | 前三项独立通过，且Owner**另行授权**本次模型、次数、费用、数据和时限 | 固定/候选约束、实际模型/任务/Attempt/Session对应，真实代码/测试/Review verdict、最终交付和Job空；异常即停，无额外Round或付费补救 |
 
-MVP-READINESS.1只读收敛完成；不是完整真实round已通过。最短路径是两个sequential步骤（实现→测试），固定一个已核验Agent×Model，显式计划/阶段确认，逐步用户accept，最后保留现有原生Review和HumanGate。无需新增调度器、平台或前端。`--workflow-choice`只固定计划，`--select fixed`只固定pair，`--checkpoint`只接管单步验收；三者均不能替代LAYA分类及派发决策。
+旧MVP-E2E.1d“两项一起修”的建议已被此依赖顺序取代，不能继续当唯一实施任务。当前NEXT_TASK只指P0-1；完成后停止，不连做P0-2。
 
-本轮健康观察未通过：初次默认HTTP客户端GET超时；随后仅纠正观察路径，用无代理的直连http.client访问127.0.0.1:8077/health，2秒同样TimeoutError。没有POST、没有启动/停止服务，不能由此断言端口关闭、无进程或确定根因；当前健康状态未确认。既往服务已停止记录仍仅是当时事实，不冒充当前新观测。
+## 3. P0-1的完成必要条件
 
-下一候选LAYA-HEALTH.1先只读定位本机健康超时，再按明确owned边界判断最小恢复。复用现有venv/固定缓存/Job launcher；不换模型、温度或权重，不重装，不新增框架，不碰不属于本轮的listener/进程。此候选不授权推理或产品Agent调用；如需启动服务，应先给出具体启动/时限/清理范围，执行后以validated Job空和owned清理证明结束。健康就绪后，新的真实个人demo仍须明确worker/reviewer模型、费用、会话和本地POST上限。
-
-## 成功效果
-
-用户给出大概目标 → LAYA 组织必要研究和澄清 → 用户确认需求及预期效果 → 确认总体路线与当前阶段 →
-LAYA 在用户允许的 Agent × Model 池中选择职责、具体模型及必要 Skill/MCP → 既有执行链完成阶段 →
-监督发现需纠偏的问题时停止相关后续派工并交用户决定 → Codex 独立审核 → 交付实际成果、验证和遗留项 →
-用户验收或调整；不自动跨阶段实施。
-
-简单任务可以合并准备环节，不增加每条命令的审批。LAYA 仍是唯一任务级决策者，监督者不是新主管。
-保留功能 A（跨角色独立任务）和功能 B（同目标 2–3 模型分工共建）；人数与角色按需要决定。
-用户可限制模型池；免费优先与已授权付费可以作为可选策略，未知费用不能自动转成支出授权。
-
-## 当前位置
-
-底层执行、停止、身份和受控工作流已建立。B4.2/B4.2a 的计划入口与合法多入口顺序执行已独立 PASS WITH P2。原 no-progress P1 关闭；
-该等待/拒绝报告分类 P2 已在 B4.3 中独立确认关闭，不重审全部历史阶段。
-还缺“需求 → 确认 → 阶段 → 用户成果”的产品闭环；结构化计划文件不是需求分析或用户批准。
-
-## 重排后的任务
-
-| 顺序 / 编号 | 交付 | 复用与退出条件 |
+| 门禁 | 必须证明 | 禁止替代 |
 |---|---|---|
-| 已完成 / B4.2a | 合法依赖计划的顺序执行与资源拒绝报告主场景 | 独立 PASS WITH P2；完整状态见唯一基线。该分类 P2 已独立确认关闭 |
-| 已完成 / B4.3 → B4.3a | 最小阶段确认入口独立通过；显式绑定/材料交付与 legacy 写前拒绝收口 | 复用 plan-file、Human Gate、NextRoundInput；先支持用户显式提供/确认材料，不先建设自动需求分析平台。批准绑定阶段、范围和适用材料；未批准实现不启动 |
-| 已完成 / B4.4 | 最小有出处的交接和用户交付视图独立 PASS | 复用 brief/handoff、Task artifacts、同次 Attempt/RunResult、RoundResult；长材料可读，关键约束不只靠摘要；普通命令不冒充测试通过，未知/过期/受阻单列 |
-| 已完成 / B4.5 → B4.5a | Git项目顺序协作与审核前资源保护 | 单组隔离worktree、root+committed base、脏文件/产物/顺序/审核cwd验证通过；运行期保护和Windows scope归一化收口。限定受控范围，最终人工集成 |
-| 已完成 / B3.1 | 任务级原生Skill用户声明候选与advisory闭环 | 受控独立PASS；requested/admitted/工具观察分开，不证明真实加载或权限限制 |
-| 已完成 / B3.2 | 原生MCP任务级advisory选择与名称匹配观察 | 受控有界PASS；原生配置/连接/权限/真实调用和工具定义裁剪未认证，无新网关 |
-| 5 / B2.1 | 用户模型池、费用策略与消耗覆盖 | 复用 registry/selection/quota/Attempt；先明确允许池、费用证据与预算，不建设排行榜。固定付费模型不自动授权花钱，目录不证明免费 |
-| 6 / B4.6 | 检查点监督与用户纠偏 | B4.6a继续/停止及B4.6b显式用户accept已在同一Verification受控通过；最短使用链已收敛，先处理LAYA健康及真实调用授权；不承诺自动质量验收或跨进程恢复 |
-| 已交付子集 / B5.1 | 明确session_failure的停止安全与具体pair接力 | 受控当前CLI链通过；停止未知拒绝、同Task新Attempt/fresh session、成果保留与有界次数；真实错误分类/完整workflow与跨进程恢复后续 |
-| 8 / B4.7 | 代表性真实 Agent 验收 | 用户授权模型和费用后，以小任务验证功能 A、功能 B、一次失败/受阻交付；核对真实产物、身份、停止和总消耗，fixture 不替代真机证据 |
-| 9 / F0 | 正式工作台前端需求确认 | 本机进度页不等于产品前端。先一起确认操作流程、模型选择、阶段确认、成果查看，再决定 UI 实现 |
+| Expected Artifacts | 文件在确认的实际Workspace根内、精确相对路径存在；同名不同目录不通过 | demo/add.js代根add.js、自动搬移、仅有声明/工具事件 |
+| Allowed Scope | 任务开始前基线与结束后真实新增/修改/删除可归属；包括已有dirty/untracked、shell写入，处理Windows大小写/链接/Junction | 普通git status、只对HEAD比较、只看Agent write事件、字符串前缀判断 |
+| Trusted Test Execution | 已批准的准确命令、实际cwd、执行来源、结束原因和真实退出码0，关联当前Attempt/产物版本 | Agent说PASS、输出含PASS、总session exit0、旧测试或被截断/缺失的记录 |
 
-角色默认/prefer、运行中改选、实时监督、完整崩溃恢复与写并行按实际使用价值后置，不作为以上最小闭环的框架前置条件。
-B4.7 的无推理探测或真实小样本可在相关接口稳定、用户已授权时提前穿插，无需等所有优化做完。
+编码/文件交付任务缺可信测试或缺任一必要证据，不能自动通过。其他任务必须显式定义适用的验收契约，不通过“测试可选”暗放编码任务。
+实现Worker允许必要自测；第二个Test Worker独立读取实际成果、运行并补充测试，不能复述前序结果。三门是必要条件，非代码质量充分证明；最终Review仍必要。
 
-## 阻塞如何处理
+范围核验复用现有Workspace/ResourceClaim；用任务前后文件事实，不把历史dirty都算本任务，也不忽略本任务对原dirty文件的新改动。保留原内容，不自动清理或回滚。
+链接或Junction越界、物理根不明、外部并发写入使归属不明时失败关闭。前后清单只能证明观察区间净变化，不证明没有瞬时外写；仍需原生权限，不能宣称新沙箱或扫描全磁盘。
 
-- 原 B4.2 多入口 no-progress 与分类 P2 均已关闭。B4.3a 已独立 PASS：显式计划绑定、冻结、完整材料交付通过；无受支持 workflow 的阶段入口写前拒绝，保留无 stage 的旧执行。B4.4 最小交付视图亦已独立通过；B4.5/B4.5a最小Git协作和审核保护已独立通过；B3.1原生Skill有界切片也已独立通过；B3.2原生MCP选择与观察有界切片已独立通过，B2.1/B2.1a声明池最终准入及B4.6a同进程用户检查点已按最小范围交付，B5.1已按已知session_failure有界子集交付，下一候选B4.7需先明确模型/费用/数据。
-- Git项目协作：单worktree顺序路线已实现；Git子目录明确拒绝，未提交文件不自动带入。运行期retained claim及scope归一化已收口；不新增合并框架、不自动写并行。
-- DSH 无逐请求选模型：该协议不能承担要求两个不同指定模型的验收；选择已支持的实际 Agent，不伪造能力、不改全局模型。
-- 模型、额度和实际调用：未知即未知。用户池不足/未授权费用/真实环境不可用时停止相关真实验收，其他 hermetic 开发继续。
-- 草案中的理论边界不是全部当前缺陷；按相关任务覆盖代表性场景，不一次建设企业级治理平台。
+## 4. 源码接点与安全边界
 
-## 完成度口径
+| 当前入口（本轮只读） | 后续最小接线 | 仍缺什么 |
+|---|---|---|
+| plan-file.ts:66/169/284；round-cli.normalizedPlanScope；stage-material.stageBindingDigest | 在既有JSON增加必要交付/范围/测试字段，传播到Task/brief与同一计划绑定 | 当前仅fileScope/deliverable声明，没有三门 |
+| workspace.ts:96/432，既有dispatch/executeTask | 以实际WorkspaceHandle.cwd采集每次执行前基线/执行后证据 | 当前没有完整dirty增量归属/重解析点核验；Node/Win32资料仅方法，不是实现证明 |
+| workbench.completeTask:1436→applyVerification:1445；orchestration/orchestrator.ts:786 | 异步检查可预先做，最终提交同步重读Task/Attempt/RunResult/工作区、授权及证据版本；所有可达pass入口服从同一约束 | review-loop.ts:281也调applyVerification，不能只在CLI加检查 |
+| opencode.toolFromPart:418/427；AgentSession.noteToolCall:641；RunResult.toolCalls | 复用原生事件和同Attempt记录，核验准确测试命令/cwd/exit来源 | 当前exit可能null，toolCalls有上限；不匹配/缺证拒绝，不能把模型文字提升为可信事实；若现有事件不足需最小可信执行接线，不另造测试引擎 |
+| round-cli.currentActualOf:2358；runOneCycle/complete分支；runUnifiedReview:4047 | 机器结果经同一Verification；缺证不能靠LAYA complete或手动accept绕过 | P0-1先门禁，P0-2后默认流转；Review保留独立会话和verdict |
+| workflow-checkpoint.ts:103/191/214；round-cli:2734/2746 | P0-3类型化原因、系统/用户来源及pending投影 | 当前仍60秒异常→stop/source=user；不将target语义直接加成第二TaskState |
 
-以“新草案对应的后端完整使用效果”为分母，按执行、模型选择、工作流、阶段确认、成果、监督、工具、费用、恢复和真实验收十项加权。
-权重和已实现信用见唯一基线。当前后端信用为68/100，网页按5%档显示完成70%、剩30%（合理剩余30–50%）；本轮动作验收受阻不增加信用。完整需求/用户批准、真实模型/费用、原生工具及完整恢复仍不足，不按测试数加进度。
+行号是本轮映射，实施前重定位。TaskStore/Assignment/Scheduler.tick/Orchestrator/AttemptStore/SessionRegistry/Job/Human Gate不新建替代。
+LAYA保留合法任务决策，但不能越过门禁；不把wait改complete。停止未知不释放保护，不放宽Worker/Reviewer/LAYA执行deadline或费用预算，PARALLEL_WRITE=CLOSED。
 
-这是规划判断，不是代码行数、通过测试数、工时预测或产品前端完成度；需求变化时必须重估并解释分母变化。
+## 5. P0-3恢复边界
 
-## 更新方式
+当前TaskStore、AttemptStore为内存对象；磁盘session/transcript/round-result不是可恢复的权威编排快照。
+最小P0-3可保存待人工决定的结果、原因、身份/授权引用及成果位置，释放已确认停止的活动资源，并明确resumeSupported=false（具体字段复用既有报告）。
+若进程退出，不声称次日能原地继续；需要恢复时，最小缺口是可信恢复Task/Attempt/授权关联、重新核验工作区和费用/停止事实，以及防重复派发。
+本轮不实施该恢复能力，不建设通用跨进程恢复引擎。停止未确认时不能宣称已安全进入pending_user或释放保护。
 
-每个任务结束：更新唯一基线的事实/证据/进度快照 → 更新受影响需求与路线 → 刷新本机进度页 → 再报告。
-页面只派生文档，不连接 Runtime、不派工、不授权。源文件、数据、预览脚本及旧 UI 备份均不进入 Git。
-本机目录存在时运行 `node project-progress/refresh.mjs`；需要实时查看时运行 `node project-progress/refresh.mjs --serve`。
+## 6. P0之后的顺序保持
 
-## 调研取舍
+| 级别 | 后续目标 | 复用方式 |
+|---|---|---|
+| P1 | 自然语言需求生成2–3个候选短计划 | 已适配Agent→parsePlanFile→plan-choice/LAYA→冻结计划/digest；生成调用另计授权，不让stage-check暗中推理 |
+| P2 | 模型与Skill/MCP配置、角色标签预过滤 | 现有Registry、用户费用池、Skill/MCP目录/intent和原生加载；不建models.yaml/第二网关；列出不等于可调用/免费 |
+| P3 | 正式Windows桌面UI | 桌面路线保持，先与Owner单独确认前端需求；本机ignored进度页不是产品UI |
 
-2026-10-13 本会话通过 GitHub MCP repository search 核对 [Spec Kit](https://github.com/github/spec-kit) 和
-[OpenSpec](https://github.com/Fission-AI/OpenSpec)：两者 metadata 为 MIT、未归档且近期有推送。
-方法参考沿用草案的需求/计划/任务分离；本轮没有重新审计其全部源码、安全性或 Windows 运行，不安装、不复制框架。
-实际接线优先复用本项目已有 Planner、Human Gate、RoundResult、Workspace/Claim 和停止协议。
+原需求中的功能A/B、多会话、免费优先、动态额度、模型掉线接力、长材料、用户纠偏/恢复全部保留，按使用反馈小片补齐。26项B5.1-WF既有失败及固定pair/顺序/无接力有限准入不因新契约消失；新代码触及其共享路径时重新评估相关风险，不扩大豁免或强行修全部历史债务。
 
-B3.1受控证据仅支持用户声明Skill候选与advisory请求/工具观察；自动发现、真实MCP连接/权限/调用、真实加载及token节省不在已交付范围，不能以元数据代替费用/调用事实。
+## 7. 研究与维护
 
-## B2.1 实施后单点调整（2026-10-14）
-
-B2.1首次因prepare期间到期仍启动而BLOCKED的P1，现已在B2.1a独立关闭。用户声明池与最终同步启动准入受控最小闭环通过；B4.6a最小检查点已交付，B5.1有界子集已交付，下一候选B4.7待模型/费用/数据确认；不让付费账务平台、实时价格或全面策略阻塞本单点。free/included只作声明，付费与未知继续拒绝，真实资格/硬预算仍后置。唯一状态与证据见PROJECT_BASELINE。
-
-## B2.1a 收口后顺序（2026-10-14）
-
-最终启动前准入已受控独立PASS，继续按个人工具小片推进：B4.6a同进程检查点（最小已交付）→ B5.1模型中断的有界接力 → B4.7明确模型/费用/数据的真实代表验收。费用声明本身不作账户事实；硬预算或全面计费可按实际使用需求后补，不为此卡住当前监督切片。每片仍需用户下发，唯一状态见PROJECT_BASELINE。
-
-## B5.1 子集后的最小下一片
-
-B4.7先明确2个支持逐请求模型选择的真实pair、用户费用/数据范围、少量调用上限，再运行一个小型顺序/协作代表验收。DSH协议不支持逐请求模型，不伪造第二模型；fixture不替代真实证据。完整自动恢复可在真实失败形态明确后补，不建设企业级治理平台。正式前端仍先确认需求。
+[研究索引](ENGINEERING_RESEARCH_REFERENCES.md)保留原20项，新增Owner本次明确给出的Agentless、A2A、OpenAI Agents SDK；明确论文事实、官方机制与项目推导。只借鉴机制，不移植框架/服务。
+每片先调查→有界委派→独立验收→更新基线/NEXT/进度页。文档更新不增实现信用；历史68/100保持，不等于MVP成功率。真实推理和开发本轮均0，不追改三次历史实验。

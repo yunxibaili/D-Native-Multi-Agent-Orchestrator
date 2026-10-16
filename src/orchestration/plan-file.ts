@@ -39,6 +39,13 @@
 import type { TaskType } from '../quota/types.ts';
 import { TASK_TYPES } from '../quota/types.ts';
 import type { CandidateTask } from './planner.ts';
+import {
+  CompletionContractError,
+  hasAnyCompletionField,
+  isCodingTaskType,
+  parseCompletionContract,
+  type CompletionContract,
+} from './completion-contract.ts';
 
 // ---------------------------------------------------------------------------
 // Bounds — named constants, not a configuration platform.
@@ -81,6 +88,14 @@ export interface PlanFileStep {
    * as `[]`: only the chain applies.
    */
   readonly dependencies?: readonly string[];
+  /**
+   * P0-1: the typed COMPLETION CONTRACT this step's task must prove before `pass`.
+   *
+   * REQUIRED for a coding step (`implementation`/`test`) — the parser refuses one that
+   * omits it, so a governed coding task can never be built without a contract. Optional
+   * for `research`/`review`, which keep their original acceptance semantics.
+   */
+  readonly completion?: CompletionContract;
 }
 
 export interface PlanFileSequentialPlan {
@@ -185,12 +200,29 @@ function parseStep(raw: unknown, where: string): PlanFileStep {
     }
     dependencies = raw.dependencies.map((d, i) => text(d, `${where}.dependencies[${i}]`)!);
   }
+  // P0-1: the typed completion contract. A coding step MUST declare it (all three
+  // fields); a partial declaration on any step is a refusal, never silently ignored.
+  const taskType = taskTypeRaw as TaskType;
+  let completion: CompletionContract | undefined;
+  const declared = hasAnyCompletionField(raw);
+  if (isCodingTaskType(taskType) || declared) {
+    try {
+      completion = parseCompletionContract(
+        { expectedArtifacts: raw.expectedArtifacts, allowedScope: raw.allowedScope, test: raw.test },
+        where,
+      );
+    } catch (e) {
+      if (e instanceof CompletionContractError) throw new PlanFileError(e.code, e.detail);
+      throw e;
+    }
+  }
   return Object.freeze({
     role,
-    taskType: taskTypeRaw as TaskType,
+    taskType,
     ...(fileScope === undefined ? {} : { fileScope }),
     deliverable,
     ...(dependencies === undefined ? {} : { dependencies: Object.freeze([...dependencies]) }),
+    ...(completion === undefined ? {} : { completion }),
   });
 }
 
@@ -367,9 +399,11 @@ export function buildSequentialStepCandidates(
     taskType: s.taskType,
     description:
       `${objective} :: ${s.role} — deliverable: ${s.deliverable}` +
-      (s.fileScope === undefined ? '' : ` — file scope: ${s.fileScope}`),
+      (s.fileScope === undefined ? '' : ` — file scope: ${s.fileScope}`) +
+      (s.completion === undefined ? '' : ` — approved test: ${s.completion.test.executable} ${s.completion.test.argv.join(' ')} (cwd ${s.completion.test.cwd})`),
     dependencies: Object.freeze([...deps[i]!]),
     requiredTaskTypes: Object.freeze([s.taskType]),
+    ...(s.completion === undefined ? {} : { completion: s.completion }),
   }));
 }
 
@@ -393,9 +427,11 @@ export function buildCollaborationMemberCandidates(
     taskType: m.taskType,
     description:
       `${objective} :: collaborator ${i + 1} (${m.role}) — file scope: ${m.fileScope ?? '(not specified)'} — ` +
-      `deliverable: ${m.deliverable} — do not implement the other members' scopes`,
+      `deliverable: ${m.deliverable} — do not implement the other members' scopes` +
+      (m.completion === undefined ? '' : ` — approved test: ${m.completion.test.executable} ${m.completion.test.argv.join(' ')} (cwd ${m.completion.test.cwd})`),
     dependencies: Object.freeze([...deps[i]!]),
     requiredTaskTypes: Object.freeze([m.taskType]),
+    ...(m.completion === undefined ? {} : { completion: m.completion }),
   }));
   const integrator = Object.freeze({
     taskId: integratorId,

@@ -1439,16 +1439,16 @@ section('T2-b. PRODUCTION WIRING: the Worker execution contract on the real chai
 /** Does this delivered instruction actually carry the bounded-recon contract? */
 const carriesContract = (p: string): boolean =>
   p.includes('Execution contract (Worker-local bounded recon / reuse-first)')
-  && p.includes('Inspect the relevant current truth')
-  && p.includes('Search the repository for an existing helper')
-  && p.includes('upstream / reference / open-source')
+  && p.includes('actual process working directory')
+  && p.includes('same-name module or an existing reusable module')
+  && p.includes('external public reference')
   && p.includes('licence, API/version compatibility')
   && p.includes('REUSE, ADAPT, WRAP, or NEW')
   && p.includes('never means your recon is already done')
   && p.includes('Keep recon bounded')
   && p.includes('Do not modify external Agent installations')
   && p.includes('Before performing the substantive task')
-  && p.includes('Only after that recon and reuse decision');
+  && p.includes('choose NEW explicitly');
 
 // --- T2B-15: normal execution, real chain ---
 {
@@ -1481,6 +1481,20 @@ const carriesContract = (p: string): boolean =>
     check('T2B-15: it still demands self-verification despite any prior research',
       dispatched !== undefined && dispatched.prompt.includes('never means your recon is already done'),
       'waiver language absent');
+    // MVP-E2E.1b round 2: the SAME actually-dispatched RunRequest must carry the NEW
+    // bounded-scope / explicit-NEW / denial / read-only / real-delivery wording. This is
+    // wording-and-wiring evidence on the real chain only — it does not show that any model
+    // obeyed it or that a file was created, and none is claimed here.
+    const pw = dispatched?.prompt ?? '';
+    check('T2B-15: the dispatched request carries the NEW empty-scope / exclusion / denial wording',
+      pw.includes('choose NEW explicitly') && pw.includes('need not prove')
+      && pw.includes('parent or sibling') && pw.includes('historical audit logs or runtime evidence')
+      && pw.includes('never bypass a denial through another tool'), 'new scope/denial wording absent');
+    check('T2B-15: and the read-only guard, real-delivery and test-handoff preservation wording',
+      pw.includes('If the task is read-only, do not mutate')
+      && pw.includes('actually create or change the requested files')
+      && pw.includes('supplied upstream artifacts') && pw.includes('never invents a pass')
+      && pw.includes('conflicting higher-priority native or task rule'), 'delivery/test wording absent');
   } finally { r.cleanup(); }
 }
 

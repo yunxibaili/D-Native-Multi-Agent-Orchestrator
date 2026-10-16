@@ -66,6 +66,11 @@ const SUITES = [
   // B4.0a: the PRODUCTION round CLI drives the workflow to completion (bounded loop,
   // existing Verification via LAYA's `complete`, honest incomplete status). Hermetic.
   'b40a-cli-workflow',
+  // MVP-E2E.1a: the per-ROUND cumulative hard POST budget (`--laya-post-max`) and the
+  // WIRE guarantee that one reservation is one transmission (HTTP 421 is not replayed by
+  // a one-shot stream body; 307/308 are refused). Offline: a controlled fetch plus real
+  // loopback servers, no model and no product Agent.
+  'laya-post-budget',
   // B4.1: same-goal 2–3 model collaboration groups (功能 B). Hermetic — the real
   // Workbench/Assignment/Session/Scheduler/Verification/Review chain with fake adapters,
   // and the integrator reads REAL member files written into the round's owned directory.
@@ -106,6 +111,9 @@ const SUITES = [
   'unified-review',
   'continuation',
   'handoff-production-round',
+  // P0-1: the deterministic completion gate — real plan-file -> workbench -> executeTask
+  // chain with a REAL contained approved test; hermetic (fake agent, no model/network).
+  'p01-completion-gate',
   'round-result',
   'execution-lifecycle',
   // TeamRun T2-b: the Worker execution contract (bounded recon / reuse-first). Proves the

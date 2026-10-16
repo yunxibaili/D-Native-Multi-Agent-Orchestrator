@@ -42,6 +42,7 @@
 import type { TaskType } from '../quota/types.ts';
 import { TASK_TYPES } from '../quota/types.ts';
 import { findDependencyCycle } from './task.ts';
+import type { CompletionContract } from './completion-contract.ts';
 // TYPE-ONLY. `SessionIntent` is data the planner passes through; importing it as a
 // type keeps the planner's runtime imports to `task.ts` alone, so the structural
 // "planner reaches nothing" test still holds.
@@ -100,6 +101,12 @@ export interface CandidateTask {
    */
   readonly preferredAgent?: string;
   readonly preferredModel?: string;
+  /**
+   * P0-1: the typed completion contract for a CODING candidate, when the plan source
+   * declared one. Carried to `TaskStore.create` unchanged; the committer adds no rule
+   * of its own. Its presence is what arms the completion gate for this task.
+   */
+  readonly completion?: CompletionContract;
 }
 
 export interface PlannerInput {

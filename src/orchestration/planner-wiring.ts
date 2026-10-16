@@ -153,6 +153,9 @@ export function commitPlan(
         dependencies: [...c.dependencies],
         budgetUnits: c.budgetUnits ?? options.budgetUnits ?? 0,
         generation: options.generation ?? 0,
+        // P0-1: carried verbatim when the plan source declared one; the committer adds
+        // no rule and never invents a contract.
+        ...(c.completion !== undefined ? { completionContract: c.completion } : {}),
       },
       Date.now(),
     );

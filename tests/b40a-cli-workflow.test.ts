@@ -128,6 +128,17 @@ async function workflowRound(opts: {
    * `null` omits the cleanup fact entirely (an UNKNOWN stop).
    */
   treeStopConfirmed?: boolean | null;
+  /**
+   * MVP-E2E.1a: an explicit per-round POST budget. When set, the provider OVERRIDE is NOT
+   * used (the CLI refuses a budget on an injected provider): the REAL provider is built by
+   * `runRoundCli` with the budget, and the controlled fetch is injected BELOW it through
+   * `layaFetchImpl`, so the budget gate is the production one.
+   */
+  postMax?: number;
+  /** MVP-E2E.1a: pass `--classify-only` (classify, print, stop; no plan/assignment). */
+  classifyOnly?: boolean;
+  /** MVP-E2E.1a: pass `--workflow-plan <path>` (a deliberately missing path forces the plan failure path). */
+  planFile?: string;
 } = {}): Promise<Round> {
   const dir = ownDir();
   // B4.0b P2-C: an OWNED publish dir, always. The production default is
@@ -281,48 +292,57 @@ async function workflowRound(opts: {
     return { type: 'choice', choice: chosen, probabilities, confidence: 1, answer_confidence: 1, action: { act_probability: 1 } };
   };
 
-  const provider: DecisionProvider = createLayaDecisionProvider({
-    fetchImpl: (async (url: string, init?: { method?: string; body?: string }) => {
-      const u = String(url);
-      if (u.endsWith('/health')) {
-        return new Response(JSON.stringify({ status: 'ok', device: 'cuda', loaded: ['english'], cpu_fallbacks: {} }), {
-          status: 200, headers: { 'content-type': 'application/json' },
-        });
-      }
-      const body = JSON.parse(String(init?.body ?? '{}')) as {
-        state?: Record<string, string>;
-        questions?: Record<string, { type: string; criteria?: unknown }>;
-      };
-      const questions = body.questions ?? {};
-      const state = body.state ?? {};
-      const answers: Record<string, unknown> = {};
-      for (const [key, q] of Object.entries(questions)) {
-        if (key === ORCHESTRATION_ACTION_ID) {
-          decisionRequests.push({ questions, state } as unknown as DecisionRequest);
-          const actionAnswer = nativeActionAnswer((q.criteria ?? {}) as Record<string, string>, state);
-          actionChoices.push(String(actionAnswer.choice));
-          answers[key] = actionAnswer;
-          continue;
-        }
-        answers[key] = answerFor(key, q as { type: string; criteria: unknown }, overrides);
-      }
-      /*
-       * LAYA-CONTEXT.1: the real provider always reports routing/usage, and the
-       * bounded visibility guard reads checkpoint + input tokens from it. The
-       * fixture must therefore send a supported checkpoint and an UNDER-budget token
-       * count, or every bounded cycle would (correctly) be refused. This is
-       * explicitly CONTROLLED fixture metadata, not a real tokenizer measurement.
-       */
-      return new Response(JSON.stringify({
-        model: 'laya-fixture',
-        answers,
-        routing: { model: 'english', reason: 'controlled fixture metadata', detection: { script: 'latin', language: 'en' }, revisions: {} },
-        usage: { input_tokens: 128, output_tokens: 0 },
-      }), {
+  // MVP-E2E.1a: a budgeted request carries a ONE-SHOT ReadableStream body, so the
+  // fixture must read the body whether it is a plain string (unbudgeted) or a stream.
+  const readLayaBody = async (init?: { body?: unknown }): Promise<string> => {
+    const b = init?.body;
+    if (typeof b === 'string') return b;
+    if (b instanceof ReadableStream) return await new Response(b).text();
+    return String(b ?? '{}');
+  };
+
+  const layaFetch = (async (url: string, init?: { method?: string; body?: unknown; redirect?: string; duplex?: string }) => {
+    const u = String(url);
+    if (u.endsWith('/health')) {
+      return new Response(JSON.stringify({ status: 'ok', device: 'cuda', loaded: ['english'], cpu_fallbacks: {} }), {
         status: 200, headers: { 'content-type': 'application/json' },
       });
-    }) as unknown as typeof fetch,
-  });
+    }
+    const body = JSON.parse(await readLayaBody(init)) as {
+      state?: Record<string, string>;
+      questions?: Record<string, { type: string; criteria?: unknown }>;
+    };
+    const questions = body.questions ?? {};
+    const state = body.state ?? {};
+    const answers: Record<string, unknown> = {};
+    for (const [key, q] of Object.entries(questions)) {
+      if (key === ORCHESTRATION_ACTION_ID) {
+        decisionRequests.push({ questions, state } as unknown as DecisionRequest);
+        const actionAnswer = nativeActionAnswer((q.criteria ?? {}) as Record<string, string>, state);
+        actionChoices.push(String(actionAnswer.choice));
+        answers[key] = actionAnswer;
+        continue;
+      }
+      answers[key] = answerFor(key, q as { type: string; criteria: unknown }, overrides);
+    }
+    /*
+     * LAYA-CONTEXT.1: the real provider always reports routing/usage, and the
+     * bounded visibility guard reads checkpoint + input tokens from it. The
+     * fixture must therefore send a supported checkpoint and an UNDER-budget token
+     * count, or every bounded cycle would (correctly) be refused. This is
+     * explicitly CONTROLLED fixture metadata, not a real tokenizer measurement.
+     */
+    return new Response(JSON.stringify({
+      model: 'laya-fixture',
+      answers,
+      routing: { model: 'english', reason: 'controlled fixture metadata', detection: { script: 'latin', language: 'en' }, revisions: {} },
+      usage: { input_tokens: 128, output_tokens: 0 },
+    }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    });
+  }) as unknown as typeof fetch;
+
+  const provider: DecisionProvider = createLayaDecisionProvider({ fetchImpl: layaFetch });
 
   const argv = [
     opts.objective ?? 'add a retry to the http client',
@@ -333,6 +353,9 @@ async function workflowRound(opts: {
     ...(opts.workflowChoice !== undefined ? ['--workflow-choice', opts.workflowChoice] : []),
     ...(opts.fixed !== undefined ? ['--select', 'fixed', '--agent', opts.fixed.agentId, '--model', opts.fixed.modelId] : []),
     ...(opts.checkpoint === true ? ['--checkpoint'] : []),
+    ...(opts.postMax !== undefined ? ['--laya-post-max', String(opts.postMax)] : []),
+    ...(opts.classifyOnly === true ? ['--classify-only'] : []),
+    ...(opts.planFile !== undefined ? ['--workflow-plan', opts.planFile] : []),
   ];
   const before = process.stdout.write.bind(process.stdout);
   let captured = '';
@@ -340,7 +363,12 @@ async function workflowRound(opts: {
   let exitCode = -1;
   try {
     exitCode = await runRoundCli(drivable as never, argv, {
-      provider,
+      /*
+       * MVP-E2E.1a: a budget must be enforced by the REAL provider, so when `postMax` is
+       * set the controlled fetch is injected BELOW the real provider (the CLI refuses a
+       * budget on a substituted `provider`). Otherwise the existing provider seam is used.
+       */
+      ...(opts.postMax !== undefined ? { layaFetchImpl: layaFetch } : { provider }),
       /*
        * TWO available pairs for the one agent. The REAL production provider refuses a
        * one-option `choice` (it would answer the same for every input), and a single
@@ -1104,6 +1132,92 @@ section('checkpoint accept refused: an unconfirmed or unknown process-tree stop 
       r.report.ok === false && r.report.executionIncomplete === true && r.exitCode !== 0,
       `ok=${String(r.report.ok)} exit=${r.exitCode}`);
   }
+}
+
+// =========================================================================
+// MVP-E2E.1a: the per-ROUND POST budget on the REAL CLI provider.
+//
+// The REAL `runRoundCli` builds the REAL `createLayaDecisionProvider` with the budget;
+// the controlled fetch sits BELOW it, so the gate under test is production code. The
+// budget spans the whole round: classify, the LAYA plan choice, initial Assignment and
+// every action cycle share ONE counter.
+
+type BudgetReport = { max?: number; reserved?: number; used?: number; remaining?: number; exhausted?: boolean; rejected?: boolean };
+
+section('MVP-E2E.1a budget: exhaustion stops the round before any runtime dispatch');
+
+{
+  // Budget 3 with NO pinned plan: classify (POST 1), LAYA plan choice (POST 2), initial
+  // assignment (POST 3), then the first action cycle would be POST 4 - refused BEFORE the
+  // network. Nothing runs, and the round must NOT report a false complete.
+  const r = await workflowRound({ postMax: 3 });
+  check('budget: NO runtime task ran', r.requests.length === 0, `n=${r.requests.length}`);
+  check('budget: the round is NOT ok', r.report.ok === false, `ok=${String(r.report.ok)}`);
+  const b = r.report.layaPostBudget as BudgetReport | undefined;
+  check('budget: the machine JSON carries the budget snapshot', b !== undefined, JSON.stringify(r.report.layaPostBudget));
+  check('budget: max/reserved/used are 3/3/3', b?.max === 3 && b?.reserved === 3 && b?.used === 3, JSON.stringify(b));
+  check('budget: remaining is 0 and it is exhausted', b?.remaining === 0 && b?.exhausted === true, JSON.stringify(b));
+  check('budget: a send was REJECTED (the fourth was refused)', b?.rejected === true, JSON.stringify(b));
+  const decision = r.report.decision as { status?: string; note?: string } | undefined;
+  check('budget: reported provider-unavailable with the budget reason PRESERVED',
+    decision?.status === 'provider-unavailable' && /POST budget/i.test(String(decision?.note)),
+    JSON.stringify(decision));
+  check('budget: the round exits non-zero', r.exitCode !== 0, `exit=${r.exitCode}`);
+}
+
+section('MVP-E2E.1a budget: a fresh round gets a FRESH budget (no leak from an exhausted one)');
+
+{
+  const r = await workflowRound({ planChoice: 'lean', postMax: 50 });
+  const b = r.report.layaPostBudget as BudgetReport | undefined;
+  check('fresh: a NEW budget object is not exhausted and rejects nothing',
+    b !== undefined && b.exhausted === false && b.rejected === false, JSON.stringify(b));
+  check('fresh: the lean round still completes', r.report.ok === true && r.requests.length === 2,
+    `ok=${String(r.report.ok)} n=${r.requests.length}`);
+}
+
+section('MVP-E2E.1a budget: with NO flag the report is unchanged (no budget field)');
+
+{
+  const r = await workflowRound({ planChoice: 'lean' });
+  check('legacy: no --laya-post-max adds NO budget field', r.report.layaPostBudget === undefined, JSON.stringify(r.report.layaPostBudget));
+  check('legacy: the round behaves exactly as before', r.report.ok === true && r.requests.length === 2,
+    `ok=${String(r.report.ok)} n=${r.requests.length}`);
+}
+
+section('MVP-E2E.1a budget: an EARLY classify failure still reports a truthful snapshot');
+
+{
+  const r = await workflowRound({ postMax: 0 });
+  check('classify-failure: stage is classify', r.report.stage === 'classify', JSON.stringify(r.report.stage));
+  const b = r.report.layaPostBudget as BudgetReport | undefined;
+  check('classify-failure: snapshot present and truthful (max 0, exhausted, rejected)',
+    b?.max === 0 && b?.reserved === 0 && b?.exhausted === true && b?.rejected === true, JSON.stringify(b));
+  check('classify-failure: no runtime task ran', r.requests.length === 0, `n=${r.requests.length}`);
+  check('classify-failure: exits non-zero', r.exitCode === 1, `exit=${r.exitCode}`);
+}
+
+section('MVP-E2E.1a budget: the classify-only report carries the snapshot');
+
+{
+  const r = await workflowRound({ postMax: 5, classifyOnly: true });
+  check('classify-only: stage is classify-only and ok', r.report.stage === 'classify-only' && r.report.ok === true,
+    `stage=${String(r.report.stage)} ok=${String(r.report.ok)}`);
+  const b = r.report.layaPostBudget as BudgetReport | undefined;
+  check('classify-only: exactly one POST was used and it is not exhausted',
+    b?.reserved === 1 && b?.used === 1 && b?.exhausted === false, JSON.stringify(b));
+  check('classify-only: no runtime task ran', r.requests.length === 0, `n=${r.requests.length}`);
+  check('classify-only: exits zero', r.exitCode === 0, `exit=${r.exitCode}`);
+}
+
+section('MVP-E2E.1a budget: the plan-failure report carries the snapshot');
+
+{
+  const r = await workflowRound({ postMax: 5, planFile: 'this-plan-file-does-not-exist.json' });
+  check('plan-failure: stage is plan', r.report.stage === 'plan', JSON.stringify(r.report.stage));
+  const b = r.report.layaPostBudget as BudgetReport | undefined;
+  check('plan-failure: the snapshot shows the classify POST was used', b?.reserved === 1, JSON.stringify(b));
+  check('plan-failure: no runtime task ran', r.requests.length === 0, `n=${r.requests.length}`);
 }
 
 // =========================================================================

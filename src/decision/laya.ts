@@ -24,6 +24,7 @@
  */
 
 import {
+  DecisionError,
   DecisionInputError,
   DecisionSchemaError,
   DecisionTimeoutError,
@@ -80,6 +81,14 @@ export interface LayaProviderOptions {
   readonly timeoutMs?: number;
   /** Injectable for tests; defaults to global fetch. */
   readonly fetchImpl?: typeof fetch;
+  /**
+   * MVP-E2E.1a: an OPT-IN per-ROUND cumulative POST budget.
+   *
+   * Absent = no budget, exactly the previous behaviour. When present, pass the SAME
+   * object to every provider a round builds so they share one counter; a new round
+   * mints a fresh object with `createLayaPostBudget`. `max === 0` forbids every POST.
+   */
+  readonly postBudget?: LayaPostBudget;
 }
 
 /** Laya's own routing/usage detail. Deliberately NOT part of the generic metadata. */
@@ -231,6 +240,96 @@ function resolveTimeoutMs(raw: number | undefined): number {
     throw new DecisionInputError(`timeoutMs is ${raw}, expected a positive number of milliseconds`);
   }
   return raw;
+}
+
+/**
+ * MVP-E2E.1a: a per-ROUND cumulative hard POST budget.
+ *
+ * A plain mutable object, NOT a manager: the CLI mints ONE with
+ * `createLayaPostBudget` per round and hands the SAME object to every provider it
+ * builds for that round, so two providers reconstructed mid-round share one counter.
+ * A new round gets a fresh object. There is no global map and no reset-per-decision
+ * behaviour.
+ *
+ * `reserved` is incremented SYNCHRONOUSLY before any transport, with no `await`
+ * between the comparison and the increment, so concurrent callers cannot all pass a
+ * stale check. A reservation is NEVER refunded: a timeout, a connection failure, an
+ * abort, a non-2xx or an unparseable response all leave it counted. `max === 0` means
+ * NO POST is ever allowed (it is NOT "unlimited").
+ */
+export interface LayaPostBudget {
+  /** The hard cap on POST reservations for the round. 0 forbids every POST. */
+  readonly max: number;
+  /** Reservations taken. Incremented before transport; never refunded. */
+  reserved: number;
+  /** Transmissions actually started. Never exceeds `reserved`. */
+  used: number;
+  /** Set true when a POST was REFUSED because the budget was already exhausted. */
+  rejected: boolean;
+}
+
+/**
+ * Creates the one shared budget object for a round.
+ *
+ * `max` must be a nonnegative SAFE integer. Anything else (a boolean from a bare
+ * flag, `-1`, `1.5`, `NaN`, `Infinity`, a string, an unsafe integer) is a
+ * programming/CLI error and is refused here rather than silently coerced into a cap
+ * that is not the one the user asked for.
+ */
+export function createLayaPostBudget(max: number): LayaPostBudget {
+  if (typeof max !== 'number' || !Number.isSafeInteger(max) || max < 0) {
+    throw new DecisionInputError(
+      `post budget max is ${describe(max)}, expected a nonnegative safe integer ` +
+        `(0 forbids every POST; there is no "unlimited" sentinel)`,
+    );
+  }
+  return { max, reserved: 0, used: 0, rejected: false };
+}
+
+/** The truthful machine-readable snapshot of a round's POST budget. */
+export interface LayaPostBudgetReport {
+  readonly enabled: true;
+  readonly max: number;
+  /** Reservations taken (incremented before transport; never refunded). */
+  readonly reserved: number;
+  /** Transmissions actually started. */
+  readonly used: number;
+  /** max - reserved, floored at 0. A consumed reservation is never returned. */
+  readonly remaining: number;
+  readonly exhausted: boolean;
+  /** Whether at least one POST was refused because the budget was exhausted. */
+  readonly rejected: boolean;
+}
+
+/** Takes a plain snapshot of the budget. Does not mutate it. */
+export function readLayaPostBudgetReport(budget: LayaPostBudget): LayaPostBudgetReport {
+  return {
+    enabled: true,
+    max: budget.max,
+    reserved: budget.reserved,
+    used: budget.used,
+    remaining: Math.max(0, budget.max - budget.reserved),
+    exhausted: budget.reserved >= budget.max,
+    rejected: budget.rejected,
+  };
+}
+
+/**
+ * MVP-E2E.1a: wraps bytes in a ONE-SHOT `ReadableStream`.
+ *
+ * Node's built-in fetch (Undici) extracts `body.source` from a string, typed array,
+ * `Blob`, etc., so it can replay the body for its automatic HTTP-421 retry. A
+ * `ReadableStream` yields `body.source === null`, so that replay is impossible: one
+ * `fetch` call is one transmission, even when the server answers 421. The bytes are
+ * enqueued once and the stream is closed, so the body is still delivered in full.
+ */
+function oneShotBody(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
 }
 
 /**
@@ -896,8 +995,35 @@ export function createLayaDecisionProvider(options: LayaProviderOptions = {}): D
   const timeoutMs = resolveTimeoutMs(options.timeoutMs);
   const doFetch = options.fetchImpl ?? globalThis.fetch;
   const name = 'laya';
+  // MVP-E2E.1a: an absent budget is `null` (no cap, previous behaviour). A supplied
+  // one is validated rather than trusted, so a hand-built object with a bad `max`
+  // cannot make the comparison below meaningless.
+  const postBudget: LayaPostBudget | null = options.postBudget ?? null;
+  if (postBudget !== null) {
+    if (typeof postBudget.max !== 'number' || !Number.isSafeInteger(postBudget.max) || postBudget.max < 0) {
+      throw new DecisionInputError(
+        `postBudget.max is ${describe(postBudget.max)}, expected a nonnegative safe integer`,
+      );
+    }
+  }
 
   async function post(path: string, payload: unknown): Promise<Response> {
+    // MVP-E2E.1a: reserve BEFORE any transport, with NO `await` between the compare and
+    // the increment, so ten concurrent callers with max 3 cannot all pass a stale check.
+    // The reservation is never refunded.
+    if (postBudget !== null) {
+      if (postBudget.reserved >= postBudget.max) {
+        postBudget.rejected = true;
+        throw new DecisionError(
+          'DECISION_POST_BUDGET_EXHAUSTED',
+          `the per-round POST budget of ${postBudget.max} is exhausted ` +
+            `(${postBudget.reserved} reservation(s) already taken, ${postBudget.used} sent). ` +
+            `This request was refused BEFORE it reached the network. The budget is a hard cap per ` +
+            `round, and a failed, timed-out, aborted or unparseable request is not refunded.`,
+        );
+      }
+      postBudget.reserved += 1;
+    }
     const url = `${baseUrl}${path}`;
     const body = JSON.stringify(payload);
     if (Buffer.byteLength(body, 'utf8') > MAX_BODY_BYTES) {
@@ -909,12 +1035,38 @@ export function createLayaDecisionProvider(options: LayaProviderOptions = {}): D
     const signal = AbortSignal.timeout(timeoutMs);
     let res: Response;
     try {
-      res = await doFetch(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body,
-        signal,
-      });
+      if (postBudget === null) {
+        // UNBUDGETED: byte-for-byte the previous request - a replayable string body and
+        // no redirect option - so compatibility is preserved exactly.
+        res = await doFetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body,
+          signal,
+        });
+      } else {
+        postBudget.used += 1;
+        // BUDGETED: a ONE-SHOT stream body plus `redirect: 'error'`, so the built-in
+        // fetch cannot silently turn one reservation into more than one transmission.
+        //
+        // Undici (Node's fetch) automatically retries an HTTP 421 when
+        // `request.body.source != null`. A string/typed-array body has a source, so it
+        // CAN be replayed and the wire would see a second POST that no reservation
+        // covers. A `ReadableStream` has `body.source === null`, so the 421 branch is
+        // skipped and one call is one POST. `redirect: 'error'` refuses to FOLLOW a 3xx
+        // (rather than following it), so a 307/308 cannot spawn an extra POST at a
+        // redirect target. The JSON bytes and the content type are unchanged.
+        res = await doFetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: oneShotBody(Buffer.from(body, 'utf8')),
+          signal,
+          redirect: 'error',
+          // Required by Undici when the body is a stream. The whole body is already
+          // enqueued, so the half-duplex flow is complete after one chunk.
+          duplex: 'half',
+        });
+      }
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       // A timeout and a refused connection are different operator problems, so
