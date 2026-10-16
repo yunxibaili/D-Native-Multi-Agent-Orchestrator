@@ -1,7 +1,8 @@
 # Execution Round 当前语义
 
-更新日期：2026-10-11
+更新日期：2026-10-12
 状态：现有执行边界参考；新需求的目标能力另见 BACKEND_REQUIREMENTS.md。
+阶段与授权的唯一基准是 [PROJECT_BASELINE.md](PROJECT_BASELINE.md)。
 
 ## 1. 有界执行
 
@@ -43,6 +44,9 @@ cancel/deadline 先触发既有停止协议，等物理停止事实得到确认�
 用户暂停应区分停止后续调度、协作保存检查点和取消；
 现状不承诺任意进程原地暂停恢复。
 
+B5.1仅覆盖已有明确TRANSPORT_ERROR/session_failure的受控安全接力；真实流/额度/认证/服务故障分类和完整恢复仍后续，静默不直接判死亡。
+有界重试考虑部分写入和重复工具调用；fixed 失效不自动换 pair，缺合格免费候选不转付费。
+
 ## 5. Review、结果与用户
 
 Review 消费当前执行证据，通过统一 verification 契约给出结论。
@@ -50,8 +54,18 @@ Review 消费当前执行证据，通过统一 verification 契约给出结论�
 CLI Round 汇总报告并停止，新要求由用户发起。
 Observation 与结果摘要是只读派生，不新增 ReportAuthority/ResultStore。
 
+## 6. 有界工作流与显式用户检查点
+
+sequential/collaborate及计划文件复用既有任务/验证/调度链，按真实依赖顺序执行。成功退出不自动等于业务验收；未交付/未验收/失败阻止下游。最终仍到Human Gate停止，无跨Round自动执行。
+可显式加独立 `--checkpoint`（不接受值、仅执行工作流），在真实成员to_verify与LAYA验收之间展示同Attempt材料；`continue`仍走原验收/准入，`stop <reason>`结束后续执行/接力并保留之前的成功及实际证据。非TTY/EOF/错误/60秒超时或无效答案停止，不默认放行。无flag不读取输入，stderr控制提示不污染JSON stdout。
+检查点不是任务完成、真实模型身份/费用认证、强制原地暂停或跨进程恢复；当前覆盖范围和独立证据只见唯一基线。PARALLEL_WRITE保持CLOSED。
+
 相关入口：
 [项目基线](PROJECT_BASELINE.md)、
 [协作契约](R2_COORDINATION_CONTRACT.md)、
 [执行证据](DECISION_LOOP_EXECUTION_RESULT_CONTRACT.md)。
 历史 R1/R2 状态和测试数只在 [归档](STAGE_ANALYSIS.md#历史备份) 保留。
+
+## 7. 已知session_failure的有界接力
+
+旧执行cleanup.treeStopConfirmed必须明确true，false/缺失先停止接力选择与身份迁移，并保持incomplete/非零。workflow失败边界交给同一个continuation driver，同Task新Attempt/fresh Session，保留部分输出、工具观察、截断/停止事实，提示核对现状，不能盲重放副作用。Agent×Model逐字段比较、unknown保守，handoff-max绝对上限与既有原因例外/重复守卫保留；fixed/用户池/最终准入不放宽。workflow恢复任务成功仍to_verify，整轮待原验证/下游，不自动resume全workflow。Review未完成原因如实区分保留资源/停止未知/用户stop/workflow/fan-out。

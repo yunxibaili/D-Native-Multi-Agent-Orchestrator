@@ -1,101 +1,137 @@
 # LAYA Native Multi-Agent Orchestrator
 
-面向个人 Windows 工作站的本机多 Agent 编排后端。
-复用已安装、已授权的 Native Agent 及其模型、会话和工具，
-由 LAYA（laya）组织任务级决策，经现有准入与执行链完成工作。
+更新日期：2026-10-16
 
-## 当前文档
+个人 Windows 工作台的本机多 Agent 编排后端。用户提交目标，LAYA 决定任务分工、具体 Agent × Model 与需要的能力，既有执行链负责准入、调度、隔离、证据和验证。
 
-| 文档 | 内容 |
+## 唯一当前状态入口
+
+**[docs/PROJECT_BASELINE.md](docs/PROJECT_BASELINE.md) 是唯一当前项目状态与阶段基准。**
+其他文档不另设一套封板状态、授权状态或测试成绩；历史审核在 Git 查看。
+
+| 文档 | 负责内容 |
 |---|---|
-| [后端需求](docs/BACKEND_REQUIREMENTS.md) | Agent/模型/多会话、Skill/MCP 选择、免费优先、接力及验收 |
-| [项目基线](docs/PROJECT_BASELINE.md) | 已有能力、封板状态与当前边界 |
-| [阶段分析](docs/STAGE_ANALYSIS.md) | 源码差距、建议阶段、前端需求提醒和 Git 历史备份 |
-| [架构契约](docs/ARCHITECTURE_CONTRACTS.md) | 身份、单一权威、执行证据、停止与隔离 |
-| [LAYA 接口](docs/DECISION_PROVIDER.md) | 本地 typed decision 和错误语义 |
-| [协作契约](docs/R2_COORDINATION_CONTRACT.md) | Lease/fencing、ResourceClaim、工作区与接力 |
-| [Round 语义](docs/EXECUTION_ROUND_SEMANTICS.md) | 有界执行、quota 事实和 Human Gate |
-| [执行证据](docs/DECISION_LOOP_EXECUTION_RESULT_CONTRACT.md) | 当前 Attempt 与 RunResult 关联 |
-| [Windows launcher](native/windows-job-launcher/README.md) | 构建、control 协议与生产 containment 边界 |
+| [后端需求](docs/BACKEND_REQUIREMENTS.md) | 用户目标与验收要求，区分已交付和未来需求 |
+| [项目基线](docs/PROJECT_BASELINE.md) | 唯一当前事实、阶段状态、限制与证据入口 |
+| [阶段分析](docs/STAGE_ANALYSIS.md) | 推进分析与历史备份 |
+| [交付计划](docs/BACKEND_DELIVERY_PLAN.md) | 新草案对应的任务路线和验收边界 |
+| [下一任务](docs/NEXT_TASK.md) | 当前最小实施切片与独立复现 |
+| [架构契约](docs/ARCHITECTURE_CONTRACTS.md) | 身份、执行入口、停止与结果权威 |
+| [LAYA 接口](docs/DECISION_PROVIDER.md) | typed decision、候选选择与失败语义 |
+| [协作契约](docs/R2_COORDINATION_CONTRACT.md) | Lease、资源、工作区和协作边界 |
+| [Round 语义](docs/EXECUTION_ROUND_SEMANTICS.md) | 有界执行、配额事实、Human Gate |
+| [执行证据](docs/DECISION_LOOP_EXECUTION_RESULT_CONTRACT.md) | Requested/Admitted/Executed/Verified 与 Attempt 关联 |
+| [Windows launcher](native/windows-job-launcher/README.md) | native 构建、Job control 与 containment |
 
-需求描述目标能力，不代表全部已实现。当前 W5 未封板，
-PARALLEL_WRITE=CLOSED；新增后端阶段未授权实现，前端需求留到进入前端阶段单独确认。
-OpenCode 主要开发，Codex 独立审核。
+用户明确指令优先。需求是目标，基线是现状，契约定义不可绕过的行为；文档不能覆盖源码与真实证据。
 
-## 目标与现状
+## 两个核心功能
 
-目标：LAYA 为每个任务选择具体 Agent、Model、所需 Skill 和 MCP 工具；
-同一 Agent 可通过独立会话运行多个模型；优先合格免费资源，必要时安全接力。
+- **功能 A：跨角色独立分工。** LAYA 为调研、实现、测试、审核等具体任务选择 Agent 内的具体模型及独立会话，传递依赖材料与交付物。角色随任务变化。
+- **功能 B：同目标模型协作组。** 一个目标由 2–3 个模型按职责共建，成员有独立 child task、会话、文件范围和交付物，指定集成责任。多人结束不等于验收通过。
 
-现有内核已有 Agent × Model 选择、Task/DAG、Session/Worker 身份、Lease/fencing、
-工作区/资源保护、Windows containment、Attempt evidence、有界 handoff 和统一 Review。
-完整模型目录与用户固定规则、LAYA Skill/MCP 选择、动态费用额度、
-各 Agent 多模型真实并发和总 token 收益，仍需按阶段补齐/验收。
-当前生产只编排 native Agent；不直接调用供应商模型 API，不读取或搬运凭据。
+同 Agent 多模型、多会话属于后端需求；“前端实现任务”只是业务角色示例，不表示本工作台已进入前端阶段。
+LAYA 还需要任务级 Skill/MCP 选择与按需上下文、免费优先和有界接力；这些尚未完成整体验收。
 
-## 执行边界
+## 当前可用与限制
 
-用户目标 → LAYA → 候选 DAG → Assignment/Lease → Scheduler/executeTask
-→ Spawn Gate/Workspace/ResourceClaim → Native Runtime
-→ Attempt/Result → Verification/Codex Review → Human Gate → END。
+已审核的最小能力包括：OpenCode opt-in 模型目录、DSH 基础 headless 接入与输出保真、项目/任务 auto/fixed 选择及动态子任务固定约束。
+W5 与 B1.4a 的准确状态见唯一基线；B1 整体未封板，PARALLEL_WRITE=CLOSED。
+DSH 当前不支持逐请求指定模型或 native session 恢复，不能声称已经通过 DSH 实现多模型调度。
+listed ≠ connected ≠ callable ≠ free；严格零新增费用尚未端到端验收。
 
-TaskId 在接力时稳定，真实执行产生新 Attempt。
-当前 Round 在 Human Gate 后 automaticPostRoundAction=NONE。
-停止未确认不提前释放保护；root 退出不等于整棵执行树停止。
-Observation/临时 dashboard 只读，不是新的命令或调度 authority。
+当前 **B4.5/B4.5a独立PASS（受控最小Git顺序协作范围）**：组内单worktree交付、脏文件保护和实际成果审核已通过；
+停止未确认、no-review或scope重叠均阻止误报成功。B1/B4整体仍未封板。
+B3.1任务级原生Skill有界闭环独立PASS：显式 `--skill-catalog skills.json` 配合sequential/collaborate，LAYA至多选一个advisory请求或none，报告分开请求/绑定/工具观察。候选不证明已安装，绑定不证明已加载；MCP和真实加载/token收益未认证。B3.2亦已独立PASS（具体Server/Tool的advisory选择与名称匹配观察）：`--mcp-catalog mcp-tools.json`，只支持OpenCode目录声明，不自动连接/配置MCP，也不裁剪原生工具定义。B2.1/B2.1a用户声明池与最终同步启动准入已受控独立PASS；B4.6a最小同进程用户检查点已独立PASS WITH P2：`--checkpoint`在单步运行后、验收前允许用户继续/停止；完整监督/纠偏恢复仍缺。B5.1现已受控独立PASS WITH P2：仅明确session_failure、确认旧树停止后才由LAYA换具体pair，新Session接手部分成果；workflow恢复任务仍待验收，真实协议及完整恢复未认证。下一候选B4.7需先明确模型/费用/数据。
+新草案要求的需求确认、阶段批准、监督、交付与恢复已重排；见 [交付计划](docs/BACKEND_DELIVERY_PLAN.md) 和 [下一任务](docs/NEXT_TASK.md)。
+后端规划估算只在唯一基线维护（固定能力权重，不含正式前端）；不能按测试数量计算进度。
+
+本机独立进度页：`project-progress/index.html`，不进入 Git，不接 Runtime 控制。
+本机存在时用 `node project-progress/refresh.mjs` 刷新，或加 `--serve` 只读实时预览；每次任务推进必须同步。
+旧 temporary-dashboard 已保留本机源码备份；递归删除被工具安全策略拒绝，待用户手动删除；正式工作台前端需求仍待单独确认。
+
+显式人工验收B4.6b已独立通过：现有`--checkpoint`支持`accept <理由>`，只对显示的当前Attempt经同一Verification应用用户判断；`continue`不等于验收，`stop`保留成果并停止。默认LAYA路线不变，其真实自动目标完成仍未验收；不宣称完整自动化完成。详见[唯一基线](docs/PROJECT_BASELINE.md)与[下一任务](docs/NEXT_TASK.md)。
+
+## 最短个人使用流程（MVP-READINESS.1）
+
+当前可做本地预检；LAYA无推理owned启动/健康/停止路径已复核通过，默认不保留服务常驻。完整真实round仍待新调用范围确认及按同一路径启动服务。下面先演示最小“实现→测试”，不是多模型/费用/真实质量已认证。请在项目外新建空目录（例如`D:\workbench-demo`），不要把现有仓库发送给模型。
+
+在该目录保存三个文件；这些是示例，不替你改本机Agent配置：
+
+`plans.json`：
+```json
+{"kind":"sequential","plans":[{"id":"personal-demo","label":"implement then test","steps":[{"role":"implementation","taskType":"implementation","fileScope":"add.js","deliverable":"add.js exports add(a,b)"},{"role":"test","taskType":"test","fileScope":"add.test.js","deliverable":"add.test.js checks 2+3=5 and reports the actual command result"}]}]}
+```
+
+`stage.json`：
+```json
+{"stageId":"personal-demo-1","scope":"Only add.js and add.test.js in the new demo","requirement":"Create a tiny add function and verify its result.","acceptance":"The add function and its test run successfully; preserve command output","planRef":"personal-demo"}
+```
+
+仅预检用`orchestrator.json`，使SessionStore落到新demo，不读取默认用户配置：
+```json
+{"agents":{},"storeDir":"D:/workbench-demo/.orchestrator-state"}
+```
+
+从本项目根目录执行PowerShell命令。`--stage-check`与`--checkpoint`不能合用：
+```powershell
+$demo = 'D:\workbench-demo'
+$objective = 'Create a tiny add function and verify its result.'
+node .\src\cli\index.ts round $objective --config "$demo\orchestrator.json" --cwd $demo --workflow sequential --workflow-plan plans.json --workflow-choice personal-demo --stage stage.json --stage-check --json
+```
+
+预检应返回`stage=stage-check`、digest和有效计划；它不证明模型安装/登录/可调用/免费、LAYA健康或执行请求预算。CLI启动会创建配置中SessionStore的空目录；不会创建任务或发推理。缺确认或计划/目标/阶段改变后沿用旧digest，应在写前拒绝。
+
+**未来执行模板，本轮未执行且当前调用额度不允许直接运行：**先在demo配置中填写已核验原生Agent command/model，准备有来源/时间的用户模型池，核对Review入口与费用，再重新做预检取得digest。模型/池与费用资格不能从`-free`名称或旧目录推断。pool.json复用既有结构：policy为no-additional-charge，models逐项提供agentId/modelId/billing/source/observedAt/expiresAt；两个时间均为Unix毫秒。只有用户真实确认的free/included且未过期声明可准入，paid/unknown不获授权。以下变量需由该次明确授权确定：
+```powershell
+# $agent / $model 为真实完整ID；$digest来自相同计划/目标/材料的预检。
+# $reviewAgent也必须在本次费用和调用授权中；默认Review是codex。
+node .\src\cli\index.ts round $objective --config "$demo\orchestrator.json" --cwd $demo --workflow sequential --workflow-plan plans.json --workflow-choice personal-demo --stage stage.json --confirm $digest --model-pool pool.json --select fixed --agent $agent --model $model --checkpoint --no-handoff --execution-timeout 90000 --laya-post-max 3 --review-agent $reviewAgent --review-timeout 90000 --json
+```
+
+固定pair不替代LAYA；正式round仍有quota采集、分类和逐次动作请求。该两步成功路径至少涉及两次worker执行及一次原生Review，不能只按worker计模型会话；本地LAYA POST总量须通过`--laya-post-max 3`单独限定并审计：第4次发送前拒绝，错误/超时不退还；0禁止POST，不传参数保持旧行为。JSON的`layaPostBudget.used`计fetch尝试而非费用或服务收到数；不限制Worker/Reviewer会话或原生辅助调用。用户每步可输入`accept <非空理由>`、`continue`或`stop <理由>`：accept经同一Verification应用用户判断，不冒充真实测试/产物证明；continue仍由原LAYA路线判断；stop保留已完成结果并阻止后续，不能跨进程恢复。
+
+不要通过`--no-review`把真实执行伪装为独立审核通过（帮助将其限定offline）。实际交付读stdout JSON的`roundResult`、`checkpoints`、`unifiedReview`与`roundResultPublished.path`；状态、Attempt/产物声明、真实测试输出分别核对。`storeDir`管执行存储，不代表最终`round-result.json`发布路径也随之改变；结果发布位置以报告为准。最终HumanGate后没有自动merge/付费/下一轮动作。
 
 ## 本地使用
 
-需要 Node >=22.6（直接执行 TypeScript）和已安装的项目依赖。
-Agent 的具体版本、安装、登录及模型可用性以本机 doctor/官方接口为准；
-不把旧环境快照写成永久可用列表。
+需要 Node >=22.6 和已安装的项目依赖；具体 Agent 安装、登录与能力以本机事实为准。
 
-    npm ci
     node src/cli/index.ts doctor
+    node src/cli/index.ts doctor --models opencode
     npm run typecheck
 
-启动本机已安装的 LAYA 服务后，可以先仅分类：
+doctor 默认不查询模型目录；目录查询不是推理可调用或免费资格证明。
+LAYA-HEALTH.1已复核现有缓存启动可用，检查结束后按计划停止。若当前8077无监听，生产Node客户端返回ECONNREFUSED；不要把之前Python短超时推断为服务挂死，也不要擅自终止foreign进程。启动方式与历史/本轮证据见[LAYA说明](docs/DECISION_PROVIDER.md#3-本地服务)。
+先用已有健康入口检查LAYA（只GET，不推理）：
 
-    laya-serve
-    node src/cli/index.ts round "分析当前项目需要完成的任务" --classify-only
+    node src/decision/check.ts --probe
 
-以下命令会实际调用 Agent，使用其账户、模型和工具，费用受其配置影响：
+默认服务地址127.0.0.1:8077；已找回现有LAYA0.3.21，并将固定英语/多语言缓存恢复至D:/AI/laya-cache，真实离线CUDA加载/健康GET通过。检查后服务已停止；重新启动配置见[LAYA说明](docs/DECISION_PROVIDER.md#3-本地服务)。环境恢复轮未执行推理；后续已授权的真实决策验收首个请求因0.3.21 action元数据兼容缺口被拒绝（1/4后停止）。该兼容缺口已在LAYA-COMPAT.1中独立hermetic/捕获回放通过；随后LAYA-DECISION.2真实本地4/4接口验收独立通过（中英文分类/计划/pair），服务已停；随后该P1已由LAYA-ACTION.1在最小workflow范围受控独立关闭；真实next_action整链尚待新授权验收，既有B45负控P2保留，详见唯一基线与下一任务。
+下列classify-only会调用真实LAYA模型，且当前round在分类前运行quota probes，不是无外部调用的健康检查：
 
-    node src/cli/index.ts run opencode "解释项目结构" --cwd .
-    node src/cli/index.ts run opencode "解释项目结构" --model <provider/model> --cwd .
-    node src/cli/index.ts round "<目标>" --cwd <项目目录>
+    node src/cli/index.ts round "分析目标" --classify-only
 
-配置查询顺序：
---config → ORCH_CONFIG → 当前目录 orchestrator.json
-→ 用户 .native-agent-orchestrator/orchestrator.json → 内置发现。
+以下示例会调用真实 Agent，费用与数据边界仍受其配置影响，不是零费用承诺：
 
-配置中的 Agent command/model 仅作为本机入口；不要将凭据放进项目仓库。
-CLI --agent/--model 的现有 preference 行为不等于新需求中的完整“固定选择”产品。
-现有 orchestration budget units 不等于真实 token/货币预算；
-严格免费模式尚未完成端到端验收。
+    node src/cli/index.ts round "<目标>" --select fixed --agent <agent> --model <full-model-id>
+    node src/cli/index.ts round "<目标>" --select auto
 
-## 验证
+项目默认 selection 配置为 auto 或完整 fixed pair。task > project > default auto。
+同时给 --agent 与 --model 解释为 fixed；单轴沿用偏好。缺值 --select 是用法错误。
+角色默认、完整 prefer、运行中改选和暂停交互尚未实现。
+配置查询：--config → ORCH_CONFIG → 当前目录 orchestrator.json → 用户配置 → 内置发现。
+不要把凭据放进仓库，也不通过修改 Agent 全局默认模型实现并发模型选择。
 
-本轮文档整理已运行 npm run typecheck，并在提交前检查差异与文档链接。
-未运行 full suite、真实 Agent 或 W5 stress；备份提交不是封板结论。
+## 执行与验证边界
 
-可按明确验证任务选择已有定向入口：
+用户目标 → LAYA/候选计划 → Planner/TaskStore → Assignment/Lease → Scheduler/executeTask
+→ Spawn Gate/Workspace/ResourceClaim → Native Runtime → Attempt/Result → Verification/Review → Human Gate。
+Human Gate 后 automaticPostRoundAction=NONE。停止未确认不提前释放保护，root 退出不等于树停止。
+代码与测试通过不代表所有真实 Agent 兼容或真实费用已核验。
 
-    node tests/decision.test.ts
-    node tests/initial-assignment-decision.test.ts
-    node tests/containment-production.test.ts
-    node tests/execution-lifecycle.test.ts
+文档维护只检查差异、链接和一致性；运行验证结果统一记录在项目基线，并标明执行日期与证据范围。
+真实 Agent 测试保持 opt-in，默认测试不得消费真实模型额度。
+旧需求、规划和审核明细保留在 [Git 历史](docs/STAGE_ANALYSIS.md#历史备份)，当前目录不复制报告。
 
-真实 Agent 测试和 W5 证据测试保持 opt-in，不因阅读本文自动运行。
-Windows launcher 构建与测试前提见其 [README](native/windows-job-launcher/README.md)。
-
-## 历史备份
-
-旧需求、阶段规划、审核与调研报告已从当前目录移除。
-整理前全部可入库源码与旧文档已推送标签：
-
-    archive/pre-backend-requirements-2026-10-11
-
-[查看历史快照](https://github.com/yunxibaili/D-Native-Multi-Agent-Orchestrator/tree/9f12a3bf475ac47e4e6b2b2dd407ed09811610b5)
-
-备份范围和只读查看方法见 [阶段分析](docs/STAGE_ANALYSIS.md#历史备份)。
+B2.1/B2.2：`--model-pool <file>` 为显式用户声明策略；当前admitted声明可补入普通CLI的既有registry（来源可追踪、pair保持unknown、已有来源不覆盖），并限制编排执行pair；并非实际免费或全流程费用保证，付费声明继续拒绝。最终启动检查P1已在B2.1a独立关闭：prepare后实际pair与当前声明再准入，拒绝不启动、不记虚假Attempt、不遗留pre-start claim。它仍不是实际账户免费、USD硬预算或全流程费用保证。状态/证据及下一片见唯一基线和NEXT_TASK。

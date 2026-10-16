@@ -1,8 +1,9 @@
 # 当前架构契约
 
-更新日期：2026-10-11
+更新日期：2026-10-12
 用途：保留既有有效约束，并标明新需求的扩展边界；不因整理文档改变运行行为。
 事实与阶段见 [项目基线](PROJECT_BASELINE.md)，目标能力见 [后端需求](BACKEND_REQUIREMENTS.md)。
+项目基线是唯一当前状态入口；本文定义契约，不独立宣布阶段完成或授权。
 
 ## 1. 权威与复用
 
@@ -79,7 +80,13 @@ Lease、fencing、ResourceClaim、Workspace 和停止/释放顺序不因多模�
 当前 Skill boolean 只表达“适配器能否请求原生 Agent 加载自己的 Skill”，
 不是完整目录、强制授权边界或可直接用于能力排序的事实。
 
-新需求要求 LAYA 选择 Skill/MCP。实现前必须明确扩展候选事实和能力契约，
+B3.1已经增加显式用户声明Skill候选与逐任务advisory选择；只匹配已分配Agent的原生能力，不参与Worker路由。
+首个无依赖任务使用既有dispatchReceipt(promptFor)，其余沿自动brief；没有新执行边或调度权威。
+报告保存选择时绑定与同任务latest-run工具观察；跨Agent同名调用不匹配旧请求，admitted不证明运行。
+B3.2已增加OpenCode原生MCP用户声明候选及advisory选择，Server/Tool前向映射并拒绝名称碰撞；
+仅目录名称匹配的completed工具事件进入新视图，不证明MCP协议或服务身份。首任务与Skill共用同一prompt composer，后续沿TaskIntent/brief。
+MCP支持不从skills boolean推断；不自动连接/授权/改配置，不复制工具参数/输出到新报告，不裁剪原生工具定义。
+真实加载/调用/强制限制尚未验收；扩展前仍须明确候选事实和能力契约，
 不能把现有 boolean 静默改成“已加载、已授权或一定可调用”。
 复用原生 Skill/MCP 机制和既有执行入口；LAYA 表达选择和意图，
 Session/Adapter/权限校验继续落实真实执行，工具结果保留来源。
@@ -99,6 +106,10 @@ Gateway 同模型重试与跨模型/跨入口重选是不同边界；后者若�
 不能以“fallback”名义绕过免费模式、预算和用户固定选择。
 Native Agent 自己的内部 fallback 只能按可观测事实记录，不能虚构实际模型和费用。
 
+项目/任务 auto/fixed 复用现有 SelectionSpec 与 Assignment；fixed 约束覆盖动态新增/重规划后代，
+不能只继承 pair 而遗漏用户选择锁。task auto 覆盖项目 fixed 时不得误锁。
+角色默认与运行中改选未实现；后续协作组也必须遵守用户允许的成员选择范围。
+
 接力先确认旧执行不能继续写，再产生新有效写入者。
 安全停止无法证实时，不释放保护或假称干净；保持既有隔离/保留行为。
 
@@ -110,4 +121,46 @@ Agent 声称、机器观察和 Review 结论分层记录。
 Human Gate 后自动动作=NONE，新工作由用户或未来另行授权的契约启动。
 前端只在用户确认需求后进入；当前文档不选择 UI 技术栈。
 
+## 9. 两层工作流的最小扩展
+
+跨角色独立任务与同目标 2–3 模型共建均复用现有候选 DAG、TaskStore、Assignment 与 Scheduler。
+职责、依赖、交付与集成责任是任务意图/数据，不获得新的状态或执行权威。
+B4.0 顺序执行异构职责沿既有路径；B4.1 候选计划产生 N 个成员 child task
+（顺序写）+ 1 个集成任务，集成任务复用指定成员的具体 pair（不新增第四个模型），成员 pair 由既有
+`initial-assignment` 逐个选择且组内两两不同（同一 pair 不能重复占位）。集成任务以全部成员为依赖，
+成员未被既有 Verification 接受时集成不可准入。候选集合必须满足 DecisionProvider 的真实输入契约；
+只剩一个候选不能直接发送被其拒绝的单选 choice。当前审核状态只见唯一基线，旧入口保持兼容。
+前后端角色仍属 implementation，不为业务标签新增并行生命周期。
+文件范围写进提示词不等于强隔离；必要限制仍由既有 Workspace/Claim/准入保证。
+非Git协作组沿用共享顺序工作区。B4.5将Git协作组映射到由组root物理owner持有的单一隔离worktree，
+成员/集成者的task/session/pair不变；同物理workspaceId/scope继续由既有ResourceClaim准入与保留，
+不新造合并引擎、不自动并入用户检出。最终review也必须检查运行期retainedResourceProtections，
+不能只检查Git创建期unconfirmedProtections。workspaceId或规范化scope命中保留声明时，
+同一executionIncomplete事实必须阻断review、ok/exit0及Human Gate完成；no-review不豁免。当前独立验收范围只见唯一基线。
+仓库子目录启动明确拒绝，用户脏文件不自动复制；最终人工集成保留。
+模型中断恢复后续复用停止确认与 handoff，不能借重试产生两个有效写入者。
+
 旧设计细节和历史审核在 [归档提交](STAGE_ANALYSIS.md#历史备份) 按原路径可查。
+
+## B2.1 用户声明池的准入边界（实施，待单点收口）
+
+用户池是冻结纯值，复用ModelRegistry身份与同一admitUserModelPoolPair；不建立第二registry/路由器。B2.2仅显式池当前admitted声明可补新entry，来源保留、已有配置/probe/thread不覆盖；新声明pair以pair-specific unknown保留，Agent可用事实不提升其为可调用，不写quota/free资格。不同字段组合的复合键文本可能碰撞，声明准入须逐项精确匹配agentId/modelId。Assignment仍accept-or-refuse，不替换fixed，不越过quota或资源门。
+B2.1a已在最后workspace.prepare之后、取得preRunTask之后、resolveSession/thread及状态提交/runtime之前复用同一buildSpawnGateInput进行同步检查；独立probe与内存负控确认到期/未列actual pair均无runtime/Attempt，原资源finally释放pre-start claim。无新增await或执行边；session解析到runtime之间没有新增Task/Session lookup，不破坏T1冻结。此为最终准入时的声明有效性判断，非真实账户/全流程费用保证。当前provenance会新增无池诊断行，默认不启用新限制不等于所有报告字节完全相同。
+
+## B4.6a 同进程检查点边界
+
+检查点是显式CLI用户输入与纯值报告：在实际RunResult落入to_verify后、原有下一验收/派工前读取冻结的同Attempt snapshot，无store/runtime/可调用权威。continue不写Task状态，stop只结束本轮后续执行（包括接力），不撤销既有succeeded/文件，也不承诺取消仍活着的外部进程或持久化恢复。TTY输入用Node标准readline并有60秒界限，默认入口不读stdin；非法/EOF/error/timeout按stop处理。等待发生在下一派工前，不插入session→runtime冻结区；原fixed、阶段绑定、费用声明最终检查、stop-unconfirmed资源保护持续适用。新范围仍走原确认，不新增manager/状态权威。
+
+## B5.1 现有接力链的停止与来源
+
+不新增恢复manager/registry/调度权威。CLI workflow在已执行session_failure处交回canonical continuation；所有相关reassign入口先读同次原子Attempt/RunResult停止事实。false/absent停止确认不得迁移、发第二run或释放保护。具体pair逐字段比较，计数/重复限制不因换模型重置；来源model来自packet关联Attempt，新执行沿原Assignment/Scheduler/fresh session。恢复成功只to_verify，原完成/Review门不放宽。此处约束请求身份，不认证provider内部实际模型或外部副作用可重放。
+
+## 决策与验收职责澄清（2026-10-15只读核对）
+
+LAYA-BOUNDARY.1只读职责审核完成：Verification是唯一状态写入权威，但不是自动测试/产物核验器；Workbench.completeTask把调用者的完成判断转成pass，原生LAYA选择complete的质量判断因此仍由模型承担。候选中有材料、状态可迁移，不等于质量已独立验证。历史QUALITY.2的安全wait与目标完成未验收保持，不能将状态权威误说成独立内容裁判。
+
+当前真实调用链：LAYA动作→同次候选目标映射→decisionCapabilities.complete→NativeWorkbench.completeTask→Orchestrator.applyVerification→translateVerification/TaskStore。独立整轮Review在workflow所有成员succeeded之前被executionIncomplete挡住，且runUnifiedReview只产报告不写Task；它不能倒过来解决第一个to_verify任务的验收。任务级applyReview/review-loop已有，可供显式调用，但当前CLI该路径没有自动接线；不需要另造ReviewManager。HumanGate是结果/选项投影，automaticPostRoundAction恒none，不是stdin执行器。
+
+B4.6b已独立通过：仅在既有`--checkpoint`中新增`accept <非空理由>`。等待输入后同步重读当前Task和原子Attempt→RunResult；状态、任务/Attempt/Worker身份、展示条件变化、执行证据缺失或停止未确认均拒绝。只有同一当前任务仍to_verify且树停止明确为true，才通过既有completeTask/applyVerification应用用户verdict；不直接写TaskStore、不新增authority。记录source=user、taskId/attemptId、理由及applied/refused，不把用户判断当LAYA决定、独立Review、产物或测试证明。末步accept后先重算all-succeeded，不额外问模型；后续派发仍走原固定pair/声明池/额度/资源/阶段门。continue/stop和无flag默认路径保持。
+
+可信调用者可经既有applyVerification应用显式verdict；此API不是任意输入的质量证明。人工accept只在显示后的同步事实复查通过后调用该入口，不改默认模型决策、不增加完成权威。实际状态仍只见PROJECT_BASELINE。
