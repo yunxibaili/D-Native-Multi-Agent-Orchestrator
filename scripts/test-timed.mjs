@@ -146,6 +146,8 @@ const SUITES = [
   // process edge; controlled sentinels prove a real agent launcher is refused BEFORE
   // spawn while a benign OS child still runs. Hermetic.
   'p01-test-isolation',
+  // P0-2: auto-advance acceptance — fake agents/fake LAYA with REAL contained approved tests (no real model).
+  'p02-auto-advance',
   // Cancellation / process-tree cleanup on REAL contained ManagedProcess instances,
   // driven by a CONTROLLED Node fixture (offline — no real agent is discovered).
   'cancel',

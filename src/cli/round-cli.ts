@@ -4799,8 +4799,14 @@ export async function runRoundCli(
    * accept is fabricated. A `--no-review` offline entry keeps its honest `not_requested` status
    * and is NOT forced to fail for a review it never requested.
    */
+  // P0-3c.1: the FINAL authorization verdict is computed ONCE and kept as one round-scoped
+  // fact. It is the SAME value that sets `report.ok=false` here and that the attention
+  // selector below consumes, so a late revocation that only this final check caught is
+  // projected into the persisted pendingUser rather than silently dropped. It is never
+  // re-read or re-computed into a second, possibly different verdict.
+  let finalApprovalDrift: string | null = null;
   if (autoMode) {
-    const finalDrift = approvalDrift();
+    finalApprovalDrift = approvalDrift();
     const finalFailures: string[] = [];
     if (workflowStop !== 'all-succeeded') {
       finalFailures.push(`the workflow did not complete (${workflowStop ?? 'not run'})`);
@@ -4808,7 +4814,7 @@ export async function runRoundCli(
     if (machineStop !== null) {
       finalFailures.push(`the machine gate stopped: ${machineStop.code} — ${machineStop.reason}`);
     }
-    if (finalDrift !== null) finalFailures.push(finalDrift);
+    if (finalApprovalDrift !== null) finalFailures.push(finalApprovalDrift);
     if (sendGate.refusals.length > 0) finalFailures.push(...sendGate.refusals);
     if (finalFailures.length > 0) report.ok = false;
     const reviewRequestedNotClean =
@@ -4964,6 +4970,12 @@ export async function runRoundCli(
     : sendGate.refusals.length > 0 ? { taskId: null, code: 'approval-revoked', reason: sendGate.refusals.join('; ') }
     : postBudget?.rejected === true ? { taskId: null, code: 'DECISION_POST_BUDGET_EXHAUSTED', reason: decisionPart.note ?? 'the round POST budget refused another request before send' }
     : machineStop !== null ? { ...machineStop, taskId: machineStop.taskId || null }
+    // P0-3c.1: the final authorization fact computed above is consumed HERE, before the clean
+    // workflow/Review branches, so a revocation that only the post-Review final check caught
+    // reaches the persisted pendingUser like an early one does. A Round-level revocation has no
+    // responsible Task/Attempt/Session, so `taskId` stays null and the identity fields below
+    // stay null — no last Worker is borrowed.
+    : finalApprovalDrift !== null ? { taskId: null, code: 'approval-revoked', reason: `approval-revoked: ${finalApprovalDrift}` }
     : workflowStop !== 'all-succeeded' ? {
       taskId: null, code: decisionPart.code ?? workflowStop ?? 'workflow-incomplete',
       reason: decisionPart.note ?? `the bounded workflow stopped: ${workflowStop ?? 'not run'}`,

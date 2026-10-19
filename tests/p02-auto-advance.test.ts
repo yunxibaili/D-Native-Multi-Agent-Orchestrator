@@ -27,7 +27,9 @@
  * SCOPE: A success, B approval revoked during async preparation before transport,
  * C withheld Review after successful tasks, including a real contained child exit,
  * D failed approved test blocks downstream, E wait preserves zero dispatch,
- * F a confirmed stage with explicit checkpoint respects the fixture's stop.
+ * F a confirmed stage with explicit checkpoint respects the fixture's stop,
+ * I (P03-F1) approval revoked DURING the controlled Review, after both Workers and
+ * their approved tests completed; the late revocation must reach the saved attention.
  * Other rejected draft cases remain unverified.
  *
  * Run: node tests/p02-auto-advance.test.ts
@@ -306,7 +308,7 @@ async function runCli(drivable: unknown, argv: readonly string[], overrides: Rou
  * This function NEVER deletes its owned directories: the caller asserts against the real
  * on-disk files first, then the top-level finally cleans up.
  */
-async function harness(options: { revokeBeforeSend?: boolean; withholdReview?: boolean; wrongImplementation?: boolean; wait?: boolean; checkpointInput?: (snapshot: WorkflowCheckpointSnapshot) => string; maxLayaPosts?: number; reviewVerdict?: 'reject' | 'rework' } = {}): Promise<CaseResult> {
+async function harness(options: { revokeBeforeSend?: boolean; revokeDuringReview?: boolean; withholdReview?: boolean; wrongImplementation?: boolean; wait?: boolean; checkpointInput?: (snapshot: WorkflowCheckpointSnapshot) => string; maxLayaPosts?: number; reviewVerdict?: 'reject' | 'rework' } = {}): Promise<CaseResult> {
   const cwd = ownDir('cwd');
   const storeDir = ownDir('store');
   const reportDir = join(ownDir('reports'), 'reports');
@@ -333,7 +335,18 @@ async function harness(options: { revokeBeforeSend?: boolean; withholdReview?: b
     descriptors: () => [AGENT_A].map((id) => ({ id, displayName: id, launcher: 'fake', transport: 'cli-jsonl', capabilities: { newTask: true, review: true, modelSelection: true, cwd: true, resume: true } } as never)),
     configFor: (id: string) => ({ command: 'fake-fixture', model: id === REVIEWER ? REVIEWER_MODEL : WORKER_MODEL } as never),
     store: runtime.store,
-    review: (req: Omit<RunRequest, 'mode'>) => { reviewRequests.push({ ...req, mode: 'review' } as RunRequest); return runtime.review(req); },
+    review: (req: Omit<RunRequest, 'mode'>) => {
+      reviewRequests.push({ ...req, mode: 'review' } as RunRequest);
+      // P0-3c.1: a DETERMINISTIC late revocation. The controlled reviewer is admitted while the
+      // approved material is still valid, and the material is changed only HERE, inside the
+      // review callback — after both Workers and both REAL approved tests already succeeded and
+      // after the auto-review blockers were evaluated. The reviewer still answers its own legal
+      // pass; only the LATER final approval check can observe the change.
+      if (options.revokeDuringReview) {
+        writeFileSync(join(cwd, 'stage.json'), JSON.stringify({ ...STAGE, acceptance: 'Owner revoked the approved acceptance during the independent Review' }), 'utf8');
+      }
+      return runtime.review(req);
+    },
     run(req: RunRequest): RunHandle {
       requests.push(req);
       const runIdx = requests.length;
@@ -713,6 +726,42 @@ async function caseF(): Promise<void> {
 }
 
 // ============================================================================
+// P03-F1: a revocation that ONLY the post-Review FINAL approval check can catch must
+// still reach the persisted user delivery. The stage material is changed inside the
+// controlled Review callback, after both Workers and both REAL approved tests completed.
+// ============================================================================
+
+async function caseI(): Promise<void> {
+  section('P03-F1: late approval revocation during Review still lands in the saved attention');
+  const r = await harness({ revokeDuringReview: true });
+  const ms = machineOf(r);
+  const review = r.report.unifiedReview as { status?: string; verdict?: string | null; code?: string | null };
+  const tasks = r.report.tasks as Array<{ taskId: string; type: string; status: string }>;
+
+  check('P03-F1: stage-check succeeded with no POST/worker/review', r.confirmed && r.stageCheckExit === 0 && r.stageCheckPosts === 0 && r.stageCheckRequests === 0 && r.stageCheckReviews === 0, diag(r));
+  check('P03-F1: both Workers really ran and both REAL approved tests executed', r.requests.length === 2 &&
+    existsSync(join(r.cwd, MARKER_CODER)) && readFileSync(join(r.cwd, MARKER_CODER), 'utf8') === 'STEP1_TEST_RAN' &&
+    existsSync(join(r.cwd, MARKER_TESTER)) && readFileSync(join(r.cwd, MARKER_TESTER), 'utf8') === 'STEP2_TEST_RAN', filesUnder(r.cwd).join(','));
+  check('P03-F1: the machine workflow completed all-succeeded before the final check', ms.workflowStop === 'all-succeeded' && (ms.completed ?? []).length === 2 && ms.stop === null, JSON.stringify(ms));
+  check('P03-F1: exactly one controlled Review ran and its legal pass is preserved', r.reviewRequests.length === 1 &&
+    review.status === 'completed' && review.verdict === 'pass', JSON.stringify(review));
+  const completedTaskIds = new Set((ms.completed ?? []).map((e) => e.taskId));
+  check('P03-F1: the two completed Worker tasks keep their real succeeded state', completedTaskIds.size === 2 &&
+    tasks.filter((t) => completedTaskIds.has(t.taskId)).every((t) => t.status === 'succeeded'), JSON.stringify(tasks));
+  check('P03-F1: the round is nonzero and ok=false', r.exitCode === 1 && r.report.ok === false, diag(r));
+  check('P03-F1: the final machine verdict names the late revocation', (r.report.machineSupervision as { finalOk?: boolean }).finalOk === false &&
+    ((r.report.machineSupervision as { finalFailures?: string[] }).finalFailures ?? []).some((f) => f.includes('the stage material file changed')), JSON.stringify((r.report.machineSupervision as { finalFailures?: string[] }).finalFailures));
+  checkAttention('P03-F1', r.report, 'approval-revoked');
+  const memo = r.report.pendingUser as PendingUserSummary;
+  check('P03-F1: a Round-level revocation keeps Task/Attempt/Session identity null', memo.taskId === null &&
+    memo.currentAttemptId === null && memo.currentSessionId === null && memo.displayedAttemptId === null &&
+    memo.workerTreeStopConfirmed === null, JSON.stringify(memo));
+  check('P03-F1: the ORIGINAL approved stage digest is retained', memo.stageDigest === r.stageCheckReport.digest && typeof memo.stageDigest === 'string', JSON.stringify({ memoDigest: memo.stageDigest, approved: r.stageCheckReport.digest }));
+  check('P03-F1: no extra dispatch, retry or human input', r.requests.length === 2 && r.reviewRequests.length === 1 &&
+    r.fetchPosts === 3 && r.checkpointCalls === 0 && !Object.prototype.hasOwnProperty.call(r.report, 'checkpoints'), diag(r));
+}
+
+// ============================================================================
 // entry
 // ============================================================================
 
@@ -743,6 +792,7 @@ async function main(): Promise<void> {
       await caseF();
       await caseG();
       await caseH();
+      await caseI();
     }
   } catch (e) {
     fatal = e;

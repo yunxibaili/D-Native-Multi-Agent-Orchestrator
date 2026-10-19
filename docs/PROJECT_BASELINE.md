@@ -1,12 +1,12 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-19。当前裁定§7.46：P0-3整体静态收口BLOCKED，剩P03-F1最终授权复查未进入持久化待人工材料；a/b/c有限离线证据保持原范围。本轮只读源码/日志/哈希，无生产修改、测试、typecheck或模型调用。真实MVP仍PARTIAL，后续只建议单点结果投影修复，不启动真实E2E。
+更新：2026-10-19。当前裁定§7.49：P0-3c.1独立PASS，P0-3按既定有界离线范围收口PASS。Runner仅新增一条已审核离线suite，真实单次116/0、exit0、outer Job确认空，P03-F1关闭。Codex审核实际diff/原日志/当前哈希，未重跑测试/typecheck或调用模型。下一步仅准备P0-4非推理准入，真实E2E仍需新授权。
 
 ## 1. 权责与当前结论
 
 本文唯一维护当前事实、阶段状态、证据与进度快照。[产品方向](PRODUCT_DIRECTION.md)管已确认定位/取舍；[后端需求](BACKEND_REQUIREMENTS.md)保留全部目标；[路线](BACKEND_DELIVERY_PLAN.md)管顺序；[阶段分析](STAGE_ANALYSIS.md)解释新策略；[NEXT_TASK](NEXT_TASK.md)只列下一有界任务；[研究索引](ENGINEERING_RESEARCH_REFERENCES.md)管来源，不各自宣布封板。
 
-**当前P0-1沿用独立PASS（§7.10），P0-2 PASS（限已批准的有界离线实现，§7.41）。源码/契约/A–F75/0证据静态映射及当前哈希核对完成，本轮未跑测试或模型。不是第三方独立审计、真实费用/权限认证或MVP封板。P0-3a来源归属与P0-3b检查点异常材料已离线PASS（§7.42/§7.43）；P0-3c自动异常汇总及非pass Review结果投影已有限离线PASS（§7.45）；P0-3整体静态收口BLOCKED（§7.46）：最终授权失效原因未完整落盘；真实MVP未完成。** 以下为前轮P0-1 Final Closure曾BLOCKED的历史事实，不能当作当前状态：Attempt重放/换绑与空产物入口已关闭，原51项失败按A5/B40/C6逐项对应最终独立通过；额外3套件9项失败已通过修改前字节快照复跑确认同签名，仍开放，不纳入历史26项豁免。本轮返工违反离线授权，旧cancel.test.ts运行3次造成6次真实Codex执行；3个成功会话实证模型gpt-6.1-sol，3个取消会话无可见推理结果。费用未独立核实，不能称零新增收费。一次实现+一次返工轮次已用完，返工由Codex停止，无第三次委派。P0-2/3及第四次E2E仍未授权。
+**当前P0-1沿用独立PASS（§7.10），P0-2 PASS（限已批准的有界离线实现，§7.41）。源码/契约/A–F75/0证据静态映射及当前哈希核对完成，本轮未跑测试或模型。不是第三方独立审计、真实费用/权限认证或MVP封板。P0-3a来源归属与P0-3b检查点异常材料已离线PASS（§7.42/§7.43）；P0-3c自动异常汇总及非pass Review结果投影已有限离线PASS（§7.45）；P0-3c.1已独立PASS，P0-3在既定有界离线范围PASS（§7.49）；真实MVP未完成，不支持跨进程恢复。** 以下为前轮P0-1 Final Closure曾BLOCKED的历史事实，不能当作当前状态：Attempt重放/换绑与空产物入口已关闭，原51项失败按A5/B40/C6逐项对应最终独立通过；额外3套件9项失败已通过修改前字节快照复跑确认同签名，仍开放，不纳入历史26项豁免。本轮返工违反离线授权，旧cancel.test.ts运行3次造成6次真实Codex执行；3个成功会话实证模型gpt-6.1-sol，3个取消会话无可见推理结果。费用未独立核实，不能称零新增收费。一次实现+一次返工轮次已用完，返工由Codex停止，无第三次委派。P0-2/3及第四次E2E仍未授权。
 
 主要开发Worker依Owner最新指令恢复为OpenCode，复用既有opencode-agent及DeepSeek V4.1 Flash Free覆盖值；DSH接入旁支暂停。本片沿用Owner此前让Codex直接推进主项目的授权，完成P0-3a最小来源修复；不改变长期OpenCode开发/Codex审核分工。LAYA仍为任务级选择权威，TaskStore仍为任务状态权威。正式Windows桌面路线保持，具体UI需求/实现未开始。PARALLEL_WRITE=CLOSED、automaticPostRoundAction=NONE。
 
@@ -68,6 +68,7 @@ project-progress/audit/是Owner指定只读旁路观察：每次开工读取，�
 | B4.6 后续 / B2 后续 / B3 后续 / B5 后续 | PLANNED；未授权扩大 |
 | P0-1 | 独立PASS：确定性完成门禁及离线隔离/取消已验收，旧Case24/32迁移149/0，见§7.10；不代表真实MVP通过 |
 | P0-2 | PASS（有界离线实现，§7.41）：当前哈希匹配A–F的75/0证据；默认自动/显式人工、撤销/失败/wait/Review拒绝边界对应源码与日志。非真实模型、原生权限或账户费用认证，非第三方独立审计 |
+| P0-3 / P0-3c.1 | 独立PASS（有界离线范围，§7.49）：P03-F1关闭，白名单单文件116/0、exit0、outer Job空；不支持跨进程resume，不证明真实E2E或全后端完成 |
 | PARALLEL_WRITE | CLOSED |
 | 本产品前端 | 本机独立进度页已授权且禁止入 Git；正式工作台 UI 需求仍待确认 |
 
@@ -113,7 +114,7 @@ B4.7.3：Space Bunny Free+MiMo V2.6 Flash Free，三个真实独立任务/会话
 
 LAYA：既有Python环境0.3.21，缓存D:/AI/laya-cache，固定权重revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851。历史离线CUDA加载和GET health通过；typed分类中英/计划/pair小样本通过。next_action的正向质量验收曾多次continue或wait，不能改成complete；置信度裁剪等原有限制不因文档更新消失。默认不常驻，不升级/下载/切权重。
 
-## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.46）
+## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.49）
 
 Owner批准日期：2026-10-16。**Owner approved / Not yet implemented / Not yet tested**。正式未来默认覆盖旧“仅显式实验”建议，未改变当前生产或历史报告。
 
@@ -141,7 +142,7 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
 
 ## 6. 唯一下一步与授权
 
-P0-1/P0-2及P0-3a/b/c保持已验收的有限范围；P0-3整体因P03-F1未收口。唯一建议P0-3c.1：复用已计算的最终授权失效事实，使其进入既有待人工材料和持久化结果，并只补一项Review期间撤销的受控负例。源代码/测试修改及运行均待Owner新授权，不自动实施。
+P0-1/P0-2及P0-3有界离线实施现均PASS；不等于原生账户、费用、权限和真实E2E通过。唯一建议P0-4.0：由OpenCode只读整理现有隔离Demo、准确CLI和一次真实闭环授权清单，核对当前实现与历史材料是否匹配，未知资格如实列出；不跑测试、改代码、启动模型或自作费用承诺。Owner另行确认模型/次数/费用/时限/数据后，才能启动P0-4真实执行。
 
 真实产品Agent/LAYA/Native Review/E2E调用保持关闭，旧剩余次数不继承。OpenCode最近一次Free CLI探测403仍是接入线索，不能推断当前必然可用或不可用；先完成本地确定性缺口，再按新授权核实模型/费用/数据/次数。阶段裁定后可按Owner既有授权推送独立审核分支，不合并main。
 
@@ -606,6 +607,33 @@ P0-1/P0-2及P0-3a/b/c保持已验收的有限范围；P0-3整体因P03-F1未收�
 - 唯一最小后续P0-3c.1：把既有最终授权复查结果提升为Round内单一事实，接入现有attention选择与实际持久化，不改变Task/Review/预算/停止权威；一项既有p02单文件负控，在受控Review回调期间撤销材料/池，断言两Worker已完成/原Review pass保留/外层失败/落盘approval-revoked/无额外派发。实施和测试均未授权，不自动修复。纯本地数据流遗漏已有明确依据，无需Gemini外部检索才能定位。
 - 证据project-progress/p03-final-static-review-20261019/evidence-integrity.json与docs/P03_FINAL_CLOSURE_REVIEW.md。阶段审核记录按Owner既有推送授权归档独立分支，不合并main；主HEAD/index/范围外dirty、9/26历史边界与68/100规划信用保持，audit只读、进度页ignored。
 
+### 7.47 P0-3c.1 OpenCode交付独立审核（源码接受；整片PARTIAL）
+
+- Owner手动转交OpenCode任务，Codex未自动启动开发会话。对照已归档1e3315d及dd35904文档，实际源码/测试变更仅round-cli.ts与p02-auto-advance.test.ts；其他既有文件无本片漂移。主HEAD及index哈希保持。手动会话模型身份未取得独立原生证据，不宣称已核实其模型。
+- finalApprovalDrift作为Round范围变量只计算一次，原finalFailures及automaticAttention消费同一事实；Round级approval-revoked沿attentionMemo/buildRoundResult/publishRoundResult保存，身份保持null。原Task成功状态、Review pass、停止保护、resumeSupported=false、stopSafetyCertified=false和最终NONE未改变。未发现本次源码阻断。
+- 唯一新增case I在受控Review回调内改变owned stage，经过真实CLI/Provider及保存文件读取，覆盖末端撤销/原Review pass保留/两Worker及批准测试完成/非零返回/原digest和null身份/无额外派发。旧A–H保留。属于fixture行为证据，不是真实模型或池过期实测。
+- 已读取原日志：typecheck两次均无错误，Worker报告exit0；单文件首次115/1，父plan误被纳入succeeded断言，修正为真实完成Worker后第二次116/0。该断言修正符合任务身份语义，未放宽生产门禁；但第二次运行超出原“一次”范围，且两次均直接node --import，未经过要求的白名单Runner/外层ManagedProcess。没有两次连续失败，不触发两次失败熔断；运行次数偏离仍明确保留。
+- 原始日志只有文本输出，缺独立退出/耗时元数据；Worker报告第二次exit0/2822ms，Codex不能将其提升为独立执行观测。case C日志证明该受控子Job为空，不能证明外层suite整树已空。没有观察到真实产品调用证据；Codex本轮0测试/0typecheck/0模型调用，仅源码和现有日志审查，并运行git diff --check通过。
+- 证据已复制到ignored project-progress/p03c1-independent-review-20261019，含原日志、前后文本与现场哈希。audit只读，9/26历史边界与68/100信用不变。下一步仅申请一次现有contained/白名单单文件补证；不进行源码返工，不自动执行、不启动真实E2E，不报告本片或整体PASS。本轮未commit/push。
+
+### 7.48 P0-3c.1补证拒绝独立核对（补证BLOCKED；外层停止已证实）
+
+- 读取project-progress/p03c1-outer-containment-20261019的run.json/run.log/verify.mjs及运行前后记录，五项当前源文件哈希与运行记录一致。command为node scripts/test-timed.mjs，child env仅覆盖TEST_TIMED_SUITES，ManagedProcess实际exit={code:3,signal:null}，106ms；适配入口将失败映射为shell exit1，不混淆两层退出。
+- run.json的validated containment显示launcherStatus=success、phase=done、rootExitCode=3、treeStopConfirmed=true、ActiveProcessesFinal=0；这是Runner拒绝路径的真实外层停止证据，不是suite或模型通过证据。没有suite输出，也未创建测试子进程；本次没有自动重试或direct node回退。
+- 根因由源码确认：SUITES不含p02-auto-advance，CANONICAL_FILES由该列表生成；normalizeSuiteEntry返回non-canonical，resolveSuiteFiles在启动suite前返回exit3。原路径归一化、LIVE拒绝、offline bootstrap均未被削弱。Codex上一份任务未核对清单，提出了“必须走Runner且不许修改Runner”的当前不可执行组合，责任不归测试或产品执行逻辑。
+- P03-F1源码接受结论不撤销，整体P0-3保持PARTIAL，当前补证BLOCKED。下一步只申请一项Runner清单登记和一次同文件验证，允许新ignored输出目录适配；不改src/tests，不增加其他suite、不复跑typecheck、不修改历史日志。Runner默认列表也会新增该已审核离线suite，须如实列为行为变化。未获此新增授权不执行。
+- Codex本轮只读源码、原日志和哈希及更新事实文档/页面，0测试/0typecheck/0模型，无提交推送。HEAD/index及既有实现保留，audit只读、页面ignored，9/26债务和68/100信用不变。无新增外部机制问题，不需要Gemini检索。
+
+### 7.49 P0-3c.1最终独立验收（PASS；P0-3有界离线收口）
+
+- OpenCode仅在scripts/test-timed.mjs的SUITES新增p02-auto-advance及一行说明；实际对照前后快照/已归档dd35904为一个hunk两行，无路径归一化、LIVE denylist、offline-context或退出码改动。该suite同时进入默认测试清单，属于本次明确影响；未运行默认全量列表。
+- 证据project-progress/p03c1-runner-registration-20261019：纯选择器ok后，以ManagedProcess包裹node scripts/test-timed.mjs，子进程TEST_TIMED_SUITES仅指定既有p02单文件；一次执行116 passed/0 failed，Runner记录仅1 suite、3133ms，外层3257ms、实际exit={code:0,signal:null}、rootExitCode=0，shell exit0。node --check仅一次exit0；没有新typecheck、其他suite或回退direct node。
+- validated containment为launcherStatus=success、phase=done、treeStopConfirmed=true、ActiveProcessesFinal=0、terminated=false；cleanupRetried=false，control目录前后相等。当前CLI/测试/Runner/spawn/bootstrap五项SHA256与运行证据一致，且本次运行前后源码哈希不变。Codex读取实际源码与原日志，未重复运行测试/typecheck，未启动开发或产品模型。
+- P03-F1负例保留原Reviewer pass、两Worker与可信测试完成、Task真实状态及原批准digest；最终授权撤销后外层非零并将approval-revoked保存到实际RoundResult，Round级身份null、无额外派发/人工输入。旧A–H仍通过。此前115/1→116/0两次direct运行及清单拒绝exit3历史不删除或追认为合规，本次新证据独立补足外层受控验证。
+- P0-3c.1独立PASS；结合a/b/c既有有限证据，P0-3按既定异常来源/只读待人工材料/最终NONE的有界离线契约PASS。材料仍stopSafetyCertified=false、resumeSupported=false；未承诺跨进程恢复、持续服务或全部异常组合，未认证真实Agent权限、可调用性或零费用。手动OpenCode开发会话模型没有本轮原生独立凭据，不伪称wrapper委派或模型身份已核实。
+- HEAD/index/范围外dirty、9/26历史债务及68/100信用保留，audit只读，进度页ignored。Owner既有阶段完成归档授权适用：本片拟以dd35904540eee399b156b77c96465b414520b99d为父提交，独立codex/p03c1-final-closure-20261019仅含CLI/测试/Runner及基线/NEXT/审核记录共六文件；远端SHA、manifest及临时索引清理以本轮实际归档记录为准，不合并main。
+- 唯一下一步P0-4.0非推理执行范围准备，不提前开发新功能。真实产品Agent/LAYA/Native Review/E2E授权仍关闭，不能继承旧剩余调用。新资格/费用事实需要官方或Owner账户确认，不能从名称free或历史成功推断。
+
 ## 8. 规划估算与本机快照
 
 沿用历史十项权重信用68/100（固定分母为完整后端需求，不含正式UI）；页面按5%档显示约70%、剩30%，旧合理剩余区间30–50%。这不是工时、可用率、自动化完成率或MVP成功概率。本轮文档不增分；下一真实E2E仍未成功，必须看具体阻塞和证据，不能用百分比代替它。
@@ -614,18 +642,18 @@ P0-1/P0-2及P0-3a/b/c保持已验收的有限范围；P0-3整体因P03-F1未收�
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-19T03:06:10.8252779Z",
+  "updatedAt": "2026-10-19T03:41:10.4612605Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-3-CLOSURE",
-    "name": "整体静态收口",
-    "status": "blocked",
-    "summary": "BLOCKED：P03-F1 Review期间授权失效虽令外层失败，但未进入最终待人工/落盘结果。a/b/c历史有限证据保留；本轮0源码修改/0测试/0模型。"
+    "id": "P0-3",
+    "name": "有界离线异常收口通过",
+    "status": "done",
+    "summary": "P0-3c.1独立PASS：Runner单项登记，单次116/0、实际exit0、outer Job空，P03-F1关闭。P0-3按既定有界离线范围PASS；真实MVP仍PARTIAL，不支持跨进程恢复。"
   },
   "next": {
-    "id": "P0-3c.1",
-    "name": "待Owner授权：最终授权失效事实接入现有待人工材料及一项受控负例",
+    "id": "P0-4.0",
+    "name": "只读整理真实闭环准入与新授权范围；不启动模型",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -703,9 +731,9 @@ P0-1/P0-2及P0-3a/b/c保持已验收的有限范围；P0-3整体因P03-F1未收�
     {
       "severity": "P1",
       "kind": "当前验收缺口",
-      "title": "P03-F1：最终授权失效未进入持久化材料",
-      "detail": "Review结束后检测过期/变更可令外层ok=false，但attention选择忽略该事实，已保存RoundResult可能遗漏实际失败原因。",
-      "next": "仅修既有最终授权事实到attention的接线，并补Review期间撤销的一项离线负控；需Owner授权。"
+      "title": "P0-4真实执行资格及新授权待确认",
+      "detail": "P0-1/2/3有界离线通过；当前Worker/Reviewer可调用性、免费或订阅额度及真实闭环尚未验收，历史调用授权不继承。",
+      "next": "先只读整理隔离Demo、准确命令与调用/费用/数据/时限清单，未知项如实列出；另获Owner授权后才实跑。"
     },
     {
       "severity": "P1",
@@ -1043,9 +1071,9 @@ P0-1/P0-2及P0-3a/b/c保持已验收的有限范围；P0-3整体因P03-F1未收�
     {
       "id": "P0-3",
       "title": "异常等待与最终Human Gate",
-      "status": "blocked",
+      "status": "done",
       "deliverable": "用户/系统来源区分，安全资源释放，pending结果与恢复限制",
-      "evidence": "a/b/c有限离线通过；最终静态收口发现P03-F1末端授权失效未持久化，待单点修复，无跨进程恢复。"
+      "evidence": "有界离线PASS；P03-F1关闭，Runner单项登记、单文件116/0、实际exit0、outer Job空。无跨进程恢复/真实模型或全后端封板结论。"
     },
     {
       "id": "P0-4",
@@ -1056,6 +1084,21 @@ P0-1/P0-2及P0-3a/b/c保持已验收的有限范围；P0-3整体因P03-F1未收�
     }
   ],
   "checks": [
+    {
+      "name": "P0-3c.1最终独立验收PASS",
+      "source": "project-progress/p03c1-runner-registration-20261019/run.json；PROJECT_BASELINE.md §7.49",
+      "result": "单次白名单suite116/0、实际exit0/signal null、outer Job已空；Runner仅登记一项，五项当前哈希匹配；Codex只审源码日志，不重跑。"
+    },
+    {
+      "name": "P0-3c.1受控补证拒绝审核",
+      "source": "project-progress/p03c1-outer-containment-20261019/run.json；PROJECT_BASELINE.md §7.48",
+      "result": "BLOCKED：Runner未登记suite，实际exit3/signal null/106ms；validated outer Job空，suite未启动；五项源哈希匹配，Codex未重跑。"
+    },
+    {
+      "name": "P0-3c.1独立源码及原日志审核",
+      "source": "docs/PROJECT_BASELINE.md §7.47；project-progress/p03c1-independent-review-20261019/",
+      "result": "源码接受/整片PARTIAL；Worker两次typecheck无错误，单文件115/1→116/0；次数及Runner偏离保留，outer Job未验证，Codex未重跑。"
+    },
     {
       "name": "P0-3最终静态审核",
       "source": "docs/P03_FINAL_CLOSURE_REVIEW.md；project-progress/p03-final-static-review-20261019/",

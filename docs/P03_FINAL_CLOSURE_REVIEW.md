@@ -1,6 +1,28 @@
-# P0-3 overall static closure — BLOCKED
+# P0-3 closure — PASS in the bounded offline scope
+
+## Final acceptance 2026-10-19 — P0-3c.1 PASS
+
+This supersedes the historical BLOCKED/PARTIAL decisions retained below. OpenCode registered exactly one reviewed offline suite in scripts/test-timed.mjs (one two-line hunk), preserving selector/path/LIVE/default-deny checks. This also adds the suite to the default manifest; no full suite was run.
+
+Codex inspected the actual diff, verifier, raw logs and run.json under ignored project-progress/p03c1-runner-registration-20261019. The current CLI/test/Runner/spawn/bootstrap hashes match that execution. After a successful pure selector preflight, one ManagedProcess-contained Runner invocation selected only tests/p02-auto-advance.test.ts: 116 passed/0 failed, one suite, actual exit0/signal null, outer 3257ms. Validated Job facts are launcherStatus=success, phase=done, rootExitCode=0, treeStopConfirmed=true, activeProcessesFinal=0; cleanupRetried=false and control-directory snapshots agree. The single node --check returned0. Codex did not rerun tests/typecheck or launch any models.
+
+P03-F1 is closed: the one final approval fact drives both outer failure and durable pendingUser. The regression preserves actual fixture Review pass and Worker success, original approved digest and null round-level execution identity, while checking the real saved JSON and no additional dispatch. Prior excess direct runs and the manifest refusal remain recorded; their evidence is not retroactively relabelled.
+
+P0-3c.1 PASS and P0-3 PASS apply to the existing bounded offline reporting/exception contract, together with the earlier a/b/c evidence. They do not certify live model availability/cost, real E2E, all failure combinations or cross-process recovery. resumeSupported=false, stopSafetyCertified=false and automaticPostRoundAction=none remain. Manual development-session model identity was not independently observed. Next is only P0-4.0 read-only readiness and a fresh Owner execution authorization.
+
+Current authority is PROJECT_BASELINE §7.49. Under the standing stage-archive authorization, this accepted snapshot is to be archived on codex/p03c1-final-closure-20261019 with parent dd35904540eee399b156b77c96465b414520b99d, six exact files, no main merge. Actual remote SHA/manifest, isolated-index cleanup and primary-tree preservation are recorded in ignored project-progress/p03c1-final-acceptance-20261019; archival is not a model/E2E authorization.
+
+## Historical review records (superseded status, retained evidence)
 
 Date: 2026-10-19. Scope: source/contracts/existing evidence only. No production edits, tests, typechecks, model calls or live probes in this review.
+
+## Follow-up 2026-10-19 — P03-F1 source accepted; closure PARTIAL
+
+The original BLOCKED finding below is historical. OpenCode's two-file repair now retains one finalApprovalDrift fact and projects it through the existing attention/publisher path. Codex inspected the actual production diff, the untracked test against its archived blob, callers and original logs; no new source blocker was found. Case I changes owned stage material in the controlled Review callback and reads the actual saved pendingUser. Review pass and completed Worker states remain real fixture facts; round-level execution identity stays null.
+
+Acceptance remains PARTIAL for execution evidence. Logs show typecheck twice without errors and one test file run twice (115/1, then116/0 after correcting an assertion that counted the parent plan). The second run exceeded the specified single run, and direct node --import bypassed the requested whitelist Runner/outer ManagedProcess. Worker-reported exit0/2822ms is not an independently captured execution record. The existing case C empty Job proves only that child, not the outer suite tree. Codex did not rerun tests/typecheck or launch models. git diff --check passed.
+
+Only next action proposed: Owner-authorized single offline run by OpenCode through the existing whitelist and ManagedProcess, with new evidence paths, source hashes, actual exit and verified outer Job stop; no production/test edits. The existing historical one-shot verifier must not be rerun by deleting or overwriting its old log. No full P0-3 or real E2E PASS, no new model authorization. Current facts are PROJECT_BASELINE §7.47; logs and local hashes are under ignored project-progress/p03c1-independent-review-20261019. No commit/push in this review.
 
 ## Verdict
 
