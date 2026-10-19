@@ -1,17 +1,23 @@
-# 唯一下一任务 — P0-4.5 最多一次非推理补观测（待Owner新增授权）
+# 唯一下一任务 — P0-4.6 一次真实Round（待Owner新授权，不自动执行）
 
-见PROJECT_BASELINE.md §7.58。已有原生debug config实际执行一次，目标exit0且control支持Job已停；有效配置stdout随观察宿主崩溃丢失。原单次额度已消耗，剩余0，不能自动重跑。本提示词仅在Owner批准转交后生效。
+P0-4.5有界无推理配置核验PASS，见PROJECT_BASELINE.md §7.59。配置中没有显式build不阻断内置primary；不改配置、不追加第三次诊断，不重审历史B阶段。当前真实调用授权仍关闭，旧池过期、旧digest失效。
 
-## 最小调整与来源
+## 执行前必须由Owner明确的最少信息
 
-不改产品、配置或新建脚本/执行框架，只修原观察命令。复用§7.58微软官方.NET流与等待契约：禁止OutputDataReceived/ErrorDataReceived的PowerShell scriptblock回调及BeginOutputReadLine；同时启动stdout/stderr的ReadToEndAsync Task，均在原runspace等待/解析，避免双管道阻塞。不得无界等待Task结果。
+1. 新授权一次真实Round：Worker opencode/space-bunny-free最多2原生会话；Reviewer codex/gpt-6.1-sol最多1独立原生会话；真实LAYA POST最多3（--laya-post-max 3）。不得继承旧额度。
+2. 以当前账户事实确认Worker零新增收费可用，Reviewer有足够订阅包含额度，不用额外credits/API按量余额/自动充值/收费fallback。原生辅助调用也须在该费用边界内；未经确认不能改时间戳刷新声明。
+3. 接受每Worker/Reviewer实际deadline90秒、LAYA启动/请求各90秒、批准测试每条默认120秒；并发1、任务重试0、无接力/换模型；OpenCode 1.19.3原生同会话有限重试须明确允许且仍受deadline/费用限制。接受现有原生工具权限与协作式Demo范围，cwd/allowedScope/Job不是OS读取或网络沙箱；不放宽权限/自动批准。中间机器验证自动推进，最终Human Gate由Owner决定，自动后续NONE。
 
-30秒共用一个从启动开始的观察截止：进程等待和两路读取都只能使用剩余时间，不能先WaitForExit(30000)再另等30秒。到期沿用已审核owned stop marker/Job的有界清理，不改变原生执行deadline、不使用裸PID/名称强杀；进程已退出但读流未完成也算证据失败。
+上面仅是待批准范围，不是已获批准。缺任何必要事实时，报告缺项并停止，不启动服务、推理、Agent或补救Round。
 
-## 待批准的一次性范围
+## 获批后的唯一执行
 
-最多新增1次同一debug config，失败不重试，无prompt/session/模型；沿用原生自身db/log/cache必要状态及已有配置元数据读取边界，不手工读凭据、不安装/升级/改全局或父目录。新建独立owned control/stop路径，不覆盖上次证据。启动前复核配置哈希371821341868CAC8CA7B9E6D5902AAAD88313B7C2267D08A7CB57B2BCEC16599与当前无安装条件；cwd仍为原workspace，OPENCODE_CONFIG为control/opencode-demo.json。
+沿用D:/workbench-demo/p04-20261019T035918Z/control和空workspace。只做会变化的最小前置：核对文件哈希、费用声明有效期、原生配置及工具安装状态无变化；无安装/权限放宽。只发送Demo及必要执行证据，不发送编排器仓库、凭据和无关数据。
 
-原始stdout/stderr仅在内存处理；只落盘批准的非敏感模型/provider/Agent/permission字段、命令、哈希与Job事实。解析错误只输出类型/阶段，不打印原始JSON或完整异常。区分launcher退出与target root退出、精确耗时与估计值；校验control才能声称树停止。若原命令不存在或无法满足边界，启动前BLOCKED，不另造工具。
+取得新的Owner费用声明后才更新池，记录原文/来源/有效期；运行一次无推理stage-check取得当前digest。OPENCODE_CONFIG进程局部指control/opencode-demo.json，保存哈希371821341868CAC8CA7B9E6D5902AAAD88313B7C2267D08A7CB57B2BCEC16599及环境引用；digest不覆盖该原生文件，不能仅凭digest假设它冻结。
 
-不编写/运行测试、typecheck、node -e/python -c，不改仓库源码/测试/Demo配置/workspace/pool/stage/plans；不运行stage-check/LAYA/Worker/Review/Round，不刷新池，不commit/push/reset/clean/stash。完成返回READY FOR CODEX REVIEW或BLOCKED后立即停止，不追加第三次诊断。真实E2E仍需单独授权。
+复用已有LAYA owned contained固定离线缓存启停与round CLI，仅一次sequential、fixed、p04-demo、maxChildren3、maxConcurrent1、retryMax0、no-handoff、laya-post-max3；execution/laya/review-timeout90000，review-agent codex，确认新的digest后执行。无需再运行debug config或模型资格试调用。
+
+目标仍为Worker创建根目录add.js，第二Worker独立创建/运行add.test.js，真实批准测试通过后Native Codex Review→Human Gate。两个任务使用既有完成契约，不预置/搬移产物，不手工完成任务，不改写LAYA wait。首任务失败/越界/费用异常/身份不符/预算耗尽即停，不重跑或追加模型。最终记录实际身份、Session/Attempt、POST、产物、真实退出码、Review verdict及Human Gate；不足则PARTIAL/BLOCKED。
+
+无论成败执行既有owned stop及可信Job清理，不按PID/名称强杀，不影响桌面已有会话。不得改生产源码、原生安装或全局配置，不commit/push/merge/reset/clean/stash；归档由Codex审核后处理。完成或停止后立即交回Codex，不进入下一阶段。

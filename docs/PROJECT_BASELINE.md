@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-19。当前见§7.58：P0-4.5已执行一次无推理debug config，control支持目标exit0且Job最终为0；观察端崩溃丢失有效字段，整片仍BLOCKED，单次额度已消耗。待Owner另批最多一次补观测，修复双流捕获及统一截止，不改产品/配置、不刷新池，真实模型授权关闭。
+更新：2026-10-19。当前见§7.59：P0-4.5补观测有界PASS。新control支持目标exit0/Job最终0；脱敏报告主/小模型及provider白名单均为批准Free路由，缺显式build不阻断内置Agent。累计2次诊断已用完，不再补跑。真实推理/费用资格与E2E未验收；下一步仅待Owner新授权一次P0-4.6真实Round及当前费用事实。
 
 ## 1. 权责与当前结论
 
@@ -114,7 +114,7 @@ B4.7.3：Space Bunny Free+MiMo V2.6 Flash Free，三个真实独立任务/会话
 
 LAYA：既有Python环境0.3.21，缓存D:/AI/laya-cache，固定权重revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851。历史离线CUDA加载和GET health通过；typed分类中英/计划/pair小样本通过。next_action的正向质量验收曾多次continue或wait，不能改成complete；置信度裁剪等原有限制不因文档更新消失。默认不常驻，不升级/下载/切权重。
 
-## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.58）
+## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.59）
 
 Owner批准日期：2026-10-16。**Owner approved / Not yet implemented / Not yet tested**。正式未来默认覆盖旧“仅显式实验”建议，未改变当前生产或历史报告。
 
@@ -142,7 +142,7 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
 
 ## 6. 唯一下一步与授权
 
-P0-4.5元数据返工PASS保留；一次原生配置命令已运行，但观察端丢失有效字段（§7.58），核验未通过。唯一下一步待Owner另批最多一次非推理补观测，只修观察命令的双流捕获/统一截止，不改产品/配置或试模型。既有单次额度已用完，不能自动重跑。
+P0-4.5补观测有界PASS（§7.59），不继续诊断或改配置。唯一下一步P0-4.6：Owner新授权一次真实Round，临近执行时确认两项当前费用资格、接受批准测试120秒与现有原生权限边界，再刷新声明并生成新digest。当前没有真实执行授权，不自动启动。
 
 真实产品Agent/LAYA/Native Review/E2E调用保持关闭，旧剩余次数不继承。OpenCode最近一次Free CLI探测403仍是接入线索，不能推断当前必然可用或不可用；先完成本地确定性缺口，再按新授权核实模型/费用/数据/次数。阶段裁定后可按Owner既有授权推送独立审核分支，不合并main。
 
@@ -713,6 +713,14 @@ P0-4.5元数据返工PASS保留；一次原生配置命令已运行，但观察�
 - 已核对[.NET重定向流](https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.process.standardoutput)与[WaitForExit](https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.process.waitforexit)/[ReadToEndAsync](https://learn.microsoft.com/en-us/dotnet/api/system.io.streamreader.readtoendasync)官方契约。最小建议是同时启动stdout/stderr的.NET读取Task，在PowerShell主runspace等待/解析，不挂scriptblock事件回调；进程退出与两个读流必须共用一个有界观察截止，不能在WaitForExit(30000)后无界Result/GetResult或额外等待30秒。超时沿用owned marker/Job有界清理，未确认就报告不明，不按裸PID或名称强杀。
 - 单次原生debug config调用已实际消耗，剩余授权0；本轮Codex没有重跑、探针或测试。下一次补观测仅是待Owner批准的建议：最多新增1次同命令，无prompt/Session/模型、不修改配置/源码，不安装，保持原生状态/配置元数据既有边界。直接在原观察命令中改捕获方式，不新建脚本或执行框架；原始输出不得落盘，解析失败不得把原文/完整异常写入报告。仍失败则停止，不开展第三次诊断。
 - 基线/NEXT/ignored进度页同步，独立记录见project-progress/p045-observer-review-20261019。按既有归档授权只推送两份项目文档；主HEAD/index/范围外dirty受保护。P0-1/2/3有限PASS、9/26债务、120秒批准测试待接受、68/100估算保留，真实E2E未授权。
+### 7.59 P0-4.5补观测独立验收（有界无推理核验PASS；不等于真实执行READY）
+
+- 新control C:/Users/Admin/AppData/Local/orchestrator/containment-run/w1ctl-89572-de5c259be6bd.txt已实读，SHA256=6FEA2D62A5AEB4D8ADB4F9DFA2BD77D10F71FE21576D3BF8316141E5934CAC53；launcherPid87160/rootPid83096，assignedBeforeResume1/resumed1，rootExitObserved1/rootExitCode0，最终phase done/launcherStatus success/complete1/treeStopped1/activeProcessesFinal0，与现有consumer停止契约一致。旧control哈希保持E79054D08EEE11AD838DCC61ECD46019F162A9B52ACB3DF866070BE589ABEDE6；配置371821341868CAC8CA7B9E6D5902AAAD88313B7C2267D08A7CB57B2BCEC16599未变，workspace空。Codex未重跑native或测试。
+- 按Owner转交的Worker脱敏观测报告保留：launcher exit0，进程1024ms/含双流1031ms，stdout421字符/stderr0；model/small_model均opencode/space-bunny-free，enabled_providers/provider keys仅opencode，whitelist仅space-bunny-free，options仅记录apiKey键存在不记录值。Agent显式键1个但非build，permission未显式设置。原始输出按约束未保存，字段/计时/launcher退出来源为Worker报告而非Codex重新测量；control及文件哈希为本次独立核对。
+- [v1.19.3 agent/agent.ts](https://github.com/anomalyco/opencode/blob/v1.19.3/packages/opencode/src/agent/agent.ts)先建立内置build primary再合并cfg.agent；[run.ts localAgent](https://github.com/anomalyco/opencode/blob/v1.19.3/packages/opencode/src/cli/cmd/run.ts)通过agentSvc.get解析--agent，缺显式build不是Agent缺失，不需追加配置或模型探针。未命名Agent的名称/来源保留unknown，不能由JSON无定义直接推断远端；ConfigAgent.load/loadMode还支持本地markdown来源。当前全局agent/agents/mode/modes路径未发现相应文件，但不据此穷举全部来源或读取认证材料。
+- permission缺键不等于deny-all。版本源码给build合并内置权限（一般allow，外目录默认ask并有原生临时/工具目录白名单等），run非交互时另加规则；这属于源码规则，不是本次工具执行权限实测，也不是OS读取/网络沙箱。不放宽工具或追加--auto。共享db/log写入归属仍未知，不以mtime跨窗口直接证明所有因果；模型可调用/费用/辅助推理及真实E2E未验证。
+- 本片裁定PASS限无推理配置核验：关键Free配置观测与原生目标/Job停止事实齐备，build疑点由固定源码关闭；不封板整个后端或MVP。累计2次诊断（首次观察端失败+新增一次成功）均已消耗，剩余授权0，禁止第三次诊断。下一步拟仅一次P0-4.6真实Round，须Owner新的会话/POST/费用/时限/数据授权、当前费用声明、接受120秒批准测试及现有原生权限边界；旧池/digest不得沿用。
+- Codex本轮0新原生进程/测试/模型，未改Demo/生产。证据在ignored project-progress/p045-config-acceptance-20261019；基线/NEXT/本机页面同步。按既有阶段归档仅推送两份文档，不上传Demo、control、ignored审计或凭据；主HEAD/index/范围外dirty保留。历史债务与68/100估算不变。
 ## 8. 规划估算与本机快照
 
 沿用历史十项权重信用68/100（固定分母为完整后端需求，不含正式UI）；页面按5%档显示约70%、剩30%，旧合理剩余区间30–50%。这不是工时、可用率、自动化完成率或MVP成功概率。本轮文档不增分；下一真实E2E仍未成功，必须看具体阻塞和证据，不能用百分比代替它。
@@ -721,18 +729,18 @@ P0-4.5元数据返工PASS保留；一次原生配置命令已运行，但观察�
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-19T07:22:26.1035558Z",
+  "updatedAt": "2026-10-19T08:15:18.1319210Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
     "id": "P0-4.5",
-    "name": "原生命令成功，观察端丢失有效配置字段",
-    "status": "blocked",
-    "summary": "已用1次原生诊断，control exit0/Job最终0；stdout丢失，核验BLOCKED。剩余授权0，待Owner另批1次修复捕获的补观测，不调用模型。"
+    "name": "补观测有界PASS，真实Round待新授权",
+    "status": "done",
+    "summary": "两次诊断已消耗，新增一次捕获Free主/小模型及provider白名单，Job最终0；内置build无需显式配置。非推理核验PASS，真实推理/费用/E2E未验收。"
   },
   "next": {
-    "id": "P0-4.5",
-    "name": "最多新增1次非推理补观测；修复双流捕获与统一截止，待Owner批准",
+    "id": "P0-4.6",
+    "name": "一次真实Round；待Owner新授权、当前费用声明及测试/权限边界确认",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -810,9 +818,9 @@ P0-4.5元数据返工PASS保留；一次原生配置命令已运行，但观察�
     {
       "severity": "P1",
       "kind": "当前验收缺口",
-      "title": "观察端崩溃丢失原生有效配置字段",
-      "detail": "debug config目标exit0且control记录Job最终0，但观察端崩溃，模型/provider/权限字段未捕获；现有单次额度已消耗。",
-      "next": "仅建议Owner另批最多1次补观测，改用并发.NET读取Task与统一30秒截止；不自动重跑、不改产品/配置或调用模型。"
+      "title": "无推理配置核验已通过；真实Round尚无新授权",
+      "detail": "补观测已捕获Free主/小模型/provider白名单，内置build源码核清；池过期，当前费用资格及真实推理/Review未验收，不能自动启动。",
+      "next": "不再追加诊断；Owner另批一次P0-4.6真实Round并确认当前费用、120秒批准测试及现有权限边界后再执行。"
     },
     {
       "severity": "P1",
@@ -1163,6 +1171,11 @@ P0-4.5元数据返工PASS保留；一次原生配置命令已运行，但观察�
     }
   ],
   "checks": [
+    {
+      "name": "P0-4.5补观测独立验收",
+      "source": "PROJECT_BASELINE.md §7.59；project-progress/p045-config-acceptance-20261019/review.json；新control本机保留",
+      "result": "有界PASS：Worker脱敏报告Free主/小模型与provider白名单，双流1031ms；独立control核对rootExit0/Job最终0，配置未变。build为内置primary；真实推理/费用/E2E未验收，不再追加诊断。"
+    },
     {
       "name": "P0-4.5观察端故障独立审核",
       "source": "PROJECT_BASELINE.md §7.58；project-progress/p045-observer-review-20261019/review.json；原始control保留在本机",
