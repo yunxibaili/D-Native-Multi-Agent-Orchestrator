@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-19。当前见§7.56：P0-4.5在执行前BLOCKED，Demo缺少$schema会命中原生配置回写分支，违反本片禁止配置变更的边界，未启动核验。唯一下一步拟由OpenCode仅补该元数据及README/哈希，待Owner转交批准；不自动重跑debug config。池不刷新、模型调用关闭，真实准入仍BLOCKED。
+更新：2026-10-19。当前见§7.57：P0-4.5单字段返工独立PASS，缺$schema回写分支已避开；移除新增行可还原原文件哈希。原生有效配置核验尚未执行，真实准入仍BLOCKED。唯一下一步待Owner合并确认工具自身状态写入/配置元数据读取边界后核验一次，不再改配置、不刷新池，模型调用关闭。
 
 ## 1. 权责与当前结论
 
@@ -114,7 +114,7 @@ B4.7.3：Space Bunny Free+MiMo V2.6 Flash Free，三个真实独立任务/会话
 
 LAYA：既有Python环境0.3.21，缓存D:/AI/laya-cache，固定权重revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851。历史离线CUDA加载和GET health通过；typed分类中英/计划/pair小样本通过。next_action的正向质量验收曾多次continue或wait，不能改成complete；置信度裁剪等原有限制不因文档更新消失。默认不常驻，不升级/下载/切权重。
 
-## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.56）
+## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.57）
 
 Owner批准日期：2026-10-16。**Owner approved / Not yet implemented / Not yet tested**。正式未来默认覆盖旧“仅显式实验”建议，未改变当前生产或历史报告。
 
@@ -142,7 +142,7 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
 
 ## 6. 唯一下一步与授权
 
-P0-4.4历史静态准备PASS保留，但P0-4.5发现缺少$schema的回写限制（§7.56），实际配置核验尚未发生。唯一下一步拟仅补Demo元数据及README并返回新哈希，不重建配置、不启动CLI；须Owner转交批准。该修订只关闭一项已定位副作用，不代表其他加载/网络/运行数据/超时清理边界已解决。费用及真实E2E未验收，池不滚动刷新。
+P0-4.5元数据返工独立PASS（§7.57），实际配置核验尚未发生。唯一下一步是Owner明确一次无推理核验的原生状态写入/配置元数据读取边界后执行一次；不继续追加配置修订或模型实验。原生有效加载/权限/费用及真实E2E未验收，池不滚动刷新。
 
 真实产品Agent/LAYA/Native Review/E2E调用保持关闭，旧剩余次数不继承。OpenCode最近一次Free CLI探测403仍是接入线索，不能推断当前必然可用或不可用；先完成本地确定性缺口，再按新授权核实模型/费用/数据/次数。阶段裁定后可按Owner既有授权推送独立审核分支，不合并main。
 
@@ -698,6 +698,13 @@ P0-4.4历史静态准备PASS保留，但P0-4.5发现缺少$schema的回写限制
 - 唯一最小返工建议：仅在control/opencode-demo.json新增$schema=https://opencode.ai/config.json，保留四项行为配置，更新同目录README及哈希。该建议待Owner转交批准，不包含debug config、测试、stage-check、池刷新或真实调用；不修改生产/全局/父目录或凭据，不新建脚本。补字段只消除本文件缺schema回写分支，其余未知仍保留。
 - 本轮Codex0测试、0原生CLI/模型/服务，未改Demo。只更新基线/NEXT及ignored进度记录；审查证据在project-progress/p045-sideeffect-review-20261019。按既有阶段归档授权仅推送两份项目文档，远端与临时索引清理以实际记录为准。主HEAD/index/范围外dirty保留，P0-1/2/3有限PASS、9/26债务和68/100估算不变，真实E2E保持关闭。
 
+### 7.57 P0-4.5缺schema定向返工独立审核（元数据修订PASS；运行核验未完成）
+
+- 实际配置新哈希371821341868CAC8CA7B9E6D5902AAAD88313B7C2267D08A7CB57B2BCEC16599，README新哈希E20F5E77CDC8440D212B077DAD724EED87FE01427B0B76EAE1E299920D6A7A1C，均与Worker报告一致。在内存删除新增schema行后按原UTF-8字节计算，精确恢复旧哈希5B2D836A539408A67E92EEA4A1655093FAE1DCD7A59DAEED8C4E6732EE3CE566；未创建验证脚本或写回Demo。四项行为配置及其他文本未变，README准确保留运行核验尚未执行和其余未知。
+- 其余Demo文件哈希与§7.55/P0-4.2一致，workspace为空。本次只关闭该文件缺schema时的回写分支，不证明全链无副作用，不追认原生有效配置/权限/可调用或费用资格；原生CLI、测试、模型、服务、stage-check均未运行。
+- 无需继续配置开发。唯一下一步拟在Owner明确允许原生工具自身db/log/cache必要状态写入，以及已有账户配置元数据读取范围之后，仅一次30秒无推理有效配置核验；不手工读取/输出凭据、不请求模型、不允许安装/升级或改全局/祖先配置。必须在启动前确定既有Job受控deadline、stop及可信control验证方式；无法满足则不运行。不把直接launcher存在当作清理通过，不新增执行层或测试脚本。上述边界尚未获得本轮执行批准。
+- 本轮Codex仅静态文件/哈希审核，0产品执行，未改Demo。基线/NEXT/ignored页面已同步，证据在project-progress/p045-schema-review-20261019；按既有归档授权只推送两份项目文档，不上传Demo或ignored材料。主HEAD/index/范围外dirty保留，9/26历史债务、120秒批准测试待接受和68/100估算不变。P0-4.5整片仍未完成，真实E2E继续关闭。
+
 ## 8. 规划估算与本机快照
 
 沿用历史十项权重信用68/100（固定分母为完整后端需求，不含正式UI）；页面按5%档显示约70%、剩30%，旧合理剩余区间30–50%。这不是工时、可用率、自动化完成率或MVP成功概率。本轮文档不增分；下一真实E2E仍未成功，必须看具体阻塞和证据，不能用百分比代替它。
@@ -706,18 +713,18 @@ P0-4.4历史静态准备PASS保留，但P0-4.5发现缺少$schema的回写限制
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-19T07:01:16.7943044Z",
+  "updatedAt": "2026-10-19T07:08:27.6192989Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
     "id": "P0-4.5",
-    "name": "配置回写副作用导致执行前阻断",
+    "name": "schema返工已通过，原生核验待授权",
     "status": "blocked",
-    "summary": "Demo缺$schema会命中原生回写分支；核验未启动。仅建议单字段静态修订，其他加载/费用/清理未知保留，不调用模型。"
+    "summary": "单schema行修订已独立PASS并能恢复旧字节哈希；原生有效配置未核验，待Owner明确原生状态/配置元数据边界，模型调用关闭。"
   },
   "next": {
     "id": "P0-4.5",
-    "name": "仅补Demo配置$schema并更新README/哈希；待Owner转交批准",
+    "name": "一次无推理有效配置核验；原生状态/配置元数据边界待Owner批准",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -795,9 +802,9 @@ P0-4.4历史静态准备PASS保留，但P0-4.5发现缺少$schema的回写限制
     {
       "severity": "P1",
       "kind": "当前验收缺口",
-      "title": "缺schema触发回写；原生配置核验未运行",
-      "detail": "缺$schema时原生加载器尝试改写显式配置，与上一片禁止配置修改冲突；未执行debug config，其他运行副作用与费用仍未验证。",
-      "next": "只提单字段$schema及README修订，待Owner转交批准；不自动重跑debug config、不刷新池或调用模型。"
+      "title": "schema回写分支已避开；原生有效配置未核验",
+      "detail": "已补schema并保留全部行为键；尚未批准工具自身状态写入和配置元数据读取边界，debug config未执行，权限/费用未知。",
+      "next": "Owner一次性明确非推理边界后核验一次；先确认现有Job deadline/控制记录及无安装，不改配置、不刷新池或调用模型。"
     },
     {
       "severity": "P1",
@@ -1148,6 +1155,11 @@ P0-4.4历史静态准备PASS保留，但P0-4.5发现缺少$schema的回写限制
     }
   ],
   "checks": [
+    {
+      "name": "P0-4.5 schema返工独立审核",
+      "source": "PROJECT_BASELINE.md §7.57；project-progress/p045-schema-review-20261019/review.json",
+      "result": "元数据修订PASS：新哈希一致，内存移除单行即还原旧哈希，原材料未变、workspace空。未启动原生CLI/测试/模型，整片运行核验未完成。"
+    },
     {
       "name": "P0-4.5执行前副作用阻断审核",
       "source": "PROJECT_BASELINE.md §7.56；project-progress/p045-sideeffect-review-20261019/review.json",

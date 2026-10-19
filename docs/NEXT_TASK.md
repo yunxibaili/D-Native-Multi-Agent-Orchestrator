@@ -1,17 +1,21 @@
-# 唯一下一任务 — P0-4.5 定向返工：仅补Demo配置$schema（待Owner转交批准）
+# 唯一下一任务 — P0-4.5 一次有效配置核验（新增非推理边界待Owner转交批准）
 
-P0-4.5执行前BLOCKED，原生配置核验未发生，见PROJECT_BASELINE.md §7.56。缺少$schema时原生加载器会尝试回写，违反上一片配置不变要求。本轮不重建配置，不新开产品阶段。
+缺schema返工已独立PASS，见PROJECT_BASELINE.md §7.57；不重做配置，不追加元数据，不刷新过期池。P0-4.5运行核验尚未发生，真实E2E未授权。
 
-## 拟允许的唯一修改
+## 拟一次性批准的边界（当前未批准执行）
 
-D:/workbench-demo/p04-20261019T035918Z/control/opencode-demo.json：仅新增顶层$schema=https://opencode.ai/config.json，保留model/small_model/enabled_providers/provider四项原值、编码和其余文本。
+只运行一次现有OpenCode debug config，无prompt/Session/模型请求；30秒硬deadline，失败不重试。允许原生工具正常产生自身db/log/cache必要状态，并按已有登录态读取现有配置元数据；这些不等于开发者可以手工读取auth.json/API Key/token/密码，不得打印或保存秘密或完整配置。禁止安装/升级、修改全局/父目录/显式配置、仓库及Demo任务产物；不执行模型探测、stage-check、LAYA或Review。
 
-同目录README.md：仅补该元数据修订原因、新哈希、实际核验尚未执行的说明。补字段只关闭本文件缺schema回写分支；不能声称加载完全无副作用或真实准入READY。
+此边界须Owner明确转交批准后才生效；本文件不是执行授权。不把静态准备PASS当费用/账户或真实模型批准。
 
-## 静态交付
+## 执行前及单次核验
 
-读取§7.56及已有v1.19.3来源，使用既有loadConfig行为，不重复试模型。提供单字段diff、JSON解析结果、新SHA256、README差异、其余Demo文件哈希及workspace仍空的事实。不新增验证脚本，不编写node -e/python -c，不运行任何CLI探针、测试或typecheck。
+读取§7.54–7.57来源与已有Job/进程入口，复用已有能力，不建脚本/执行框架。先确认当前安装依赖状态不会触发reify，各适用path配置都有schema，并明确30秒stop触发、最终control严格验证及清理方式。只展示无凭据字段/路径/哈希；无法满足则在启动前BLOCKED，不裸跑，不放宽权限。不能只凭launcher退出0认证树停止。
 
-停止于READY FOR CODEX REVIEW；不附带重跑debug config。wellknown/活动账户远端配置、工具数据写入、依赖状态及受控deadline/可信停止证据仍未验证，不能隐藏为PASS。后续应合并剩余执行边界的明确授权后再核验，避免反复刷新池/预检。
+cwd固定D:/workbench-demo/p04-20261019T035918Z/workspace；OPENCODE_CONFIG仅进程局部指向control/opencode-demo.json。启动前校验新哈希371821341868CAC8CA7B9E6D5902AAAD88313B7C2267D08A7CB57B2BCEC16599。原生debug config参数按v1.19.3已有源码确认，不猜run参数通用。只持久化model、small_model、provider限定/白名单、build Agent及permission的非敏感有效字段；原始输出只在内存做字段白名单筛选，不能先落盘完整配置再脱敏。
 
-禁止改orchestrator、pool、plans、stage、workspace、生产/测试/全局/父目录配置、凭据和外部安装；禁止LAYA、Worker、Native Review或Round；禁止安装/网络探测/付费、commit/push/reset/clean/stash。Git归档仍由Codex负责。
+交付实际命令/cwd/配置哈希、单次退出码/耗时、必要有效字段及来源、validated control停止事实与cleanupFailures、允许状态写入的观察结果及仍未知项。元数据中若出现未批准模型/provider/权限冲突立即停止，不改配置再试。未启动则所有运行/Job结果写不适用，不能写ActiveProcessesFinal=0冒充实际清理证据。
+
+## 停止
+
+不改源码/测试/Demo配置，不跑测试/typecheck，不创建任务或模型会话，不联网试模型、不滚动刷新池，不commit/push/reset/clean/stash。Git由Codex负责。完成返回READY FOR CODEX REVIEW或BLOCKED并停止，不继续真实Round。
