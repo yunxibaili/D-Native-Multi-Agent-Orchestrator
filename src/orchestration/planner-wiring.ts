@@ -28,6 +28,11 @@ import type { CandidateTask, CandidateRejection, DagValidation } from './planner
 import { validateCandidateDag } from './planner.ts';
 import type { TaskStore } from './store.ts';
 import type { Task } from './task.ts';
+import {
+  CompletionContractError,
+  parseCompletionContract,
+  type CompletionContract,
+} from './completion-contract.ts';
 
 /** Why a commit was refused. Nothing is written in any of these cases. */
 export type CommitFailure =
@@ -35,7 +40,9 @@ export type CommitFailure =
   | 'root-not-found'
   | 'task-already-exists'
   | 'parent-not-found'
-  | 'create-refused';
+  | 'create-refused'
+  /** P0-1: a candidate carried a completion contract that is empty/partial/unsafe. */
+  | 'completion-refused';
 
 export type CommitOutcome =
   | {
@@ -70,10 +77,39 @@ export interface CommitOptions {
 }
 
 /**
+ * P0-1: validate + freeze every PRESENT candidate completion contract with the ONE
+ * parser, BEFORE any task is written.
+ *
+ * Exported so the workbench can run it before it creates the root (a `commitPlan`
+ * refusal would otherwise leave a root behind), and reused by `commitPlan` for direct
+ * callers. An absent contract is left absent (a coding candidate without one is refused
+ * later, at completion, never silently given a default).
+ */
+export function validateCandidateCompletions(
+  candidates: readonly CandidateTask[],
+): { readonly ok: true; readonly contracts: Map<string, CompletionContract> } | { readonly ok: false; readonly reason: string } {
+  const contracts = new Map<string, CompletionContract>();
+  for (const c of candidates) {
+    if (c.completion === undefined) continue;
+    try {
+      contracts.set(c.taskId, parseCompletionContract(
+        { expectedArtifacts: c.completion.expectedArtifacts, allowedScope: c.completion.allowedScope, test: c.completion.test },
+        `candidate "${c.taskId}"`,
+        { taskType: c.taskType },
+      ));
+    } catch (e) {
+      if (e instanceof CompletionContractError) return { ok: false, reason: `${c.taskId}: ${e.detail}` };
+      throw e;
+    }
+  }
+  return { ok: true, contracts };
+}
+
+/**
  * Write a validated candidate DAG into the EXISTING store.
  *
- * Validates first, commits second. On any refusal the store is untouched — which
- * is asserted by the tests comparing a full snapshot before and after, because
+ * Validates first, commits second. On any refusal the store is untouched — which is
+ * asserted by the tests comparing a full snapshot before and after, because
  * "we checked first" is easy to claim and easy to break.
  */
 export function commitPlan(
@@ -117,6 +153,16 @@ export function commitPlan(
     }
   }
 
+  // P0-1: THE COMMON CONTRACT BOUNDARY. Every candidate — from the plan-file path, a
+  // built-in plan, or a DIRECT `planWithCandidates` caller — reaches the store here. A
+  // present contract is therefore re-validated and FROZEN with the ONE parser before it
+  // is written, so a caller cannot smuggle an empty/partial contract (e.g. an empty
+  // `expectedArtifacts`) past the parser that only the CLI path used to run, and the
+  // task can never carry a mutable contract that is later edited into a bypass.
+  const validated = validateCandidateCompletions(candidates);
+  if (!validated.ok) return { ok: false, code: 'completion-refused', reason: validated.reason };
+  const validatedCompletions = validated.contracts;
+
   const existing = new Map(store.all().map((t) => [t.taskId, { taskId: t.taskId, dependencies: t.dependencies } as const]));
   const validation: DagValidation = validateCandidateDag(candidates, existing);
   if (!validation.ok) {
@@ -153,9 +199,8 @@ export function commitPlan(
         dependencies: [...c.dependencies],
         budgetUnits: c.budgetUnits ?? options.budgetUnits ?? 0,
         generation: options.generation ?? 0,
-        // P0-1: carried verbatim when the plan source declared one; the committer adds
-        // no rule and never invents a contract.
-        ...(c.completion !== undefined ? { completionContract: c.completion } : {}),
+        // P0-1: the VALIDATED + FROZEN contract (never the caller's mutable object).
+        ...(validatedCompletions.has(c.taskId) ? { completionContract: validatedCompletions.get(c.taskId)! } : {}),
       },
       Date.now(),
     );

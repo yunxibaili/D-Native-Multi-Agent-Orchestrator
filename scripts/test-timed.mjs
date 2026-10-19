@@ -25,9 +25,37 @@
 
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { basename, isAbsolute, relative, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // The ONE existing process-tree killer, reused rather than reimplemented here.
 import { taskkillTree } from '../src/runtime/spawn.ts';
+
+/**
+ * P0-1 OFFLINE BOOTSTRAP. Every suite is launched with `--import` of the trusted
+ * offline bootstrap, which FREEZES the offline deny policy BEFORE the suite module
+ * (and any test code) executes. From that point no suite can discover, authenticate or
+ * launch a real coding agent — regardless of env vars, config or a recreated runtime.
+ */
+const OFFLINE_BOOTSTRAP = pathToFileURL(
+  fileURLToPath(new URL('../tests/helpers/offline-context.mjs', import.meta.url)),
+).href;
+
+/**
+ * Real-agent suites that must NEVER be selected through `TEST_TIMED_SUITES`: they are
+ * opt-in, need a real install and a real model, and the reviewed offline runner must
+ * not be talked into running them.
+ */
+const LIVE_SUITE_DENYLIST = [
+  'w41-opencode-natural-exit',
+  'w42-opencode-lifecycle',
+  'w42-codex-lifecycle',
+  'w43-opencode-evidence',
+  'real-agent-cleanup',
+  'native-agent-e2e',
+  'native-handoff-e2e',
+  'b47-free-duo',
+];
 
 const SUITES = [
   'unit',
@@ -114,6 +142,13 @@ const SUITES = [
   // P0-1: the deterministic completion gate — real plan-file -> workbench -> executeTask
   // chain with a REAL contained approved test; hermetic (fake agent, no model/network).
   'p01-completion-gate',
+  // P0-1 isolation: the OFFLINE deny policy is frozen and enforced at the shared
+  // process edge; controlled sentinels prove a real agent launcher is refused BEFORE
+  // spawn while a benign OS child still runs. Hermetic.
+  'p01-test-isolation',
+  // Cancellation / process-tree cleanup on REAL contained ManagedProcess instances,
+  // driven by a CONTROLLED Node fixture (offline — no real agent is discovered).
+  'cancel',
   'round-result',
   'execution-lifecycle',
   // TeamRun T2-b: the Worker execution contract (bounded recon / reuse-first). Proves the
@@ -142,17 +177,83 @@ const SUITES = [
 ];
 
 // R5-1.2 (§10): a caller may override the suite list via TEST_TIMED_SUITES
-// (';'-separated paths; entries containing '/' are used verbatim). Used by the
-// exit-semantics regression; production `npm test` leaves it unset and runs the
-// canonical list.
-const override = process.env.TEST_TIMED_SUITES;
-const SUITE_FILES =
-  override !== undefined && override !== ''
-    ? override.split(';')
-    : SUITES.map((s) => `tests/${s}.test.ts`);
+// (';'-separated). P0-1 hardening: EVERY selector — the default list AND the override —
+// is NORMALISED against the canonical workspace root and must resolve to a reviewed
+// canonical offline suite INSIDE that root. Absolute paths, `..` escapes, unknown files
+// and LIVE entries are all refused, fail-closed, so the offline runner cannot be talked
+// into launching a real agent or a non-reviewed file.
+const CANONICAL_FILES = new Set(SUITES.map((s) => `tests/${s}.test.ts`));
 
+/** The canonical repository root, derived from THIS file's location (never ambient cwd). */
+const WORKSPACE_ROOT = fileURLToPath(new URL('../', import.meta.url));
+
+/**
+ * Normalise ONE suite selector to its canonical repo-relative manifest path.
+ *
+ * Exported so the isolation suite can prove the rejection rules WITHOUT spawning a
+ * child. Pure: it inspects no state and starts no process.
+ */
+export function normalizeSuiteEntry(raw, workspaceRoot = WORKSPACE_ROOT) {
+  if (typeof raw !== 'string' || raw.trim() === '') {
+    return { ok: false, code: 'empty-entry', raw: String(raw) };
+  }
+  let resolved;
+  try {
+    resolved = resolve(workspaceRoot, raw);
+  } catch {
+    return { ok: false, code: 'unresolvable-entry', raw };
+  }
+  const rel = relative(workspaceRoot, resolved).replace(/\\/g, '/');
+  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+    return { ok: false, code: 'outside-workspace', raw };
+  }
+  const liveName = basename(rel).replace(/\.test\.ts$/, '');
+  if (LIVE_SUITE_DENYLIST.includes(liveName)) return { ok: false, code: 'live-suite', raw };
+  if (!CANONICAL_FILES.has(rel)) return { ok: false, code: 'non-canonical', raw };
+  return { ok: true, file: rel, resolved };
+}
+
+/** Normalise a whole run's selectors (the default list, or TEST_TIMED_SUITES). */
+function resolveSuiteFiles(overrideRaw) {
+  const raw =
+    overrideRaw !== undefined && overrideRaw !== ''
+      ? overrideRaw.split(';').filter((f) => f !== '')
+      : SUITES.map((s) => `tests/${s}.test.ts`);
+  const files = [];
+  for (const entry of raw) {
+    const norm = normalizeSuiteEntry(entry);
+    if (!norm.ok) {
+      process.stdout.write(
+        `-- refusing suite selector "${entry}" (${norm.code}); only reviewed canonical offline suites inside the workspace may be selected --\n`,
+      );
+      return { ok: false, exitCode: 3 };
+    }
+    files.push(norm.resolved);
+  }
+  return { ok: true, files };
+}
+
+// R5-1.2C: only RUN when invoked as the entry point. Importing this module (e.g. the
+// isolation suite importing `normalizeSuiteEntry`) must NOT start any suite.
+const isMain = (() => {
+  const entry = process.argv[1];
+  if (typeof entry !== 'string' || entry === '') return false;
+  try {
+    const self = fileURLToPath(import.meta.url);
+    const entryAbs = resolve(entry);
+    return process.platform === 'win32'
+      ? entryAbs.toLowerCase() === self.toLowerCase()
+      : entryAbs === self;
+  } catch {
+    return false;
+  }
+})();
+
+if (isMain) {
 const results = [];
 const totalStart = Date.now();
+const resolvedSuites = resolveSuiteFiles(process.env.TEST_TIMED_SUITES);
+if (!resolvedSuites.ok) process.exit(resolvedSuites.exitCode);
 let currentChild = null;
 let interrupted = false;
 /** R5-1.2C (§13): the pending tree kill and whether it was CONFIRMED. */
@@ -209,7 +310,7 @@ function runSuite(file) {
     }
     let child;
     try {
-      child = spawn(process.execPath, [file], { stdio: 'inherit' });
+      child = spawn(process.execPath, ['--import', OFFLINE_BOOTSTRAP, file], { stdio: 'inherit' });
     } catch (e) {
       resolve({ kind: 'spawn-error', error: e });
       return;
@@ -230,7 +331,7 @@ function runSuite(file) {
 let stop = false;
 let wrapperExit = 0;
 
-for (const file of SUITE_FILES) {
+for (const file of resolvedSuites.files) {
   if (stop) break;
   const start = Date.now();
   process.stdout.write(`\n== ${file} ==\n`);
@@ -284,3 +385,4 @@ for (const r of results) {
 }
 process.stdout.write(`${String(totalMs).padStart(8)} ms  TOTAL (${results.length} suite(s) run)\n`);
 process.exit(wrapperExit);
+}

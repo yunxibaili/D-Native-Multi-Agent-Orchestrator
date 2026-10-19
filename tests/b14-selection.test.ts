@@ -14,7 +14,7 @@
  * Run: node tests/b14-selection.test.ts
  */
 
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -186,7 +186,19 @@ function makeHarness(opts: {
       createFakeAdapter({ id: B, script: [{ kind: 'exit', code: 0 }], capabilities: { newTask: true, review: true, modelSelection: true } }),
     ],
   });
-  const runtime = { run: (r: RunRequest) => { requests.push(r); return rt.run(r); } };
+  // P0-1: a built-in sequential coding step carries an approved contract, so the fake
+  // runtime REALLY delivers the named artifact into the run cwd.
+  const runtime = {
+    run: (r: RunRequest) => {
+      requests.push(r);
+      const role = /:: ([\w-]+) — deliverable:/.exec(r.prompt)?.[1] ?? /^Task \S+ \((\w+)\)/m.exec(r.prompt)?.[1];
+      if (role === 'implementation' || role === 'test') {
+        const rel = `work/${role}/${role}.txt`;
+        try { mkdirSync(join(r.cwd, rel, '..'), { recursive: true }); writeFileSync(join(r.cwd, rel), `${role}\n`, 'utf8'); } catch { /* synthetic cwd */ }
+      }
+      return rt.run(r);
+    },
+  };
   const budgets = new BudgetManager(1_000_000);
   for (const t of ['r', 'r-c1', 'r-c2', 'r-c3']) budgets.task(t, 100_000);
   budgets.agent(A, 1_000_000);
@@ -994,6 +1006,11 @@ async function b21Round(opts: { pool: boolean; json: boolean }): Promise<{ code:
       requests.push(req);
       runN += 1;
       const role = /^Task \S+ \((\w+)\)/m.exec(req.prompt)?.[1] ?? /:: (\w+) — deliverable:/.exec(req.prompt)?.[1] ?? 'unknown';
+      // P0-1: deliver the built-in workflow's approved artifact for a coding step.
+      if (role === 'implementation' || role === 'test') {
+        const rel = `work/${role}/${role}.txt`;
+        try { mkdirSync(join(req.cwd, rel, '..'), { recursive: true }); writeFileSync(join(req.cwd, rel), `${role}\n`, 'utf8'); } catch { /* synthetic cwd */ }
+      }
       const result: RunResult = {
         taskId: `t${runN}`, threadId: null, agentId: req.agentId, state: 'succeeded',
         startedAt: Date.now(), endedAt: Date.now(), exitCode: 0, signal: null,

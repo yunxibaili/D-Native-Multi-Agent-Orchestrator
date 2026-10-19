@@ -23,12 +23,14 @@
  * measurement rather than a claim.
  */
 
-import { mkdtempSync, rmSync, readFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { Orchestrator } from '../src/orchestration/orchestrator.ts';
 import { TaskScheduler } from '../src/orchestration/scheduler.ts';
+import { AttemptStore } from '../src/orchestration/attempt-store.ts';
+import { recordAndBindTick } from './helpers/p01-binding.ts';
 import { TaskStore } from '../src/orchestration/store.ts';
 import { observeTasks } from '../src/orchestration/observation.ts';
 import {
@@ -145,12 +147,26 @@ const gateSources = (taskIds: readonly string[]) => ({
   maxConcurrentAgents: 4,
 }) as never;
 
+/**
+ * P0-1: the approved completion contract these coding fixtures carry. The fake runtime
+ * REALLY writes the named artifact into the actual run cwd, so the completion gate has a
+ * real file to verify — this is a controlled fake-runtime delivery, not a fake proof.
+ */
+const COMPLETION = {
+  expectedArtifacts: ['out.txt'],
+  allowedScope: ['out.txt'],
+  test: { executable: 'node', argv: ['-e', 'process.exit(0)'], cwd: '.' },
+};
+
 /** Records every RunRequest so "the same agent ran again" is measurable. */
 function fakeRuntime(state: 'succeeded' | 'failed' = 'succeeded'): { runtime: RuntimeRunner; requests: RunRequest[] } {
   const requests: RunRequest[] = [];
   const runtime: RuntimeRunner = {
     run(req: RunRequest): RunHandle {
       requests.push(req);
+      if (state === 'succeeded') {
+        try { writeFileSync(join(req.cwd, 'out.txt'), 'ok\n', 'utf8'); } catch { /* cwd may be synthetic in a non-completion test */ }
+      }
       const result = {
         taskId: `rt-${requests.length}`, agentId: req.agentId, state,
         error: state === 'failed' ? { code: 'NONZERO_EXIT', message: 'boom' } : null,
@@ -188,22 +204,38 @@ function instrumented(ids: readonly string[], runtime?: RuntimeRunner): {
     };
   orch.createRoot({ taskId: 'r', agentId: AGENT, taskType: impl, acceptanceCriteria: 'root' });
   for (const id of ids) {
-    orch.spawnChild({
+    // P0-1: a coding task now needs an approved contract to be completable, so the
+    // fixture attaches one (with a real artifact the fake runtime writes) rather than
+    // weakening the gate. Created via the store so the contract can be supplied.
+    const created = orch.getStore().create({
       taskId: id, parentTaskId: 'r', agentId: AGENT, modelId: SB,
       taskType: impl, acceptanceCriteria: 'do the work', budgetUnits: 10,
-    });
+      completionContract: COMPLETION,
+    }, NOW);
+    if (!created.ok) throw new Error(`fixture could not create ${id}: ${created.code}`);
   }
   return { orch, calls, requests: rt.requests };
 }
 
 /** Drive a child to `to_verify` through the real execution edge. */
 async function runToVerify(orch: Orchestrator, scheduler: TaskScheduler, taskId: string): Promise<void> {
-  await scheduler.tick();
+  const tick = await scheduler.tick();
+  // P0-1: a lower caller correlates the accepted execution(s) to the attempts they
+  // produced, through the SAME existing authorities the Workbench uses. The store is
+  // per-orchestrator so a reworked task's later attempt lands in the ONE attached store.
+  let evidence = p01Evidence.get(orch);
+  if (evidence === undefined) { evidence = new AttemptStore(); p01Evidence.set(orch, evidence); }
+  recordAndBindTick(orch, evidence, tick, (id) => {
+    const t = orch.getStore().get(id);
+    return t === null ? null : { agentId: t.agentId, modelId: t.modelId, budgetUnits: t.budgetUnits, taskType: t.taskType };
+  });
   const after = orch.getStore().get(taskId);
   if (after?.status !== 'to_verify') {
     throw new Error(`expected ${taskId} in to_verify, got ${String(after?.status)}`);
   }
 }
+/** P0-1: the ONE attempt store attached per lower-caller orchestrator, reused across ticks. */
+const p01Evidence = new WeakMap<Orchestrator, AttemptStore>();
 
 /** A fresh instrumented orchestrator with one child already run to `to_verify`. */
 async function freshAtVerify(id: string): Promise<{ orch: Orchestrator; requests: RunRequest[] }> {

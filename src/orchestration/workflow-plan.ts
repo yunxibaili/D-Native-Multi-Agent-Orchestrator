@@ -28,6 +28,7 @@
 
 import type { TaskType } from '../quota/types.ts';
 import type { CandidateTask } from './planner.ts';
+import type { CompletionContract } from './completion-contract.ts';
 // B4.2: the ONE candidate-formatting rule, shared with the user's plan file so a built-in
 // plan and a file plan produce byte-identical task descriptions.
 import { buildSequentialStepCandidates } from './plan-file.ts';
@@ -42,6 +43,18 @@ export interface WorkflowStep {
   readonly taskType: TaskType;
   /** What this step must produce, rendered into its acceptance criteria. */
   readonly deliverable: string;
+  /** Relative file scope, rendered into the acceptance criteria (a declaration, not a sandbox). */
+  readonly fileScope?: string;
+  /**
+   * P0-1: an EXPLICIT completion contract a coding step must prove, when a caller
+   * supplies one. The BUILT-IN plans declare NO contract: the artifact set, scope and
+   * approved test are business acceptance facts only the USER can authorise, so they are
+   * never synthesised from the deliverable prose. A built-in coding step therefore
+   * carries no contract and is refused at completion until a caller supplies an explicit
+   * one (a plan file, or `planWithCandidates` with an explicit contract). The field and
+   * the pass-through are kept so a caller CAN declare one; nothing infers it.
+   */
+  readonly completion?: CompletionContract;
 }
 
 export interface WorkflowPlanChoice {
@@ -54,6 +67,12 @@ export interface WorkflowPlanChoice {
 /**
  * The bounded candidate plans. Order is stable so a single-candidate fallback and a
  * LAYA choice are both deterministic.
+ *
+ * P0-1: these plans declare NO completion contract. A coding step's accepted artifact
+ * set, allowed scope and approved test are BUSINESS acceptance that only the user can
+ * authorise; the built-in shape states the roles and the sequential order, never a
+ * fictional default artifact. A caller that wants a built-in coding step to be
+ * completable supplies an explicit contract (see `--workflow-plan` / `planWithCandidates`).
  */
 export const WORKFLOW_PLAN_CHOICES: readonly WorkflowPlanChoice[] = Object.freeze([
   Object.freeze({
@@ -61,16 +80,28 @@ export const WORKFLOW_PLAN_CHOICES: readonly WorkflowPlanChoice[] = Object.freez
     label: 'research, then implementation, then test',
     steps: Object.freeze([
       Object.freeze({ role: 'research', taskType: 'research', deliverable: 'a bounded findings note (sources kept)' }),
-      Object.freeze({ role: 'implementation', taskType: 'implementation', deliverable: 'the change, with the files it touched' }),
-      Object.freeze({ role: 'test', taskType: 'test', deliverable: 'the tests run and their outcome' }),
+      Object.freeze({
+        role: 'implementation', taskType: 'implementation', fileScope: 'work/implementation',
+        deliverable: 'the change, with the files it touched',
+      }),
+      Object.freeze({
+        role: 'test', taskType: 'test', fileScope: 'work/test',
+        deliverable: 'the tests run and their outcome',
+      }),
     ]),
   }),
   Object.freeze({
     choice: 'lean',
     label: 'implementation, then test (research skipped)',
     steps: Object.freeze([
-      Object.freeze({ role: 'implementation', taskType: 'implementation', deliverable: 'the change, with the files it touched' }),
-      Object.freeze({ role: 'test', taskType: 'test', deliverable: 'the tests run and their outcome' }),
+      Object.freeze({
+        role: 'implementation', taskType: 'implementation', fileScope: 'work/implementation',
+        deliverable: 'the change, with the files it touched',
+      }),
+      Object.freeze({
+        role: 'test', taskType: 'test', fileScope: 'work/test',
+        deliverable: 'the tests run and their outcome',
+      }),
     ]),
   }),
 ]);
@@ -108,7 +139,13 @@ export function buildWorkflowCandidates(
   // drift apart. The built-in steps carry no `fileScope`, so the rendered description is
   // byte-identical to before.
   return buildSequentialStepCandidates(
-    plan.steps.map((s) => ({ role: s.role, taskType: s.taskType, deliverable: s.deliverable })),
+    plan.steps.map((s) => ({
+      role: s.role,
+      taskType: s.taskType,
+      deliverable: s.deliverable,
+      ...(s.fileScope === undefined ? {} : { fileScope: s.fileScope }),
+      ...(s.completion === undefined ? {} : { completion: s.completion }),
+    })),
     objective,
     rootTaskId,
   );

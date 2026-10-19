@@ -13,6 +13,7 @@ import { Orchestrator } from '../orchestrator/orchestrator.ts';
 import { writeStarterConfig, type AgentConfig } from '../orchestrator/config.ts';
 import { runTaskCli } from './task-cli.ts';
 import { buildQuotaCenter, type BuildQuotaCenterOptions, type QuotaCenterView } from '../quota/index.ts';
+import { installOfflinePolicy } from '../runtime/offline-policy.ts';
 import type { RunRequest, RunResult } from '../core/types.ts';
 
 const USAGE = `
@@ -48,6 +49,9 @@ OPTIONS
   --quiet            suppress the human-readable result
   --log-level <lvl>  silent|error|warn|info|debug   (default: warn)
   --config <path>    explicit orchestrator.json
+  --live-agent       EXPLICIT opt-in: allow launching a REAL coding agent. Without
+                     it, no real agent is launched. Ignored by smoke (which stays
+                     offline). Never honoured by a test process.
 
 AGENTS (Phase 1)
   opencode   opencode run --format json    (session resume: yes, review: no)
@@ -136,7 +140,15 @@ function strList(flags: Parsed['flags'], key: string): string[] | undefined {
 }
 
 async function main(): Promise<number> {
-  const argv = process.argv.slice(2);
+  /*
+   * OFFLINE-AGENT SAFETY. `--live-agent` is the explicit WHOLE-TOKEN opt-in that the
+   * shared launch policy (`src/runtime/offline-policy.ts`) requires before ANY real
+   * coding agent may be launched. It is a GLOBAL switch, deliberately consumed here and
+   * removed before argv is handed to the generic parser, `task`, or `round`, so an
+   * unknown flag is never misread as a subcommand's own argument. The policy reads
+   * `process.argv` directly, so removing it here cannot hide it from the check.
+   */
+  const argv = process.argv.slice(2).filter((a) => a !== '--live-agent');
 
   // 5C-9: `task` owns its own flags. The generic parser below splits argv into
   // positionals and flags and would silently swallow --verified / --json before
@@ -168,6 +180,16 @@ async function main(): Promise<number> {
         : undefined;
     const { runRoundCli } = await import('./round-cli.ts');
     return runRoundCli(new Orchestrator({ configPath }), argv.slice(1));
+  }
+
+  // P0-1: the DIRECT `orchestrator smoke` entry must FREEZE the offline deny policy
+  // BEFORE any Orchestrator is constructed or any adapter is discovered. The smoke
+  // surface is verification-only and must never launch a real agent, even when the
+  // explicit `--live-agent` opt-in is supplied for another command form. Freezing here
+  // (only for smoke) is monotonic and one-way; non-smoke commands keep the normal
+  // opt-in behaviour. `npm run smoke` / `smoke:quick` also pre-freeze via `--import`.
+  if (argv[0] === 'smoke') {
+    installOfflinePolicy();
   }
 
   const parsed = parseArgs(argv);

@@ -38,6 +38,14 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'no
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
+// P0-1 OFFLINE TEST ISOLATION. This suite drives REAL native agent binaries, so it
+// REFUSES to run by default, BEFORE any discovery or spawn. Live execution requires a
+// future explicit trusted-control authorization; the offline policy is not one, and an
+// env flag is deliberately not accepted as one. Nothing below runs.
+import { refuseLiveEntry } from './helpers/native-agent-policy.ts';
+refuseLiveEntry('native-handoff-e2e');
+
+
 import { ModelRegistry } from '../src/quota/registry.ts';
 import { BudgetManager } from '../src/quota/budget.ts';
 import type { QuotaRecord, TaskType } from '../src/quota/types.ts';

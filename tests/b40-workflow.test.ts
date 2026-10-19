@@ -16,7 +16,7 @@
  * Run: node tests/b40-workflow.test.ts
  */
 
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -118,12 +118,26 @@ function makeHarness(opts: { provider?: DecisionProvider; projectSelection?: Sel
   const exit = opts.exitCode ?? 0;
   const rt = new RuntimeOrch({
     config: { agents: {} } as never,
-    storeDir: join(dir, 'store'),
+    // P0-1: the runtime's own bookkeeping store lives OUTSIDE the workspace root, so it
+    // can never be mistaken for a change the worker made (and fail allowedScope).
+    storeDir: ownDir(),
     extraAdapters: [
       createFakeAdapter({ id: A, script: [{ kind: 'exit', code: exit }], capabilities: { newTask: true, review: true, modelSelection: true } }),
     ],
   });
-  const runtime = { run: (r: RunRequest) => { requests.push(r); return rt.run(r); } };
+  const runtime = {
+    run: (r: RunRequest) => {
+      requests.push(r);
+      // P0-1: a built-in coding step carries an approved contract, so the fake runtime
+      // REALLY delivers the named artifact into the run cwd (a controlled delivery).
+      const role = /:: (\w+) — deliverable:/.exec(r.prompt)?.[1] ?? /^Task \S+ \((\w+)\)/m.exec(r.prompt)?.[1];
+      if (role === 'implementation' || role === 'test') {
+        const rel = `work/${role}/${role}.txt`;
+        try { mkdirSync(join(r.cwd, rel, '..'), { recursive: true }); writeFileSync(join(r.cwd, rel), `${role} deliverable\n`, 'utf8'); } catch { /* synthetic cwd */ }
+      }
+      return rt.run(r);
+    },
+  };
   const budgets = new BudgetManager(1_000_000);
   budgets.agent(A, 1_000_000);
   const reg = registryWith([[A, MA, ['implementation', 'research', 'test']]]);
@@ -164,6 +178,20 @@ const specFor = (selection?: SelectionSpec): WorkbenchTaskSpec => ({
 });
 const byTaskType = (children: readonly Task[], t: string): Task | undefined => children.find((c) => c.taskType === t);
 
+/**
+ * P0-1: the built-in plan intentionally declares NO completion contract — a coding
+ * step's artifact set, scope and approved test are business acceptance only the user can
+ * authorise. This hermetic regression supplies its OWN explicit, user-approved contract
+ * for the coding steps, matching the artifact the fake runtime really writes, so the
+ * workflow/assignment/lifecycle behaviour under test is unchanged.
+ */
+const FIXTURE_TEST = { executable: 'node', argv: ['-e', 'process.exit(0)'], cwd: '.' } as const;
+function withFixtureContracts(candidates: ReturnType<typeof buildWorkflowCandidates>): ReturnType<typeof buildWorkflowCandidates> {
+  return candidates.map((c) => (c.taskType === 'implementation' || c.taskType === 'test')
+    ? { ...c, completion: { expectedArtifacts: [`work/${c.taskType}/${c.taskType}.txt`], allowedScope: [`work/${c.taskType}`], test: FIXTURE_TEST } }
+    : c);
+}
+
 // =========================================================================
 section('pure workflow plan: bounded choices, real types, real dependencies');
 
@@ -201,7 +229,7 @@ section('real chain: research -> implementation -> test, sequential, with real h
 
 {
   const h = makeHarness({ provider: stubProvider(`${A}\u0000${MA}`) });
-  const candidates = buildWorkflowCandidates('full', 'add a retry to the http client', 'r');
+  const candidates = withFixtureContracts(buildWorkflowCandidates('full', 'add a retry to the http client', 'r'));
   for (const c of candidates) h.budgets.task(c.taskId, 100_000);
   const spec = specFor();
   const planned = h.wb.planWithCandidates(spec, candidates);

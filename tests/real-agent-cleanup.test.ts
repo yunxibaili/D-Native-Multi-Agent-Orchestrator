@@ -16,6 +16,14 @@
 
 import { CheckLog, deployedLauncher, runInjectionCase } from './helpers/hygiene-harness.ts';
 
+// P0-1 OFFLINE TEST ISOLATION. This matrix starts REAL agents inside the injected-failure
+// children, so it REFUSES to run by default, BEFORE any child is spawned. Live execution
+// requires a future explicit trusted-control authorization; the offline policy is not
+// one, and an env flag is deliberately not accepted as one. Nothing below runs.
+import { refuseLiveEntry } from './helpers/native-agent-policy.ts';
+refuseLiveEntry('W4.4 real-agent cleanup');
+
+
 const log = new CheckLog();
 const launcher = deployedLauncher();
 

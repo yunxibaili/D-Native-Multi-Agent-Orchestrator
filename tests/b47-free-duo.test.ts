@@ -63,6 +63,7 @@ import {
 } from './helpers/real-agent-isolation.ts';
 import { ManagedProcess } from '../src/runtime/spawn.ts';
 import { launcherFor } from '../src/runtime/launcher.ts';
+import { isOfflineFrozen } from '../src/runtime/offline-policy.ts';
 import { readControlRecord, treeStopConfirmedFrom } from '../src/runtime/containment.ts';
 import type { ProcessStartDisposition } from '../src/core/types.ts';
 import {
@@ -1323,6 +1324,20 @@ function record(verdict: 'PASS' | 'FAIL', name: string, detail = ''): void {
 
 async function main(): Promise<void> {
   process.stdout.write('== B4.7.1 real OpenCode free-duo acceptance ENTRY ==\n');
+
+  /*
+   * P0-1: the offline deny policy is AUTHORITY. When frozen (the reviewed offline
+   * runner imports the trusted bootstrap first), the OLD opt-in flag alone must NOT
+   * elevate this entry to live. Refuse BEFORE the gate, setup, discovery or launch.
+   */
+  if (isOfflineFrozen()) {
+    process.stdout.write('  NOT_RUN (offline test policy is frozen; ORCH_B47_REAL_FREE_DUO cannot elevate it)\n');
+    process.stdout.write('  no discovery, no agent start, no owned context created.\n');
+    writeReport({ schema: 'b47-free-duo-entry/1', optIn: process.env[B47_OPT_IN_ENV] ?? null, status: 'NOT_RUN', code: null, detail: null, candidates: B47_CANDIDATE_PAIRS, limitations: [], ownedRoot: null, cleanupFailures: [], outcome: null });
+    writeHygieneReport();
+    process.exitCode = finish([], { allowEnvironmentBlocked: true });
+    return;
+  }
 
   const gate = evaluateB47Entry({ env: process.env, now: Date.now(), readText: (p) => readFileSync(p, 'utf8') });
 

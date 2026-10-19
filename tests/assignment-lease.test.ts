@@ -24,7 +24,7 @@
  * as evidence for the lifecycle claims.
  */
 
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -47,6 +47,7 @@ import { Orchestrator } from '../src/orchestration/orchestrator.ts';
 import { TaskStore } from '../src/orchestration/store.ts';
 import { AttemptStore } from '../src/orchestration/attempt-store.ts';
 import { recordExecutions } from '../src/orchestration/attempt-integration.ts';
+import { recordAndBindOutcome } from './helpers/p01-binding.ts';
 import { validateAttemptRecord } from '../src/orchestration/attempt-record.ts';
 import { modelKey } from '../src/quota/registry.ts';
 import { BudgetManager } from '../src/quota/budget.ts';
@@ -132,6 +133,17 @@ const okResult = (agentId: string, i = 1): RunResult => ({
   cleanup: { killed: false, orphans: 0, method: 'none' },
 } as unknown as RunResult);
 
+/**
+ * P0-1: the approved completion contract these coding fixtures carry. The immediate
+ * runtime REALLY writes the named artifact into the run cwd, so a coding task the
+ * fixture dispatches is genuinely completable (a controlled fake-runtime delivery).
+ */
+const COMPLETION = {
+  expectedArtifacts: ['out.txt'],
+  allowedScope: ['out.txt'],
+  test: { executable: 'node', argv: ['-e', 'process.exit(0)'], cwd: '.' },
+};
+
 /** An immediate runtime: the run is over before `executeTask` can be interrupted. */
 function immediateRuntime(agentId = AGENT): { runtime: RuntimeRunner; requests: RunRequest[] } {
   const requests: RunRequest[] = [];
@@ -140,6 +152,7 @@ function immediateRuntime(agentId = AGENT): { runtime: RuntimeRunner; requests: 
     run(req: RunRequest): RunHandle {
       requests.push(req);
       i++;
+      try { writeFileSync(join(req.cwd, 'out.txt'), 'ok\n', 'utf8'); } catch { /* synthetic cwd in non-completion tests */ }
       const result = okResult(agentId, i);
       return { result: async () => result, cancel: async () => {}, dispose: async () => {} } as unknown as RunHandle;
     },
@@ -643,7 +656,9 @@ section('R2-2 Case D + L5: a valid current lease writes through to to_verify');
   const { runtime, requests } = immediateRuntime(AGENT);
   const orch = new Orchestrator({ store, gate: gateSources(['c1']), runtime, now, defaultCwd: dir });
   orch.createRoot({ taskId: 'r', agentId: AGENT, taskType: impl, acceptanceCriteria: 'root' });
-  orch.spawnChild({ taskId: 'c1', parentTaskId: 'r', agentId: AGENT, modelId: SB, taskType: impl, acceptanceCriteria: 'child', budgetUnits: 10 });
+  // P0-1: c1 must carry an approved contract so verification can complete it; the store
+  // is the only channel (`spawnChild` has no contract field).
+  orch.getStore().create({ taskId: 'c1', parentTaskId: 'r', agentId: AGENT, modelId: SB, taskType: impl, acceptanceCriteria: 'child', budgetUnits: 10, completionContract: COMPLETION }, NOW);
 
   const outcome = await orch.executeTask({ taskId: 'c1' });
   check('Case D: the run was accepted', outcome.ok === true, outcome.ok ? '' : `${outcome.code} ${outcome.reason}`);
@@ -660,6 +675,11 @@ section('R2-2 Case D + L5: a valid current lease writes through to to_verify');
     const t = store.get(taskId);
     return t === null ? null : { agentId: t.agentId, modelId: t.modelId, taskType: impl };
   });
+  // P0-1: a lower caller correlates the accepted execution to the attempt it produced.
+  orch.attachAttemptStore(evidence);
+  for (const ref of recorded.executionsByTask['c1'] ?? []) {
+    orch.recordAttemptBinding('c1', { attemptId: ref.attemptId, sessionId: null, run: ref.run });
+  }
   const attempt = evidence.history('c1')[0];
   check('Case D: evidence is recorded', recorded.recorded.includes('c1') && attempt !== undefined);
   check('Case D: the record names the agent that ran', attempt?.agentId === AGENT);
@@ -684,16 +704,24 @@ section('R2-2 Race 5: a late result after terminal only becomes evidence');
   const { runtime } = immediateRuntime(AGENT);
   const orch = new Orchestrator({ store, gate: gateSources(['c1']), runtime, now, defaultCwd: dir });
   orch.createRoot({ taskId: 'r', agentId: AGENT, taskType: impl, acceptanceCriteria: 'root' });
-  orch.spawnChild({ taskId: 'c1', parentTaskId: 'r', agentId: AGENT, modelId: SB, taskType: impl, acceptanceCriteria: 'child', budgetUnits: 10 });
-  orch.queue('c1'); orch.start('c1');
+  // P0-1: c1 carries an approved contract and is driven through the REAL execution edge,
+  // because a hand-written `applyRunResult` can never produce completion evidence.
+  orch.getStore().create({ taskId: 'c1', parentTaskId: 'r', agentId: AGENT, modelId: SB, taskType: impl, acceptanceCriteria: 'child', budgetUnits: 10, completionContract: COMPLETION }, NOW);
 
   const owner = store.get('c1')!;
   const presented = { agentId: AGENT, leaseVersion: owner.leaseVersion, fencingToken: owner.fencingToken };
 
-  // The run completes and is written back normally...
-  const applied = orch.applyRunResult('c1', okResult(AGENT, 8), presented);
+  // The run completes and is written back normally, through the real execution edge.
+  const applied = await orch.executeTask({ taskId: 'c1' });
   check('Race 5: the first result is accepted', applied.ok === true, applied.ok ? '' : applied.code);
   check('Race 5: the task is now in to_verify', store.get('c1')!.status === 'to_verify', store.get('c1')!.status);
+
+  // P0-1: correlate the accepted execution to the attempt it produced BEFORE verification,
+  // exactly as the Workbench does (this lower caller has no Workbench).
+  recordAndBindOutcome(orch, evidence, 'c1', applied, (taskId) => {
+    const t = store.get(taskId);
+    return t === null ? null : { agentId: t.agentId, modelId: t.modelId, taskType: impl };
+  });
 
   // ...verification finishes it, which is the ONLY route to succeeded and revokes...
   const verified = orch.applyVerification('c1', { verdict: 'pass', reason: 'ok' });

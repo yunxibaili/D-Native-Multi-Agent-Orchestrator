@@ -68,8 +68,13 @@ import { runGit } from './git.ts';
 // P0-1: the completion gate's fact-gathering helpers (value-only) and the pure decision.
 import { captureWorkspaceManifest, manifestDigest, type WorkspaceManifest } from './workspace-manifest.ts';
 import { buildCompletionEvidence, runFingerprintOf, DEFAULT_COMPLETION_TEST_TIMEOUT_MS, type CompletionEvidence } from './completion-evidence.ts';
-import { completionContractDigest } from './completion-contract.ts';
+import { completionContractDigest, isCodingTaskType, parseCompletionContract, CompletionContractError } from './completion-contract.ts';
 import { evaluateCompletionGate } from './completion-gate.ts';
+// P0-1: read-only correlation against the EXISTING evidence authority. This is not a
+// second authority — the store is owned by the workbench and only `get`/`history` are
+// consulted, never appended through here.
+import type { AttemptStore } from './attempt-store.ts';
+import { runProvenanceOf } from './attempt-integration.ts';
 
 import type { TaskType } from '../quota/types.ts';
 // The THREE types this file uses but which the R2-3 observation edit dropped from the
@@ -200,6 +205,12 @@ export interface OrchestrationOptions {
    * result rejected. Defaults to 120s; tests shrink it.
    */
   completionTimeoutMs?: number;
+  /**
+   * P0-1: a NARROW test-only seam replacing the approved test's tree-stop verdict, so
+   * the "unconfirmed stop retains the WRITE claim" branch can be driven without a real
+   * orphan writer. Production leaves it undefined.
+   */
+  completionTestStopProbe?: () => boolean;
 }
 
 export interface ExecuteTaskRequest {
@@ -327,6 +338,52 @@ function hasParallelWorkBeside(store: TaskStore, selfTaskId: string): boolean {
   });
 }
 
+/**
+ * P0-1: the trusted execution proof bound to one task's CURRENT execution.
+ *
+ * A coding task may succeed only when this proof exists AND still matches the task's
+ * current lease/identity, or when it carries a complete, validated completion contract.
+ * It is derived entirely from facts the execution edge already produced — the applied
+ * `RunResult` (its fingerprint) and, when the workbench binds it, the attempt id and
+ * sealed dispatch session. It invents no new evidence authority.
+ */
+export interface ExecutionProof {
+  readonly leaseVersion: number;
+  readonly agentId: string;
+  readonly modelId: string | null;
+  readonly sessionId: string | null;
+  readonly attemptId: string | null;
+  readonly runFingerprint: string;
+  /**
+   * P0-1: the fingerprint of the exact run the append-site binding named, when the
+   * workbench supplied the real `RunResult`. When present it must equal
+   * `runFingerprint`, so a binding for a DIFFERENT run can never be laundered in.
+   * Absent means the binding carried no run; the attempt record correlation still
+   * applies.
+   */
+  readonly bindingRunFingerprint?: string;
+}
+
+/**
+ * P0-1: the EXACT `RunResult` object accepted for a task's current execution.
+ *
+ * Module-private (keyed by the orchestrator instance) and runtime-opaque: a caller can
+ * read `executionProof` (TS `private` is erased at runtime) but can never reach this, so
+ * it cannot substitute a different run object to make the attempt binding agree. Set
+ * only inside `executeTask` when the write-back is ACCEPTED, cleared at the start of
+ * every new execution and on a refused write-back, so a prior/cancelled/replaced run can
+ * never prove the current one.
+ */
+const ACCEPTED_RUNS = new WeakMap<Orchestrator, Map<string, RunResult>>();
+function acceptedRuns(owner: Orchestrator): Map<string, RunResult> {
+  let map = ACCEPTED_RUNS.get(owner);
+  if (map === undefined) {
+    map = new Map<string, RunResult>();
+    ACCEPTED_RUNS.set(owner, map);
+  }
+  return map;
+}
+
 export class Orchestrator {
   private readonly store: TaskStore;
   private readonly limits: OrchestrationLimits;
@@ -353,7 +410,33 @@ export class Orchestrator {
    * forged outcome cannot mint a pass.
    */
   private readonly completionEvidence = new Map<string, CompletionEvidence>();
+  /**
+   * P0-1: the TRUSTED EXECUTION PROOF bound to the task's CURRENT execution.
+   *
+   * This is the fact that answers "did a real run happen for this task, and which
+   * one". It is written by the execution edge (`applyRunResult`/`executeTask`) and
+   * enriched at the Append site by the workbench with the attempt id and the sealed
+   * dispatch session, so the completion gate can require that a coding task's pass is
+   * backed by an actual execution rather than a hand-set `to_verify`.
+   *
+   * Like `lastObservations` this is a read-only cache of execution facts — not a
+   * second evidence authority (AttemptStore still owns attempt records) and not
+   * persisted. It is cleared at the start of every new execution, so a stale proof can
+   * never answer for a fresh run.
+   */
+  private readonly executionProof = new Map<string, ExecutionProof>();
+  /**
+   * P0-1: a READ-ONLY reference to the EXISTING `AttemptStore`, attached once by the
+   * workbench that owns it. It is used only to correlate a completion proof's claimed
+   * attempt against the actual recorded attempt at the synchronous commit point. It is
+   * not attached by callers, never appended through, and attaching twice is a no-op
+   * (first store wins) so a later attach cannot swap the authority out from under a
+   * live proof.
+   */
+  private attemptStore: AttemptStore | null = null;
   private readonly completionTimeoutMs: number;
+  /** P0-1 test-only seam for the approved test's tree-stop verdict (see options). */
+  private readonly completionTestStopProbe: (() => boolean) | undefined;
   /**
    * Live child count = tasks in a non-terminal state. Counted from the store, not
    * from a separate counter, so it cannot drift from the authoritative state.
@@ -398,6 +481,7 @@ export class Orchestrator {
     this.workspaceOwnerOf = options.workspaceOwner ?? null;
     this.resourceClaims = options.resourceClaims ?? null;
     this.completionTimeoutMs = options.completionTimeoutMs ?? DEFAULT_COMPLETION_TEST_TIMEOUT_MS;
+    this.completionTestStopProbe = options.completionTestStopProbe;
   }
 
   /** The workspace manager, when one is configured. Lifecycle authority only. */
@@ -775,6 +859,11 @@ export class Orchestrator {
     if (current === null) {
       return { ok: false, code: 'task-not-found', reason: `no task "${taskId}"` };
     }
+    // P0-1: this layer deliberately mints NO completion proof. A refused write-back is
+    // still a real execution and stays historical evidence in the `AttemptStore`, but it
+    // may NOT become completion proof. The trusted proof is created ONLY inside
+    // `executeTask`, after the write-back is ACCEPTED, and it is enriched by the
+    // workbench with the attempt id and sealed dispatch session at the append site.
     const verdict = validateWriteback(
       {
         lease: this.store.leaseOf(taskId),
@@ -810,11 +899,21 @@ export class Orchestrator {
     // the decision brain's `complete`, a human/checkpoint accept, the review loop —
     // funnels through here, so a task that declares a completion contract is checked
     // against REAL evidence before it may succeed. `rework`/`reject` are untouched.
+    //
+    // A CODING task that declares NO contract is not silently grandfathered: an actual
+    // coding leaf must be backed by a trusted execution proof (a real run) or a
+    // complete contract. A hand-set `to_verify` — a caller inventing a finished task —
+    // is refused. research/review keep their explicit compatibility path.
     if (outcome.verdict === 'pass') {
       const task = this.store.get(taskId);
-      if (task !== null && task.completionContract !== undefined) {
+      if (task !== null && task.status === 'to_verify') {
         const refusal = this.completionRefusal(task);
         if (refusal !== null) {
+          log.warn('completion refused by the completion gate', {
+            taskId,
+            code: refusal.code,
+            reason: refusal.reason,
+          });
           return { ok: false, code: refusal.code, reason: refusal.reason };
         }
       }
@@ -832,51 +931,281 @@ export class Orchestrator {
   }
 
   /**
-   * P0-1: the synchronous completion decision for a contracted task.
+   * P0-1: the synchronous completion decision for a coding task.
    *
-   * Reads the current TASK identity/lease and RE-READS the workspace at this instant,
-   * so a reassignment, a new run, or any file change after the proof was gathered
-   * invalidates it. The decision itself is the import-free `evaluateCompletionGate`,
-   * so the gate is a value and cannot reach any authority. Returns null when the pass
-   * may proceed.
+   * Reads the current TASK identity/lease, RE-READS the workspace at this instant, and
+   * correlates the proof's claimed attempt against the actual `AttemptStore` record, so
+   * a reassignment, a new run, a foreign attempt or any file change after the proof was
+   * gathered invalidates it. The core decision is the import-free
+   * `evaluateCompletionGate`, so the gate is a value and cannot reach any authority.
+   * Returns null when the pass may proceed.
    */
   private completionRefusal(task: Task): { code: string; reason: string } | null {
     const contract = task.completionContract;
-    if (contract === undefined) return null;
-    const evidence = this.completionEvidence.get(task.taskId) ?? null;
-    // Re-read the workspace ONLY when there is evidence to compare against; a missing
-    // evidence record must not depend on a filesystem read to be refused.
-    const currentWorkspaceDigest = evidence === null
-      ? null
-      : manifestDigest(captureWorkspaceManifest(evidence.workspaceRoot));
-    const result = evaluateCompletionGate({
-      contractPresent: true,
-      task: {
-        taskId: task.taskId,
-        leaseVersion: task.leaseVersion,
-        agentId: task.agentId,
-        modelId: task.modelId,
-        contractDigest: completionContractDigest(contract),
-      },
-      evidence: evidence === null
+    const proof = this.executionProof.get(task.taskId) ?? null;
+    if (contract !== undefined) {
+      // P0-1: the UNIFIED CONTRACT BOUNDARY. Every path that can write a task —
+      // the plan-file parser, `commitPlan`, and a DIRECT `createRoot`/`TaskStore.create`
+      // TaskSpec — funnels its `pass` through here, so the contract is re-validated with
+      // the ONE parser before any completion. A direct TaskSpec that carried an empty
+      // `expectedArtifacts` (or any partial/unsafe contract) is therefore refused here,
+      // never silently accepted because it bypassed the plan-file path.
+      try {
+        parseCompletionContract(
+          { expectedArtifacts: contract.expectedArtifacts, allowedScope: contract.allowedScope, test: contract.test },
+          `task "${task.taskId}"`,
+          { taskType: task.taskType },
+        );
+      } catch (e) {
+        if (e instanceof CompletionContractError) {
+          return {
+            code: 'completion-contract-invalid',
+            reason: `the completion contract on "${task.taskId}" is not valid against its task type: ${e.detail}`,
+          };
+        }
+        throw e;
+      }
+      // A contract makes this a governed coding task. Before the file/test facts are
+      // judged, the proof must be a REAL accepted execution bound to an attempt the
+      // evidence authority actually recorded. A bare `RunResult` (or a hand-set
+      // `to_verify`) is neither a completion contract nor a completion proof.
+      const bindingRefusal = this.attemptBindingRefusal(task, proof);
+      if (bindingRefusal !== null) return bindingRefusal;
+      const evidence = this.completionEvidence.get(task.taskId) ?? null;
+      // Re-read the workspace ONLY when there is evidence to compare against; a missing
+      // evidence record must not depend on a filesystem read to be refused.
+      const currentWorkspaceDigest = evidence === null
         ? null
-        : {
-            contractDigest: evidence.contractDigest,
-            taskId: evidence.taskId,
-            leaseVersion: evidence.leaseVersion,
-            agentId: evidence.agentId,
-            modelId: evidence.modelId,
-            workspaceDigest: evidence.workspaceDigest,
-            unsafeWorkspace: evidence.unsafeWorkspace,
-            testCode: evidence.test.code,
-            testTimedOut: evidence.test.timedOut,
-            testTreeStopConfirmed: evidence.test.treeStopConfirmed,
-            missingArtifacts: evidence.missingArtifacts,
-            outOfScope: evidence.outOfScope,
-          },
-      currentWorkspaceDigest,
+        : manifestDigest(captureWorkspaceManifest(evidence.workspaceRoot));
+      const result = evaluateCompletionGate({
+        contractPresent: true,
+        task: {
+          taskId: task.taskId,
+          leaseVersion: task.leaseVersion,
+          agentId: task.agentId,
+          modelId: task.modelId,
+          contractDigest: completionContractDigest(contract),
+        },
+        evidence: evidence === null
+          ? null
+          : {
+              contractDigest: evidence.contractDigest,
+              taskId: evidence.taskId,
+              leaseVersion: evidence.leaseVersion,
+              agentId: evidence.agentId,
+              modelId: evidence.modelId,
+              runFingerprint: evidence.runFingerprint,
+              sessionId: evidence.sessionId,
+              workspaceDigest: evidence.workspaceDigest,
+              unsafeWorkspace: evidence.unsafeWorkspace,
+              testCode: evidence.test.code,
+              testTimedOut: evidence.test.timedOut,
+              testTreeStopConfirmed: evidence.test.treeStopConfirmed,
+              missingArtifacts: evidence.missingArtifacts,
+              outOfScope: evidence.outOfScope,
+            },
+        currentWorkspaceDigest,
+        // The RUN and SESSION the proof is bound to, re-read synchronously here. A
+        // missing proof is a refusal, never a default-allow.
+        currentRunFingerprint: proof?.runFingerprint ?? null,
+        currentSessionId: proof?.sessionId ?? null,
+      });
+      return result.ok ? null : { code: result.code, reason: result.reason };
+    }
+
+    // ----- No contract on the task -----
+    // Non-coding work keeps its explicit compatibility path; it is not a code leaf.
+    if (!isCodingTaskType(task.taskType)) return null;
+    // P0-1: a coding task with NO contract is refused, FULL STOP. The old
+    // `children().length > 0 && proof === null` exemption let an implementation root
+    // with a merely PLANNED (never executed) child be caller-filled to `to_verify` and
+    // completed with zero real runs. A child's PRESENCE is not aggregate evidence and is
+    // not a coding contract; the CLI's RoundCompletionGuard already projects children and
+    // does not need a fake root execution certified here. There is no aggregate engine.
+    return {
+      code: 'completion-contract-missing',
+      reason:
+        `coding task "${task.taskId}" (${task.taskType}) has no approved completion contract` +
+        (proof === null
+          ? ' and no trusted execution proof'
+          : ' even though a real run executed') +
+        `; a coding task cannot succeed without an approved completion contract`,
+    };
+  }
+
+  /**
+   * P0-1: correlate a completion proof's claimed attempt against the EXISTING evidence
+   * authority, synchronously, at the commit point.
+   *
+   * The proof is created only by a real `executeTask` whose write-back was accepted; the
+   * workbench then binds the attempt id `AttemptStore` minted and the exact run it
+   * appended that record for. This method re-reads the CURRENT record and refuses when
+   * the attempt, session, lease or identity do not line up. A foreign or missing attempt,
+   * a stale session, a superseded lease or a binding for a different run therefore can
+   * never mint success.
+   */
+  private attemptBindingRefusal(task: Task, proof: ExecutionProof | null): { code: string; reason: string } | null {
+    if (proof === null) {
+      return {
+        code: 'completion-execution-proof-missing',
+        reason:
+          `task "${task.taskId}" declares a completion contract, but no accepted execution proof is bound to it; ` +
+          `a refused write-back or a hand-set state cannot complete a coding task`,
+      };
+    }
+    if (proof.leaseVersion !== task.leaseVersion || proof.agentId !== task.agentId || proof.modelId !== task.modelId) {
+      return {
+        code: 'completion-execution-proof-stale',
+        reason:
+          `the trusted execution proof for "${task.taskId}" belongs to lease ${proof.leaseVersion} ` +
+          `${proof.agentId}/${proof.modelId ?? 'default'}, but the task is now lease ${task.leaseVersion} ` +
+          `${task.agentId}/${task.modelId ?? 'default'}; a superseded run cannot prove the current one`,
+      };
+    }
+    if (proof.attemptId === null) {
+      // P0-1: a governed coding task MUST be correlated to the actual attempt its
+      // accepted execution produced. The proof is minted with `attemptId: null` and is
+      // enriched only at the append site where `AttemptStore` minted the record and the
+      // workbench bound it. An unclaimed attempt — a lower caller that executed through
+      // `executeTask` but never recorded/bound, a hand-set `to_verify`, or a refused
+      // execution — is refused: no caller-supplied label and no bare RunResult is trust.
+      return {
+        code: 'completion-attempt-unbound',
+        reason:
+          `task "${task.taskId}" declares a completion contract, but no attempt was bound to its accepted ` +
+          `execution; a governed coding task cannot complete without its recorded attempt`,
+      };
+    }
+    if (proof.bindingRunFingerprint !== undefined && proof.bindingRunFingerprint !== proof.runFingerprint) {
+      return {
+        code: 'completion-attempt-run-mismatch',
+        reason:
+          `the attempt binding for "${task.taskId}" names a different run than the one the proof describes; ` +
+          `only the exact run that produced the attempt can prove completion`,
+      };
+    }
+    const store = this.attemptStore;
+    if (store === null) {
+      return {
+        code: 'completion-attempt-store-unavailable',
+        reason: `the attempt evidence store is not attached, so the completion proof cannot be correlated`,
+      };
+    }
+    const record = store.get(proof.attemptId);
+    if (record === null) {
+      return {
+        code: 'completion-attempt-foreign',
+        reason: `the completion proof names attempt "${proof.attemptId}", which the evidence authority has no record of`,
+      };
+    }
+    if (record.taskId !== task.taskId) {
+      return {
+        code: 'completion-attempt-foreign-task',
+        reason: `attempt "${record.attemptId}" belongs to task "${record.taskId}", not "${task.taskId}"`,
+      };
+    }
+    if (record.kind !== 'execution' && record.kind !== 'rework') {
+      return {
+        code: 'completion-attempt-kind',
+        reason: `attempt "${record.attemptId}" is a ${record.kind} attempt, not the execution of this task`,
+      };
+    }
+    if (record.agentId !== task.agentId || record.modelId !== task.modelId) {
+      return {
+        code: 'completion-attempt-identity-mismatch',
+        reason:
+          `attempt "${record.attemptId}" was produced by ${record.agentId}/${record.modelId ?? 'default'}, but the ` +
+          `task is ${task.agentId}/${task.modelId ?? 'default'}`,
+      };
+    }
+    if ((record.sessionId ?? null) !== proof.sessionId) {
+      return {
+        code: 'completion-attempt-session-mismatch',
+        reason:
+          `attempt "${record.attemptId}" ran in session ${record.sessionId ?? '<none>'}, but the completion proof ` +
+          `is bound to session ${proof.sessionId ?? '<none>'}`,
+      };
+    }
+    if (record.leaseVersion !== proof.leaseVersion) {
+      return {
+        code: 'completion-attempt-lease-mismatch',
+        reason:
+          `attempt "${record.attemptId}" ran under lease ${record.leaseVersion ?? '<none>'}, but the completion ` +
+          `proof is bound to lease ${proof.leaseVersion}`,
+      };
+    }
+    if (record.outcome !== 'success') {
+      return {
+        code: 'completion-attempt-not-success',
+        reason: `attempt "${record.attemptId}" is recorded as ${record.outcome}, so it cannot prove completion`,
+      };
+    }
+    // The final, unforgeable check: the claimed attempt must be the APPEND-SITE
+    // provenance of the exact run this task accepted — the SAME store, the SAME record
+    // object, the SAME id. A record appended for a different run (even one with the same
+    // task/pair/session/lease, or a clone with matching fields), a replay that appended a
+    // second record, a record minted by ANOTHER store (a colliding `att_XXXX`), or a
+    // directly appended record under the same id, was never correlated to the accepted
+    // run object, so it can never complete.
+    const accepted = acceptedRuns(this).get(task.taskId);
+    const provenance = accepted === undefined ? null : runProvenanceOf(accepted);
+    if (provenance === null || provenance.store !== store || provenance.attemptId !== proof.attemptId || provenance.record !== record) {
+      return {
+        code: 'completion-attempt-provenance-mismatch',
+        reason:
+          `the completion proof for "${task.taskId}" names attempt "${proof.attemptId}", but the task's accepted ` +
+          `execution was recorded as ${provenance === null ? '<no correlated attempt>' : `"${provenance.attemptId}"`}; ` +
+          `only the exact attempt its accepted run produced can prove completion`,
+      };
+    }
+    return null;
+  }
+
+  /**
+   * P0-1: attach the EXISTING `AttemptStore` so completion can correlate a claimed
+   * attempt against it. Called once by the workbench that owns the store. Idempotent
+   * (first store wins) and read-only: this layer never appends through it.
+   */
+  attachAttemptStore(store: AttemptStore): void {
+    if (this.attemptStore === null) this.attemptStore = store;
+  }
+
+  /**
+   * P0-1: bind the append-site attempt correlation to the task's current execution proof.
+   *
+   * Called by the workbench once it has, in one breath, the attempt id `AttemptStore`
+   * minted and the exact `RunResult` it appended that record for. It records a CLAIM —
+   * the attempt id, the sealed dispatch session, and the fingerprint of the run it names
+   * — on a proof that ALREADY exists (it never creates one). The claim is not trusted
+   * here: `completionRefusal` re-reads the actual `AttemptStore` record and refuses a
+   * foreign, stale or mismatched attempt. A bare relabel therefore cannot succeed.
+   */
+  recordAttemptBinding(taskId: string, binding: { attemptId: string; sessionId: string | null; run?: RunResult }): void {
+    const current = this.executionProof.get(taskId);
+    if (current === undefined) return;
+    let bindingRunFingerprint: string | undefined;
+    const run = binding.run;
+    if (run !== undefined && run !== null && typeof run.startedAt === 'number') {
+      bindingRunFingerprint = runFingerprintOf({
+        taskId,
+        agentId: current.agentId,
+        modelId: current.modelId,
+        startedAt: run.startedAt,
+        endedAt: run.endedAt,
+        state: run.state,
+        exitCode: run.exitCode,
+      });
+    }
+    // This records a CLAIM, not trust: the attempt id and session are set here, but
+    // `completionRefusal`/`attemptBindingRefusal` re-read the actual `AttemptStore` record
+    // AND the append-site run provenance of the ACCEPTED run before any pass. A relabel
+    // to another attempt (or a fabricated run) therefore can only produce a refusal.
+    this.executionProof.set(taskId, {
+      ...current,
+      attemptId: binding.attemptId,
+      sessionId: binding.sessionId,
+      ...(bindingRunFingerprint === undefined ? {} : { bindingRunFingerprint }),
     });
-    return result.ok ? null : { code: result.code, reason: result.reason };
   }
 
   /**
@@ -1074,6 +1403,15 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
      */
     const stopConfirmed: boolean[] = [];
     const stopOutcome: (string | null)[] = [];
+    /*
+     * P0-1/W3: did the APPROVED COMPLETION TEST enter its own execution edge?
+     *
+     * A one-element holder, raised BEFORE the `ManagedProcess` constructor. The test runs
+     * inside the SAME `try/finally` as the agent run, so its stop verdict must participate
+     * in the ONE outer WRITE-claim release decision: an agent's earlier confirmed stop
+     * cannot authorise releasing a claim while a test process may still be writing.
+     */
+    const testMayHaveStarted: boolean[] = [false];
     /*
      * W3.1: does THIS execution require positive proof that its tree stopped before
      * the write scope may be released?
@@ -1471,6 +1809,11 @@ if (req.allowUnmetDependenciesAtExecute !== true) {
        * requirement is only lowered by explicit typed proof from the runtime seam.
        */
       requiresTreeStopProof[0] = true;
+      // P0-1: a NEW execution begins — drop any earlier run's proof/evidence for this
+      // task so a completion can only ever answer for THIS run.
+      this.completionEvidence.delete(task.taskId);
+      this.executionProof.delete(task.taskId);
+      acceptedRuns(this).delete(task.taskId);
       try {
         const built = buildRunRequest({
           task: running.task,
@@ -1651,49 +1994,86 @@ this.liveHandles.delete(task.taskId);
 
       // ---- write the result back to the lifecycle ----
       const applied = this.applyRunResult(task.taskId, result, dispatchedLease, req.translate ?? {});
-      // ---- P0-1: gather completion evidence while the WRITE claim is still held ----
-      //
-      // The approved test runs AFTER the agent and BEFORE the claim is released, so a
-      // writer cannot slip into the workspace between the run and the proof. Evidence
-      // is gathered only from a successful run; a failed/cancelled run leaves the gate
-      // with nothing to accept. A gathering failure deletes any prior entry so the
-      // gate refuses rather than reusing a stale proof.
-      if (completionContract !== undefined && baselineManifest !== null && result.state === 'succeeded') {
-        try {
-          const afterRun = captureWorkspaceManifest(resolvedCwd);
-          const evidence = await buildCompletionEvidence({
-            taskId: task.taskId,
-            leaseVersion: dispatchedLease.leaseVersion,
-            agentId: running.task.agentId,
-            modelId: running.task.modelId,
-            contract: completionContract,
-            workspaceRoot: resolvedCwd,
-            before: baselineManifest,
-            afterRun,
-            runFingerprint: runFingerprintOf({
+      const runFingerprint = runFingerprintOf({
+        taskId: task.taskId,
+        agentId: result.agentId,
+        modelId: running.task.modelId,
+        startedAt: result.startedAt,
+        endedAt: result.endedAt,
+        state: result.state,
+        exitCode: result.exitCode,
+      });
+      // P0-1: a completion proof exists ONLY for an ACCEPTED write-back of a real run.
+      // A REFUSED write-back is still a real execution and stays historical evidence in
+      // the `AttemptStore`, but it must NOT become a completion proof. The proof is bound
+      // to the exact run the task accepted and the sealed dispatch session; the workbench
+      // later enriches it with the attempt id `AttemptStore` minted for that run.
+      if (applied.ok) {
+        // The EXACT object the accepted execution produced. Bound to the proof here (and
+        // to the evidence authority at the append site) so completion can require that
+        // the recorded attempt is this run's own provenance, not a relabel.
+        acceptedRuns(this).set(task.taskId, result);
+        this.executionProof.set(task.taskId, {
+          leaseVersion: dispatchedLease.leaseVersion,
+          agentId: running.task.agentId,
+          modelId: running.task.modelId,
+          sessionId: mapping?.sessionId ?? null,
+          attemptId: null,
+          runFingerprint,
+        });
+        // ---- P0-1: gather completion evidence while the WRITE claim is still held ----
+        //
+        // The approved test runs AFTER the agent and BEFORE the claim is released, so a
+        // writer cannot slip into the workspace between the run and the proof. Evidence
+        // is gathered only from a successful run; a failed/cancelled run leaves the gate
+        // with nothing to accept. A gathering failure deletes any prior entry so the
+        // gate refuses rather than reusing a stale proof.
+        if (completionContract !== undefined && baselineManifest !== null && result.state === 'succeeded') {
+          try {
+            const afterRun = captureWorkspaceManifest(resolvedCwd);
+            const evidence = await buildCompletionEvidence({
               taskId: task.taskId,
-              agentId: result.agentId,
+              leaseVersion: dispatchedLease.leaseVersion,
+              agentId: running.task.agentId,
               modelId: running.task.modelId,
-              startedAt: result.startedAt,
-              endedAt: result.endedAt,
-              state: result.state,
-              exitCode: result.exitCode,
-            }),
-            timeoutMs: this.completionTimeoutMs,
-            now: this.now(),
-          });
-          this.completionEvidence.set(task.taskId, evidence);
-        } catch (e) {
-          log.warn('completion evidence gathering failed; completion will be refused', {
-            taskId: task.taskId,
-            error: (e as Error).message,
-          });
+              sessionId: mapping?.sessionId ?? null,
+              contract: completionContract,
+              workspaceRoot: resolvedCwd,
+              before: baselineManifest,
+              afterRun,
+              runFingerprint,
+              timeoutMs: this.completionTimeoutMs,
+              now: this.now(),
+              // Raise the outer requirement BEFORE the test's ManagedProcess edge so a
+              // throw inside it can never be read as "the test never started".
+              hooks: { onMayHaveStarted: () => { testMayHaveStarted[0] = true; requiresTreeStopProof[0] = true; }, ...(this.completionTestStopProbe !== undefined ? { stopVerdictProbe: this.completionTestStopProbe } : {}) },
+            });
+            this.completionEvidence.set(task.taskId, evidence);
+            // The test's OWN tree-stop verdict participates in the shared release
+            // decision. If a test process may have started and its stop is unconfirmed,
+            // the WRITE claim is retained even when the agent's stop was confirmed.
+            if (evidence.test.mayHaveStarted) {
+              stopConfirmed[0] = stopConfirmed[0] === true && evidence.test.treeStopConfirmed;
+            }
+          } catch (e) {
+            log.warn('completion evidence gathering failed; completion will be refused', {
+              taskId: task.taskId,
+              error: (e as Error).message,
+            });
+            this.completionEvidence.delete(task.taskId);
+            // The test edge may have been entered before the throw: retain protection.
+            if (testMayHaveStarted[0]) stopConfirmed[0] = false;
+          }
+        } else if (completionContract !== undefined) {
+          // A run that did not succeed cannot produce completion evidence; drop any stale
+          // entry so a later mismatched pass cannot reuse it.
           this.completionEvidence.delete(task.taskId);
         }
-      } else if (completionContract !== undefined) {
-        // A run that did not succeed cannot produce completion evidence; drop any stale
-        // entry so a later mismatched pass cannot reuse it.
+      } else {
+        // A refused write-back is execution evidence, never completion proof.
+        this.executionProof.delete(task.taskId);
         this.completionEvidence.delete(task.taskId);
+        acceptedRuns(this).delete(task.taskId);
       }
       if (!applied.ok) {
         // R2-2 / F5: STATE is refused, EVIDENCE IS NOT.
@@ -1791,8 +2171,13 @@ this.liveHandles.delete(task.taskId);
            *
            * Only the value `'not-started'` releases. Anything else — including a value
            * that a caller forgot to set — is "no proof", and no proof retains.
+           *
+           * P0-1: once the APPROVED TEST edge was entered (`testMayHaveStarted`), the
+           * agent's own proven-not-started fact can no longer release the claim: the test
+           * is a second process edge, and only ITS confirmed stop (folded into
+           * `confirmed` above) may release.
            */
-          const provenNotStarted = startDisposition[0] === 'not-started';
+          const provenNotStarted = startDisposition[0] === 'not-started' && !testMayHaveStarted[0];
           if (!proofRequired || confirmed || provenNotStarted) {
             // Idempotent by construction: `releaseClaimForScope` removes what it finds,
             // so a second call is a no-op returning 0 rather than an error.

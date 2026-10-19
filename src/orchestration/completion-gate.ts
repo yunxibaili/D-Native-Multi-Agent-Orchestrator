@@ -20,19 +20,23 @@
  *
  * WHAT IS CHECKED (all must hold; the first failure is named)
  * ---------------------------------------------------------
- *   1. no contract  -> pass through (pre-P0-1 behaviour; the plan-file path refuses to
- *                      build a coding task without one, so this is never a governed coding task)
+ *   1. no contract  -> this PURE gate passes through; the orchestrator refuses EVERY
+ *                      coding task without a contract (except a genuine non-executing
+ *                      parent/container), so "no contract" is never a coding success and
+ *                      a real run is never a substitute for a contract.
  *   2. evidence present
  *   3. contract digest matches the task's current contract
  *   4. evidence belongs to THIS task
  *   5. same lease version (a reassign advances it and invalidates the proof)
  *   6. same Agent × Model identity
- *   7. current workspace digest matches the post-run digest (a later edit invalidates it)
- *   8. the approved test really exited 0
- *   9. the approved test did not time out
- *  10. the process tree stop was positively confirmed
- *  11. every expected artifact is present
- *  12. every changed path is inside allowedScope
+ *   7. the SAME exact run (the evidence fingerprint is consumed against the current proof)
+ *   8. the SAME dispatch session
+ *   9. current workspace digest matches the post-run digest (a later edit invalidates it)
+ *  10. the approved test really exited 0
+ *  11. the approved test did not time out
+ *  12. the process tree stop was positively confirmed
+ *  13. every expected artifact is present
+ *  14. every changed path is inside allowedScope
  */
 
 export interface CompletionGateEvidenceView {
@@ -42,6 +46,10 @@ export interface CompletionGateEvidenceView {
   readonly leaseVersion: number;
   readonly agentId: string;
   readonly modelId: string | null;
+  /** The exact RunResult fingerprint the evidence was gathered against. */
+  readonly runFingerprint: string | null;
+  /** The dispatch session the evidenced execution ran in, or null when sessionless. */
+  readonly sessionId: string | null;
   /** Digest of the workspace AFTER the approved test; null when unavailable/unsafe. */
   readonly workspaceDigest: string | null;
   /** True when a link/reparse point made the workspace manifest unsafe. */
@@ -75,6 +83,14 @@ export interface CompletionGateInput {
   readonly evidence: CompletionGateEvidenceView | null;
   /** Digest of the workspace re-read at the synchronous commit point. */
   readonly currentWorkspaceDigest: string | null;
+  /**
+   * The run fingerprint of the execution CURRENTLY bound to the task (the trusted
+   * execution proof), re-read at the synchronous commit point. Null when no execution
+   * proof is bound — which is itself a refusal.
+   */
+  readonly currentRunFingerprint: string | null;
+  /** The dispatch session of the currently-bound execution, or null when sessionless. */
+  readonly currentSessionId: string | null;
 }
 
 export function evaluateCompletionGate(input: CompletionGateInput): CompletionGateResult {
@@ -125,6 +141,34 @@ export function evaluateCompletionGate(input: CompletionGateInput): CompletionGa
       reason:
         `the completion evidence was produced by ${evidence.agentId}/${evidence.modelId ?? 'default'}, but the task ` +
         `is now ${input.task.agentId}/${input.task.modelId ?? 'default'}`,
+    };
+  }
+  // The proof is bound to the EXACT run and dispatch session, not just the identity.
+  // The fingerprint is generated at execution time; here it is finally CONSUMED, so a
+  // later execution can never be answered by an earlier run's proof.
+  if (evidence.runFingerprint === null || input.currentRunFingerprint === null) {
+    return {
+      ok: false,
+      code: 'completion-run-proof-missing',
+      reason: `the completion evidence is not bound to a current execution run, so no run can be trusted for this task`,
+    };
+  }
+  if (evidence.runFingerprint !== input.currentRunFingerprint) {
+    return {
+      ok: false,
+      code: 'completion-run-proof-stale',
+      reason:
+        `the completion evidence describes run ${evidence.runFingerprint.slice(0, 12)}…, but the task's current ` +
+        `execution is ${input.currentRunFingerprint.slice(0, 12)}…; an earlier run cannot prove the current one`,
+    };
+  }
+  if (evidence.sessionId !== input.currentSessionId) {
+    return {
+      ok: false,
+      code: 'completion-session-mismatch',
+      reason:
+        `the completion evidence was gathered in session ${evidence.sessionId ?? '<none>'}, but the current ` +
+        `dispatch binding is ${input.currentSessionId ?? '<none>'}`,
     };
   }
   if (evidence.unsafeWorkspace) {

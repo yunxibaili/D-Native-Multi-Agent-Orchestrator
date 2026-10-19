@@ -23,7 +23,18 @@ import { createDshAdapter } from './dsh.ts';
 import { createOpenCodeAdapter } from './opencode.ts';
 import { createWorkBuddyAdapter } from './workbuddy.ts';
 import type { WorkBuddyId } from './workbuddy.ts';
+import { denyExecutableBasename } from '../runtime/offline-policy.ts';
 import type { AgentAdapter } from '../core/types.ts';
+
+/*
+ * OFFLINE DENIAL REGISTRATION. The real native launch targets whose basename is
+ * NOT the agent id are registered here, at the SHARED factory table, so the
+ * offline deny set knows them before any discovery runs. Registration is
+ * monotonic and deny-only (no unmark/grant API), so it cannot promote an agent
+ * to live. See src/runtime/offline-policy.ts.
+ */
+denyExecutableBasename('code-sidecar'); // Cline
+denyExecutableBasename('codebuddy'); // WorkBuddy (CN + Intl), extension-less script
 
 export interface AdapterFactoryContext {
   /** Configured binary path for this agent, if any. */

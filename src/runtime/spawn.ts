@@ -23,7 +23,8 @@ import { StringDecoder } from 'node:string_decoder';
 import { TailBuffer } from '../core/buffer.ts';
 import { log } from '../core/log.ts';
 import { assertCmdSafe, buildLaunchArgv } from './launcher.ts';
-import { asProvenNotStarted } from './internal/start-proof.ts';
+import { asProvenNotStarted, brandProvenNotStarted } from './internal/start-proof.ts';
+import { evaluateOfflineSpawn, describeOfflineDenial, OFFLINE_AGENT_LAUNCH_REFUSED } from './offline-policy.ts';
 import { advanceProcessStart } from './process-start.ts';
 import type { ProcessStartDisposition } from '../core/types.ts';
 import type { LauncherSpec } from '../core/types.ts';
@@ -198,6 +199,23 @@ export function buildEnv(extra?: Readonly<Record<string, string>>): Record<strin
   for (const key of ENV_ALLOWLIST) {
     const v = process.env[key];
     if (v !== undefined) out[key] = v;
+  }
+  // Preserve supported parent proxy routes across nested contained launches.
+  for (const key of ['HTTP_PROXY', 'HTTPS_PROXY'] as const) {
+    const value = process.env[key] ?? process.env[key.toLowerCase()];
+    if (!value) continue;
+    try {
+      const protocol = new URL(value).protocol;
+      if (protocol === 'http:' || protocol === 'https:') out[key] = value;
+    } catch { /* Malformed proxy values are not inherited. */ }
+  }
+  const noProxy = process.env.NO_PROXY ?? process.env.no_proxy;
+  if (noProxy !== undefined || out.HTTP_PROXY !== undefined || out.HTTPS_PROXY !== undefined) {
+    out.NO_PROXY = [...new Set([
+      ...(noProxy ?? '').split(',').map((host) => host.trim()).filter(Boolean),
+      'localhost', '127.0.0.1', '::1',
+    ])].join(',');
+    out.no_proxy = out.NO_PROXY;
   }
   if (extra) for (const [k, v] of Object.entries(extra)) out[k] = v;
   if (out.NO_COLOR === undefined) out.NO_COLOR = '1';
@@ -379,6 +397,24 @@ export class ManagedProcess {
      * Nothing here is inferred from a message or a type name. Each site is a fact this
      * class knows from its own control flow, and the brand is module-private.
      */
+    const offline = evaluateOfflineSpawn({ launcher: opts.launcher, args: opts.args, cwd: opts.cwd, env: opts.env });
+    if (!offline.allowed) {
+      /*
+       * OFFLINE TEST ISOLATION. The decision is made from the ACTUAL launch inputs
+       * before `spawn()` is ever reached, so it is a PROVEN pre-start: nothing was
+       * created, and the WRITE claim may be released. This is the shared process edge
+       * that every launch path (run / probe / catalogue / approved-test / transport /
+       * adapter) funnels through. See `./offline-policy.ts`.
+       *
+       * The refusal carries a DEDICATED code so a caller can tell a policy refusal
+       * apart from a resolve/argv failure. It is branded IN PLACE (never wrapped), so
+       * both the code and the runtime-owned proven-not-started proof survive together.
+       */
+      const refusal = new Error(describeOfflineDenial(offline)) as Error & { code?: string };
+      refusal.name = 'OfflineAgentLaunchRefusedError';
+      refusal.code = OFFLINE_AGENT_LAUNCH_REFUSED;
+      throw brandProvenNotStarted(refusal, 'request-rejected-before-spawn', 'offline agent launch policy');
+    }
     let argv: string[];
     try {
       argv = buildLaunchArgv(opts.launcher, opts.args);

@@ -28,8 +28,9 @@
 
 import { CapabilityError, InvalidRequestError } from '../core/errors.ts';
 import { validateExecutionTimeout } from '../core/types.ts';
-import type { RunRequest } from '../core/types.ts';
+import type { LauncherSpec, RunRequest } from '../core/types.ts';
 import { brandProvenNotStarted } from './internal/start-proof.ts';
+import { evaluateOfflineSpawn, describeOfflineDenial } from './offline-policy.ts';
 
 /** The capability subset the preflight gates on. */
 export interface LaunchCapabilities {
@@ -60,6 +61,14 @@ export interface RuntimeLaunchPreflightInput {
    * runtime implementation because it owns the thread store; it carries no brand.
    */
   readonly resolveResumeTarget: (req: RunRequest, supportsResume: boolean) => string;
+  /**
+   * The adapter's launcher, when known at preflight time. OFFLINE TEST ISOLATION
+   * consults it here so a frozen test process refuses a real agent BEFORE an
+   * `AgentSession` (and therefore a transport / child) is ever constructed. Optional
+   * so existing direct callers that only exercise request validation stay valid; the
+   * `ManagedProcess` edge re-checks unconditionally.
+   */
+  readonly launcher?: LauncherSpec;
 }
 
 export interface RuntimeLaunchPreflightResult {
@@ -82,6 +91,20 @@ export function validateRuntimeLaunchPreflight(
 ): RuntimeLaunchPreflightResult {
   const { req, capabilities, config } = input;
   try {
+    /*
+     * OFFLINE TEST ISOLATION. When the offline policy is frozen and the adapter's own
+     * launcher is a real agent executable, refuse HERE — before any transport, child or
+     * OS process exists. The refusal is thrown inside this region, so it is branded as
+     * proven-not-started exactly like the other pre-process validations below, and the
+     * WRITE-claim release contract is preserved.
+     */
+    if (input.launcher !== undefined) {
+      const offline = evaluateOfflineSpawn({ launcher: input.launcher, args: [], cwd: req.cwd });
+      if (!offline.allowed) {
+        throw new InvalidRequestError(req.agentId, 'offline-policy', describeOfflineDenial(offline));
+      }
+    }
+
     if (!capabilities.newTask && !req.threadId) throw new CapabilityError(req.agentId, 'newTask');
 
     // `review` and `resume` are mutually exclusive entrypoints. A review is a one-shot

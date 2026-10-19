@@ -210,6 +210,7 @@ export class Orchestrator {
       },
       validateAdapterRequest: (r) => adapter.validateRequest(r),
       resolveResumeTarget: (r, supportsResume) => this.resolveResumeTarget(r, supportsResume),
+      launcher: adapter.descriptor.launcher,
     });
     const merged = preflight.merged;
 

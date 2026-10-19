@@ -46,6 +46,7 @@
 
 import type { TaskType } from '../quota/types.ts';
 import type { CandidateTask } from './planner.ts';
+import type { CompletionContract } from './completion-contract.ts';
 // B4.2: the ONE candidate-formatting rule, shared with the user's plan file.
 import { buildCollaborationMemberCandidates, collaborationTaskIds as planFileCollaborationTaskIds } from './plan-file.ts';
 
@@ -68,6 +69,14 @@ export interface CollaborationMemberSpec {
   readonly fileScope: string;
   /** What this member must produce, and what downstream may rely on. */
   readonly deliverable: string;
+  /**
+   * P0-1: an EXPLICIT completion contract this member's task must prove, when a caller
+   * supplies one. The BUILT-IN groups declare NONE: the artifact set, scope and approved
+   * test are business acceptance only the user can authorise, so they are never derived
+   * from the deliverable prose. A built-in member carries no contract and is refused at
+   * completion until a caller supplies one explicitly.
+   */
+  readonly completion?: CompletionContract;
 }
 
 export interface CollaborationPlanChoice {
@@ -80,6 +89,13 @@ export interface CollaborationPlanChoice {
    * by the integration task; no fourth model is introduced for it.
    */
   readonly integratorMember: number;
+  /**
+   * P0-1: an EXPLICIT completion contract the INTEGRATION task (a coding leaf) must prove,
+   * when a caller supplies one. The BUILT-IN groups declare NONE (the integration artifact
+   * is business acceptance, not a default), so a built-in group's integrator is refused at
+   * completion until a caller supplies one via a plan file.
+   */
+  readonly integratorCompletion?: CompletionContract;
 }
 
 /**
@@ -87,6 +103,12 @@ export interface CollaborationPlanChoice {
  * LAYA choice are both deterministic. `duo` and `trio` are the whole answer space
  * for this slice — the round rule is "offer valid candidates, do not ask a model to
  * emit an arbitrary DAG".
+ *
+ * P0-1: these groups declare NO completion contract. A member's/integrator's accepted
+ * artifact set, scope and approved test are business acceptance only the user can
+ * authorise; a built-in group states the roles, the scopes and the sequential order,
+ * never a fictional default artifact. A caller that wants a built-in group completable
+ * supplies explicit contracts through `--workflow-plan`.
  */
 export const COLLABORATION_PLAN_CHOICES: readonly CollaborationPlanChoice[] = Object.freeze([
   Object.freeze({
@@ -178,5 +200,5 @@ export function buildCollaborationCandidates(
   rootTaskId: string,
 ): CandidateTask[] {
   const plan = collaborationPlanFor(choice);
-  return buildCollaborationMemberCandidates(plan.members, plan.integratorMember, objective, rootTaskId);
+  return buildCollaborationMemberCandidates(plan.members, plan.integratorMember, objective, rootTaskId, plan.integratorCompletion);
 }

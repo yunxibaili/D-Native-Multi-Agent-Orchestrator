@@ -91,13 +91,27 @@ function probeFor(agentId: string, modelId: string): QuotaProbe {
   } as unknown as QuotaProbe;
 }
 
+/**
+ * P0-1: a coding step must declare a completion contract. The fixture writes
+ * `<scope>/<role>.txt` into the round's own directory, so the contract names exactly
+ * that file, allows exactly that scope, and approves a trivial zero-exit command.
+ */
+function contractFor(role: string, fileScope: string) {
+  const scope = fileScope.replace(/\/+$/, '');
+  return {
+    expectedArtifacts: [`${scope}/${role}.txt`],
+    allowedScope: [scope],
+    test: { executable: 'node', argv: ['-e', 'process.exit(0)'], cwd: '.' },
+  };
+}
+
 const SEQUENTIAL_PLAN = {
   kind: 'sequential',
   plans: [{
     id: 'stage-flow', label: 'research then implement',
     steps: [
       { role: 'api-research', taskType: 'research', fileScope: 'docs/api', deliverable: 'the api findings note' },
-      { role: 'server', taskType: 'implementation', fileScope: 'src/server', deliverable: 'the server change' },
+      { role: 'server', taskType: 'implementation', fileScope: 'src/server', deliverable: 'the server change', ...contractFor('server', 'src/server') },
     ],
   }],
 };
@@ -180,7 +194,9 @@ async function stageRound(opts: {
   const VERDICT = JSON.stringify({ verdict: 'pass', reason: 'fixture reviewer: the stage deliveries meet the recorded runs', findings: [], recommendedAction: 'none', reviewer: 'fixture-codex', reviewedAt: 1 });
   const runtime = new RuntimeOrchestrator({
     config: { agents: {} } as never,
-    storeDir: join(cwd, '.store'),
+    // P0-1: the runtime's own bookkeeping store lives OUTSIDE the workspace root, so
+    // its transcript/task files can never be mistaken for a change the worker made.
+    storeDir: join(ownDir(), 'store'),
     replaceAdapters: [
       createFakeAdapter({ id: AGENT_A, capabilities: CAPS, script: [{ kind: 'exit', code: 0 }] }),
       createFakeAdapter({ id: REVIEWER, capabilities: CAPS, script: [{ kind: 'frame', text: VERDICT, data: { text: VERDICT } }, { kind: 'exit', code: 0 }] }),

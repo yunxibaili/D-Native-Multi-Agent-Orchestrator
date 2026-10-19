@@ -146,6 +146,38 @@ function memberRoleOf(prompt: string): { kind: 'member'; index: number; role: st
 }
 
 /**
+ * P0-1: the built-in `duo`/`trio` groups now declare NO completion contract — the
+ * accepted artifact set, scope and approved test are business acceptance only the USER
+ * can authorise, and the first draft invented them. This fixture supplies the SAME group
+ * shapes as an explicit user-approved plan FILE, with contracts naming exactly the
+ * artifact the fixture runtime really writes (`<scope>/<role>.txt`) and the integration
+ * artifact, plus a real contained zero-exit command. The collaboration/assignment/
+ * lifecycle behaviour under test is unchanged; only the plan source moved.
+ */
+const member = (role: string, taskType: 'implementation' | 'test', scope: string) => ({
+  role, taskType, fileScope: `${scope}/**`, deliverable: `the ${role} change, with the files it touched`,
+  expectedArtifacts: [`${scope}/${role}.txt`], allowedScope: [scope],
+  test: { executable: 'node', argv: ['-e', 'process.exit(0)'], cwd: '.' },
+});
+const B41_PLAN_FILE = {
+  kind: 'collaborate',
+  plans: [
+    {
+      id: 'duo', label: 'two models build the goal together, one of them integrates',
+      members: [member('provider', 'implementation', 'src/provider'), member('consumer', 'implementation', 'src/consumer')],
+      integratorMember: 1,
+      integratorCompletion: { expectedArtifacts: ['src/integration/combined.txt'], allowedScope: ['src/integration'], test: { executable: 'node', argv: ['-e', 'process.exit(0)'], cwd: '.' } },
+    },
+    {
+      id: 'trio', label: 'three models build the goal together, the middle one integrates',
+      members: [member('core', 'implementation', 'src/core'), member('cli', 'implementation', 'src/cli'), member('checks', 'test', 'tests')],
+      integratorMember: 2,
+      integratorCompletion: { expectedArtifacts: ['src/integration/combined.txt'], allowedScope: ['src/integration'], test: { executable: 'node', argv: ['-e', 'process.exit(0)'], cwd: '.' } },
+    },
+  ],
+};
+
+/**
  * Run ONE real production round with `--workflow collaborate`.
  *
  * `pairOrder` is what LAYA answers for each member's initial Agent x Model question: the
@@ -225,6 +257,10 @@ async function collabRound(opts: {
       const parsed = memberRoleOf(req.prompt);
       const failed = opts.failMember !== undefined && parsed !== null && parsed.kind === 'member' && parsed.index === opts.failMember;
       const noDeliverable = opts.noDeliverableMember !== undefined && parsed !== null && parsed.kind === 'member' && parsed.index === opts.noDeliverableMember;
+      // B4.5: in a git round the group runs in ONE shared worktree, so the deliverable
+      // must be written to the ACTUAL run cwd, not the user checkout — otherwise the
+      // approved artifact exists nowhere the completion gate can see it.
+      const runCwd = req.cwd;
 
       // A member WRITES its own file into the round's real working directory.
       let changedFiles: string[] = [];
@@ -242,7 +278,7 @@ async function collabRound(opts: {
         output = '';
       } else if (parsed !== null && parsed.kind === 'member') {
         const relPath = `${parsed.scope.replace(/\/?\*+$/, '')}/${parsed.role}.txt`;
-        const abs = join(cwd, relPath);
+        const abs = join(runCwd, relPath);
         mkdirSync(join(abs, '..'), { recursive: true });
         // The content is DERIVED from the run itself (agent/model/order), so two members
         // can never claim the same thing and a stale file from a previous round is
@@ -259,15 +295,15 @@ async function collabRound(opts: {
          * not written its file, this output would say so and the combined artifact would
          * be missing that member.
          */
-        const found = filesUnder(cwd).filter((f) => f.endsWith('.txt') && !f.startsWith('src/integration/'));
-        const contents = found.map((f) => ({ file: f, text: readFileSync(join(cwd, f), 'utf8').trim() }));
+        const found = filesUnder(runCwd).filter((f) => f.endsWith('.txt') && !f.startsWith('src/integration/') && f !== 'base.txt');
+        const contents = found.map((f) => ({ file: f, text: readFileSync(join(runCwd, f), 'utf8').trim() }));
         const combinedRel = 'src/integration/combined.txt';
         const combined = [
           `COMBINED RESULT objective=${String(opts.objective ?? 'collab')}`,
           ...contents.map((c) => `from ${c.file}: ${c.text}`),
         ].join('\n');
-        mkdirSync(join(cwd, 'src/integration'), { recursive: true });
-        writeFileSync(join(cwd, combinedRel), combined, 'utf8');
+        mkdirSync(join(runCwd, 'src/integration'), { recursive: true });
+        writeFileSync(join(runCwd, combinedRel), combined, 'utf8');
         changedFiles = [combinedRel, ...found];
         output = `${parsed.token}: integrated ${contents.length} member file(s) [${found.join(', ')}]`;
       } else {
@@ -395,11 +431,18 @@ async function collabRound(opts: {
     },
   };
 
+  // P0-1: drive the group from an explicit user-approved plan FILE, never the
+  // contract-free built-in. It is written OUTSIDE the round cwd (absolute path) so a git
+  // round's user checkout is never dirtied by it.
+  const planFilePath = join(ownDir(), 'plans.json');
+  writeFileSync(planFilePath, JSON.stringify(B41_PLAN_FILE), 'utf8');
+
   const argv = [
     opts.objective ?? 'add a retry budget to the http client',
     '--json', '--cwd', cwd,
     '--max-children', '4', '--max-concurrent', '2',
     '--workflow', 'collaborate',
+    '--workflow-plan', planFilePath,
     ...(opts.planChoice !== undefined ? ['--workflow-choice', opts.planChoice] : []),
     ...(opts.fixed !== undefined ? ['--select', 'fixed', '--agent', opts.fixed.agentId, '--model', opts.fixed.modelId] : []),
   ];

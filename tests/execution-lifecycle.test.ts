@@ -28,11 +28,11 @@
  * suites, so the file is independent of agent auth state.
  */
 
-import { mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { Orchestrator } from '../src/orchestration/orchestrator.ts';
 import { TaskStore } from '../src/orchestration/store.ts';
@@ -56,6 +56,9 @@ import { normalizeScopeForWorkspace as normalizeScope } from '../src/orchestrati
 import { Orchestrator as RuntimeOrch } from '../src/orchestrator/orchestrator.ts';
 import { sourceText } from './helpers.ts';
 import { createFakeAdapter, FakeTransport } from './helpers.ts';
+// R5-1.2/C Case 32: held-handle (ORIGINAL handle) proof that the controlled
+// descendant really EXITED. The existing external observer is reused as-is.
+import { open as openObserver } from './helpers/process-observer.ts';
 import type { AgentDescriptor, RunHandle, RunRequest, RunResult, TaskState, TransportExit } from '../src/core/types.ts';
 import type { QuotaRecord, TaskType } from '../src/quota/types.ts';
 
@@ -113,6 +116,88 @@ function gateFixture(budgets: BudgetManager, registry: ModelRegistry) {
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+// ---------------------------------------------------------------------------
+// P0-1 CONTROLLED CHILD ROLE (fixed, test-only; read ONCE, BEFORE any case).
+//
+// The reviewed runner (scripts/test-timed.mjs) only admits canonical manifest
+// suites, so the old arbitrary TEMP `exit7.test.ts` can no longer be selected.
+// Case 24 / Case 32 therefore drive the REAL runner — as MAIN, never imported —
+// over THIS reviewed file, with a narrowly-scoped role supplied by env:
+//
+//   RUNNER_LIFECYCLE_ROLE=exit7 -> exit 7 immediately (a real admitted child)
+//   RUNNER_LIFECYCLE_ROLE=tree  -> spawn ONE harmless writer, publish its pid,
+//                                  then park until the contained cancellation
+//                                  tears the tree down. It NEVER recurses into
+//                                  the suite and NEVER starts another runner.
+//
+// The role is NOT a live authorization: the child still loads the offline
+// bootstrap and can only exit or park. An unknown role fails closed.
+// ---------------------------------------------------------------------------
+const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+const TEST_RUNNER = join(REPO_ROOT, 'scripts', 'test-timed.mjs');
+const LIFECYCLE_HELPER = fileURLToPath(new URL('./helpers/runner-lifecycle-fixture.cjs', import.meta.url));
+const CANONICAL_LIFECYCLE_SUITE = 'tests/execution-lifecycle.test.ts';
+
+// The `tree` child role may only write into the ONE owned temp root the parent
+// created for Case 32. A missing/empty RUNNER_LIFECYCLE_TMP must fail closed
+// instead of resolving to the process's CURRENT DIRECTORY, and the root must be
+// the expected absolute, EXISTING directory placed directly under the OS temp dir
+// (never an arbitrary path). This is a fixed expectation, not a global scan, and
+// it kills nothing.
+const CASE32_OWNED_ROOT_PREFIX = 'r512c-case32-';
+function isExpectedCase32OwnedRoot(p: string | undefined): p is string {
+  if (typeof p !== 'string' || p === '') return false;
+  if (!isAbsolute(p)) return false;
+  let isDir = false;
+  try {
+    isDir = statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+  if (!isDir) return false;
+  const parent = dirname(p);
+  const tmp = resolve(tmpdir());
+  const sameParent = process.platform === 'win32'
+    ? parent.toLowerCase() === tmp.toLowerCase()
+    : parent === tmp;
+  return sameParent && basename(p).startsWith(CASE32_OWNED_ROOT_PREFIX);
+}
+
+const CHILD_ROLE = process.env.RUNNER_LIFECYCLE_ROLE;
+if (CHILD_ROLE !== undefined && CHILD_ROLE !== '') {
+  if (CHILD_ROLE === 'exit7') {
+    process.exit(7);
+  } else if (CHILD_ROLE === 'tree') {
+    const ownedRoot = process.env.RUNNER_LIFECYCLE_TMP;
+    // Validate BEFORE spawning the writer or writing any file, so a bad/absent
+    // root can never scatter pid files into the current directory.
+    if (!isExpectedCase32OwnedRoot(ownedRoot)) {
+      process.stderr.write(
+        `RUNNER_LIFECYCLE_ROLE=tree refused: RUNNER_LIFECYCLE_TMP must be the parent-created `
+          + `absolute case32 owned root; got "${String(ownedRoot)}"\n`,
+      );
+      process.exit(2);
+    }
+    const writer = spawn(process.execPath, [LIFECYCLE_HELPER, 'writer'], {
+      detached: true,
+      stdio: 'ignore',
+      env: process.env,
+      windowsHide: true,
+    });
+    writer.unref();
+    writeFileSync(join(ownedRoot, 'suite.pid'), String(process.pid));
+    writeFileSync(join(ownedRoot, 'writer.pid'), String(writer.pid));
+    // Park until the runner's contained tree kill ends this process. A REFERENCED
+    // interval keeps the event loop alive, so the process can never drain and exit
+    // early on an unsettled top-level await.
+    setInterval(() => {}, 1_000);
+    await new Promise<void>(() => {});
+  } else {
+    process.stderr.write(`unknown RUNNER_LIFECYCLE_ROLE="${CHILD_ROLE}"\n`);
+    process.exit(2);
+  }
+}
 
 // ===========================================================================
 
@@ -1302,27 +1387,137 @@ section('R5-1.2 Case 24: the timing runner passes exit codes through and classif
 
 {
   const tmp = mkdtempSync(join(tmpdir(), 'r512-case24-'));
-  const exit7 = join(tmp, 'exit7.test.ts');
-  writeFileSync(exit7, 'process.exit(7);\n', 'utf8');
-  const runner = fileURLToPath(new URL('../scripts/test-timed.mjs', import.meta.url));
-  const run = (files: string) =>
-    new Promise<{ code: number | null; out: string }>((resolve) => {
-      const child = spawn(process.execPath, [runner], {
-        env: { ...process.env, TEST_TIMED_SUITES: files },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      let out = '';
-      child.stdout?.on('data', (b: Buffer) => (out += b.toString('utf8')));
-      child.stderr?.on('data', (b: Buffer) => (out += b.toString('utf8')));
-      child.on('exit', (code: number | null) => resolve({ code, out }));
+  const launched: ManagedProcess[] = [];
+  let anyRunnerTimedOut = false;
+
+  // Drive the REAL runner (as MAIN) as a contained child. The selector is always
+  // the canonical reviewed manifest suite (or, for the refusal case, an
+  // out-of-manifest absolute path that must never execute).
+  const RUNNER_DEADLINE_MS = 20_000;
+  const runRunner = async (
+    env: Record<string, string>,
+    preload: string[] = [],
+  ): Promise<{ code: number | null; out: string; timedOut: boolean }> => {
+    const resolved = launcherFor(process.execPath);
+    if (!resolved.ok) throw new Error('cannot resolve the node launcher');
+    let out = '';
+    const proc = new ManagedProcess({
+      launcher: resolved.launcher,
+      args: [...preload, TEST_RUNNER],
+      cwd: REPO_ROOT,
+      env: { ...process.env, ...env } as Readonly<Record<string, string>>,
+      onStdoutText: (t) => { out += t; },
     });
-  const r7 = await run(exit7);
-  check('a child exiting 7 makes the WRAPPER exit 7 (passed through, not blanket 1)', r7.code === 7, String(r7.code));
-  const rErr = await run(join(tmp, 'does-not-exist.test.ts'));
-  check('a missing suite file is classified as spawn-error with a non-zero exit',
-    rErr.code !== 0 && /spawn-error/i.test(rErr.out), `code=${String(rErr.code)}`);
-  check('the timing table is printed even on failure', /suite timing/.test(rErr.out) || /suite timing/.test(r7.out));
-  rmSync(tmp, { recursive: true, force: true });
+    launched.push(proc);
+    // BOUNDED wait for the runner's own exit. A hung runner must never wedge the
+    // suite: on expiry the timeout is RECORDED (never masked as success), the tree
+    // is cooperatively stopped, and the finally below refuses to remove the owned
+    // root unless every tree is confirmed stopped.
+    let timedOut = false;
+    const exit = await new Promise<{ code: number | null } | null>((resolve) => {
+      const guard = setTimeout(() => {
+        timedOut = true;
+        resolve(null);
+      }, RUNNER_DEADLINE_MS);
+      if (typeof guard.unref === 'function') guard.unref();
+      proc.exited.then((e) => {
+        clearTimeout(guard);
+        resolve(e);
+      });
+    });
+    if (timedOut) {
+      anyRunnerTimedOut = true;
+      await proc.cancel('case 24: the runner exceeded its bounded deadline').catch(() => false);
+      await proc.settleCleanup().catch(() => false);
+    }
+    return { code: exit === null ? null : exit.code, out: out + proc.stderrTail.toString(), timedOut };
+  };
+
+  try {
+    // (1) A real ADMITTED child — the canonical reviewed suite in its fixed exit7
+    // role — exits 7: the runner must PASS THAT CODE THROUGH, never blanket 1.
+    const r7 = await runRunner({ TEST_TIMED_SUITES: CANONICAL_LIFECYCLE_SUITE, RUNNER_LIFECYCLE_ROLE: 'exit7' });
+    check('a child exiting 7 makes the WRAPPER exit 7 (passed through, not blanket 1)', r7.code === 7, String(r7.code));
+    check('the timing table is printed for the admitted failing attempt', /suite timing/.test(r7.out));
+
+    // (2) A REAL OS LAUNCH FAILURE. The controlled preload is passed through
+    // `--require` to the ROOT runner ONLY (never via NODE_OPTIONS, so the child is
+    // unaffected). It redirects the runner's own process.execPath to a
+    // nonexistent executable under the OWNED temp root, so the runner's ACTUAL
+    // spawn() call fails with a real OS ENOENT and is classified `spawn-error`.
+    // The exit7 role is a fail-safe: if the redirect were ever ineffective, the
+    // child exits 7 instead of re-running the suite (no recursion), and the
+    // missing `spawn-error` text fails the check honestly.
+    const rErr = await runRunner(
+      {
+        TEST_TIMED_SUITES: CANONICAL_LIFECYCLE_SUITE,
+        RUNNER_LIFECYCLE_PRELOAD_MODE: 'spawn-error',
+        RUNNER_LIFECYCLE_TMP: tmp,
+        RUNNER_LIFECYCLE_ROLE: 'exit7',
+      },
+      ['--require', LIFECYCLE_HELPER],
+    );
+    check('a real OS launch failure is classified as spawn-error with a non-zero exit',
+      rErr.code !== 0 && /spawn-error/i.test(rErr.out), `code=${String(rErr.code)}`);
+    check('the timing table is printed even on a spawn failure', /suite timing/.test(rErr.out));
+
+    // (3) An OUT-OF-MANIFEST ABSOLUTE selector is REFUSED BEFORE EXECUTION: the
+    // runner normalises it outside the workspace and never spawns it, so a marker
+    // that file would write if it ever ran stays ABSENT.
+    const marker = join(tmp, 'outside-ran.txt');
+    const outside = join(tmp, 'outside-marker.test.mjs');
+    writeFileSync(
+      outside,
+      `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)}, 'ran');\n`,
+      'utf8',
+    );
+    const refused = await runRunner({ TEST_TIMED_SUITES: outside });
+    check('an outside/non-manifest absolute selector is refused before execution (exit 3)',
+      refused.code === 3, `code=${String(refused.code)}`);
+    check('the refused out-of-manifest selector never executed (its marker is absent)',
+      existsSync(marker) === false);
+
+    check('Case 24: no controlled runner exceeded its bounded deadline', anyRunnerTimedOut === false);
+  } finally {
+    // Cooperative cleanup only: request the stop FIRST for any tree not already
+    // confirmed stopped, THEN verify the REAL stop facts. No cancel/settleCleanup
+    // result is swallowed — a failure makes a check fail — and the owned root is
+    // removed ONLY once every launched tree is confirmed stopped; otherwise it is
+    // RETAINED and its path is reported. Never a bare pid/name kill.
+    const stopErrors: string[] = [];
+    for (const proc of launched) {
+      if (proc.isTreeStopConfirmed()) continue;
+      try {
+        const cancelled = await proc.cancel('case 24 cleanup');
+        if (cancelled !== true) stopErrors.push('cancel() reported an unconfirmed stop');
+      } catch (e) {
+        stopErrors.push(`cancel() failed: ${(e as Error).message}`);
+      }
+      try {
+        const settled = await proc.settleCleanup();
+        if (settled !== true) stopErrors.push('settleCleanup() reported an unconfirmed stop');
+      } catch (e) {
+        stopErrors.push(`settleCleanup() failed: ${(e as Error).message}`);
+      }
+    }
+    const allStopped = launched.every((p) => p.isTreeStopConfirmed());
+    check('Case 24: every launched runner tree was confirmed stopped (cancel/settleCleanup failures surfaced)',
+      allStopped && stopErrors.length === 0,
+      stopErrors.length > 0 ? stopErrors.join('; ') : `treeStopConfirmed=${String(allStopped)}`);
+
+    let removed = false;
+    if (allStopped) {
+      try {
+        rmSync(tmp, { recursive: true, force: true });
+        removed = !existsSync(tmp);
+      } catch {
+        removed = false;
+      }
+    }
+    check('Case 24: the owned temp root was removed after the stop facts',
+      allStopped && removed,
+      allStopped ? `removal failed for ${tmp}` : `retained (stop unconfirmed): ${tmp}`);
+  }
 }
 
 section('R5-1.2 Case 25: the handoff production suite\'s reviewer is the FIXTURE, never real Codex');
@@ -1474,112 +1669,150 @@ section('R5-1.2C Case 30: a FAILED deadline cancellation releases the single-fli
 section('R5-1.2C Case 32: an interrupted runner terminates the whole suite process TREE');
 
 {
-  // §13. A real end-to-end interrupt: a controlled "suite" that spawns a REAL detached
-  // descendant, driven through the real runner, then SIGINT'd.
-  //
-  // The runner used `currentChild.kill()`, which on Windows terminates only the direct
-  // `node tests/...` spawn. A descendant would survive the runner's exit. This proves
-  // both that the runner now ends the whole tree AND that the kill is reported as
-  // CONFIRMED rather than assumed.
+  // §13. A real end-to-end interrupt. The REAL runner (as MAIN) selects the
+  // canonical reviewed suite (this file) in its fixed `tree` role, which spawns
+  // ONE real writer and parks. A controlled preload — passed through `--require`
+  // to the ROOT runner ONLY — arms a bounded, unref'ed poller that emits a REAL
+  // SIGINT inside the runner once the parent's GO marker proves the descendant is
+  // live. The runner's OWN SIGINT handler must then tear the WHOLE tree down,
+  // AWAIT confirmation, and exit 130. The descendant's death is proven from a HELD
+  // HANDLE acquired BEFORE the signal, never from a pid lookup.
   const dir = mkdtempSync(join(tmpdir(), 'r512c-case32-'));
-  const pidFile = join(dir, 'descendant.pid');
+  const goMarker = join(dir, 'go.txt');
   const suitePidFile = join(dir, 'suite.pid');
-  const marker = join(dir, 'descendant-writes.txt');
-  const descScript = `setInterval(()=>require('node:fs').appendFileSync(${JSON.stringify(marker)},'x'),50)`;
-  const fakeSuite = join(dir, 'fake-suite.mjs');
-  writeFileSync(fakeSuite, [
-    `import { spawn } from 'node:child_process';`,
-    `import { writeFileSync } from 'node:fs';`,
-    // Its own pid, so the test can clean up deterministically if the runner's tree kill
-    // ever leaves it behind. It inherits the runner's stdio, so a survivor would hold the
-    // test's pipes open and stall the whole suite at exit.
-    `writeFileSync(${JSON.stringify(suitePidFile)}, String(process.pid));`,
-    `const child = spawn(process.execPath, ['-e', ${JSON.stringify(descScript)}], { detached: true, stdio: 'ignore' });`,
-    `child.unref();`,
-    `writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
-    `setInterval(() => {}, 1000);`,
-  ].join('\n'), 'utf8');
+  const writerPidFile = join(dir, 'writer.pid');
+  const heartbeat = join(dir, 'writer-heartbeat.txt');
 
-  // Windows cannot deliver a real SIGINT to another process: `process.kill(pid,
-  // 'SIGINT')` terminates it outright, so the runner's handler would never run and the
-  // case would prove nothing. Instead the interrupt is raised the way the platform
-  // actually delivers Ctrl+C — in the runner's OWN process — by a tiny launcher that
-  // arms a timer and then imports the real runner module. The runner's real handler runs.
-  const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
-  const runnerPath = join(REPO, 'scripts', 'test-timed.mjs');
-  const launcher = join(dir, 'launch.mjs');
-  writeFileSync(launcher, [
-    `// Arms the interrupt, then runs the REAL runner module unmodified.`,
-    `setTimeout(() => process.emit('SIGINT'), 2500);`,
-    `await import(${JSON.stringify(pathToFileURL(runnerPath).href)});`,
-  ].join('\n'), 'utf8');
-
-  const runner = spawn(process.execPath, [launcher], {
-    cwd: REPO,
-    env: { ...process.env, TEST_TIMED_SUITES: fakeSuite },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const resolved = launcherFor(process.execPath);
+  let observer: ReturnType<typeof openObserver> = null;
+  let proc: ManagedProcess | null = null;
   let out = '';
-  runner.stdout?.on('data', (b: Buffer) => { out += b.toString('utf8'); });
-  runner.stderr?.on('data', (b: Buffer) => { out += b.toString('utf8'); });
+  check('the controlled node launcher resolved', resolved.ok === true);
 
-  // Wait until the descendant really exists, so this cannot pass by interrupting before
-  // anything was spawned.
-  let waited = 0;
-  while (!existsSync(pidFile) && waited < 10_000) {
-    await sleep(50);
-    waited += 50;
-  }
-  check('Case 32a: the suite really spawned a descendant before the interrupt', existsSync(pidFile));
+  try {
+    if (resolved.ok) {
+      proc = new ManagedProcess({
+        launcher: resolved.launcher,
+        args: ['--require', LIFECYCLE_HELPER, TEST_RUNNER],
+        cwd: REPO_ROOT,
+        env: {
+          ...process.env,
+          TEST_TIMED_SUITES: CANONICAL_LIFECYCLE_SUITE,
+          RUNNER_LIFECYCLE_ROLE: 'tree',
+          RUNNER_LIFECYCLE_TMP: dir,
+          RUNNER_LIFECYCLE_PRELOAD_MODE: 'interrupt',
+          RUNNER_LIFECYCLE_GO: goMarker,
+        } as Readonly<Record<string, string>>,
+        onStdoutText: (t) => { out += t; },
+      });
 
-  // The fallback timer is CLEARED on every path. A timeout that loses its race still holds
-  // a referenced timer, which would keep this suite alive for the full 25 s AFTER its last
-  // assertion — the same dangling-timer trap `bounded()` in git.ts exists to avoid.
-  const runnerExit = await new Promise<number>((resolve) => {
-    const guard = setTimeout(() => resolve(-2), 25_000);
-    guard.unref();
-    runner.on('exit', (code) => {
-      clearTimeout(guard);
-      resolve(code ?? -1);
-    });
-  });
+      // Require the suite AND its writer really started before anything is signalled.
+      const started = Date.now() + 20_000;
+      while (Date.now() < started && !(existsSync(suitePidFile) && existsSync(writerPidFile))) await sleep(50);
+      check('Case 32a: the controlled suite and its writer really started',
+        existsSync(suitePidFile) && existsSync(writerPidFile), proc.stderrTail.toString().slice(0, 200));
 
-  check('Case 32b: the runner exited on the interrupt (130)', runnerExit === 130, String(runnerExit));
-  check('Case 32c: the runner reported the tree cleanup as CONFIRMED',
-    /interrupt tree cleanup CONFIRMED/.test(out), out.split('\n').filter((l) => l.includes('cleanup')).join(' | ').slice(0, 160));
+      // Require ACTUAL pre-stop activity: the writer's heartbeat must GROW, so a
+      // later death check cannot be vacuous.
+      const grew = await (async (): Promise<boolean> => {
+        let prev = existsSync(heartbeat) ? readFileSync(heartbeat, 'utf8').length : -1;
+        const deadline = Date.now() + 5_000;
+        while (Date.now() < deadline) {
+          await sleep(60);
+          const now = existsSync(heartbeat) ? readFileSync(heartbeat, 'utf8').length : -1;
+          if (now > prev) return true;
+          prev = now;
+        }
+        return false;
+      })();
+      check('Case 32b: the writer was really active (bounded heartbeat growth) before the signal', grew);
 
-  const pid = existsSync(pidFile) ? Number(readFileSync(pidFile, 'utf8').trim()) : -1;
-  let descendantGone = pid > 0 ? !isProcessAlive(pid) : true;
-  for (let i = 0; i < 60 && !descendantGone; i++) {
-    await sleep(50);
-    descendantGone = !isProcessAlive(pid);
-  }
-  check('Case 32d: the DESCENDANT was terminated too, not just the direct child',
-    descendantGone, `pid=${pid}`);
-  // Leave nothing behind if the assertion failed: a leaked descendant would outlive the suite.
-  if (!descendantGone && pid > 0) {
-    try { process.kill(pid); } catch { /* already gone */ }
-  }
-  // Leave nothing behind that could keep THIS process alive. The suite inherits the
-  // runner's stdio, so any survivor would hold the test's pipes open and stall the whole
-  // suite for tens of seconds AFTER its assertions had already finished. The runner's
-  // tree kill is what the case is testing, so the cleanup here is belt-and-braces: reap
-  // anything still alive, then release the streams explicitly.
-  for (const f of [suitePidFile, pidFile]) {
-    if (!existsSync(f)) continue;
-    const stray = Number(readFileSync(f, 'utf8').trim());
-    if (!Number.isFinite(stray) || stray <= 0) continue;
-    try {
-      process.kill(stray);
-    } catch {
-      /* already gone, which is the expected case */
+      const writerPid = existsSync(writerPidFile) ? Number(readFileSync(writerPidFile, 'utf8').trim()) : -1;
+
+      // Acquire the ORIGINAL handle BEFORE signalling, so an EXITED verdict is a
+      // same-process proof and cannot be faked by a later pid lookup.
+      observer = Number.isInteger(writerPid) && writerPid > 0 ? openObserver(writerPid, { holdMs: 60_000 }) : null;
+      const acquired = observer !== null && (await observer.acquired());
+      check('Case 32c: the held-handle observer acquired the writer BEFORE the signal', acquired);
+
+      // GO: the descendant is proven live; only now may the runner be signalled.
+      writeFileSync(goMarker, 'go\n', 'utf8');
+
+      // Bounded wait for the runner to exit ON ITS OWN (no outer kill that could
+      // masquerade as the runner's own tree cleanup).
+      const runnerExit = await new Promise<number>((resolve) => {
+        const guard = setTimeout(() => resolve(-99), 40_000);
+        if (typeof guard.unref === 'function') guard.unref();
+        proc!.exited.then((e) => {
+          clearTimeout(guard);
+          resolve(e.code ?? (e.signal !== null ? -1 : -2));
+        });
+      });
+      check('Case 32d: the runner exited on the interrupt (130)', runnerExit === 130, String(runnerExit));
+      check('Case 32e: the runner reported the interrupt tree cleanup as CONFIRMED',
+        /interrupt tree cleanup CONFIRMED/.test(out + proc.stderrTail.toString()));
+      check('Case 32f: the outer contained Job reported the tree stopped with 0 active processes',
+        proc.isTreeStopConfirmed() === true && proc.containment?.activeProcessesFinal === 0,
+        JSON.stringify({
+          treeStop: proc.isTreeStopConfirmed(),
+          active: proc.containment?.activeProcessesFinal ?? null,
+          status: proc.containment?.launcherStatus ?? null,
+        }));
+
+      if (observer !== null) {
+        const v = await observer.verdict(15_000);
+        check('Case 32g: the HELD HANDLE proves the descendant EXITED (not OBSERVATION_ERROR)',
+          v.state === 'EXITED', JSON.stringify(v));
+      } else {
+        check('Case 32g: the HELD HANDLE proves the descendant EXITED', false, 'observer unavailable');
+      }
     }
+  } finally {
+    // Cooperative cleanup only: request the stop for any tree not already
+    // confirmed, then verify the REAL stop facts. Nothing is swallowed — a
+    // cleanup throw, an unconfirmed tree stop or a lost observer fails a check —
+    // and the owned root is removed ONLY once those facts are confirmed.
+    let runnerStopped = false;
+    let stopError = '';
+    if (proc !== null) {
+      try {
+        if (!proc.isTreeStopConfirmed()) await proc.cancel('case 32 cleanup');
+        await proc.settleCleanup();
+      } catch (e) {
+        stopError = (e as Error).message;
+      }
+      // The REAL stop fact: a confirmed tree stop AND a reported 0 active
+      // processes — never inferred from the root's own exit.
+      runnerStopped = proc.isTreeStopConfirmed() && proc.containment?.activeProcessesFinal === 0;
+      check('Case 32h: the runner tree is confirmed stopped with 0 active processes',
+        runnerStopped && stopError === '',
+        stopError !== '' ? `cleanup threw: ${stopError}` : JSON.stringify({
+          treeStop: proc.isTreeStopConfirmed(),
+          active: proc.containment?.activeProcessesFinal ?? null,
+          status: proc.containment?.launcherStatus ?? null,
+        }));
+    }
+
+    let observerReaped = false;
+    if (observer !== null) {
+      observerReaped = await observer.reaped(5_000).catch(() => false);
+      check('Case 32i: the owned observer process is reaped', observerReaped === true);
+    }
+
+    const factsConfirmed = runnerStopped && observerReaped;
+    let removed = false;
+    if (factsConfirmed) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+        removed = !existsSync(dir);
+      } catch {
+        removed = false;
+      }
+    }
+    check('Case 32j: the owned temp root was removed only after the stop facts',
+      factsConfirmed && removed,
+      factsConfirmed ? `removal failed for ${dir}` : `retained (stop unconfirmed): ${dir}`);
   }
-  await sleep(150);
-  runner.stdout?.destroy();
-  runner.stderr?.destroy();
-  runner.unref();
-  rmSync(dir, { recursive: true, force: true });
 }
 
 process.stdout.write(`\n${passed} passed, ${failed} failed\n`);

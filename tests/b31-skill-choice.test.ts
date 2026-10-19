@@ -86,11 +86,37 @@ const SEQUENTIAL_PLAN = {
     id: 'skill-flow', label: 'research then implement',
     steps: [
       { role: 'api-research', taskType: 'research', fileScope: 'docs/api', deliverable: 'the api findings note' },
-      { role: 'server', taskType: 'implementation', fileScope: 'src/server', deliverable: 'the server change' },
+      // P0-1: the coding step declares the approved completion contract; the fixture
+      // runtime really writes `<fileScope>/<role>.txt`.
+      {
+        role: 'server', taskType: 'implementation', fileScope: 'src/server', deliverable: 'the server change',
+        expectedArtifacts: ['src/server/server.txt'], allowedScope: ['src/server'],
+        test: { executable: 'node', argv: ['-e', 'process.exit(0)'], cwd: '.' },
+      },
     ],
   }],
 };
 const ROLES = [{ role: 'api-research', scope: 'docs/api' }, { role: 'server', scope: 'src/server' }];
+
+/**
+ * P0-1: the built-in `duo` group now declares NO completion contract (the accepted
+ * artifact set/scope/test are business acceptance only the USER can authorise). This
+ * fixture supplies the SAME group shape as an explicit user-approved plan FILE, matching
+ * the artifact the fixture runtime really writes (`<scope>/<role>.txt`) plus the
+ * integration artifact. Only the plan source moved; the skill assertions are unchanged.
+ */
+const COLLAB_PLAN = {
+  kind: 'collaborate',
+  plans: [{
+    id: 'duo', label: 'two models build the goal together, one of them integrates',
+    members: [
+      { role: 'provider', taskType: 'implementation', fileScope: 'src/provider/**', deliverable: 'the provider-side change, with the files it touched', expectedArtifacts: ['src/provider/provider.txt'], allowedScope: ['src/provider'], test: { executable: 'node', argv: ['-e', 'process.exit(0)'], cwd: '.' } },
+      { role: 'consumer', taskType: 'implementation', fileScope: 'src/consumer/**', deliverable: 'the consumer-side change, with the files it touched', expectedArtifacts: ['src/consumer/consumer.txt'], allowedScope: ['src/consumer'], test: { executable: 'node', argv: ['-e', 'process.exit(0)'], cwd: '.' } },
+    ],
+    integratorMember: 1,
+    integratorCompletion: { expectedArtifacts: ['src/integration/combined.txt'], allowedScope: ['src/integration'], test: { executable: 'node', argv: ['-e', 'process.exit(0)'], cwd: '.' } },
+  }],
+};
 
 // B3.2: the ONE agent the real MCP parser supports this version, held as a const so this
 // hermetic suite never writes a literal 'opencode' agent id that the real-agent isolation
@@ -855,7 +881,7 @@ section('10: collaborate duo — members AND the integrator each get their own a
   // and the integrator reuses a designated member's pair. The catalogue is declared for the
   // single agent family, so EVERY initially assigned execution task (both members AND the
   // integrator) is offered the choice. Nothing here is a real model or a network call.
-  const r = await skillRound({ workflow: 'collaborate', noPlanFile: true, workflowChoice: 'duo' });
+  const r = await skillRound({ workflow: 'collaborate', planFile: COLLAB_PLAN, workflowChoice: 'duo' });
   const rows = (r.report.skills ?? []) as SkillEntry[];
   const collab = r.report.collaboration as {
     choice: string;

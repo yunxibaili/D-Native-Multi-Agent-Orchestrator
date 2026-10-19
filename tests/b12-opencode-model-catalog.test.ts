@@ -78,6 +78,7 @@
 
 import { Orchestrator } from '../src/orchestrator/orchestrator.ts';
 import { knownAgentIds } from '../src/adapters/index.ts';
+import { isOfflineFrozen } from '../src/runtime/offline-policy.ts';
 import { createFakeAdapter } from './helpers.ts';
 import { setupOwnedTestContext, finish, writeHygieneReport, type OwnedTestContext } from './helpers/real-agent-isolation.ts';
 import { judgeStageEvidence, snapshotControlDir } from './helpers/b12-control-evidence.ts';
@@ -122,6 +123,19 @@ function entryAgentConfig(): Record<string, { command?: string }> {
 
 async function main(): Promise<void> {
   console.log('== B1.2 real OpenCode model catalogue ==');
+
+  /*
+   * P0-1: the offline deny policy is AUTHORITY. When it is frozen (the reviewed
+   * offline runner imports the trusted bootstrap before any suite), the OLD opt-in
+   * env flag alone must NOT elevate this entry to a live run. Refuse BEFORE setup,
+   * discovery or any model transport.
+   */
+  if (isOfflineFrozen()) {
+    console.log('  NOT_RUN (offline test policy is frozen; ORCH_B12_REAL_CATALOG cannot elevate it)');
+    console.log('  no discovery, no agent start, no owned context created.');
+    process.exitCode = finish([], { allowEnvironmentBlocked: true });
+    return;
+  }
 
   /*
    * P1-1, NOT ENABLED: the only branch allowed to exit 0 without doing work.

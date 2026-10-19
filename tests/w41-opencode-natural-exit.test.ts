@@ -26,6 +26,13 @@ import { Orchestrator as RuntimeOrch } from '../src/orchestrator/orchestrator.ts
 import { join } from 'node:path';
 import { withOwnedTestContext, writeHygieneReport, type OwnedTestContext } from './helpers/real-agent-isolation.ts';
 
+// P0-1 OFFLINE TEST ISOLATION. This suite needs a REAL, authenticated OpenCode install,
+// so it REFUSES to run by default, BEFORE any setup, discovery or spawn. Live execution
+// requires a future explicit trusted-control authorization; the offline policy is not
+// one, and an env flag is deliberately not accepted as one. Nothing below runs.
+import { refuseLiveEntry } from './helpers/native-agent-policy.ts';
+refuseLiveEntry('W4.1 OpenCode natural-exit');
+
 const RUNS = 10;
 let pass = 0;
 let blocked = 0;

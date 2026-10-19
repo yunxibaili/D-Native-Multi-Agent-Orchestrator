@@ -41,6 +41,14 @@ import {
   type OwnedTestContext,
 } from './helpers/real-agent-isolation.ts';
 
+// P0-1 OFFLINE TEST ISOLATION. This suite needs a REAL, authenticated OpenCode install,
+// so it REFUSES to run by default, BEFORE any setup, discovery or spawn. Live execution
+// requires a future explicit trusted-control authorization; the offline policy is not
+// one, and an env flag is deliberately not accepted as one. Nothing below runs.
+import { refuseLiveEntry } from './helpers/native-agent-policy.ts';
+refuseLiveEntry('W4.3 OpenCode evidence');
+
+
 const results: Array<{ name: string; verdict: string; detail: string }> = [];
 function rec(name: string, ok: boolean | 'SKIP', detail = ''): void {
   const verdict = ok === true ? 'PASS' : ok === 'SKIP' ? 'SKIP' : 'FAIL';

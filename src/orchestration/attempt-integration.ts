@@ -74,6 +74,31 @@ export interface ExecutionEvidenceInput {
  * an evidence loss and is visible to the caller - deliberately not swallowed,
  * because silent evidence loss looks identical to "nothing happened".
  */
+/**
+ * P0-1: the APPEND-SITE provenance of a real run — the exact object a record was
+ * appended for, the id the evidence authority minted for it, the STORE that minted it
+ * and the exact `AttemptRecord` object it minted.
+ *
+ * Module-private: a WeakMap is reachable only by the code in this module, so no caller
+ * (including one that reaches `AttemptStore.append` directly, or that fabricates a
+ * `RunResult` clone with matching fields) can register a correlation. Only
+ * `recordExecution` — the one writer of attempt evidence — can, and only from the very
+ * object it handed the store.
+ *
+ * IMMUTABLE PER RUN. The FIRST recording of an exact run object wins: re-recording the
+ * SAME `RunResult` (a replay) appends another historical record, but it must never
+ * replace the correlation the accepted execution minted, or a replay would relabel the
+ * task's current attempt. The store and the record are carried because IDs alone are not
+ * identity: a second `AttemptStore` can mint a colliding `att_XXXX`, and a directly
+ * appended record is a different object even under the same id.
+ */
+const RUN_PROVENANCE = new WeakMap<object, { readonly attemptId: string; readonly taskId: string; readonly store: AttemptStore; readonly record: AttemptRecord }>();
+
+/** The append-site provenance of a real run object, or null when it was never recorded. */
+export function runProvenanceOf(run: object): { readonly attemptId: string; readonly taskId: string; readonly store: AttemptStore; readonly record: AttemptRecord } | null {
+  return RUN_PROVENANCE.get(run) ?? null;
+}
+
 export function recordExecution(
   store: AttemptStore,
   input: {
@@ -106,7 +131,23 @@ export function recordExecution(
     ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
     result: input.result,
   }));
-  return outcome.ok ? outcome.record : null;
+  if (!outcome.ok) return null;
+  // Bind the exact run object to the id that was ACTUALLY minted, right here where both
+  // are in hand. Nothing else in the process can add an entry to this WeakMap.
+  //
+  // IMMUTABLE: the FIRST recording of this exact run object owns the correlation. A
+  // replay (the same `RunResult` recorded again) appends a new historical record — which
+  // is legitimate history — but it must NOT overwrite the attempt the accepted execution
+  // actually produced, or completion could be relabelled by replaying one run.
+  if (!RUN_PROVENANCE.has(input.result)) {
+    RUN_PROVENANCE.set(input.result, Object.freeze({
+      attemptId: outcome.record.attemptId,
+      taskId: input.taskId,
+      store,
+      record: outcome.record,
+    }));
+  }
+  return outcome.record;
 }
 
 /**

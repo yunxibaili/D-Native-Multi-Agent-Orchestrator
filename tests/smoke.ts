@@ -21,6 +21,7 @@ import { join } from 'node:path';
 import type { Orchestrator } from '../src/orchestrator/orchestrator.ts';
 import type { RuntimeEvent, RuntimeEventType } from '../src/core/event.ts';
 import { setLogLevel } from '../src/core/log.ts';
+import { isOfflineFrozen } from '../src/runtime/offline-policy.ts';
 import type { RunHandle, RunRequest, RunResult } from '../src/core/types.ts';
 
 /** Mutable staging for building a partial `RunRequest` field by field. */
@@ -55,6 +56,15 @@ const OFF = '\x1b[0m';
 
 export async function runSmoke(orch: Orchestrator, options: SmokeOptions = {}): Promise<number> {
   if (!options.asJson) setLogLevel('warn');
+  // P0-1 OFFLINE TEST ISOLATION: once the offline deny policy is frozen (the reviewed
+  // test runner imports the trusted bootstrap before any suite), the smoke command
+  // must NOT discover or start a real agent. It reports NOT_RUN honestly and exits 0
+  // BEFORE `doctor()` (discovery) or any `run()`. Production `npm run smoke`, which
+  // does not freeze the policy, is unchanged.
+  if (isOfflineFrozen()) {
+    process.stdout.write('smoke: NOT_RUN (offline test policy is frozen; real-agent smoke requires explicit authorization)\n');
+    return 0;
+  }
   const scratch = join(tmpdir(), 'orch-smoke');
   mkdirSync(scratch, { recursive: true });
 

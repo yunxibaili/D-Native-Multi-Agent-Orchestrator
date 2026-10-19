@@ -1,14 +1,16 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-16。本次为 P0-1 最小实施与独立验收；最终 BLOCKED，部分实现保留，未运行真实产品调用。
+更新：2026-10-19。当前裁定§7.41：P0-2 PASS（限已批准的有界离线实现）。只读静态复核源码/契约/A–F日志，当前文件哈希与75/0记录一致，未重跑测试或typecheck、0模型调用。自动完成经唯一Verification，授权撤销/失败/wait/Review拒绝及人工模式边界对应证据成立；原生费用/权限、真实Owner输入/模型E2E不在此PASS内。P0-3来源与异常待人工仍未实施，唯一下一片为待授权P0-3a来源归属，不自行启动。
 
 ## 1. 权责与当前结论
 
 本文唯一维护当前事实、阶段状态、证据与进度快照。[产品方向](PRODUCT_DIRECTION.md)管已确认定位/取舍；[后端需求](BACKEND_REQUIREMENTS.md)保留全部目标；[路线](BACKEND_DELIVERY_PLAN.md)管顺序；[阶段分析](STAGE_ANALYSIS.md)解释新策略；[NEXT_TASK](NEXT_TASK.md)只列下一有界任务；[研究索引](ENGINEERING_RESEARCH_REFERENCES.md)管来源，不各自宣布封板。
 
-**当前真实MVP为PARTIAL，MVP-E2E.1c为FIX_REQUIRED。** 检查点归属与确定性交付检查尚未修复；P0-1已完成两轮开发委派和Codex独立审核，最终BLOCKED：完成门禁绕过、文件证据/资源安全缺口和新增编译/夹具回归尚未关闭；P0-2/3仍未授权。旧MVP-E2E.1d合并任务已被依赖顺序替代。本轮无产品LAYA POST、产品Worker或Native Review，旧产品剩余额度不继承。
+**当前P0-1沿用独立PASS（§7.10），P0-2 PASS（限已批准的有界离线实现，§7.41）。源码/契约/A–F75/0证据静态映射及当前哈希核对完成，本轮未跑测试或模型。不是第三方独立审计、真实费用/权限认证或MVP封板。P0-3系统/用户来源缺陷仍open，唯一下一片为待授权P0-3a。** 以下为前轮P0-1 Final Closure曾BLOCKED的历史事实，不能当作当前状态：Attempt重放/换绑与空产物入口已关闭，原51项失败按A5/B40/C6逐项对应最终独立通过；额外3套件9项失败已通过修改前字节快照复跑确认同签名，仍开放，不纳入历史26项豁免。本轮返工违反离线授权，旧cancel.test.ts运行3次造成6次真实Codex执行；3个成功会话实证模型gpt-6.1-sol，3个取消会话无可见推理结果。费用未独立核实，不能称零新增收费。一次实现+一次返工轮次已用完，返工由Codex停止，无第三次委派。P0-2/3及第四次E2E仍未授权。
 
-OpenCode主要开发、Codex独立审核；本轮文档由Codex整理，不代写生产实现。LAYA仍为任务级选择权威，TaskStore仍为任务状态权威。正式Windows桌面路线保持，具体UI需求/实现未开始。PARALLEL_WRITE=CLOSED、automaticPostRoundAction=NONE。
+主要开发Worker依Owner最新指令恢复为OpenCode，复用既有opencode-agent及DeepSeek V4.1 Flash Free覆盖值；DSH接入旁支暂停。本次Codex直接实施例外仅wait离线负例，不接管生产开发。LAYA仍为任务级选择权威，TaskStore仍为任务状态权威。正式Windows桌面路线保持，具体UI需求/实现未开始。PARALLEL_WRITE=CLOSED、automaticPostRoundAction=NONE。
+
+2026-10-18 Owner明确协作方式：Codex牵头掌握本机事实、制定最小切片、委派OpenCode开发并独立审核；Gemini仅按检索单提供外部参考，由Owner居中转交和审批，不接管本机规划。已提供的有效资料结合本地源码过滤后采用，不重复检索；本地明确的类型/接线问题不因外检阻塞。新安全门禁、协议/恢复或验收规则需要外部依据时，由Codex在报告末尾给出Gemini检索单。本轮不修改全局或项目AGENTS/配置。
 
 project-progress/audit/是Owner指定只读旁路观察：每次开工读取，不修改/上传，不强制采纳，不能替代原始事件或本次独立验证。当前文档不再次核验其全部历史结论。
 
@@ -64,7 +66,8 @@ project-progress/audit/是Owner指定只读旁路观察：每次开工读取，�
 | B5 overall | NOT SEALED；真实协议掉线、完整工作流恢复及更广错误分类未验收 |
 | B4.7 | B4.7.3固定free duo代表样本独立PASS：两个真实模型、三个独立任务/会话、共享顺序demo；整体仍NOT SEALED（真实LAYA/工具/全流程费用未验）；累计产品会话5/5、剩0 |
 | B4.6 后续 / B2 后续 / B3 后续 / B5 后续 | PLANNED；未授权扩大 |
-| P0-1 | BLOCKED：部分契约/快照/contained测试接线已实现；缺契约编码任务仍可完成，4类独立反例复现，typecheck及B42/B43回归失败；不封板 |
+| P0-1 | 独立PASS：确定性完成门禁及离线隔离/取消已验收，旧Case24/32迁移149/0，见§7.10；不代表真实MVP通过 |
+| P0-2 | PASS（有界离线实现，§7.41）：当前哈希匹配A–F的75/0证据；默认自动/显式人工、撤销/失败/wait/Review拒绝边界对应源码与日志。非真实模型、原生权限或账户费用认证，非第三方独立审计 |
 | PARALLEL_WRITE | CLOSED |
 | 本产品前端 | 本机独立进度页已授权且禁止入 Git；正式工作台 UI 需求仍待确认 |
 
@@ -85,7 +88,7 @@ project-progress/audit/是Owner指定只读旁路观察：每次开工读取，�
 | 接力 | 已知session_failure、同Attempt停止证据、fresh session与有界pair迁移的受控子集 | 26项WF失败仍open；无完整跨进程恢复/副作用重放保证 |
 | Review/Human Gate | 原生独立Review入口已有，结果verdict与最终动作NONE分开；手动accept走既有Verification | HumanGate结果投影不是Owner亲自输入；Runtime成功不等于质量验收 |
 
-任务编排Agent Execution Edge维持既有runtime.run路径；P0-1草稿另沿既有ManagedProcess执行批准测试，未新建调度权威，但其停止确认尚未参与外层claim释放判断，不能声称新增路径已安全验收。内存TaskStore与磁盘执行记录不等于可跨进程恢复。
+任务编排Agent Execution Edge维持既有runtime.run路径；P0-1草稿另沿既有ManagedProcess执行批准测试，未新建调度权威，续修将批准测试may-start和停止确认AND接入同一claim释放门，离线受控false证明保留写保护；不声称危险的真实未停止进程已物理复现。该历史草稿阻断已在后续切片逐项收口，当前P0-1为PASS（§7.10）；9项旧债和26项handoff边界仍单独保留。内存TaskStore与磁盘执行记录不等于可跨进程恢复。
 
 ## 4. 关键真实证据与未完成项
 
@@ -117,7 +120,7 @@ Owner批准日期：2026-10-16。**Owner approved / Not yet implemented / Not ye
 | 项目 | 已批准方向 | 当前实现事实 |
 |---|---|---|
 | 监督策略 | 产品默认Round-level Preauthorization + Exception-driven Human Intervention；整轮绑定计划/范围/pair或池/费用/工具，正常中间任务机器验收后自动流转 | 现有--checkpoint仍每步输入，默认60秒；timeout/EOF/error统记user-stop缺陷未修 |
-| 质量验收 | 编码/文件交付必须精确expectedArtifacts、考虑原dirty/Windows重解析点的allowedScope、批准命令的真实test exit0；异步检查后完成提交复查身份/证据 | P0-1草稿增加结构化字段、快照与contained测试；共享pass仅检查带契约任务，缺契约编码任务仍放行，范围/版本/身份和停止保护未完整，独立BLOCKED |
+| 质量验收 | 编码/文件交付必须精确expectedArtifacts、考虑原dirty/Windows重解析点的allowedScope、批准命令的真实test exit0；异步检查后完成提交复查身份/证据 | Final Closure已关闭空产物/Attempt绕过及原51项回归；本轮completion118/0，保护源码保持。P0-1仍因§7.7测试隔离缺口BLOCKED |
 | 候选生成 | 现有Agent生成2–3个JSON，再LAYA选 | 当前支持用户/内置候选；自然语言自动填计划尚未接入 |
 | 资源工具 | 角色标签预过滤已有候选，再LAYA选择并原生加载 | 目录/intent已有最小接口，角色过滤与真实加载闭环未完成 |
 | 产品界面 | 保持Windows正式桌面路线 | 本机ignored只读进度页不等于正式UI，具体UI需求待用户确认 |
@@ -132,13 +135,15 @@ Owner批准日期：2026-10-16。**Owner approved / Not yet implemented / Not ye
 
 源码复核：store.ts:11/119与attempt-store.ts头部声明内存存储；已有磁盘session/transcript/round-result不足以恢复权威Round。P0-3先保存待人工材料/引用并标明不支持跨进程恢复；真正恢复还缺Task/Attempt/授权关联恢复、工作区/预算/停止重验及防重复派发。不能把取消计时器说成次日恢复。
 
-stageBindingDigest现绑定材料、objective、workflow、planRef/planScope；模型/pool、费用、工具和新增验收字段尚未完整绑定。P0-1随新增计划字段补当前内容绑定，P0-2再完善整轮授权，不建第二授权/工作流平台。原生ToolCall.exitCode可缺失且工具历史有上限；不能把现有字段存在当可信测试已认证。
+stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完成契约及解析后的模式/工作区/模型池声明/工具目录/执行限制，详见§7.41的有限范围；该值不证明第三方Agent全局配置、账户实际费用或原生权限沙箱已被完整约束。原生ToolCall.exitCode可缺失且工具历史有上限，P0-1另用批准的contained测试执行证据，不能把字段存在当可信测试已认证。不建第二授权/工作流平台。
 
 新默认不改写第三次PARTIAL、accept0/stop0、Review0和历史source=user误记事实；26项B5.1-WF有限准入仍只适用原固定/顺序/无接力边界。
 
 ## 6. 唯一下一步与授权
 
-**P0-1独立BLOCKED：本轮两轮开发已结束，下一步仅建议有界续修已定位缺口，需Owner新任务授权。** 门禁独立通过后再P0-2授权范围内默认自动推进，再P0-3异常等待/最终交付，最后P0-4另行授权的真实闭环；不能在P0-1先开放新默认。 本轮仅已授权的OpenCode开发委派，不自动第四次E2E，不修改模型或重新审计B1–B5。后续真实运行重新确认模型/免费或订阅资格、会话/POST/timeout/数据范围；free名称和pool声明不是当前账户事实。本轮只授权P0-1必要源码/测试与最多两轮开发委派；真实产品推理、正式前端和P0-2/3未授权。P1自然语言计划、P2模型/Skill/MCP配置、P3正式桌面UI顺序保持。
+**当前以§7.10为准：P0-1独立PASS。** 本轮Owner仅授权迁移旧Case24/32，已完成且四个指定单文件全绿。唯一后续为申请P0-2“授权范围内自动推进”的有界实施；本轮不实施、不调用真实产品模型，不开放并行写。下段为此前授权历史，不再作为当前下一任务。
+
+**P0-1续修独立BLOCKED：新授权的一次实现和唯一返工均结束，不追加开发调用。下一步仅建议补齐统一契约/精确Attempt关联与直接受影响调用者，须Owner新授权。** 门禁独立通过后再P0-2授权范围内默认自动推进，再P0-3异常等待/最终交付，最后P0-4另行授权的真实闭环；不能在P0-1先开放新默认。 本轮仅已授权的OpenCode开发委派，不自动第四次E2E，不修改模型或重新审计B1–B5。后续真实运行重新确认模型/免费或订阅资格、会话/POST/timeout/数据范围；free名称和pool声明不是当前账户事实。本轮只授权P0-1必要源码/测试与最多两轮开发委派；真实产品推理、正式前端和P0-2/3未授权。P1自然语言计划、P2模型/Skill/MCP配置、P3正式桌面UI顺序保持。
 
 ## 7. 文档更新与历史
 
@@ -165,6 +170,393 @@ stageBindingDigest现绑定材料、objective、workflow、planRef/planScope；�
 - 本机证据只读入口：project-progress/p01-review-20261016T070858Z/，含before字节快照、两轮委派/原生导出、独立测试日志、codex-final-probes.json、handoff-failure-comparison.json；全部ignored，不上传。project-progress/audit保持只读。
 - 研究复用Node24 fs/lstat/realpath、Win32 reparse points、OpenCode Go官方资料；不引入框架/依赖。结论只限当前草稿，下一步仍是P0-1已定位缺口的有界续修，须新任务授权；P0-2不具备开始条件。
 
+### 7.4 P0-1 新授权有界续修（独立 BLOCKED，轮次已用完）
+
+- 以开工完整dirty tree为现场，未checkout归档12e21bb6。实际经wrapper implement两次：ses_ebc11cf36ffe6DFtYSrFi1oMvv、ses_ebb9653d5ffefsrBlGZC8d5AOu；原生assistant模型均为opencode-go/deepseek-v4.1-flash，最终finish=stop、wrapper exit0。未遇TEMP原生权限拒绝；只在本轮ignored目录留诊断日志，未放宽权限。Codex未代写生产/测试实现。
+- 已修复并独立验证：B42 UTF-8/未闭合字符串/DEBUGSEQ；编码任务真实执行后仍缺契约则拒绝；完整内容hash检出>8MiB等长变化；before→afterTest包含Worker和测试写入（含.git）；根/祖先/测试cwd Junction拒绝；approved-test may-start/实际tree-stop AND进入外层claim，测试seam仅降级、not-started豁免不能覆盖已启动测试。
+- **P1剩余绕过A（实际复现）**：同一task/pair/session/lease下，向既有AttemptStore追加另一时间段的成功execution，recordAttemptBinding换绑其真实ID且省略run，completeTask仍completed/succeeded。run可选且未核对record.startedAt/finishedAt与当前实际Run；旧bindingRunFingerprint被保留。不存在的Attempt已被拒绝不等于精确Attempt绑定完成。
+- **P1剩余绕过B（实际复现）**：绕过plan-file解析、直接planWithCandidates提交expectedArtifacts:[]、合法scope/test的编码任务，无实际产物也completed/succeeded。Task携带contract仅verbatim，统一完成边界未重新强制完整有效契约；parser拒绝空数组不能覆盖所有合法调用者。
+- Codex独立：typecheck=0；p01-completion-gate105/0（含源副本负控，但遗漏上述两例）；B43 47/0；Contract248/0、2skipped；resource-claim192/0；execution-lifecycle136/0；isolation6opt-in/0违规。四类首轮反例现拒绝，但扩大合同断言4pass/2fail、exit1，不能判P0-1通过。
+- **新增回归51项**：B42 56/5、Workbench409/10、CLI b40a 2/12（未走完原182项）、state-loop270/6、review-loop157/12、assignment-lease245/6。内置/集成任务缺契约输入和部分夹具直接writeback没有真实Attempt关联；不能把它们改叫历史失败或以放宽门禁求绿。开工before字节快照在独立ignored副本复跑：Workbench419/0、state-loop276/0、review-loop169/0、assignment-lease251/0。需最小契约来源/接线与语义相符的fixture更新，不新建系统。
+- Handoff独立388/26：与旧原始日志的26失败名称和标准化完整错误完全一致，无新增签名；26 pre-existing B5.1-WF failures remain open，豁免不覆盖上述51项。
+- 本轮6份生产源码+5份测试修改，Codex另更本基线/NEXT；runner、native、外部Agent安装/账户配置未更。源码和测试哈希在独立验证始末相同。HEAD8b8add4250d64d2c9c78fe47ded208e7bc285aaf、主index及范围外dirty/audit保持；未commit/push/merge，续修尚未上传，不冒充旧归档含本轮修复。
+- 可复核本机证据：project-progress/p01-repair-20261016T085450844Z/；independent-final-counterexamples.json、independent-final-contract-verdict.json、independent-final-suites.json、independent-before-regressions.json、independent-final-handoff-comparison.json、independent-final-source.diff、两次model-evidence及final-local-state。audit目录只读。研究复用Node24 fs lstat/realpath与Win32 reparse官方资料，不新增依赖。
+- 边界：批准测试是contained真实进程，Agent为受控fake；未运行真实产品LAYA/Worker/Native Review/E2E，未full suite。文件快照认证持久before/after内容，不是文件系统沙箱，不宣称发现瞬时写后删。完成比例保持68/100，不能按105条测试加分。P0-2不具备开始条件；须Owner决定仅续修剩余缺口，或另行归档当前BLOCKED现场。
+
+### 7.5 P0-1 Final Closure（独立 BLOCKED，开发已停止）
+
+- 本轮仅一次实现与一次定向返工。两个原绕过已通过独立实际执行链检查：RunResult首次记录关联不可被重放覆盖，并核对同一AttemptStore/同一冻结AttemptRecord；统一applyVerification重新解析契约，直接TaskSpec空产物不能绕过；无契约编码父任务也不能凭未完成child和手填结果成功。显式只读test允许空产物/空scope但必须有批准的真实测试，research/review兼容保留。18项独立探针全绿，首轮相同探针曾检出4项错误，非仅采信Worker。
+- 原51项失败最终逐条匹配原断言名称全部通过：A5为生产缺失集成契约来源，已补PlanFile/builder/CLI/digest显式传递；B40为正向夹具缺少批准的产物/范围/测试输入，改走现有显式候选/计划文件；C6原来靠手填RunResult模拟成功，改用真实受控执行并保留拒绝假事实的负例；D/E为0。初始A26/B19/C6为调查假设；最终发现21项已有合法显式输入渠道，应归B而非发明默认契约。未删除/skip原断言，源码中虚构txt产物和恒成功默认测试已移除。实现方旧A17/B34/C0报告未采信，独立逐项表为准。
+- 独立实跑：typecheck PASS；P01 118/0；B42 61/0；B43 47/0；Workbench419/0；CLI182/0；state-loop276/0；review-loop169/0；assignment-lease251/0；Contract248/0(2skipped)；B41 96/0；B40 41/0；B31 119/0；B46 49/0；resource-claim192/0；execution-lifecycle136/0；isolation守卫通过。原51项所在六套件均恢复全绿。
+- 扩大检查仍有9项相关既有失败：attempt-record150/2、b14-selection176/3、b22-model-pool-candidates29/4。修改前字节快照离线复跑得到相同数量及规范化完整错误，均涉及正向夹具未提供批准契约；未自动豁免，不能以虚构生产默认值求绿。handoff388/26，26项名称与规范化完整错误同上轮，继续单独开放。B45 103/1为已知E2负控旧hook定位失败，本轮未修改该hook，不冒充PASS。
+- 严重执行事件：返工原生session ses_ebb498b1effey6UnNt9ZpTnifh在无产品调用授权下运行旧tests/cancel.test.ts三次（其真实Codex段无opt-in），产品Runtime实际创建6次Codex执行、3成功PONG/3取消。三个成功原生上下文为gpt-6.1-sol，无工具调用；取消会话是否发出推理不可确认。三个成功的记录各有21441 totalTokens，实际账单未核实。Codex发现后中断外层wrapper，并在核对启动时间/路径/开发模型、取得Process原始handle后终止仍存活的开发OpenCode，退出已确认；停止时无子进程。不能称本轮无真实模型调用或零新增费用，未执行真实LAYA/第四次E2E/产品Native Review。
+- 六个意外产品RunResult均treeStopConfirmed=true；Codex离线回归使用独立launcher副本，486份控制记录均经生产验证确认Job空且ActiveProcessesFinal=0，owned根删除成功、cleanupFailures=0。根目录out.txt为本轮fake夹具误落文件，确认开工不存在且内容精确ok换行后已按名删除。外部6份执行及原生会话记录保留，不清除越界证据。
+- 前五项修复保持：B42编译/回归通过；completion-evidence、workspace-manifest、runtime/spawn、生产launcher与开工字节相同，原测试越界写/大文件等长改写/Junction/停止未确认WRITE claim保留检查均通过。Source在独立18项探针后未变化。未增加依赖、调度层或状态权威，PARALLEL_WRITE=CLOSED、automaticPostRoundAction=NONE。
+- HEAD/index/范围外dirty及只读audit保持，无commit/push/merge。本机证据：D:/yunxibaili/本地多 Coding Agent 编排器/project-progress/p01-closure-20261016T114736317Z；最终结论final-independent-review.json、51项独立分类与对照、independent-final-suites.json、unauthorized-native-executions.json、unauthorized-native-identity.json及rework-safety-stop.json。当前草稿未上传，不冒充旧12e21bb6归档已含此次修复。
+- 唯一建议下一步：Owner先审阅越界事件，再决定是否新授权仅离线的三套件契约夹具收口与最终审核；必须采用固定hermetic测试白名单，不再运行旧cancel.test.ts。本轮不追加开发，不申请或启动P0-2/真实E2E。规划估算68/100保持，不因测试数加分。
+
+### 7.6 P0-1有界测试隔离修复（历史：GLM端点阻塞，后续见§7.7）
+
+- 后续Owner配置决定（2026-10-17）：开发委派切换为OpenCode服务的opencode/deepseek-v4.1-flash-free；本机目录context=200000、output=32000，官方Models页当前列为限时免费。用户环境变量与全局委派约束已同步，四个role的wrapper dry-run一致；本次切换未启动原生模型或重发开发任务。真实可调用性尚未验证，不撤销下述GLM失败历史或提升P0-1状态。此前ignored controller/任务证据仍保留其原GLM配置，不能未经重核和新执行决定直接重用。
+
+- 本轮Owner授权修复已定位隔离缺口及有限离线验收，不授权产品Codex/OpenCode/Native Review/LAYA或第四次E2E。已应用research-before-work；核对OpenCode官方permissions/config及Models页面，后者当前列GLM-5.3-Flash Free为限时免费；不把目录或价格页等同账户实际调用成功。
+- 模型以Owner随后明确确认的opencode/glm-5.3-flash-free为准，覆盖附件中旧的DeepSeek优先建议。实际wrapper implement会话ses_eba754910ffe3TaNeTLLyGlwo6；原生日志providerID=opencode、modelID=glm-5.3-flash-free。没有成功生成或Token usage证据；不能声称实际费用已核实。
+- 委派前两次无推理debug agent build均exit0且Job停止确认，实际tools显示bash=false、task=false、skill=false、lsp禁用、webfetch/websearch=false，仅read/glob/grep及逐文件白名单edit/write开放。inline配置固定主模型和small_model为同一Free型号，未改用户全局配置或外部安装。此为有效工具清单证据，不冒充已执行危险工具拒绝负控。
+- 首次实施没有返回输出或编辑。原生日志记录10条APICallError和1条RetryError，错误为Upstream request failed: Endpoint is unavailable及Failed after 3 attempts；这些是日志条数，不是独立HTTP请求数。已停止，不换模型、不再委派。产品模型会话0，LAYA POST0；开发原生会话1，内部请求数/Token/实际费用UNKNOWN。
+- 通过本轮launcher精确stop文件请求协同终止，保存的生产containment facts为launcherStatus=terminated、treeStopConfirmed=true、activeProcessesFinal=0。不是根据wrapper退出0判通过。源码、测试、runner与开工字节快照相同；本轮未运行typecheck或任何测试，不以历史118/0等当本轮结果。
+- 上轮只读审计有限裁定保留：9条完成契约迁移旧期望NON_BLOCKING_FOR_P0_1；B45旧负控hook失效单列，不冒充通过；handoff26项仍UNKNOWN安全覆盖，本轮尚未补停止未确认共享链路负控。原完成门禁18项独立证据及原51项关闭为历史，未新增本轮验证。
+- 唯一阻塞是当前开发模型端点不可用，隔离方案没有被实施或验收。仍须先消除cancel真实AI段、约束Live入口/runner、覆盖底层启动拒绝和真实Dummy Job测试；不能以已有edit-only权限替代产品隔离修复。P0-1 BLOCKED，P0-2冻结，PARALLEL_WRITE=CLOSED；不commit/push/merge。证据仅存本机ignored project-progress/p01-isolation-20261017/，audit目录保持只读。
+
+### 7.7 P0-1隔离草稿独立验收（2026-10-17历史：BLOCKED）
+
+- 复用ManagedProcess、sealed Job、preflight及现有runner。开发wrapper实际执行implement两次，原生session为ses_eb67ea094ffeYQ6MjWvE1miOy9、ses_eb6710d0bffe6ALt16xYJZMmaw，均核实opencode/deepseek-v4.1-flash-free。首次达到有界deadline后停止；返工根进程exit0不等于验收通过。开发权限为白名单读写，bash/task/网络/Skill/LSP关闭，Worker未跑测试。开发账单未独立核实，不能将模型Free名称或原生cost字段当作零新增收费证明。
+- 草稿新增offline-policy及offline-context、受控cancel fixture、native-agent-policy和隔离suite；修改runtime/preflight/adapter注册与各Live入口，verify移除隐式smoke。Codex未代写生产实现。既有Completion/Attempt/哈希/Junction/范围及claim保护源码与本轮开始快照一致。
+- **P1：runner白名单存在实际绕过。** scripts/test-timed.mjs:193允许非清单绝对路径；受控无模型marker文件经TEST_TIMED_SUITES被实际执行，exit0。不是原生AI启动证据。offline-policy对bare codex.exe未拒绝，但受控Node副本启动被Windows以ERROR_FILE_NOT_FOUND拒绝，不能声称该项成功运行或真实Codex绕过。
+- **P1：直接smoke仍缺默认关闭。** package.json的smoke:quick直达CLI；tests/smoke.ts仅在已经frozen时拒绝，CLI本身不安装offline policy。本轮未运行此危险入口。旧ownership守卫只覆盖6个入口，其通过不代表新增Live清单全面受控。
+- **P1：新隔离suite25/2，cancel35/6。** runApprovedTest正例传绝对executable却走resolveCommand的agentId入口，未实际启动测试；相同负例也提前失败，不能作为发送门承重证据。cancel的stream fixture输出普通tick而非JSONL，未形成中间事件及cancel，最终timed_out；另有心跳断言失败，但held-handle EXITED及Job空通过，不能据此认定后代泄漏。
+- **缺失验收：** 新suite没有真正覆盖“测试停止未确认时保留WRITE claim并阻止第二任务”的共享生产反例。现有lifecycle/resource suite通过不能替代这一新增要求。
+- 独立检查（Worker未运行）：最终typecheck=0；P01 completion118/0、B42 61/0、B43 47/0、Contract248/0(2skipped)、Workbench419/0、CLI182/0、lifecycle136/0、resource192/0；隔离25/2及cancel35/6均exit1。未跑full suite；9项迁移债务、B45旧失败及handoff26项沿用历史分类，未重新验证、未宣称已关闭。
+- 已启动的开发及离线suite外层owned Job均确认ActiveProcessesFinal=0。bare-name反例为validated create-process-failed、rootPid=null、Win32=2的未启动事实，不伪称Job0；探针原cleanupFailures记录保留，随后仅逐个删除本轮3个明确命名文件及空目录，临时根已清理。无产品OpenCode/Codex/Native Review或LAYA POST。
+- HEAD/index与范围外dirty保持，无commit/push/merge；audit保持只读。一次实现+一次返工已用完，不再测试重试或追加委派。仅可等待Owner授权同一隔离缺口收口，P0-2/第四次E2E仍关闭。
+- 本轮新增out.txt（3字节ok换行，起始快照中不存在）与Workbench受控writer及运行时间吻合；归因属源码/时间推断，未做写入追踪。文件已移至本轮ignored证据目录owned-workbench-out.txt保留，未删除或混入源码成果。
+- 本机完整证据：project-progress/p01-isolation-ds-20261017T105610443Z/，含前后快照、两轮原生事件/权限/退出事实、独立suite日志及independent-bypass-probes.json。该原始探针报告中的rootRemoved=false及保守cleanupFailures为当时事实，后续清理见本节，不改写原始证据。官方资料复用OpenCode permissions/config及Models页；同任务不重复联网或试模型。
+
+### 7.8 P0-1四项隔离缺口最小收口（历史：BLOCKED，检查已熔断）
+
+- Owner本轮授权仅四项隔离修复、对应测试及文档；P0-2/真实E2E继续冻结。按research-before-work复核本地源码与只读audit，复用前轮官方permissions/config来源，依会话覆盖规则未重复联网。未修改任何AGENTS或全局配置。
+- OpenCode经真实opencode-agent implement首次实施及一次定向返工；原生session为ses_eb3639998ffeB2RhfZLT3qNf4K、ses_eb359569dffe2w8R8FNAblJ8Yd，后端LLM日志均确认opencode/deepseek-v4.1-flash-free。权限仍为精确白名单读写，Shell/task/网络/Skill关闭，Worker未运行检查或测试。首轮有界deadline后协同停止；返工exit0及最终报告不作为PASS证明。
+- 修改草稿9文件：scripts/test-timed.mjs、package.json、src/cli/index.ts、src/runtime/offline-policy.ts、src/runtime/preflight.ts、src/runtime/spawn.ts、tests/cancel.test.ts、tests/helpers/cancel-fixture.cjs、tests/p01-test-isolation.test.ts。Protected completion/Attempt/哈希/Junction/Workspace/TaskStore源码及范围外原dirty字节未改。
+- 四项静态变化：runner统一resolve/relative再对照清单，取消绝对路径例外且导入不自动运行；smoke显式冻结、底层默认拒绝，仅物理CLI入口+--live-agent且未冻结可Live；隔离正例用合法裸node、负例受控opencode.cjs并检查专用拒绝码/marker，必要正例不skip；cancel使用即时JSONL和追加心跳，共享负控走真实受控Runtime/TaskOrchestrator/WorkspaceManager、批准测试marker和停止降级seam，再检查第二任务resource-conflict及零新增runtime请求。上述仅为源码走查事实，尚未证明动态通过。
+- **编译阻断：** 首次typecheck因CLI帮助模板内未转义反引号报TS1005；返工已修该处，但最终typecheck exit2，tests/p01-test-isolation.test.ts:37直接导入../scripts/test-timed.mjs缺少声明，报TS7016。连续两次失败后立即熔断，未追加第三轮开发或重试检查。
+- **本轮测试矩阵：** typecheck FAIL；新隔离、cancel、P01 completion、B42/B43及相关核心回归均NOT_RUN；最终diff --check亦未在熔断后追加。不将前轮25/2、35/6或核心通过数量写成本轮结果，不宣告27/27或41/41。
+- 另有已静态定位的兼容冲突：execution-lifecycle的Case24/32依赖runner执行任意临时绝对路径，与Owner新批准的严格白名单相反；本轮未运行或修改，不当作9/26项历史豁免。后续须明确迁移其测试契约，不能为保旧期望恢复绕过。
+- 开发两Job均validated ActiveProcessesFinal=0，非推理权限检查Job亦确认停止；本轮没有运行产品Worker、LAYA POST或Native Review，观察到未授权Live启动0。开发账单未独立核验，不能将Free名称或原生cost字段当实际账单证明。HEAD/index保留，无commit/push/reset/clean/stash/merge；audit只读。
+- 本机证据project-progress/p01-isolation-final-20261018/：before.json、两轮任务/权限/事件/退出事实、native-model-evidence.json、first-typecheck.log、final-typecheck.log/json、final-result.json。唯一建议为Owner另行授权最小类型边界修正及原定定向验收，P0-2仍不具备开始条件。
+
+### 7.9 类型边界修正与四项定向验收（历史：四项PASS，当时整体PARTIAL）
+
+- 复核当前源码、NodeNext配置、唯一基线/NEXT_TASK及只读audit；沿用已核对资料，无新外部框架设计，本轮不需Gemini检索。Codex继续牵头，OpenCode主要实现，Owner保留阶段审批。
+- OpenCode通过真实opencode-agent implement仅新增scripts/test-timed.d.mts，声明normalizeSuiteEntry的准确参数、literal ok判别联合及错误码；未改任何现有源码、测试或tsconfig，不使用any/ts-ignore/检查降级。原生session ses_eb2894d77ffeCQOTsxPPlFazJo，后端LLM日志确认opencode/deepseek-v4.1-flash-free；Worker Shell关闭且未运行测试，开发Job exit0并validated ActiveProcessesFinal=0。
+- Codex独立核对声明与真实JS返回值及前后文件字节，typecheck PASS。随后经既有固定清单、offline-context和contained ManagedProcess，每个指定单文件仅运行一次，未运行全量或Live套件。
+- **本轮实际矩阵：** 新隔离40/0（专用拒绝码、非解析失败、正/负marker、路径归一化拒绝全部通过）；cancel49/0（即时JSONL、真实取消/超时/树停止、批准测试marker、Task A真实WRITE保护保留、Task B resource-conflict且runtime请求数不增）；completion118/0、B42 61/0、B43 47/0、Contract248/0(2既有skip)、Workbench419/0、CLI182/0。新增断言增加数量，不以旧27/41数字伪称实跑结果。源码/日志独立审核通过，不采信Worker自述PASS。
+- 四项当前授权目标已通过，但**P0-1整体暂记PARTIAL**：execution-lifecycle Case24/32仍依赖任意临时绝对路径或import runner自动执行，与Owner新批准的严格清单和无导入副作用契约冲突。已静态定位、未运行或修改，不能称完整生命周期回归通过，也不纳入9/26历史豁免。唯一下一步为Owner明确批准后只迁移这两个旧测试契约，保持原生停止验证，不扩大生产代码或测试框架。
+- 所有8个本轮套件及开发owned Job均validated treeStopConfirmed=true、ActiveProcessesFinal=0。产品Worker/LAYA POST/Native Review为0，未观察到未授权Live启动；开发账单未独立核验，不声称总账单0元。现有Completion/Attempt/哈希/Junction/Workspace/TaskStore及范围外dirty源码字节保持。
+- 唯一基线/NEXT_TASK与本机进度页同步；HEAD/index保留，无commit/push/reset/clean/stash/merge。Workbench运行新增的3字节out.txt与既有fixture writer吻合，按本轮新增文件及时间归因，原样移至ignored证据目录保留而非删除；不宣称做过写入追踪。
+- 本机证据project-progress/p01-type-boundary-20261018/：before.json、受限委派任务/权限/原生事件/退出事实、native-model-evidence.json、typecheck.log/json、8组independent日志及最终结果。前轮四项实现源证据保留于p01-isolation-final-20261018/，不改写失败历史。P0-2、正式UI、并行写及真实E2E继续关闭。
+
+### 7.10 旧生命周期Case24/32迁移与P0-1最终收口（当前：独立PASS）
+
+- Owner本轮明确授权迁移两项旧测试、受控fixture及基线/NEXT_TASK/本机进度；沿用本地已核对的Runner主入口、严格manifest、offline-context、ManagedProcess与原句柄observer，无新外部协议设计，不需为本片重复联网或Gemini检索。
+- OpenCode经真实opencode-agent implement完成一次实现+一次定向返工，仅改tests/execution-lifecycle.test.ts并新增tests/helpers/runner-lifecycle-fixture.cjs。两次原生session分别ses_eb2807d37ffeaiBJDmXZJFEiJC、ses_eb27515ccffeJdhRIPg2ktnINW，后端LLM日志均确认opencode/deepseek-v4.1-flash-free；edit仅放行这两文件，shell/task/Skill/网络/LSP关闭。第一次开发到10分钟边界被协同停止，不采信其完成声明；返工exit0，两Job均validated ActiveProcessesFinal=0。
+- Case24通过真实Runner main运行清单内本套件的固定exit7子角色，保留真实退出码7传递和timing；固定preload令实际spawn得到OS ENOENT并验证spawn-error；清单外绝对路径必须exit3且marker未生成，未恢复任意路径豁免。import Runner仍无执行副作用。
+- Case32通过清单内固定tree子角色启动真实writer，等待心跳增长且原句柄acquired后才触发Runner自身SIGINT handler；实测Runner exit130、interrupt tree cleanup CONFIRMED、contained ActiveProcessesFinal=0、held-handle verdict=EXITED、observer reaped。删除旧PID消失/裸PID补杀证明，保留并加强原进程树清理意图，无删除或skip原用例。
+- Codex独立审查首稿指出无界等待及未确认停止便删目录，唯一返工增加有界等待、固定owned根检查、停止/observer确认后才删目录，失败会计入非零退出并保留路径。复用既有停止机制，未改生产Runner/runtime/完成门禁。
+- **本轮一次性最终矩阵：typecheck PASS；execution-lifecycle 149/0；隔离40/0；cancel49/0；completion118/0，均真实exit0。** Worker未跑测试；Codex按固定已审查单文件清单、offline-context、contained Job各运行一次，未全量/Live/主从双跑。首稿typecheck亦PASS，返工后重查是因代码变化，不是碰运气重试。B42/B43/Contract/Workbench/CLI前轮结果为历史，本轮未重复。
+- 本次产品Agent/LAYA/Native Review调用0，未观察到未经授权Live启动；两开发会话单独计数，不冒充产品验收或零账单证明。四suite及开发Job均确认停止、ActiveProcessesFinal=0，Case24/32 owned根删除和observer回收有实际断言。离线门是应用级默认拒绝，不是OS沙箱或恶意代码隔离。
+- HEAD、主index及范围外既有dirty文件由开始快照逐文件哈希核对保留；无commit/push/reset/clean/stash/merge，production/native/package/runner字节不变。证据project-progress/p01-lifecycle-migration-20261018/（任务/权限/原生events/model/进程事实/typecheck/四suite日志/现场保护结果），audit只读未改。本机快照同步，目录保持ignored。
+- **P0-1有限范围正式PASS**：不扩大旧9项非阻断债务或26项handoff豁免，不重新封板全部B/W或完整后端，不追认前三次PARTIAL E2E。唯一下一步申请P0-2：复用stage/冻结计划与同一Verification，在批准模型/费用/工具/范围内机器通过后推进，记录system来源而非伪造accept；新安全绑定方案可先由Owner转交Gemini核对文献。P0-2/3、真实P0-4/E2E、正式UI及并行写均未启动。
+
+### 7.11 P0-2参考资料过滤与最小接点准备（未授权实施）
+
+- Owner转交Gemini资料，按现有research-before-work与Ponytail流程仅做本地静态核对，未重复在线检索。来源与采纳/拒绝边界归档ENGINEERING_RESEARCH_REFERENCES.md的P0-2节；NEXT_TASK补充有界接点。资料不是外部框架细节已核实或本机实现证明。
+- 复用stageBindingDigest/normalizedPlanScope和当前确认入口，将来只补模型/池、费用/声明有效期、工具和执行限制的有效输入绑定；P0-1已绑定产物/范围/批准测试，继续经同一completeTask/applyVerification核验，不新建授权/Verification系统。
+- 静态批准策略与动态执行事实分开；不强求初始整目录hash在合法写入后仍不变，不以请求/token/重试数充当金额硬上限，不一概排除有授权含义的时间戳。批准变化或有效期/资格失效应在后续准入前拒绝。
+- TaskStore内存、Scheduler防重入、匿名Job与KILL_ON_JOB_CLOSE均有当前源码依据；不采纳新事务三态、WAL、自动回滚、跨进程恢复、Named Job或PID恢复路径。机器结果与真实user_accept分开，不改LAYA wait，保留Native Review/Human Gate。
+- 本轮仅文档/进度准备，不调用OpenCode开发/产品Agent、LAYA或Review，不运行或新增测试，不修改生产/测试/安装/配置，不commit/push。P0-1 PASS沿用§7.10，无新通过结论；9/26历史边界与68/100规划信用不变。唯一下一步仍为Owner批准P0-2有界实施，收到资料不等于授权。
+
+### 7.12 P0-2预授权范围内自动推进草稿（当前：BLOCKED）
+
+- Owner已回复“可以，开始吧”，按已收敛方案授权实施。Codex沿用research-before-work/Ponytail和Owner转交资料，仅补本地调用链定位，无重复外检。OpenCode为主要实现者；仅修改src/orchestration/stage-material.ts和src/cli/round-cli.ts，未修改任何测试、P0-1门禁、Runner、安装或全局配置。
+- 通过既有opencode-agent implement做一次实现+唯一一次定向返工，原生模型均由后端LLM日志核对为opencode/deepseek-v4.1-flash-free。两轮各到10分钟有界期限，由既有ManagedProcess协同停止，exit.code为null、launcherStatus=terminated，不是正常完成或Worker PASS；两Job均validated ActiveProcessesFinal=0。未发第三轮。
+- 已落盘草稿：stageBindingDigest增加可选authorization，缺省调用保持原摘要；CLI摘要增加有效selection、模型池声明/期限、Skill/MCP内容、Agent配置白名单、Review模型、执行限额等。stage-check本地显示批准投影；自动模式要求显式计划/完整completion/有效声明池、并发1、retry0、no-handoff，保留严格checkpoint。旧CLI确认digest需要按新执行范围重新生成，不能把API可选兼容说成旧CLI确认继续有效。
+- 草稿在现有循环加入机器监督，通过同一completeTask→applyVerification/P0-1完成门禁，source=system与user checkpoint分开；限制扩计划/重试/换人动作；缺执行/缺合同/停止不明/验证拒绝时停止；最后完成后回顶部检查，不以额外LAYA complete充当质量验收。任务允许清单当前只投影类型/pair/完成合同，不能声称全部任务字段漂移已验证覆盖。
+- **独立静态核验：首稿typecheck失败（重复SelectionSpec导入和unused参数），返工后typecheck PASS；git diff --check PASS。** 全程按当前零新增测试规则未新增/修改测试、未运行任何行为套件；没有离线模拟成功或E2E证据。静态通过不能封板本片，既有P0-1 PASS仅沿用，不宣称本轮回归实跑。
+- **阻断P1：LAYA发送前批准复核未统一覆盖。** approvalDrift调用位于初始配置前、Worker gate getter、工作流循环和Review前；quota/probes等await之后的classifyTask及计划/pair/工具选择、首个runOneCycle仍可直接用provider，缺少实际POST发送前的同一复核。批准/资格在异步间隔失效时，当前代码不能证明拒绝了该次额外推理。此为静态调用链发现，未启动真实或模拟模型复现。
+- **阻断P1：自动Review拒绝未进入最终失败结果。** report.ok在Review之前仅按executionIncomplete赋值；autoReviewBlockers在任务全succeeded后仍可能因Reviewer模型/池资格或批准漂移阻断Review，后面没有将该拒绝合入report.ok，最终return仍仅依据report.ok。存在not-run/withheld Review但ok=true和exit0的源码路径，不得解释成完整成功；这是新增自动分支的收口，非全面重写旧Review策略。
+- 本轮独立结论**BLOCKED**，不进入P0-3/4或真实E2E。唯一最小下一步：Owner授权后，仅补现有LAYA发送/fetch注入边界的统一批准检查及自动拒绝/Review拒绝→最终报告/退出码；仍不增Provider大脑/调度器/状态权威。后续行为验收需要Owner按当前零测试规则明确许可，不能凭静态检查冒充运行通过。本轮两次开发已用尽，禁止继续自动返工。
+- 产品Agent/LAYA/Native Review调用0；开发两会话单列、当前目录标记Free/200K，不将目录报价或历史cost0当实时账单证明，开发账单未独立核验。源码工具统计只有read/glob/grep/edit（另有一次edit匹配失败），未执行shell/task/网络/Skill/LSP，进程树已确认停止。
+- HEAD/index/范围外dirty逐文件哈希保留，无commit/push/reset/clean/stash/merge。本机进度页同步BLOCKED、68/100规划信用不变；9/26历史边界保留。证据project-progress/p02-implementation-20261018/：before快照、两轮任务/权限/原生事件/模型/停止事实、两次静态检查、independent-review.json与final-result.json。audit仅只读。
+
+### 7.13 P0-2发送前门禁与最终失败投影续修（源码静态通过；整体PARTIAL）
+
+- Owner在获知本机未推送及两项阻断后回复“可以，继续推进”，新批准本片最小续修；没有Git推送或真实产品模型/E2E授权。按research-before-work复核现有源码、NEXT_TASK及只读audit，沿用Owner提供的资料，不重复外检。
+- OpenCode经既有opencode-agent implement一次正常完成，仅修改src/cli/round-cli.ts（相对本轮开始119增/5删，含说明注释），未使用返工。原生session/后端LLM记录核对为opencode/deepseek-v4.1-flash-free，未改Codex模型。开发Job exit0、launcher success、validated treeStopConfirmed=true/ActiveProcessesFinal=0。Worker有一次调用不可用shell工具的尝试，工具返回unavailable并未执行；没有shell/测试/产品调用实际运行。
+- 静态缺口A已关闭：autoMode下拒绝opaque provider override，统一给现有createLayaDecisionProvider注入gatedFetch。所有分类/计划/pair/Skill/MCP/循环使用同一Provider；在实际realFetch调用前同步approvalDrift，有拒绝则记approval-revoked并throw，中间无await且底层fetch不可达。合法请求原样转交input/init，不丢失signal/headers/stream/duplex/redirect；非auto路径保持原逻辑。
+- 自动模式启动前新增显式--laya-post-max要求（0合法且禁发），复用已有预算路径的one-shot body与redirect:error，不改laya.ts或预算对象。该条件是实际发送不经底层隐藏重放绕开检查的必要复用前提；本轮未重新运行HTTP测试。拒绝不返还预算，layaSendGate独立记录允许进入传输的尝试及发送前拒绝；预算used/reserved可能在门前增加，不能把这些计数冒充实际HTTP字节、成功请求或账单。
+- 静态缺口B已关闭：Review结束/withheld后、round-result构造及输出前，auto模式统一把批准漂移、发送拒绝、机器门停止、工作流未all-succeeded、已请求Review但被拒绝或未完成合入同一个report.ok；最终return仍读该值。machineSupervision投影system原因，严格checkpoint/source=user/Task状态不改；显式no-review仍诚实not_requested，不误称Review PASS。
+- Codex独立读取完整本轮diff及Provider实际post/所有provider接线/最终报告调用链；**typecheck一次PASS，git diff --check PASS**。两项结论仅为源码静态收口；无新增/修改测试，无测试套件或临时验证脚本，无真实/模拟产品推理，不能据此宣称自动流转运行通过或零回归。
+- **P0-2整体PARTIAL（待离线行为验收）**：旧两项静态阻断不再开放，但正向Task1→Task2及发送前拒绝、JSON/exit一致性、旧checkpoint兼容尚未实跑；当前全局零测试规则不允许自行新增/运行该验收。唯一下一步为Owner明确授权一个离线单文件验收，复用原fetch/runtime fixture与冻结离线保护，不先推进P0-3/4或真实E2E。本轮没有继续创建开发任务。
+- P0-1沿用历史PASS；9项旧债与26项handoff边界保留；PARALLEL_WRITE=CLOSED、automaticPostRoundAction=NONE。产品Agent/LAYA/Native Review调用0；本轮开发1会话单列，账单未独立核验，不以缓存Free/200K或事件cost0冒充实时费用证明。
+- HEAD/index及范围外既有dirty逐文件哈希保持，无commit/push/reset/clean/stash/merge；唯一基线/NEXT_TASK及ignored进度快照同步，历史68/100规划信用不增加。证据project-progress/p02-send-closure-20261018/：before字节快照、委派任务/权限/原生事件/模型/Job事实、typecheck/diff检查、independent-review.json、final-result.json。上轮失败/超时及本轮工具拒绝不被抹去。
+
+### 7.14 P0-2单文件离线行为验收（本片BLOCKED；整体仍PARTIAL）
+
+- Owner对上一轮明确提出的“写并运行一个离线定向文件”回复“可以，继续推进”，本轮仅批准tests/p02-auto-advance.test.ts及基线/NEXT_TASK/ignored进度证据；没有生产源码、额外模型、真实产品Round或Git写入授权。按research-before-work复核本地调用链与Owner既有参考；audit只读，不需重复外检。
+- 经既有opencode-agent implement一次实现+唯一返工，两个原生session均核实为opencode/deepseek-v4.1-flash-free。两轮各10分钟截止协同停止，exit.code=null、launcherStatus=terminated、rootExitCode=1；validated treeStopConfirmed=true、ActiveProcessesFinal=0。协调器外层exit0只说明停止确认，不是Worker完成或PASS。首轮没有落盘，返工留下测试草稿；没有第三次开发。
+- Codex独立审查最终草稿并仅运行一次typecheck：exit=2，tests/p02-auto-advance.test.ts:434 TS6133（ms1未使用）。另有确定fixture问题：harness默认未传layaPostMax，而多数正向/失败用例未显式传3，会提前stage-gate拒绝；harness在return的finally中删除cwd/marker，然后调用方才核验磁盘产物；注释声称global fetch thrower但未安装，负例答案还有首项回退。不能将这种提前拒绝或已删除文件当作生产行为证据。
+- **行为suite未运行**：编译/静态审查没有通过，不执行不可靠fixture、不修改生产掩盖结果、不重复检查求绿。没有依据宣布自动流转PASS或新生产回归；本片是测试交付失败，上轮源码静态结论仅沿用。
+- 新文件在before字节快照中不存在；Codex将其完整复制到project-progress/p02-offline-acceptance-20261018/rejected-p02-auto-advance.test.ts.txt，SHA256逐字核对后仅移除本轮未验收的新文件，防止污染默认typecheck范围。没有覆盖/删除任何既有测试或dirty成果；没有代写测试实现。隔离后未重跑typecheck，不宣称新typecheck PASS。ignored verify入口未执行。
+- 真实LAYA/产品Agent/Native Review均0；本轮开发2会话单列，原生cost元数据不能替代实际账单，未独立核实开发费用。HEAD/index及范围外文件逐字哈希保持，无commit/push/reset/clean/stash/merge。P0-1历史PASS、9/26历史边界、PARALLEL_WRITE=CLOSED、automaticPostRoundAction=NONE保持。
+- 唯一建议：另行授权更小的P0-2测试夹具修复，先使一个真实CLI正向成功链成立，再复用它补发送拒绝/Review退出负例；不重写生产、不推进P0-3/4或真实E2E。本轮两轮额度已用完，等待Owner，不自动再委派。没有新的外部资料阻塞，不需Gemini重复检索。
+- 证据project-progress/p02-offline-acceptance-20261018/：before、两轮任务/事件/原生模型/停止事实、typecheck.log/json、隔离草稿与quarantine.json、独立审查与现场保护。唯一基线/NEXT_TASK与本机进度快照同步；历史68/100规划信用不增加。
+### 7.15 P0-2最小成功链夹具续修（PARTIAL；单文件24/1）
+
+- Owner再次回复“继续推进”，批准按上轮建议执行更小test-only续修。仅新增tests/p02-auto-advance.test.ts，Codex同步本节/NEXT_TASK/ignored进度证据；无生产源码、已有测试/helper/runner修改，无真实产品模型或Git推送授权。按research-before-work复核本地实现与既有Owner参考；无需新的外部检索，audit只读。
+- OpenCode通过既有opencode-agent implement开发新文件：仅复用旧未验收草稿的成功链，B-G不进入本轮覆盖且旧草稿完整保留。修复显式预算3、global fetch thrower+冻结offline、断言后清理、严格答案无首项回退。两个批准的真实Node测试在assert通过后写各自marker，均列入批准allowedScope；fake Worker不写marker；store/report保持在cwd外。
+- 开发首次10分钟截止终止，原生session ses_eb183a66cffeUTP2X476v0kZtt核实opencode/deepseek-v4.1-flash-free；未正常完成。Codex试图通过控制会话stdin提前停止，但stdin已关闭、消息未送达，最终依原截止协同停止，不能记为Owner人工输入。唯一返工针对已定位的verdict字段与checkpoint计数，3分钟截止终止；未产生stdout原生事件/修改，不能仅凭环境推断该轮实际模型或已完成。两个开发Job均validated ActiveProcessesFinal=0；无第三轮。
+- Codex独立审查最终源码/真实报告投影，**typecheck一次PASS；单文件仅一次，24 passed / 1 failed，真实exit1、signal=null、Job ActiveProcessesFinal=0**。首轮/返工均未运行检查，不存在主从双跑。测试经固定单文件contained verifier与--import offline-context运行，未注册默认Runner、未放宽白名单或Live保护。
+- 已有真实离线证据：实际stage-check无POST/Worker/Review；confirm使用同一digest；真实CLI→Assignment→Scheduler→Attempt→P0-1→机器完成→下一任务，两fake Worker各一次，两个不同Task/Attempt/Session、source=system，workflowStop=all-succeeded、JSON ok=true、CLI return0。add.cjs/add.test.cjs精确字节及两个批准测试marker均核对通过；真实Provider解析受控HTTP，底层fake POST恰3次；独立fake Reviewer调用一次并返回completed/字符串verdict='pass'。外层测试真实exit1与内部CLI return0是不同层，不是产品JSON/退出不一致。
+- 唯一运行失败确定为测试夹具：408行把最终report.unifiedReview.verdict当嵌套对象读取；实际buildUnifiedRoundReport（unified-review.ts:740）投影为字符串，失败日志完整显示verdict:'pass'。另347/411行checkpointCalls未接实际callback，其0计数本身不承重；report.checkpoints确实缺席、machine source=system是独立字段证据。不得将1失败隐藏、或把输入计数称强验证。
+- **本片/整体PARTIAL，不标PASS**：保留编译通过但1失败的测试WIP，不改断言制造绿色、不运行第二次测试、不因开发未返回而由Codex接管修改。发送前批准撤销/Review拒绝真实退出/失败阻断/wait/严格checkpoint等负例仍未验证；没有新生产缺陷证据，也不能据正例宣称这些边界安全。
+- 真实LAYA/产品Agent/Native Review调用0；fake Review不冒充原生模型。测试出现既有cline注册发现警告，未启动真实Agent/探测推理，不把它写成零discovery。受控测试cleanup未报错；所有本轮拥有Job确认空。开发费用未独立核实，事件cost0不代替账单。
+- 唯一下一步：Owner授权只修本文件verdict字符串读取及接入真正的禁止输入callback，保留其余正例与强断言，跑同一文件一次收口。该最小正例收口后才补既定负例，不推进P0-3/4或真实E2E；没有新的文献阻断。本轮两轮额度已用完，停止等待。
+- HEAD/index/范围外dirty逐文件哈希保持，新增仅该测试文件，受版本管理现场另仅两份进度文档变化；无commit/push/reset/clean/stash/merge。PARALLEL_WRITE=CLOSED、automaticPostRoundAction=NONE、9/26历史边界保持，68/100历史规划信用不增。证据project-progress/p02-fixture-20261018/：before、两轮任务/停止事实、原生模型、before-rework、typecheck、单次测试日志/JSON、独立审查及现场保护。本机快照同步PARTIAL。
+### 7.16 P0-2两处夹具最小收口尝试（本片BLOCKED；整体PARTIAL）
+
+- Owner回复“可以”，仅批准修tests/p02-auto-advance.test.ts中的verdict字符串读取和真实checkpointInput计数回调；不扩展负例/生产/E2E/Git推送。按research-before-work复核本地源码、NEXT_TASK与只读audit；两个缺陷已经有直接源码/日志依据，无需重新研究产品方向。
+- 实际通过opencode-agent implement委派一次及唯一第二尝试，均3分钟截止，无stdout原生事件、无源码/测试修改；两个Job协同停止，exit.code=null、launcherStatus=terminated、rootExitCode=1、validated treeStopConfirmed=true/ActiveProcessesFinal=0。外层协调器exit0只表示停止确认，不是开发成功。没有第三次委派。
+- 只读入口核对：Git Bash command -v解析到用户npm shim；shim exec对应native opencode.exe；wrapper dry-run exit0、role=implement、model=opencode/deepseek-v4.1-flash-free、dir正确。第一次通过现有stdin入口，第二次通过wrapper已有参数入口，均没有事件；**不能据此归因stdin/模型/认证/网络/桌面attach中的任何一种**。未修改wrapper、Agent安装或用户配置。dry-run和env不能证明实际模型/可调用性/费用，本轮实际原生模型及session为UNKNOWN。
+- before字节快照确认测试/生产/范围外文件未变；因此未重跑typecheck或已知24/1的单文件，不新增验证结论、不以重复失败消耗时间。§7.15的typecheck PASS、24/1及其实际假Reviewer pass、真实批准Node marker保留为历史；verdict错读与输入计数缺口仍开放，发送/Review退出等负例仍未覆盖。
+- 当前唯一阻塞：开发入口在限定时间内未交付，具体原因未知，不是新生产失败证据。唯一建议先做有界非推理的开发入口诊断：核对官方1.18.35启动/日志与请求重试可观察方式，再在本机定位wrapper→native CLI→模型请求边界；不增加推理、不读取密钥、不静默换模型/关闭权限/更改安装。恢复入口后再执行原两处修复，不重写fixture或P0-2。若需外部工具规范，由Owner转交Gemini获取一手诊断资料。
+- 真实产品LAYA/Worker/Native Review调用0；开发委派尝试2次单列，实际模型请求次数和费用未知，不能称开发零收费。HEAD/index/范围外dirty哈希保持，唯一主工作树变化为本轮进度文档，测试WIP原样保留。无commit/push/reset/clean/stash/merge；PARALLEL_WRITE=CLOSED、automaticPostRoundAction=NONE，9/26历史边界保持。
+- 证据project-progress/p02-fixture-finish-20261018/：before、两轮有界任务/控制入口/进程停止事实、现场哈希、独立裁定；事件日志不存在如实保留，不制造session/model证明。本机进度快照同步“开发入口阻塞”，整体PARTIAL、历史68/100规划信用不增，P0-3/4与真实E2E不启动。
+### 7.17 开发无事件只读诊断（已定位Provider限流；P0-2仍PARTIAL）
+
+- Owner提供Gemini诊断资料，本轮仅按该资料做本地可行性过滤与只读取证，无新开发/产品推理、安装/配置变更或测试。复用现有Node SQLite只读能力与native日志；没有运行OpenCode debug/models/stats/run/help等新命令，因为现有落盘证据已足够定位直接阻塞。研究按research-before-work读取，audit只读，避免重复在线检索。
+- 本机opencode-ai安装包元数据1.18.35。两次既有调用窗口分别为UTC 10:27:57.765–10:30:57.897（stdin）和10:32:50.463–10:35:50.573（argv）。第二窗口采用worker-policy实际写入时间；rework-task由Copy-Item复制会保留旧mtime，不能误把其mtime当成第二次启动时间。
+- 原生只读DB：stdin对应ses_eb1723125ffeI0WIbHCg9AfSNB，argv对应ses_eb16db9a7ffe87GnoaBE0nrKub；均在启动约1秒内生成user/assistant message，assistant provider=opencode/model=deepseek-v4.1-flash-free，finish/completed/tokens.total为空。§7.16当时“模型未知”因本轮新增原生证据得到修正；仍不宣称远端实际完成响应、可调用资格、零费用或请求数量。
+- 同一原生session的日志交叉证据：stdin在10:28:00.442Z出现AI_APICallError+rate limit、10:28:06.494Z出现retry+rate limit；argv在10:32:53.362Z出现AI_APICallError+rate limit、10:32:59.179Z出现retry+rate limit。两者先有Provider stream记录。**直接阻塞已定位为Provider限流错误后的重试等待**，不是尚未初始化Session，也没有依据修复stdin/argv或放宽工具权限。stdout零JSON事件不代表没有模型请求。
+- 只导出session/message身份、时间、模型字段和日志允许列表特征；不导出原始日志/提示词/headers/URL，未读取auth或全局配置文件。日志仅按时间窗匹配的行明确标记“可能包括foreign进程”，根因只采用exact-session行。没有取得明确HTTP状态码、限流类别/重置时间、真实HTTP尝试总数或账单，不能写429/每日配额耗尽/约6-8次请求/零费用等未证实结论。
+- Gemini参考采用：日志+SQLite+stdout分层交叉对照；不采用“无DB记录→100%零请求/零费用”，不把dev源码或Issue描述的无界重试/事件发射次序直接提升为1.18.35契约。两条本机记录足以定位，无需为本任务再查新文献或启动帮助命令。附件路径C:/Users/Admin/.codex/attachments/0f0ee7b0-cee7-4095-8870-3d3efd137815/已粘贴的文本.txt；官方URL及dev源码只作Owner转交研究背景，本轮未重新在线核实全文。
+- 结论：本次只读诊断完成，开发仍受服务限流阻塞；P0-2保持PARTIAL，上一轮typecheck PASS/24-1不提升为本轮PASS，两处verdict/输入回调夹具和负例仍开放。唯一下一步：确认限流恢复后，再由Owner授权恢复原两处最小test-only修复；不继续盲试、不加长deadline、不重装、不改付款/权限或静默切换模型，不启动P0-3/4或真实E2E。
+- 本轮新OpenCode/LAYA/产品Agent/Native Review调用均0，不产生新的owned Agent Job；上一轮两个Job已验证ActiveProcessesFinal=0，仅沿用，不伪造新的物理验证。源码/测试、HEAD/index及范围外dirty哈希保持，仅同步基线/NEXT_TASK和ignored本机进度，无commit/push/reset/clean/stash/merge。9/26历史边界、PARALLEL_WRITE=CLOSED、automaticPostRoundAction=NONE、68/100规划信用保持。
+- 证据project-progress/p02-startup-diagnosis-20261018/：before.json、read-only evidence.mjs、native-metadata.json（脱敏特征与会话交叉）、scope.json及最终报告。本机快照同步“已定位限流”，不再将它展示为未知启动故障。
+### 7.18 一次有界开发恢复（仍限流，已主动停止；待Owner实施者决定）
+
+- Owner回复“可以，继续推进”，批准恢复原两处test-only任务；本轮仅通过既有opencode-agent implement发放一次有界开发任务，指定模型和编辑范围不变，不另发探测推理。限流恢复并非已知事实，未将本次授权解释为更换模型/付费fallback、生产实现或真实E2E授权。
+- 新原生session ses_eb1596363ffeJxycvz27X98PVL，DB assistant确认provider opencode/model deepseek-v4.1-flash-free；10:55:05.991Z出现exact-session AI_APICallError+rate limit，10:55:12.031Z出现retry+rate limit，仍未产生工具修改或stdout事件。只读沿用§7.17的诊断，不重新检索或猜测HTTP状态/实际请求数/账单。
+- 发现限流后，通过本轮ignored协调器的stop-request触发现有ManagedProcess.cancel/settleCleanup，未按裸PID/进程名强杀、未等满3分钟、未追加同模型重试。validated treeStopConfirmed=true、launcherStatus=terminated、ActiveProcessesFinal=0；exit.code=null不冒充正常完成。开发1次，与产品调用分开。
+- 测试文件SHA256仍EAEC1C269C79631766C9CAFBFFD94A9B84A936E3F3D186B2C1965CCF6D2E18B9，生产及范围外文件保持；两处verdict/输入回调缺口未修。未运行typecheck或已知失败suite，不把历史24/1或历史typecheck PASS写成本轮检查结果。没有新增产品LAYA/Worker/Native Review或真实E2E。
+- 为避免继续等待服务，已向Owner请求**仅本次**允许Codex直接修两处测试夹具并做一次typecheck/单文件验证的临时实施者例外，替代选择是保持OpenCode开发分工等待服务恢复。理由来自Owner提供的AGENTS.md协作规则（OpenCode主要开发、Codex独立审核）；这不是重复询问已有测试范围或新的产品模型授权。**未收到答复前例外不生效，Codex没有代改**；若Owner允许，须如实说明Codex实施/验证，不宣称OpenCode完成或独立第三方审核。
+- 当前P0-2仍PARTIAL，本次恢复受限流阻塞；唯一待办是Owner实施者选择，不能自行第三方换路由/修改全局AGENTS/付款/权限。P0-3/4、负例扩展和真实E2E不启动。HEAD/index/范围外dirty哈希保持，仅同步基线/NEXT_TASK和ignored快照，无commit/push/reset/clean/stash/merge；9/26历史边界、PARALLEL_WRITE=CLOSED、68/100规划信用不变。
+- 证据project-progress/p02-fixture-resume-20261018/：before、精确任务/权限、原生只读window元数据、stop-request及进程停止事实/现场哈希。开发实际模型请求总数和费用仍未核实，不用空tokens或Free名称证明零费用。audit只读，进度快照同步待Owner实施者决定。
+### 7.19 Owner一次性授权Codex修复两处夹具（本片PASS；P0-2整体PARTIAL）
+
+- Owner通过用户输入明确答复“允许Codex仅修这两处测试”，本次实施者例外生效，仅限tests/p02-auto-advance.test.ts及约定的一次typecheck/单文件离线验证；不改变长期OpenCode主要开发分工，不修改AGENTS或配置。按research-before-work复核原调用链/源码/既有证据与只读audit，无需新的外检或模型调用。
+- Codex实际仅改两个位置：harness overrides接入checkpointInput（被调用即计数+throw，保留calls=0和无checkpoints字段断言）；Review通过断言保留status=completed，并按最终buildUnifiedRoundReport的字符串verdict=pass读取。相对before字节副本只有两个diff hunk；其余强断言、两个真实批准Node marker、预算3、精确磁盘字节/身份、global fetch阻断、离线保护和清理原样保持，没有删除/skip/弱化验收。
+- **本轮typecheck一次PASS；固定单文件contained verifier运行一次25 passed/0 failed，真实exit0、signal=null、treeStopConfirmed=true、launcherStatus=success、ActiveProcessesFinal=0**。源文件SHA256=86a9546500a552a0855ed77a029f347f01c2501d2a47372a5b6d0e85e22c70c3。旧24/1保留历史，不覆盖旧证据、不反复运行求绿；无Worker重复检查。
+- 正例证据：实际stage-check/confirm、生产CLI与统一P0-1机器完成门、两个独立Task/Attempt/Session/source=system，两个fake Worker顺序执行；批准的两个真实contained Node测试写出marker且断言成立；真实Provider消费3个受控POST响应，fake独立Reviewer一次completed/字符串pass，内部CLI ok=true/return0，外层suite也exit0；checkpointInput确已接入而未被消费，没有虚构Owner accept。
+- 证据边界：本次为**Codex直接实施并验证**，不是OpenCode交付，也不声称独立第三方审核。Worker/Review/HTTP响应为受控替身，真实的是CLI/任务门禁和批准Node执行；不提升为真实模型兼容性或完整MVP成功。既有cline注册发现警告与上轮相同，不是本轮Agent调用。
+- 本切片PASS，P0-2整体仍PARTIAL：批准漂移发送前拒绝/零底层POST、Review拒绝JSON/原生退出一致、失败阻断/wait/严格checkpoint等负例仍未验。唯一建议下一步为Owner授权复用已通过fixture补关键离线负例（发送批准撤销和Review拒绝退出），不重建框架、不推进P0-3/4或真实E2E；既有Gemini研究和本地边界足够，不需新文献。
+- 本轮新OpenCode开发、真实LAYA/产品Agent/Native Review调用均0；无费用推理资格试探、无额外Skill/MCP/模型切换、无生产/helper/runner修改。HEAD/index及范围外dirty哈希保持，主树仅该测试与基线/NEXT_TASK变化，无commit/push/reset/clean/stash/merge。9/26历史边界、PARALLEL_WRITE=CLOSED、automaticPostRoundAction=NONE、68/100规划信用保持。
+- 证据project-progress/p02-codex-fixture-20261018/：before.json、before.test.ts.txt、test.diff、typecheck.log/json、单次测试日志/JSON、范围与页面一致性记录。ignored进度快照同步正例25/0/P0-2 PARTIAL；本次实施者例外完成后不自动延长。
+### 7.20 Owner授权查询与探测其他免费OpenCode模型（未确认可用替代）
+
+- 本轮仅执行免费可调用性探测，不开发P0-2、不运行真实产品Round，不更改持久开发路由。应用research-before-work并核对官方当前价格表 https://opencode.ai/v2/docs/console/models/ 与本机公开模型缓存：GLM-5.3 Flash Free、MiMo V2.6 Flash Free等当前标价Free。模型目录和零价字段不作为实际可调用证明。
+- 复用真实产品CLI `run opencode ... --model <完整ID> --timeout 30000 --json --live-agent`，由既有ManagedProcess/Job containment包裹；使用本轮新建的隔离空目录，主模型与small_model同一免费候选，opencode provider限定、所有工具deny；不发送仓库代码，不使用其他产品Agent、LAYA或Review。默认拒绝启动保护原样保留，不伪装CLI入口、不修改外部安装/账户或系统设置。
+- 两个真实原生session分别确认 `opencode/glm-5.3-flash-free`（200000 context，约2601ms）与 `opencode/mimo-v2.6-flash-free`（200000 context，约2528ms）。两者均exit1，实际API事件均为HTTP403、FreeTierError、isRetryable=false，服务端提示“OpenCode's free tier can only be used from within OpenCode”。没有得到回答；不能声称任何一个本轮可调用，也不能仅凭错误文本确定鉴权/客户端识别缺陷的根因。
+- 连续两次失败后熔断，未继续试Space Bunny/Big Pickle/Nemotron Lightning/Exo，未重试DeepSeek。没有篡改请求头、绕过服务端限制、换收费路由或持久切换模型。此前DeepSeek rate limit仍是历史事实，不能与本次403合并为同一已证实原因。
+- 两个外层Job以及CLI失败事件内的原生清理均确认treeStopConfirmed=true，外层ActiveProcessesFinal=0；本轮owned目录已删除，cleanupFailure=null。原生消息cost=0仅为Agent记录，账户账单未独立核对。没有代码/测试修改或测试suite执行；HEAD/index及原有文件哈希在写本文档前逐一保持。仅更新基线/NEXT_TASK与ignored进度记录，无Git提交推送。
+- 证据 `project-progress/free-model-probe-20261018/`：before.json、probe.mjs、两候选完整运行事件、原生session只读元数据、final.json。唯一后续建议是核查本机OpenCode 1.18.35原生调用被FreeTierError拒绝的客户端/接入兼容性；先只读查官方已知问题，不继续盲试模型或自动修改环境。P0-1 PASS、P0-2 PARTIAL及68/100规划信用保持，未推进任何阶段。
+
+### 7.21 Owner提供资料后的ask审批门控最小验证（限流；非可调用PASS）
+
+- Owner提供OpenCode官方仓库Issue #49433/#51315并明确要求试一次原生`ask`方案。按research-before-work核对原文与本机`run --help`：本机1.18.35支持`--pure`。Issue中的社区复现支持bash/read deny会导致某些免费层403、ask可保留工具定义；并不支持“六个工具缺一不可”的绝对说法，已有保留edit/write deny仍成功的报告。没有将社区分析写成已审定的服务端规范，也没有使用其中请求头/二进制绕过方法。
+- 本轮复用既有最小探测器和真正的`src/cli/index.ts run ... --live-agent`，只启动一个新原生`opencode/big-pickle`会话，`--agent build --pure --title=FREE_PROBE`，同一免费模型作为small_model；当前隔离配置由全工具deny改为`permission={"*":"ask","external_directory":"deny"}`，build同规则，不自动同意工具调用，不修改用户持久配置、wrapper路由或外部安装。数据只有固定回复问句与本轮隔离空目录，没有项目代码。官方价格表仍将Big Pickle列为Free，本机公开元数据context=200000。
+- 实际session `ses_eb1367e68ffekAiPIyNctnUrYr`，原生只读数据库确认provider=opencode/model=big-pickle。实际约30426ms，CLI exit1，终态TIMED_OUT，无回答；精确session日志在2026-10-18T11:33:12.841Z记录AI_APICallError/rate limit。本次没有观察到403/FreeTierError；但参数/模型与上轮不同，不能据此宣称已做同模型单变量因果验证，或免费可调用已经PASS。没有额外重试或后续模型探测；日志行不是内部请求总数，账单仍未独立核实。
+- 原生失败事件cleanup.treeStopConfirmed=true，外层Job treeStopConfirmed=true、ActiveProcessesFinal=0；owned目录删除，cleanupFailure=null。生产源码/测试/runner未改，无测试suite执行；HEAD/index及范围外dirty保持，无commit/push。当前只更新基线/NEXT_TASK和ignored页面。P0-1 PASS/P0-2 PARTIAL、并行写CLOSED、automaticPostRoundAction=NONE及规划68/100不变。
+- 资料：https://github.com/anomalyco/opencode/issues/49433 （含Linux/Windows ask复现与其他拒绝原因），https://github.com/anomalyco/opencode/issues/51315 （read禁用复现），https://opencode.ai/docs/cli/ （pure/permission说明）。证据`project-progress/free-model-ask-probe-20261018/`：before.json、probe.mjs、原生事件/metadata、native-log-evidence.json、final.json。下一步仅建议核实免费池限流作用域与恢复条件，不自动继续模型试跑或开发委派；ask不能等同于允许无人值守执行任意工具。
+
+### 7.22 Owner授权DeepSeek Free单次ask探测（CLI限流；桌面入口待对照）
+
+- Owner表示OpenCode桌面版可以调用DeepSeek V4.1 Flash，明确授权再试一次。复用§7.21已经核对的本机1.18.35、官方Issue与原生CLI参数，不重复检索或修改实现；本机公开模型元数据仍为opencode/deepseek-v4.1-flash-free、context200000、input/output cost0。桌面成功仅按Owner报告记录，其完整provider/model与版本本轮尚未核对，不假定与CLI同路由。
+- 实际经既有genuine CLI live入口和contained ManagedProcess，只发起一个新原生会话：`opencode/deepseek-v4.1-flash-free`，build/pure、固定title、主/小模型同一免费候选，隔离空目录和ask审批/external_directory deny；仅固定回复问句，不发送仓库代码、不自动审批工具、不运行产品Round/其他Agent/LAYA/Review，不改长期开发模型或配置。
+- 原生session `ses_eb131d674ffeVwgUY8Yhwm5WTo`，只读数据库确认provider=opencode/model=deepseek-v4.1-flash-free；精确session日志2026-10-18T11:38:17.875Z为AI_APICallError/rate limit。约30486ms后CLI TIMED_OUT/exit1，无回答；未观察403，不重试。没有账户限额、恢复时间或内部请求总数的独立证据，不将原生cost0当作账单核实，不推断桌面也不可用。
+- 原生失败事件停止确认，外层treeStopConfirmed=true、ActiveProcessesFinal=0，owned目录删除、cleanupFailure=null。源码/测试未改，无suite执行，无Git提交推送；只同步基线/NEXT_TASK和ignored页面，HEAD/index与范围外dirty保留。P0-1 PASS/P0-2 PARTIAL、68/100信用和其他授权边界保持。
+- 证据`project-progress/deepseek-ask-probe-20261018/`：before.json、probe.mjs、原生运行事件、results.json、native-log-evidence.json、final.json。唯一后续诊断是只读核对桌面成功会话的准确provider/model与版本，再决定是否存在入口/配置差异；不得擅自改用Go/收费路由、升级或继续真实试跑。
+
+### 7.23 桌面与CLI相同模型的只读入口差异核对（根因未验证）
+
+- Owner确认桌面成功选项同为`opencode/deepseek-v4.1-flash-free`，不再将Go/Free模型ID不同作为当前解释；桌面成功本身仍为Owner报告，本轮没有重放桌面会话或调用模型，也未核对两边的账户凭据是否一致。
+- 本机安装的桌面入口为`C:/Users/Admin/AppData/Local/Programs/@opencode-aidesktop/OpenCode.exe`，卸载项/ProductVersion/只读app.asar内package.json相互对应：包名`@opencode-ai/desktop`、版本1.19.0、homepage=https://opencode.ai。npm原生`opencode.exe --version`实际返回1.18.35。PE文件资源的旧FileVersion不作为CLI真实版本依据。桌面界面/包版本不单独冒充已查询的Server协议版本。
+- 只读检查安装包公开应用代码：main设置`OPENCODE_CLIENT=desktop`，通过Electron utilityProcess启动`out/main/sidecar.js`，sidecar加载包内`./chunks/node-DaUPSCrz.js`的Server.listen；不是调用npm目录的1.18.35 exe。未启动或修改桌面应用、未抽取执行38MB Server bundle，也未冒充客户端请求头。
+- sidecar中明确调用`useEnvProxy()`→Node `http.setGlobalProxyFromEnv()`、加载系统证书并补充loopback NO_PROXY。当前Codex进程仅检查到HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY四个变量名存在，未读取/打印其值；`src/runtime/spawn.ts`的ENV_ALLOWLIST/buildEnv未透传这些代理变量，之前探测的extra env也未显式提供它们。这是实际传输配置差异线索，不能据此断言同一出口IP、桌面实际继承值、CLI是否另用系统代理或限流一定由代理导致。
+- 本轮只读诊断，无新增模型/Agent/Review/LAYA推理或测试suite、无源码/测试/配置修改，无Git提交推送；只维护本基线/NEXT_TASK及ignored进度。证据`project-progress/deepseek-desktop-compare-20261018/comparison.json`不含凭据、代理值或对话内容。唯一建议先核查既有代理透传是否应与桌面一致，获得有界调用授权后才在单次临时进程验证；不直接改生产白名单或先升级安装。客户端标识/版本是否影响限流及配额作用域仍待官方依据。P0-1/P0-2阶段及规划信用不变。
+
+### 7.24 Gemini代理资料的本机可行性过滤（只读；待有界环境透传授权）
+
+- Owner转交2026-10-18代理/限流研究附件，按已提供参考结合本机源码过滤，不重做全网检索，不将附件所有“已证实”断言视为本机当前版本的执行证据。采纳先对齐现有HTTP/HTTPS代理、保留回环NO_PROXY、暂不升级/换模型及不盲目传递SOCKS ALL_PROXY的最小方向；具体代理协议支持仍以适用版本为准，不新增代理平台。
+- 明确收紧：本机原始证据是精确session的AI_APICallError/rate limit及30秒deadline，没有已经核实的HTTP429、FreeUsageLimitError、免费剩余额度或固定200次窗口。不能从代理变量缺失推断必然不同出口IP；一次代理实验成功只支持传输配置相关，不能单独证明IP限额；实验失败也不能排除网络并锁定版本/认证。4小时失败报告不能单独证明全网上游池耗尽；资料关于无上限退避的描述不能替代1.18.35本机SessionRetry策略证据。
+- 安装包源码差异以§7.23为准：实际sidecar使用http.setGlobalProxyFromEnv，回环列表是127.0.0.1/localhost/::1；并未在该3381字节sidecar中见到资料所说的createSidecarEnv/proxy-from-env/HttpsProxyAgent或更长回环列表。不把其他版本/路径的实现照搬成当前桌面事实。
+- 关键本机约束：`src/runtime/spawn.ts:197`的buildEnv及`:432`调用用于每次ManagedProcess。先前探测由外层ManagedProcess启动genuine产品CLI，CLI经`src/adapters/opencode.ts:308`创建Transport且不提供env，`src/runtime/transport/cli.ts:96`再启动原生OpenCode并再次调用buildEnv。因此仅给外层extra env加代理仍会被内层过滤。当前AgentConfig/RunRequest/CLI没有已接通的任意env透传参数，不能声称“零源码改动且只改外层env”已经形成有效对照。
+- 唯一最小后续候选：有界修正共享buildEnv的代理继承边界，仅考虑父进程已有且协议合适的HTTP_PROXY/HTTPS_PROXY和保留既有NO_PROXY并补回环；ALL_PROXY不盲目透传，不打印代理/认证值，不增加新运行入口、不关闭离线保护。源码/实施者与一次相同Free模型30秒探测都需Owner明确批准；本轮附件仅作研究输入，未视为无限新调用或生产修改授权。也不通过预加载hook、伪装CLI入口或外部安装补丁绕过现有安全门。
+- 本轮0新增模型调用、0测试suite、无源码/测试/配置修改，仅更新基线/NEXT_TASK/ignored页面；原有HEAD/index/范围外dirty保持，未commit/push。P0-1 PASS/P0-2 PARTIAL、规划68/100不变。证据`project-progress/proxy-research-filter-20261018/assessment.json`；只读audit未修改。产品P0-2离线负例仍待授权，未推进其他阶段。
+
+### 7.25 Owner例外授权的代理继承修复与单次DeepSeek验证（PARTIAL；网关拒绝）
+
+- Owner明确批准Codex本次仅修`src/runtime/spawn.ts`代理继承、一次typecheck/diff及一次30秒DeepSeek Free问答；不新增/修改或运行测试suite，不调用额外开发Worker，不改变长期OpenCode开发/Codex审核分工。本次实施者例外不自动延长。复用已提供研究与§7.24调用链，不重建Runtime/配置系统，不升级外部安装。
+- 实际仅在共享buildEnv增加一个17行hunk：从父环境读取HTTP_PROXY/HTTPS_PROXY（兼容小写键），标准URL解析后仅继承http:/https:协议；保留既有NO_PROXY条目并补localhost/127.0.0.1/::1，同步no_proxy。ALL_PROXY不进入默认继承；原有显式extra env覆盖顺序保持。该入口用于所有ManagedProcess，不冒称仅影响OpenCode；未改离线默认拒绝、launcher、Session、调度、费用门禁、模型或配置文件。代理值不写入日志/配置。
+- `npm run typecheck`仅运行一次，exit0；相对本轮完整dirty字节副本的diff独立查看，仅上述hunk。未创建/修改任何tests/spec文件，未运行测试suite或重复typecheck。代理探测预检记录http=true/https=true/allProxyInherited=false/loopbackExcluded=true，不含代理值；未用未透传代理的旧路径冒充新验证。
+- 实际只启动一次新`opencode/deepseek-v4.1-flash-free`原生会话（主/小模型相同，build/pure/固定title、隔离空目录、ask审批/external_directory deny，30秒deadline，无工具任务或仓库代码）。只读数据库确认session `ses_eb1241afcffe1k2ftpSSZt5DMM`、provider=opencode/model=deepseek-v4.1-flash-free。约3020ms返回exit1、无回答；实际APIError statusCode=403、isRetryable=false，公开message为“Forbidden, OpenCode Free Model Gateway Detect Abuse Traffic”、server=cloudflare。该拒绝区别于之前FreeTierError及rate limit，不能合并原因或据此证明具体IP/版本/账户风控规则。
+- 本次无额外重跑，无LAYA/Review/其他产品Agent调用，没有付费fallback或账户/网络配置修改；原生cost0不当作独立账单证明。原生失败清理treeStopConfirmed=true，外层Job确认treeStopConfirmed=true/ActiveProcessesFinal=0，owned目录删除、cleanupFailure=null。没有通过换IP、伪装header、客户端补丁或关闭TLS校验继续试探。
+- 裁定本片PARTIAL：代理继承修复及静态检查已完成，真实模型调用仍BLOCKED，不能宣称可恢复OpenCode开发。唯一下一步是核查官方对此精确网关拒绝的正常处理方式；不自动追加调用/修改。P0-1 PASS/P0-2 PARTIAL、规划68/100、PARALLEL_WRITE=CLOSED及automaticPostRoundAction=NONE保持。HEAD/index及范围外dirty哈希保留，未commit/push。
+- 证据：`project-progress/proxy-inheritance-20261018/`包含修改前224文件哈希、before-spawn.ts.txt、spawn.diff、一次typecheck.log/json与最终scope；`project-progress/deepseek-proxy-probe-20261018/`包含代理布尔预检、实际事件/原生模型元数据、脱敏public-error.json、final.json和清理事实。只同步本基线/NEXT_TASK/ignored页面，不修改只读audit。
+
+### 7.26 OmniRoute请求适配的只读可行性评估（仅备选；本机修复未证实）
+
+- Owner要求评估https://github.com/diegosouzapw/OmniRoute。按research-before-work实际打开仓库/许可证/Issue并通过GitHub MCP成功get_commit/get_file_contents；不沿用历史MCP不可用结论。仓库MIT、提供Windows/Electron路线且有持续修复；本轮未安装、构建、运行测试或发出模型请求，不将项目宣传/上游测试当本机证据。
+- 提交0349627c86844e87b46dc739eaa604d2cf04ed51真实存在，属于OmniRoute PR #14013、关联#13935；它为第三方网关适配版本化UA、ses_/msg_、stream与工具列表。#14313后续有社区成功报告和TLS假说自我更正，不能只截取早期“必定TLS”或后期个别成功当作统一结论；这些是第三方维护者/用户测量，不是OpenCode公布的稳定服务契约。
+- 当前源码固定到MCP返回commit e62b4b71c5cf1b99d022bc48cb0f30da22f982c0：open-sse/utils/opencodeHeaders.ts会合成UA/客户端/规范形状ID；open-sse/executors/opencodeFreeTierContract.ts会强制流式、学习工具名并注入占位描述/空参数工具，并不是无条件完整注入六份真实原生工具Schema；头部注释、历史测量和当前分支细节须区分，不能据此保证本机当前模型可用。占位工具不等于实际获得执行工具能力。
+- 对照本机最新错误：现有路径已经是真正opencode.exe/原生session，且最近返回的是“Forbidden, OpenCode Free Model Gateway Detect Abuse Traffic”。所读opencodeGeoBlock.ts:81-92的FreeTier识别分支只匹配freetiererror/free tier can only be used，不直接识别该文本；不能因此断言全项目没有通用403处理，但没有证据证明所给0349627修复解决本机拒绝。#14313主要讨论的是旧FreeTierError，不能把两个403视为同一缺陷。
+- 引入独立HTTP网关还需额外核验上游真实模型/费用、自动回退/内部重试与调用预算、工具语义及Agent原生身份归属；这些可配置功能不必然违背LAYA，但不能直接启用默认自动路由而仍声称固定pair与次数保持。MIT仅涵盖代码许可，不替代模型服务的资格/使用政策。现阶段不建议为本问题部署整套网关，也不复制客户端身份伪装路径。
+- 唯一建议优先核查官方支持的桌面后端/CLI接入与版本对齐方式，保留既有Runtime和containment；不擅自升级或启动新推理。OmniRoute可保留为未来经单独授权的provider接入备选，不替代现有规划/状态权威。P0-1 PASS/P0-2 PARTIAL、68/100规划信用及现有冻结不变；仅更新基线/NEXT_TASK/ignored进度，无生产/测试/配置/Git写入。证据project-progress/omniroute-review-20261018/assessment.json含固定源码位置与公开URL；只读audit未改。
+
+### 7.27 桌面本地Server接入尝试（401认证阻塞；0推理）
+
+- Owner提出固定端口/Attach或本地API方案并要求试一下。按research-before-work核对官方Server/CLI文档和本机安装包公开代码；没有照抄“完全信任/彻底绕过/免改代码”等未经验证结论。当前桌面进程已运行，本机包实际为@opencode-ai/desktop 1.19.3（PE及app.asar/package.json），与§7.23此前观察的1.19.0不同，本轮未执行升级或重启。健康未认证，因此不单凭包版本声称后端health版本已经查询。
+- 按已确认OpenCode.exe进程所有权只读定位唯一监听127.0.0.1:58460（PID51556），不是扫描任意本机端口。仅一次不经代理的GET /global/health（3秒界限），实际返回401、WWW-Authenticate Basic realm="Secure Area"；当前Codex环境中OPENCODE_SERVER_USERNAME/PASSWORD键均不存在（仅检查名称，不读取值）。没有发送模型POST、创建Session、读取既有Session内容或访问auth.json，也没有停止/修改用户桌面进程。
+- 当前安装包main公开代码选择OPENCODE_PORT，否则临时分配回环端口；本地sidecar密码由randomUUID生成并经内部IPC提供。不能假定修改全局server.port配置就能控制此桌面启动分支，也无必要为找到的活跃端点重写全局配置。API的Basic Auth连接密码不同于模型provider的认证，已有云认证不能直接替代本地401。尚未取得官方可用的外部客户端连接凭据。
+- 官方文档区分：`opencode attach <url>`是交互TUI，自动化可用`opencode run --attach <url> --format json ...`；Server公开的是/session及/session/:id/message、/session/:id/abort等会话API，并非据此承诺/v1/chat/completions兼容接口。/doc是规范入口，但未绕过401访问。未来试验也应创建独立隔离会话，不复用用户正在工作的活跃会话。
+- 重要生命周期边界：连接桌面Server后，推理/工具在既有桌面后端运行，客户端Job退出不证明远端Session或工具进程已停止；正式接入不能直接沿用“CLI Job空即整个任务树空”的原生子进程证据。下一步只能在合法认证、独立Session、明确权限及可验证abort边界成立后做一次有界无工具问答；不通过kill桌面清理，不声称本轮已获得模型可用证明。
+- Owner随后明确批准仅本地Server连接凭据的本机内存使用，云APIKey/auth.json仍排除。本轮续查安装包公开main/preload/主renderer：main生成随机密码，preload仅经`await-initialization`供桌面renderer初始化；`get-default-server-url`是存储的默认地址接口，不能当作活跃连接密码导出。已检查入口未发现受支持的外部凭据获取机制；这不等于证明整个上游永远不存在该功能。V2背景daemon的`service get password`分支不作为当前embedded Sidecar的可用证据。
+- 依授权中“若没有受支持的凭据获取方式则停止”条件保持BLOCKED，不读取/猜测密码、不用调试器或进程内存提取、不关闭认证、不修改全局端口或重启桌面。0新Session/0模型POST/0凭据读取，无owned Agent进程启动；用户桌面进程未被停止。下一步仅需核实当前1.19.3官方支持的外部连接凭据获取方式，不重复申请相同凭据使用授权，也不自行改走新daemon。没有代码/测试/配置修改或suite运行，仅更新基线/NEXT_TASK/ignored页面；P0-1/P0-2状态、68/100及其他冻结不变，无Git提交推送。证据project-progress/desktop-server-preflight-20261018/preflight.json。
+- 官方来源：https://opencode.ai/docs/server/ ，https://opencode.ai/docs/cli/ ，https://raw.githubusercontent.com/anomalyco/opencode/v1.19.0/packages/desktop/src/main/sidecar.ts （只作相近版本参照；本机已核对1.19.3打包main）。未将共享同一provider/model名或桌面成功报告提升为共享全部认证/会话数据库的确定事实。
+- Owner转回研究后的过滤：接受停止寻找当前embedded Sidecar外部密码导出，并把官方`serve`作为可控连接的候选。当前官方Server文档明确用户名默认opencode、可经OPENCODE_SERVER_USERNAME覆盖，设置OPENCODE_SERVER_PASSWORD启用Basic Auth；不采纳“所有serve/web默认随机密码”或“用户名始终硬编码”的泛化结论。所述CISA版本归因未核实，不作为决策依据。自建serve只解决连接凭据掌控，不能据此认为同一CLI的免费网关403已经解决，也不能用abort返回true代替进程树停止事实。唯一接入建议改为另行批准专用owned服务的非推理预检：回环监听、内存随机密码、认证健康/API、既有Job协同停止及清理；不安装/升级、不改产品或桌面、不发模型POST，本轮未启动该服务。P0-2产品下一片仍为待授权离线负例。
+
+### 7.28 专用owned serve一次性配置及真实问答（接入成立，模型仍BLOCKED）
+
+- Owner明确批准“一次性直接配置完成，然后测试调用，可以就继续项目”。复用§7.27官方资料及本机1.18.35对应源码确认serve/纯净模式；最新官方价格页仍将DeepSeek V4.1 Flash Free列为免费，本机目录cost input/output=0、context=200000。未改安装版本、桌面配置、用户账户或长期开发路由，不新增生产接入层。
+- 本次只在owned临时空目录生成配置，主模型与small_model均为opencode/deepseek-v4.1-flash-free，enabled_providers仅opencode、外部plugin/MCP为0、全部工具ask、external_directory deny。内存生成独立随机Basic密码，通过子进程环境传递，不打印/落盘密码，不读取云Key/auth.json。直接按批准的服务操作，经既有sealed launcher/buildContainedArgv启动专用serve；未修改/关闭项目离线保护门，也没有从测试入口启动真实Agent。
+- 专用端点127.0.0.1:59618；认证GET健康200/healthy=true、实际后端1.18.35，未认证GET为401；/doc及/config读取成功，生效固定模型/权限/无外部插件工具已核对。创建独立命名Session避免自动标题请求，idle abort返回true；这些不被当作运行中工具取消或整套产品集成通过。
+- 唯一一次模型消息POST（30秒硬期限、无重跑/换模型），原生Session ses_eb106f2ffffenBb8O0X97CV43j，assistant providerID=opencode/modelID=deepseek-v4.1-flash-free；约2137ms返回APIError HTTP403“Forbidden, OpenCode Free Model Gateway Detect Abuse Traffic”、isRetryable=false、无回答/无工具调用。原生cost=0、tokens=0；未另查云端账单，不将一次消息POST统计冒充所有内部网络请求计数。请求标识01a14ef9-11aa-7050-bd91-8f56c4dfb264可供官方排障，不是凭据。
+- 最后abort返回true、Session状态表空；另经owned stop marker协同停止服务，生产readControlRecord验证launcherStatus=terminated/treeStopConfirmed=true/ActiveProcessesFinal=0，cleanupFailures=[]，owned目录已删除。不能用abort布尔值或client退出替代这个Job停止事实；本次专用服务树已确认，用户桌面未停。
+- 实际结论：本地认证及专用Server连接配置可行，但没有解决本机CLI免费网关拒绝，因此不继续开发委派/产品Round或付费fallback；P0-2关键离线负例仍未实施。唯一建议凭准确版本、403消息及request ID向官方核实客户端接入要求，不再凭未经验证的“Server天然受信任”说法更换入口反复调用。本次仅ignored诊断记录+基线/NEXT_TASK/进度页更新；诊断执行前后受保护文件的内容哈希已逐项比对，scope changed/newFiles均空、HEAD/index保持，无测试suite/typecheck/生产修改/提交推送。证据project-progress/owned-serve-probe-20261018/result.json、preflight.json及control.txt。
+
+### 7.29 开发Worker改选DSH（路由意图已更新；实际模型及费用待确认）
+
+- Owner明确“换这个”，本项目主要开发Worker调整为DSH，Codex继续协调及独立审核；仅修改项目AGENTS的协作说明，不修改全局AGENTS/环境变量，不删除OpenCode或现有多Agent能力。保留原有任务状态/完成门禁、调度及进程保护，不把换Worker解释为重新实现运行时或授权新产品阶段。
+- 已核对本机@deepseek-ai/dsh版本0.1.5-rc.2、已注册的src/adapters/dsh.ts及其transport/discovery。真实本机协议来自安装包dsh-headless README/lib：`dsh --profile headless "任务"`，stdout最终纯文本、stderr诊断、完成映射退出状态，无已实现的`run --prompt --format json`；既有adapter按此处理，modelSelection=false且原生sessionId不输出。不能凭stdout PASS或退出0跨过P0-1确定性验收。
+- 本机~/.dsh/profiles/headless根及patch均为空，bundles为dsh-base+dsh-headless；默认settings.yaml不存在。已读公开dsh-base配置的agent-default-model为deepseek-official/deepseek-flash，profile默认选择不能冒充用户DSH桌面中的模型/额度。未读取.credentials.yaml或任何API Key，不执行npx安装/升级、不启动DSH/模型或fixture。实际headless认证、额度、免费资格、模型运行证据仍未知。
+- 外部资料中的Cordis/插件架构与官方项目定位相符，但新命令示例不适用于本机版本；dsh-crew未核验，不安装。原生DSH可配置其他provider不等于消除上游限流/计费风险，不宣称“彻底根治”。官方公开依据https://github.com/deepseek-ai/deepseek-harness ，精确协议以已安装版本为准。
+- 唯一直接阻塞是Owner确认此次开发要用的DSH Provider×Model及免费/订阅包含额度；已发出缺失信息问题，不要求提供密钥。确认前不调用默认官方API，不继承OpenCode Free费用资格或自动换收费模型。后续实施仍走已有contained CLI，保留0新增付费、最多一次返工、零默认新增测试与不重复测试边界；P0-2关键离线负例尚未实施，真实E2E/并行写冻结。仅更新项目协作说明、基线/NEXT_TASK/ignored进度；未修改生产/测试、无Git提交推送，audit只读。
+
+### 7.30 WorkBuddy Step限免选择、插件升级及有界试跑（升级PASS；模型接入BLOCKED）
+
+- Owner提供截图明确选择WorkBuddy分组的Step-5-Preview（x0.00/独家限免）。仅选择性读取本机模型目录非秘密字段，得到provider=workbuddy、id=step-5-preview、billing.free=true、credits=x0.00、contextWindow=1000000；这是目录及界面证据，不提升为当前账户实际调用或独立账单证明。未读取.credentials.yaml、云Key、WorkBuddy登录文件或令牌。
+- 核对发现：独立npm CLI仍0.1.5-rc.2，但D:/DSH桌面附带的CLI/base/headless实际均为0.2.1-rc.2；后者已实现--json及独立session事件，不能把§7.29旧CLI限制推广到所有DSH版本。通过桌面发布的runtime/cli/bin/dsh.cmd对应的原生入口运行，而非修改安装包或调用受管理desktop profile来执行任务。
+- 首次隔离预备启动（project-progress/dsh-step-probe-20261018）原生拒绝0.7.7插件的rc.1依赖；另外Codex探针禁用tools服务导致required agent-loop无法激活。两项问题分开记录，不能把该探针错误归因于模型。无可用Agent创建/模型回答，validated Job空、owned删除。既有desktop compatibility.json中已有0.7.7/rc.2豁免，本轮未设置/复制豁免，隔离profile按默认校验拒绝。
+- Owner单独批准仅升级插件并单次验证后，先备份desktop profile六个配置/锁文件至ignored profile-backup；使用桌面原生CLI plugin --profile desktop add dsh-workbuddy-connect@0.7.8。安装退出及生产control验证成功、实际插件0.7.8；包管理器供应链校验通过，+1/-1包，未升级DSH/Node/pnpm。仅原profile package.json及pnpm-lock.yaml变化（插件由^0.7.7固定0.7.8），cordis根/patch、workspace和compatibility逐字不变；无新增版本豁免，未主动重启桌面或改全局默认模型。
+- 更新后一次有界试跑使用独立owned DSH_HOME/profile/demo，选择workbuddy/step-5-preview、禁用具体操作工具及辅助标题/重试插件，保留Agent必需tools服务。原生Session session-6f053245-fd4f-4497-b0bf-4fb57281e1b8产生turn_start/step_start/turn_end(error)/final空文本，报UNKNOWN_MODEL：pi-ai provider workbuddy has no configured model step-5-preview。模型解析阶段失败，无模型回答/工具执行，不称实际模型身份或真实推理成功；没有继续试其他ID、读取登录凭据、自动重试或付费fallback。
+- 两次诊断及安装的validated Job均ActiveProcessesFinal=0、cleanupFailures=[]、owned临时目录已删；安装/诊断之外没有产品Round、LAYA或Native Review调用，未跑测试suite或typecheck。独立检查实际事件、退出事实和profile差异，不采信外层launcher退出0为Agent成功。工作树受保护文件在试跑期间哈希保持、HEAD/index未变，无commit/push。
+- 唯一直接阻塞改为“隔离headless未暴露桌面插件提供的指定模型”；是否因DSH_HOME中的插件状态/认证目录或目录初始化时序导致尚未确定，不据此断言WorkBuddy账号无效或Step本身不可用。下一步仅做两环境的模型目录加载差异定位，不重装/豁免/继续模型探测。现有产品adapter仍指旧CLI协议，尚未将新桌面CLI接入为长期开发调用；不得声称切换已完成或P0-2已推进。
+- 依据：https://github.com/corrinehu/dsh-workbuddy-connect 及当前package.json（0.7.8 peers匹配rc.2），本机app.asar公开CLI/headless代码；插件是第三方WorkBuddy连接实现，使用客户端接口而非WorkBuddy官方开放API，保留维护风险。证据project-progress/dsh-step-update-20261018/中的install-result.json、profile-change-list.json、events.json、result.json；备份和证据均ignored，不进Git。
+
+### 7.31 Gemini资料过滤及WorkBuddy目录源码映射（只读；不追加模型试跑）
+
+- 已核对本机桌面捆绑0.2.1-rc.2的headless README/cordis.patch.yml：确实禁用credentials/authorization/deepseek-account，文档提供重新启用三行的通用方案。该事实针对DSH托管认证，不能直接证明当前第三方WorkBuddy问题源于这些插件。用户资料中的Discussion #8227无准确可复核链接；auth login、--refresh-catalog、provider:ready及给定providers静态映射语法未取得当前版本依据，不执行，不写成确定事实；第三方聚合站不作为协议依据。
+- 本机dsh-workbuddy-connect 0.7.8 lib/index.js:283/514/1870：WorkBuddy路由使用INERT_AUTH、resolveApiKey→shim.token，只必需注入llm；createVariantRuntime:2000自行创建WorkBuddyCredentialStore。相应host-heartbeat-sjotAEdb.js:3456/3489的current()分别读WorkBuddy桌面文件及插件own副本，不走DSH通用llm-pi-ai托管凭证。因此不采纳“所有WorkBuddy凭证必在DSH_HOME/llm-pi-ai”或“启用deepseek-account即可修好”的归因。
+- 仅做路径存在性检查：Windows Local候选workbuddy-desktop.info存在，Roaming候选不存在；原DSH_HOME的.workbuddy-auth.json不存在。不打开上述文件、解密或读取token；存在不等于有效认证。独立DSH_HOME会影响插件自有缓存/副本，但不会自动抹掉外部WorkBuddy桌面凭证路径，不能仅凭隔离目录断言已丢登录态。
+- 模型ID无需猜：本机插件fallback本已包含step-5-preview。createVariantRuntime:2013先setVisible(false)，helper WorkBuddyCatalog.current:4503在隐藏时返回[]；index.js:2518的apply()尾部异步startVariant，随后syncAll()也未await/return。syncVariant:2494先等store.current，adoptIdentity后才显露目录。源码因此暴露“provider已注册但目录尚不可见”的启动竞态可能，符合历史UNKNOWN_MODEL现象；凭证解析失败也会继续隐藏，旧试跑未保留足够时序/状态证据，不能将竞态提升为已唯一定位的实际根因。
+- 结论：暂不改DSH凭证配置，不启用DeepSeek账户，不添加重复workbuddy provider或静态fallback，不复制凭据，不改插件安装源码。唯一最小下一动作是非推理的目录就绪诊断：分别观察provider注册、WorkBuddy目录出现及脱敏认证失败/超时状态，再判断是否需要就绪等待修复；本轮未编写/运行该诊断，也不重新试模型。项目现有调度/验证/权限不变；0新进程/模型/测试，无生产或用户配置修改，HEAD/index保持。
+- 已读官方headless文档 https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/bundle/headless/README.md ，插件公开源码 https://raw.githubusercontent.com/corrinehu/dsh-workbuddy-connect/main/lib/index.js 及已安装0.7.8代码；在线main仅作对照，判断以本机版本为准。已同步NEXT_TASK及ignored进度，不增加规划完成信用。
+
+### 7.32 DSH目录非推理诊断及有界接线尝试（诊断通过；接线两次失败已熔断）
+
+- Owner要求“直接搞好”；本轮只针对DSH目录启动接线，不推进P0-2或产品Round。Codex实施ignored profile局部就绪门槛，非生产源码/测试改动，不修改安装包/全局账户/正在使用的desktop或headless profile，不新增Planner/Runtime/Registry。
+- 复用已安装0.7.8与捆绑0.2.1-rc.2，仍用临时DSH_HOME、同样的provider/model配置及既有sealed Job。禁用headless-runner，仅通过公开ctx.llm.listProviders/listModels观察目录：provider=workbuddy的19项中，step-5-preview · x0.00在3070ms后可见；0 Agent任务/模型请求，诊断rootExit=0、validated Job空、清理0失败，owned删除。证据project-progress/dsh-ready-fix-20261018/events.json/result.json。
+- 此结果排除了“该隔离组合始终没有模型目录”及“必须复制DSH托管凭据才能显露模型”的解释；与目录异步就绪问题一致，但不单凭一次成功观察证明此前失败的唯一原因，也不将模型列出当作已真实可调用。未读取/复制凭据、启用DeepSeek账户或追加静态模型。
+- 首次接线把ownerWorkbuddyReady加入headless-runner的必需inject，目录门槛在异步观察后provide。DSH在约1.9秒即报required headless-runner缺少ownerWorkbuddyReady，尚未有Session/模型事件。唯一返工只把门槛run() Promise从apply返回，第二次仍约1.7秒同样失败；两次均没有进入推理。说明此“等待服务再激活required runner”的profile挂载方式不适用于当前加载器，Codex该接线未完成，不能归咎Step模型或WorkBuddy认证。两份原始失败证据分别project-progress/dsh-ready-call-20261018/和dsh-ready-call2-20261018/。
+- 已按Owner两次失败规则停止，不再改插件/重试或追加调用。三个owned Job均ActiveProcessesFinal=0，cleanupFailures=[]、owned临时目录已删；试跑中所有受保护工作树文件内容/HEAD/index保持，无生产/测试文件修改、suite或typecheck运行、无Git提交推送。实验profile helper仅保留在ignored证据目录，不接入长期开发默认调用。
+- 唯一后续是明确Cordis/DSH支持的启动延期或按目录就绪挂载原生headless-runner的生命周期入口，再申请有界修正；不以固定sleep、猴子补丁、另一套执行器或复制凭据替代。当前结论BLOCKED，DSH模型真实可调用性仍未知，P0-1/P0-2和规划信用均不变。
+
+### 7.33 P0-2两项关键离线负例（本片PASS；整体PARTIAL）
+
+- Owner明确允许Codex本轮直接修改现有tests/p02-auto-advance.test.ts，仅补“发送前撤销授权”和“Review拒绝时非零退出”，运行该单文件一次及类型检查。本次实施者例外仅此片，不修改生产代码/长期路由、不调用DSH/OpenCode/LAYA/Native Review；不是开发Worker委派或第三方独立审核。
+- 复用真实runRoundCli、批准摘要、pre-send gatedFetch、统一Verification及原有fixture。Case B在probes getter后以microtask变更已批准材料，跨过异步准备后触达真实发送门：stage-check先通过，随后approval-revoked拒绝，sendGate.attempts=0、底层fetch POST=0、Worker/Review=0。Provider预算reserved=1/used=1是保守预留/尝试语义，不代表实际发送。
+- Case C在批准前从模型池移除Reviewer pair，保持Worker pair有效。真实contained Node子进程中两项任务均机器验证完成，两个批准Node测试实际写出各自marker；Review被模型池准入拒绝、dispatch=0、execution_incomplete/machine-supervision-not-run/verdict=null。JSON ok=false、CLI返回1、真实进程exit=1且无signal/fatal/cleanup失败相互一致，未将无关崩溃冒充拒绝。
+- 单次typecheck PASS（约3.18s）；单文件41 passed/0 failed、exit=0（约1.42s），原正向链断言保留。子进程及外层contained树均确认停止，validated ActiveProcessesFinal=0；owned临时目录同一finally账本清理，cleanupFailures=0。fake Agent/fetch不代表真实模型验收，日志中的cline未注册警告不是Agent启动证据。
+- Codex核对最终测试差异与生产发送/Review投影/退出路径；生产文件未改，不重跑历史suite或追加模型探测。P0-2仍缺失败阻断、wait保真、严格人工checkpoint等边界证据，不能以本片PASS封板整体或启动P0-3/4。唯一建议下一片为有界离线验证“首任务验证失败时不派发下游”，仍待Owner授权。
+- 证据project-progress/p02-negative-20261018/：before.json、before.test.ts.txt、typecheck.log/json、单次independent-test.log/json及现场保护结果；audit只读。HEAD/index/范围外dirty保留，无commit/push/merge；本机快照同步，历史规划信用68/100不增。
+
+### 7.34 P0-2首任务可信测试失败阻断下游（本片PASS；整体PARTIAL）
+
+- Owner明确允许Codex仅在tests/p02-auto-advance.test.ts补这一项离线负例，最初授权单文件一次及typecheck。保留§7.33原有A/B/C断言与全部生产逻辑，仅增加错误实现fixture和Case D；不调用开发Worker、产品Agent、LAYA或Native Review。
+- 受控Worker在正确路径交付add.cjs，但计算为a-b，原批准Node断言不变。真实contained测试退出1，统一完成门返回completion-test-nonzero/“the approved test exited 1 (not 0)”，真实CLI machineGate停于machine-verification-stop。拒绝记录绑定实际派发子任务/Attempt/Session；两任务均未成功、后续测试任务未派发/无产物、Review未派发且verdict=null，JSON ok=false/exit1/executionIncomplete=true；仅2个受控决策POST，没有继续决策或人工输入fallback。
+- typecheck单次PASS（约3.30s）。首次单文件50/2、exit1：新增断言按implementation类型取到根容器，误与子任务的停止记录比较。日志已显示批准测试非零与下游零派发。只将定位条件改为同时匹配真实report.decision.dispatchedTasks（来自Attempt历史）；没有放宽拒绝、身份或阻断断言，没有生产修复。
+- Owner单独批准额外单文件运行一次；最终52/0、exit0（约1.71s），A/B/C原覆盖保持。首次失败与两版本哈希完整保留，不以重跑抹除失败。最终一行定位修正未再次typecheck；最后运行已执行精确最终源哈希版本，无第三次运行或其他suite。
+- Codex静态复核CLI machineGate→wb.completeTask→原completion gate、报告Task/Attempt与Review拒绝投影。生产文件未变；本次Codex直接实施及复核，不宣称第三方独立审核或真实Agent验收。默认离线保护及global fetch拒绝保持；owned目录清理账本无失败，内外Job停止确认、ActiveProcessesFinal=0；0真实模型调用。
+- 唯一建议下一片：有界离线验证LAYA返回wait时，不伪造完成、不派发Worker/Review、不代填用户accept；待Owner另行授权。严格人工checkpoint等其余边界仍待验，P0-2整体PARTIAL，P0-3/4和真实E2E不启动。历史68/100规划信用不按测试数增加。
+- 证据project-progress/p02-failure-block-20261018/：before.json、before.test.ts.txt、typecheck.log/json、首次independent-test.log/json、corrected.test.ts.txt、最终recheck-test.log/json、review.json及final-state.json。HEAD/index/范围外dirty保持，无commit/push/merge；audit只读，唯一基线/NEXT_TASK及ignored页面同步。
+
+### 7.35 P0-2 wait保真离线负例与既有开发路由恢复（负例PASS；模型未重验）
+
+- Owner明确要求Codex自行完成已给OpenCode的wait单文件任务，故仅在tests/p02-auto-advance.test.ts添加harness的wait选项及Case E，保留A–D。通过原makeLayaFetch→真实Provider解析→runDecisionCycle/applyDecision→runRoundCli，未直接构造最终报告或替换生产决策。
+- 真实typed结果保留action/via=wait、code=decision-wait、applied/dispatched=false；顺序循环按no-progress安全停止，任务及机器完成记录不伪造成功、实际Attempt派发列表为空，Worker/Review/人工输入均0，无代码/测试/成功marker，无Review verdict，JSON ok=false/executionIncomplete=true、CLI返回1。受控fetch在既有3次上限内，没有预算或发送门拒绝；不把保留wait误写为一次请求硬规则或真实推理证据。
+- 单次typecheck PASS（约3.11s）；单文件63 passed/0 failed、exit0（约1.68s），A–D保持。内外contained Job停止确认、ActiveProcessesFinal=0，owned目录清理账本无失败；0真实模型调用。本次Codex直接实施和静态复核，无第三方独立审核，不跑其他suite，不推进P0-3/4或真实E2E。
+- Owner随后要求恢复以前命令OpenCode的工作流、模型仍DeepSeek V4.1 Flash。核对原C:/Users/Admin/.codex/bin/opencode-agent仍存在且支持implement/--dry-run，未修改或降级wrapper/外部Agent安装。用户环境值仍为opencode/deepseek-v4.1-flash-free；复用该值的Git Bash dry-run输出role=implement、model精确相同、dir为本项目。仅将项目AGENTS的DSH开发默认恢复为OpenCode，未写全局AGENTS/用户环境/凭据/产品配置，未切换opencode-go付费路由，也未启动真实会话。
+- “恢复工作流”仅指命令与项目分工恢复，不证明免费网关当前可用；旧Free 403/限流、Go历史调用和DSH就绪接线失败全部保留。下次真实开发委派前仍核对模型/费用及调用授权；不因恢复配置自动运行问答或产品Round。Owner要求手动转交时仍直接给提示词。
+- 证据project-progress/p02-wait-20261018/：before.json、before.test.ts.txt、typecheck.log/json、单次independent-test.log/json、before-routing-AGENTS.md.txt、routing.json、最终diff及现场保护结果。HEAD/index/范围外dirty保持，无commit/push/merge；audit只读。基线/NEXT_TASK/ignored页面同步，68/100规划信用不加分。
+- 唯一建议下一片：离线核对P0-2与显式严格人工checkpoint入口兼容性，确保输入回调被实际使用且不能默认accept；待Owner另行授权，不顺带实现P0-3恢复或真实人工E2E。
+
+### 7.36 P0-2显式checkpoint兼容性核对（既有入口49/0；组合证据仍缺）
+
+- Owner要求继续主项目并在需要外部资料时给Gemini4检索单。先复核现有tests/b46-workflow-checkpoint.test.ts、round-cli的autoMode/checkpointGate和原生reader；现有套件已覆盖continue/stop/accept、快照分离、非法输入、非TTY/EOF/超时/输入错误拒绝及子进程自然退出，无需重写。纯本地既有契约核对不新增外部资料需求。
+- 仅运行TEST_TIMED_SUITES=tests/b46-workflow-checkpoint.test.ts node scripts/test-timed.mjs一次，Runner先严格归一化白名单选择并预加载offline-context，未执行默认全量suite。49 passed/0 failed，真实exit0、约2.11s；controlled reader子进程均自然退出，套件owned目录清理未报告失败。无源码/测试/helper/runner修改，因此未额外typecheck或跑P0-2等相邻文件；没有开发委派/真实Agent/LAYA/Native Review调用。
+- 本轮证明现有无stage的显式人工入口仍兼容。源码autoMode=stage!==null && checkpoint!==true，checkpointGate仅在flag开启时消费输入，静态支持stage+checkpoint选择人工路径；但B4.6 fixture无stage文件/confirm，尚未实测此组合。不能以49/0或静态分支判断封板P0-2，也不能把fixture输入当Owner真实accept。
+- 已知归属问题仍在round-cli checkpointGate：reader抛错及非法输入走record('stop')，record固定source=user。现有reader负控只证明拒绝与资源释放，不证明超时来源正确；该缺陷已属P0-3边界，不本轮扩修Verification/Human Gate。需要设计其最小事件归属调整时，再按Owner协同规则列Gemini官方资料需求，不提前造框架。
+- 唯一下一步是有界补“已确认stage+显式--checkpoint”的组合离线证据，验证真实回调被使用且显式stop阻止自动完成/下游/Review；先形成bounded任务，实施者及新测试授权按Owner边界。OpenCode路由仅恢复dry-run，未因继续推进自动试模型或更换provider。
+- 证据project-progress/p02-checkpoint-readonly-20261018/：before.json、checkpoint.log/json及final-state.json；只更新本基线/NEXT_TASK/ignored页面，HEAD/index/所有源码测试及范围外dirty保持，无commit/push/merge，audit只读，规划信用68/100不增。未创建owned Agent服务Job，不把Runner正常退出包装成新增的全局Job认证。
+
+### 7.37 OpenCode既有wrapper单次真实复测（BLOCKED，403网络IP拒绝）
+
+- Owner明确要求“看看能不能调用opencode，现在试试”。复用既有opencode-agent implement及ManagedProcess/sealed Job开发路径；用户环境值精确核对为opencode/deepseek-v4.1-flash-free，未换Go/provider/模型或改Codex自身模型。真实CLI仍为opencode-ai@1.18.35，未重装/升级。官方当前Models页仍列该完整ID输入/输出/缓存读取Free，本机元数据同为0、context=200000；仅此固定免费路由，无付费fallback。
+- 只在新建owned空demo发送固定合成问答，要求精确回复OPENCODE_CONNECTION_OK；主模型与small_model相同，enabled_providers仅opencode，禁插件/MCP配置、自动更新/压缩/LSP/formatter；原生工具ask且无批准通道，external_directory deny，不用工具裁剪或客户端伪装。30秒硬截止、1个原生会话，无重试或补救会话，不发送项目源码/聊天/无关本机数据，不直接读取认证文件或改账户设置。
+- 实际约3271ms正常结束但exit1；原生Session ses_eae396bafffe7i0r8F2AAWyvq9的assistant元数据确认provider=opencode、model=deepseek-v4.1-flash-free、cost=0，无回答或工具事件。返回APIError/403/FreeTierError/isRetryable=false，消息明确称当前网络IP被检测为abusive traffic、与账户无关。此为服务端的拒绝说明，不将其扩写成独立证实VPN/代理是唯一原因，不切出口/试其他模型/自动购买Go。原生cost=0不是独立账单审计。
+- 记录request关联x-opencode-log-id=01a151c6-99fc-7688-9208-8a61961aea3c及脱敏错误；无密钥/认证头读取或落盘。validated treeStopConfirmed=true、ActiveProcessesFinal=0、cleanupFailures=0，owned目录删除。本轮真实调用1个会话，但无成功回答，不称开发委派可用或产品E2E通过。
+- 依据https://opencode.ai/v2/docs/console/models/（2026-10-19实际打开价格/Free条目）及本机wrapper/原生Session事件；证据project-progress/opencode-recheck-20261019/：authorization.json、before.json、call.mjs、events.jsonl、result.json及final-state.json。call.mjs是本次明确授权问答的contained控制入口，不是新增测试框架/产品执行边。
+- 仅同步本基线/NEXT_TASK/ignored进度，主线stage+checkpoint组合仍未实施，P0-2整体PARTIAL、规划信用68/100不增加。OpenCode开发入口保持BLOCKED；下一次真实调用前应先按服务端说明核实合法网络准入/官方处理，不能把本次授权延长为连续试模型。本轮无测试suite/typecheck/生产修改/提交推送，HEAD/index/范围外dirty保持，audit只读。
+
+### 7.38 Desktop 1.19.3固定凭据方案源码准入（BLOCKED，0调用）
+
+- Owner要求尝试“预设OPENCODE_SERVER_PASSWORD/USERNAME/PORT后启动Desktop，再用HTTP/attach”。先只读核对当前安装包版本1.19.3及公开main/sidecar源码，未读取运行内存、IPC秘密或认证存储。原桌面未退出/重启，端口/配置/用户环境未改，未启动新的服务/Session/模型请求。
+- 本机out/main/index.js的本地启动链读取OPENCODE_PORT，但随后无条件const password=randomUUID()，传给spawnLocalServer→utilityProcess.fork(out/main/sidecar.js)及start IPC；sidecar的prepareSidecarEnv(command.password,...)覆盖OPENCODE_SERVER_USERNAME为opencode、PASSWORD为IPC password，Server.listen也直接使用command.password。createSidecarEnv复制父环境并不能覆盖这条后续赋值。因此材料所述“环境凭据优先、只在未设置时随机”不适用于本机1.19.3；重启桌面并设置固定密码不能据此保证外部认证。
+- 已枚举当前安装目录exe，未发现opencode-cli.exe/独立同版本Sidecar exe；当前Sidecar是Electron utility process执行JS模块，起点需要process.parentPort。不能把JS当独立CLI执行，不能未经授权编写私有IPC引导器/补丁或抽取内存密码来凑成功。
+- GitHub MCP实际读取Issue #32250和#24747：前者是1.17.6桌面Node utility/TUI Bun的MiniMax TLS证书差异用户报告，后者是1.14.28环境密码导致非attach run认证失败的用户报告；它们不证明本机1.19.3密码优先级，更不证明1.18.35指纹是Free 403唯一根因。保留Node/Bun差异作线索，不将GitHub用户分析冒充已确认通用保证。
+- 本轮0模型调用/0owned进程启动/0凭据读取，不启动测试或typecheck、不修改源码或外部安装；仅同步基线/NEXT_TASK/ignored进度。证据project-progress/desktop-sidecar-precheck-20261019/：before.json、local-source.json（公开源码行号）、github-sources.json（原Issue内容）、precheck.json及final-state.json。HEAD/index/范围外dirty保持，audit只读，无commit/push/merge，主线stage+checkpoint组合未推进，68/100信用不变。
+- 下一接入研究仅向Gemini核实官方支持的Desktop 1.19.3外部配对/外部server连接或独立同版本服务启动途径，要求准确tag源码/入口，不能继续使用“固定环境密码即能接管Desktop”的假设。若需升级/新进程引导或安装，单独给出最小授权，不自动实施。
+
+### 7.39 P0-2确认stage+显式checkpoint组合（BLOCKED：预检模式冲突）
+
+- Owner明确“你自己推进主项目先”，Codex本轮只补tests/p02-auto-advance.test.ts的harness checkpointInput选项、flag接线和Case F；不再试OpenCode/DSH入口。复用既有stage、固定pair、真实CLI、callback seam及A–E，不新增框架或生产执行边。
+- Case F要求stage-check先投影authorization.mode=checkpoint，确认该digest后首任务运行，再由受控callback明确返回stop，检查未自动完成/后续未派发。本轮仅fixture停止答复，不能冒充Owner真实输入或真实E2E。旧A–E的默认callback仍是调用即throw，未削弱自动模式不消费输入的检查。
+- 单次typecheck PASS（约3.01s）；单次单文件真实exit1（约1.59s）。A–E为63 passed/0 failed；F未达到任务执行/回调：CLI参数解析先返回“--checkpoint cannot be combined with --stage-check: nothing is executed to checkpoint”。测试随后读取不存在的checkpoints.entries触发fatal，最终账本正确非零，不能把63/0摘要当整体PASS。测试草稿/执行版本哈希与完整日志保留，未跳过F或改期望凑绿，未再运行检查。
+- 生产源码最小冲突已定位：round-cli.ts:699保留旧checkpoint&&stageCheck拒绝；同文件buildApprovalAuthorization在:1241把checkpoint/machine-auto模式纳入摘要，确认阶段又要求精确digest匹配。省略checkpoint能取得机器模式预检摘要，但不能据此批准人工模式；直接计算私有digest不是本任务要求的正式CLI预检闭环，未采用绕过。现有“stage+checkpoint运行分支存在”不足以证明确认链可正常使用。
+- 最小修复建议仅调整CLI的合法只读预检组合：在有效stage/workflow条件下允许stage-check投影checkpoint模式，但仍在任何任务/provider/输入前返回；保留不同监督模式的digest隔离、裸flag校验、非法workflow/classify-only等拒绝。随后复用F验证明确stop的阻断。此为生产语义变更，超出本轮测试范围，尚未实施；不得放宽Verification、自动accept或扩到P0-3来源/恢复修复。
+- outer/child contained停止确认、ActiveProcessesFinal=0，owned目录清理无失败；0真实Agent/LAYA/Native Review调用。本次无其他suite/typecheck重跑，不修改AGENTS/生产/helper/runner，HEAD/index/范围外dirty保持，无commit/push/merge。证据project-progress/p02-stage-checkpoint-20261019/：before.json、before.test.ts.txt、executed.test.ts.txt、typecheck.log/json、independent-test.log/json、review.json及final-state.json；audit只读，ignored页面同步BLOCKED，68/100规划信用不增。
+- 唯一下一步为Owner批准上述模式预检冲突的有界生产修复和对应单文件验收；本地规则/调用链已明确，无需Gemini重复外检，不开启新的恢复机制或第四次真实E2E。
+
+### 7.40 P0-2 checkpoint模式预检冲突最小修复（本片PASS，整体待收口裁定）
+
+- Owner对已定位最小生产修复明确“继续推进”；沿用其让Codex推进主项目的本次实施例外，不调用不可用的OpenCode补救。只改src/cli/round-cli.ts和tests/p02-auto-advance.test.ts，无其他生产模块/helper/runner/依赖/AGENTS/外部安装变更。
+- CLI仅删除checkpoint&&stageCheck的旧三行拒绝，更新相邻说明及usage。现有stage-check必须有stage、checkpoint裸flag/合法workflow/classify-only拒绝、文件/计划校验、早期只读return及模式digest绑定全部保留。没有新执行边或任务权威，也未改变Verification/Review/Human Gate；预检显示人工模式不等于模拟或批准人工accept。
+- F的fixture增加两个零推理预检：同样材料分别取得checkpoint和machine-auto摘要；拿machine-auto摘要确认checkpoint运行，在stage-gate以exit2拒绝，probes/POST/Worker/Review/输入均0。使用正确摘要后首任务真实链执行、callback消费一次明确stop；身份/Attempt/Session一致，机器监督enabled=false、无机器完成，任务仍to_verify，下游/Review未派发且无后续产物，JSON ok=false/CLI exit1/incomplete=true，仅2个受控决策POST。该input是fixture，不是Owner真实输入。
+- 将F的stage-check断言前移至checkpoint报告读取前，预检失败时明确记录断言失败而非缺报告fatal；没有跳过、削弱或修改原A–E成功/拒绝断言。上轮原始63/0+fatal/exit1保留在p02-stage-checkpoint-20261019/，未改写失败历史。
+- 单次typecheck PASS（约3.18s）；单文件75 passed/0 failed、exit0（约1.78s），通过existing offline-context和既有contained验证入口，内外Job停止确认、ActiveProcessesFinal=0、owned目录清理无失败。无其他suite、无重复检查、0真实OpenCode/DSH/LAYA/Native Review调用，未运行真实产品Round。
+- Codex核对真实生产差异和最终日志，确认只有usage/注释及旧互斥删除，未改摘要算法、模式切换、调度/任务完成或资源门；本次Codex直接实施及复核，不冒充第三方独立审核。现有9/26历史边界不触碰；超时错误记录source=user仍属于P0-3，不因本片通过视为已修。
+- 证据project-progress/p02-checkpoint-preflight-fix-20261019/：before.json、before.round-cli.ts.txt、before.test.ts.txt、typecheck.log/json、independent-test.log/json、round-cli.diff/test.diff、review.json及final-state.json。HEAD/index/范围外dirty保持，无commit/push/merge，audit只读，基线/NEXT_TASK/ignored页面同步；68/100信用不按测试数增加。
+- 唯一下一步为P0-2最终静态收口审核：对已批准契约、实际源码和A–F证据逐项映射，给出有限PASS/剩余阻塞，不再机械追加测试或探索模型入口。P0-3/真实E2E仍需后续明确授权。
+
+### 7.41 P0-2最终静态收口裁定（PASS，限有界离线实现）
+
+- Owner同意执行最终静态收口审核。本轮只读核对批准需求§20/交付路线P0-2、round-cli授权/发送/派发/完成/Review链及A–F现有日志；没有生产/测试修改，没有新测试/typecheck/模型调用，不重复历史B1–B5审核。未发现该有限范围内新的直接阻断，裁定P0-2 PASS。
+- PASS范围明确为已确认stage+冻结文件计划+各任务完整完成契约+声明free/included模型池+并发1+retry0+no-handoff+有限POST；旧无stage入口不被追认已切换为完整产品新默认。显式checkpoint优先，预检只读且摘要区分监督模式。无需人工accept的自动中间步骤及显式fixture stop分开归属，不伪造Owner真实验收。
+- 核对A–F与调用链：A真实批准Node测试/两个任务机器完成，B异步准备后批准撤销底层POST0，C Review未准入时JSON失败与真实子进程exit1，D可信测试exit1阻断下游，E typed wait保真且不派发，F模式摘要隔离/预检零执行/明确stop阻断。自动完成仍经machineGate→wb.completeTask→applyVerification/P0-1，TaskStore/AttemptStore/Session与执行边不新增。
+- 检查冻结授权投影、task allowlist、同步gatedFetch及最终派发taskPolicyAllows；改变材料/计划/池/目录/任务定义时有失败关闭路径，自动模式拒绝重试/重排/新增任务/接力/模型自判complete。此部分为静态核对，不宣称穷举所有变化组合。Review/最终Human Gate由既有链投影，automaticPostRoundAction=none；最终gate后无再派发路径。
+- 复用上轮75/0及typecheck PASS，本轮确认CLI哈希0F430971…、测试哈希EA3C93E7…与原记录相同，其他生产代码相对该次验证前快照未变；原Job ActiveProcessesFinal=0为历史执行事实，本轮未创建进程Job。P0-1底座/9项和26项历史失败依原裁定，不冒称本轮重跑或全部回归通过。
+- 保留范围：声明池不是实际账户资格/USD/原生辅助请求费用硬限；工具目录绑定不是第三方Agent权限沙箱；fake Worker/Review和fetch回答不是实际Agent/Owner TTY/Native Review证明。Codex对包含自身直接实施片段的源码做静态复核，不称第三方独立审计。B1/B4/完整后端及真实MVP不因P0-2通过而封板。
+- P0-3未实施：checkpoint读取异常/EOF/超时/非法输入仍可能被记录为source=user，这是明确后续缺陷；默认异常待人工材料与跨进程恢复不能由本次PASS推导。唯一下一片建议P0-3a仅做来源归属最小修复，先区分显式用户stop与系统读取失败，不扩建状态机/跨进程恢复；仍待Owner授权。可向Gemini索取Node24官方输入结束/错误/超时语义作为下一片资料，不阻塞已完成P0-2裁定。
+- 证据project-progress/p02-final-static-review-20261019/：before.json、evidence-integrity.json、closure.md（逐项契约/源码/证据矩阵）、final-state.json。只更新本基线/NEXT_TASK及ignored页面，HEAD/index/全部生产测试及范围外dirty保持，无commit/push/merge，audit只读，68/100历史规划信用不按测试数自动增加。
+
 ## 8. 规划估算与本机快照
 
 沿用历史十项权重信用68/100（固定分母为完整后端需求，不含正式UI）；页面按5%档显示约70%、剩30%，旧合理剩余区间30–50%。这不是工时、可用率、自动化完成率或MVP成功概率。本轮文档不增分；下一真实E2E仍未成功，必须看具体阻塞和证据，不能用百分比代替它。
@@ -173,18 +565,18 @@ stageBindingDigest现绑定材料、objective、workflow、planRef/planScope；�
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-16T07:54:15.250Z",
+  "updatedAt": "2026-10-19T02:05:15.4582581Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-1",
-    "name": "确定性任务完成门禁",
-    "status": "blocked",
-    "summary": "Codex独立BLOCKED：4类安全/契约反例复现；typecheck/B42/B43失败。两轮开发已用完；无产品推理，不进入P0-2。"
+    "id": "P0-2-CLOSURE",
+    "name": "有界自动推进离线收口",
+    "status": "done",
+    "summary": "P0-2有限离线PASS：源码/契约/A–F75/0证据静态映射完成，文件哈希一致；本轮0测试/0模型。非真实模型/费用/人工E2E认证，P0-3异常来源缺陷保留，下一片待授权。"
   },
   "next": {
-    "id": "P0-1",
-    "name": "已定位完成门禁/证据与回归缺口有界续修（需新任务授权）",
+    "id": "P0-3a",
+    "name": "待Owner授权：checkpoint系统读取失败与显式用户stop来源分离",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -261,16 +653,16 @@ stageBindingDigest现绑定材料、objective、workflow、planRef/planScope；�
   "blockers": [
     {
       "severity": "P1",
-      "kind": "本轮独立阻断",
-      "title": "P0-1草稿可绕过且存在新回归",
-      "detail": "缺契约编码可完成；测试写入未计范围；大文件版本/Junction根漏检；身份与测试停止claim保护不足；B42语法、B43夹具未闭合。",
-      "next": "只续修P0-1已定位问题；不启动P0-2/3或真实E2E。"
+      "kind": "当前验收缺口",
+      "title": "P0-3系统/用户来源与异常待人工尚未实施",
+      "detail": "P0-2已有限离线收口；reader异常/超时/EOF等仍可能被记为source=user。真实用户stop与系统故障来源尚未正确分离，不能宣称首尾监督完整可用。",
+      "next": "Owner另行批准P0-3a最小来源修复，保留执行deadline/停止保护，不扩建恢复引擎。"
     },
     {
       "severity": "P1",
       "kind": "后续依赖",
-      "title": "预授权绑定、异常等待与真实闭环尚未完成",
-      "detail": "现有digest未全面绑定模型/费用/工具；系统超时仍误记user。默认自动流转须P0-1通过后分片实施，Task/Attempt内存不等于可恢复。",
+      "title": "原生权限/费用资格与真实闭环尚未验收",
+      "detail": "P0-2冻结的是解析后的声明与有界执行面，不是原生Agent完整权限或账户计费认证；Task/Attempt内存不等于可恢复，真实MVP仍PARTIAL。",
       "next": "依次P0-2、P0-3通过，再另行授权P0-4真实E2E。"
     },
     {
@@ -586,18 +978,18 @@ stageBindingDigest现绑定材料、objective、workflow、planRef/planScope；�
     {
       "id": "P0-1",
       "title": "确定性完成门禁",
-      "status": "blocked",
+      "status": "done",
       "deliverable": "Expected Artifacts + Allowed Scope + Trusted Test Execution→统一Verification",
-      "evidence": "Codex独立BLOCKED；57/0与源副本负控通过但4类合同断言失败；typecheck/B42/B43失败，handoff388/26签名保持。",
-      "summary": "部分实现，独立BLOCKED；4类反例复现及新增回归待修",
-      "note": "两轮开发结束，不再追加第三轮"
+      "evidence": "本轮typecheck PASS；生命周期149/0、隔离40/0、cancel49/0、completion118/0，真实exit0，全部Job ActiveProcessesFinal=0。",
+      "summary": "独立PASS；旧Case24/32按严格Runner契约迁移完成，无删除/skip或白名单弱化",
+      "note": "开发2会话单列；产品0；生产/HEAD/index/范围外dirty不变；9/26历史边界保留；P0-2尚未授权。"
     },
     {
       "id": "P0-2",
       "title": "授权范围内默认自动推进",
-      "status": "planned",
-      "deliverable": "整轮绑定计划/范围/模型/费用/工具，机器验证后Task1→2",
-      "evidence": "依赖P0-1通过；不得伪造accept，不重复已成功Worker。"
+      "status": "done",
+      "deliverable": "已确认stage的有界声明绑定与机器验证后Task1→2，显式checkpoint优先",
+      "evidence": "最终静态收口PASS，复用A–F75/0/exit0/Job空并核对当前哈希；本轮0测试/0模型。仅有界离线实现，非原生费用/权限、真实模型或第三方独立审计。"
     },
     {
       "id": "P0-3",
@@ -616,34 +1008,174 @@ stageBindingDigest现绑定材料、objective、workflow、planRef/planScope；�
   ],
   "checks": [
     {
-      "name": "Owner产品契约",
-      "source": "2026-10-16新授权",
-      "result": "Owner approved；P0-1部分实现但独立BLOCKED；P0-2/3未实施"
+      "name": "P0-2最终静态收口",
+      "source": "project-progress/p02-final-static-review-20261019/closure.md",
+      "result": "有限离线PASS：批准契约/真实调用链/A–F75/0日志对应，当前哈希匹配，无其他生产漂移。本轮0测试/typecheck/模型；P0-3来源缺陷及真实E2E边界保留。"
     },
     {
-      "name": "最近真实MVP",
-      "source": "第三次历史Round原证据",
-      "result": "PARTIAL不变，非本轮实跑"
+      "name": "P0-2 checkpoint模式预检最小修复",
+      "source": "project-progress/p02-checkpoint-preflight-fix-20261019/",
+      "result": "单次typecheck PASS、单文件75/0/exit0；跨模式摘要拒绝时所有执行/输入计数0，正确确认后stop阻断完成/下游/Review。Job空、0真实模型，上轮失败历史保留。"
     },
     {
-      "name": "唯一下一实施任务",
-      "source": "docs/NEXT_TASK.md",
-      "result": "P0-1已定位缺口续修，需新任务授权；P0-2未开始"
+      "name": "P0-2确认stage与checkpoint组合负例",
+      "source": "project-progress/p02-stage-checkpoint-20261019/",
+      "result": "typecheck一次PASS；单文件真实exit1，A–E63/0但F参数拒绝后缺报告fatal。最小生产冲突已定位，未改生产/重跑；Job空、0真实模型。"
     },
     {
-      "name": "状态与恢复",
-      "source": "TaskStore/AttemptStore当前源码",
-      "result": "内存；pending保存不等于可恢复"
+      "name": "Desktop固定凭据与同版本Sidecar方案源码准入",
+      "source": "project-progress/desktop-sidecar-precheck-20261019/",
+      "result": "本机1.19.3端口读取环境、密码无条件随机并经IPC覆盖；安装目录无独立CLI exe。GitHub MCP实读两Issue但不支持原方案保证；0重启/0凭据读取/0模型调用，执行前BLOCKED。"
     },
     {
-      "name": "历史风险",
-      "source": "26项既有B5.1-WF有限准入",
-      "result": "open，不扩大豁免"
+      "name": "OpenCode wrapper单次真实复测",
+      "source": "project-progress/opencode-recheck-20261019/result.json",
+      "result": "implement/DeepSeek V4.1 Flash Free原生身份确认，3271ms exit1/403 FreeTierError，服务端称当前网络IP限制；无回答/工具/重试，cost字段0，Job空/owned删除。不能宣称开发可用。"
     },
     {
-      "name": "P0-1独立验收",
-      "source": "project-progress/p01-review-20261016T070858Z/codex-final-probes.json",
-      "result": "BLOCKED：4类反例；57/0不覆盖此缺口；typecheck/B42/B43失败，handoff388/26签名保持"
+      "name": "P0-2既有显式checkpoint兼容性",
+      "source": "project-progress/p02-checkpoint-readonly-20261018/",
+      "result": "白名单Runner单文件一次49/0、exit0；无源码测试修改、0真实模型。无stage人工入口通过，stage+checkpoint组合未实跑，超时source=user已知问题保留。"
+    },
+    {
+      "name": "P0-2 wait离线负例与OpenCode路由恢复",
+      "source": "project-progress/p02-wait-20261018/",
+      "result": "单次typecheck PASS、单文件63/0、Job空；wait不派发/不伪造完成。原wrapper dry-run为implement/DeepSeek Flash Free，仅项目AGENTS恢复路由；0真实模型，当前可调用性未重验。"
+    },
+    {
+      "name": "P0-2可信测试失败阻断下游",
+      "source": "project-progress/p02-failure-block-20261018/",
+      "result": "typecheck一次PASS；首次50/2为新增断言误选根容器，修正定位后经Owner批准额外一次52/0、exit0。真实批准测试exit1，机器门拒绝，下游/Review零派发，0真实模型、Job空。"
+    },
+    {
+      "name": "P0-2发送前撤销与Review拒绝负例",
+      "source": "project-progress/p02-negative-20261018/",
+      "result": "单次typecheck PASS；单文件41/0、真实exit0；撤销后POST=0，Review准入拒绝子进程exit1/无signal或fatal；内外Job空、0真实模型调用。"
+    },
+    {
+      "name": "DSH目录就绪诊断与两次接线",
+      "source": "project-progress/dsh-ready-fix-20261018/；dsh-ready-call-20261018/；dsh-ready-call2-20261018/",
+      "result": "诊断模型目录可见；两接线均required-plugin缺ready服务，0推理，已熔断。Job全空/owned删除，无生产配置变更。"
+    },
+    {
+      "name": "WorkBuddy目录与认证链只读映射",
+      "source": "docs/PROJECT_BASELINE.md §7.31；已安装0.7.8公开源码与捆绑headless文档",
+      "result": "确认headless托管凭证禁用及WorkBuddy独立认证链，fallback已有step ID；Local候选仅查存在。发现未等待的异步目录初始化，真实失败归因仍未知；未运行模型或测试。"
+    },
+    {
+      "name": "WorkBuddy插件升级及Step单次试跑",
+      "source": "project-progress/dsh-step-update-20261018/",
+      "result": "原生安装0.7.8成功，仅profile package/锁变化；原生Session turn_end UNKNOWN_MODEL/空final，不能视为模型成功；validated Job空/owned删除，无重试。"
+    },
+    {
+      "name": "DSH接入及当前profile只读核对",
+      "source": "src/adapters/dsh.ts；本机@deepseek-ai/dsh@0.1.5-rc.2公开源码及headless profile",
+      "result": "已有adapter/注册/contained链；纯文本位置任务，无逐请求模型或JSON参数。headless patch为空，settings缺省，默认官方模型费用未知；0进程/推理/凭据读取。"
+    },
+    {
+      "name": "专用owned serve及真实Free问答",
+      "source": "project-progress/owned-serve-probe-20261018/result.json",
+      "result": "健康200/未认证401；1消息POST，正确原生身份，403无回答/工具；cost0；validated Job空/cleanupFailures0/owned删除，HEAD/index及执行前文件保持。"
+    },
+    {
+      "name": "桌面本地Server接入前置核对",
+      "source": "project-progress/desktop-server-preflight-20261018/preflight.json",
+      "result": "GET健康401；Owner本地凭据使用例外已批准，公开初始化IPC未找到受支持的外部获取入口；0凭据读取/Session/模型调用。认证、权限及abort仍未知。"
+    },
+    {
+      "name": "OmniRoute第三方方案只读核查",
+      "source": "project-progress/omniroute-review-20261018/assessment.json",
+      "result": "GitHub MCP实读提交及固定current源码，MIT/Windows路线核实；身份合成/占位工具不等于本机网关拒绝已修复；未安装/试跑。"
+    },
+    {
+      "name": "代理继承修复及单次真实问答",
+      "source": "project-progress/proxy-inheritance-20261018/",
+      "result": "一个17行source hunk/typecheck exit0；代理预检http+https true、ALL_PROXY false、回环排除；真实403 Detect Abuse Traffic exit1，模型身份确认，Job空/owned删除；无测试suite。"
+    },
+    {
+      "name": "代理研究本机接线核对",
+      "source": "project-progress/proxy-research-filter-20261018/assessment.json",
+      "result": "确认外层/原生层均走buildEnv，adapter未提供env；拒绝将429/配额/IP因果作为已证实事实；本轮只读，未试跑。"
+    },
+    {
+      "name": "桌面与CLI只读差异",
+      "source": "project-progress/deepseek-desktop-compare-20261018/comparison.json",
+      "result": "Owner确认相同模型；安装版本/启动实现/代理环境透传存在差异；仅变量名检查，无凭据读取或新增模型调用；因果未验证。"
+    },
+    {
+      "name": "DeepSeek Free单次ask真实问答",
+      "source": "project-progress/deepseek-ask-probe-20261018/final.json",
+      "result": "原生opencode/deepseek-v4.1-flash-free身份确认；精确session rate limit，TIMED_OUT/exit1，无回答；ActiveProcessesFinal=0、owned删除，无重试/长期配置变更。"
+    },
+    {
+      "name": "ask审批门控单次真实最小问答",
+      "source": "project-progress/free-model-ask-probe-20261018/final.json",
+      "result": "opencode/big-pickle原生身份确认；rate limit/TIMED_OUT、无回答；30秒后安全停止、ActiveProcessesFinal=0、owned删除；未验证可调用或账单。"
+    },
+    {
+      "name": "其他免费模型真实最小问答",
+      "source": "project-progress/free-model-probe-20261018/final.json",
+      "result": "2次原生会话均403 FreeTierError、identity确认/exit1；0回答、无重试；两Job ActiveProcessesFinal=0，owned目录删除，长期开发路由不变。"
+    },
+    {
+      "name": "两处夹具修复与正向链收口",
+      "source": "project-progress/p02-codex-fixture-20261018/",
+      "result": "Owner仅本次授权Codex实施验证；两个diff hunk，typecheck PASS/单文件25-0/exit0/ActiveProcessesFinal=0；无模型调用，整体PARTIAL。"
+    },
+    {
+      "name": "一次有界开发恢复",
+      "source": "project-progress/p02-fixture-resume-20261018/",
+      "result": "新session指定Free模型再次rate limit/retry，主动协同停止、ActiveProcessesFinal=0；代码未改、无测试重跑，待Owner实施者决定。"
+    },
+    {
+      "name": "OpenCode无事件只读诊断",
+      "source": "project-progress/p02-startup-diagnosis-20261018/native-metadata.json",
+      "result": "两次会话约1秒建成，指定Free模型身份确认；同session AI_APICallError/rate limit后retry，定位Provider限流；本轮0新推理。"
+    },
+    {
+      "name": "P0-2两处夹具收口尝试",
+      "source": "project-progress/p02-fixture-finish-20261018/",
+      "result": "BLOCKED：两次开发无事件/修改，3分钟截止Job均空；dry-run exit0不证明模型；源码未变，未重跑旧24/1。"
+    },
+    {
+      "name": "P0-2最小正向离线链",
+      "source": "project-progress/p02-fixture-20261018/",
+      "result": "typecheck PASS，单文件24/1 exit1；两Worker+真实批准Node+fake Review已走通，唯一失败为verdict字段误读；全部Job空，仍PARTIAL。"
+    },
+    {
+      "name": "P0-2单文件离线验收交付",
+      "source": "project-progress/p02-offline-acceptance-20261018/",
+      "result": "BLOCKED：两轮截止均Job空；草稿typecheck exit2及fixture缺陷，suite未运行；逐字隔离，原代码/HEAD/index保持。"
+    },
+    {
+      "name": "P0-2发送与失败投影本轮静态收口",
+      "source": "project-progress/p02-send-closure-20261018/",
+      "result": "typecheck一次PASS、diff check PASS、两静态阻断关闭；行为未测；开发原生模型已核对，Job成功且空。"
+    },
+    {
+      "name": "P0-2本轮静态核验",
+      "source": "project-progress/p02-implementation-20261018/",
+      "result": "返工后typecheck PASS、diff check PASS；独立审查BLOCKED，无行为测试。两原生开发会话模型已核实，两个Job空。"
+    },
+    {
+      "name": "本轮定向验收",
+      "source": "project-progress/p01-lifecycle-migration-20261018/",
+      "result": "typecheck PASS；149/0、40/0、49/0、118/0；每suite一次；无Worker重复测试"
+    },
+    {
+      "name": "开发模型与停止",
+      "source": "project-progress/p01-lifecycle-migration-20261018/native-model-evidence.json",
+      "result": "两原生session均opencode/deepseek-v4.1-flash-free；实现超时后安全停，唯一返工正常退出；Job空"
+    },
+    {
+      "name": "历史完成门禁",
+      "source": "project-progress/p01-closure-20261016T114736317Z/final-independent-review.json",
+      "result": "历史18探针/原51项分类保留；本轮completion118/0及指定核心回归通过，不等于所有历史回归均通过"
+    },
+    {
+      "name": "历史失败边界",
+      "source": "Owner本轮授权及上轮只读审计",
+      "result": "9项有限非阻断；B45旧负控未通过；handoff26项UNKNOWN，未补共享停止负控"
     }
   ],
   "sources": [
@@ -670,6 +1202,10 @@ stageBindingDigest现绑定材料、objective、workflow、planRef/planScope；�
     {
       "title": "原20+新增3项一手研究",
       "path": "docs/ENGINEERING_RESEARCH_REFERENCES.md"
+    },
+    {
+      "title": "本轮P0-1最终收口",
+      "path": "docs/PROJECT_BASELINE.md §7.10；project-progress/p01-lifecycle-migration-20261018/final-result.json"
     }
   ],
   "nativeFrontendRoute": "Windows正式桌面工作台；具体UI需求待单独确认，本机进度页不等于产品前端"

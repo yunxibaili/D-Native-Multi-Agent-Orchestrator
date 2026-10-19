@@ -66,7 +66,7 @@ import { buildHandoff, buildTaskBrief, type TaskHandoff } from './workbench-hand
 // R4: the per-attempt evidence SHAPE only. Imported as a type so this file gains no runtime
 // dependency on the report layer, and so the direction stays one-way (report <- workbench).
 import type { AttemptEvidenceInput } from './round-result.ts';
-import { commitPlan, replanSubtree } from './planner-wiring.ts';
+import { commitPlan, replanSubtree, validateCandidateCompletions } from './planner-wiring.ts';
 import { planTasks, validateCandidateDag, type CandidateTask } from './planner.ts';
 import { planFromSpec, type WorkbenchTaskSpec, type PlanFromSpecResult } from './workbench-plan.ts';
 // TeamRun T3-a.1: the READ-only fan-out topology validation + grouping evidence. Pure value
@@ -455,6 +455,11 @@ unDecisionCycle can read a real TickResult. */
     this.reworkPolicy = options.reworkPolicy ?? DEFAULT_REWORK_POLICY;
     this.store = this.orchestrator.getStore();
     this.evidence = options.evidence ?? new AttemptStore();
+    // P0-1: hand the ONE evidence store to the orchestrator for READ-ONLY completion
+    // correlation. The orchestrator never appends through it; it only re-reads a record
+    // to check that a completion proof names an attempt that actually exists. First
+    // attach wins, so a later caller cannot swap the authority out from under a proof.
+    this.orchestrator.attachAttemptStore(this.evidence);
     this.sessions = options.sessions ?? new SessionRegistry();
     this.decisionProvider = options.decisionProvider ?? null;
     this.rootAgentId = options.rootAgentId ?? DEFAULT_ROOT_AGENT_ID;
@@ -563,6 +568,13 @@ unDecisionCycle can read a real TickResult. */
         `workbench could not commit workflow plan: first candidate "${first.taskId}" has no parent, ` +
           'so it is not part of the root it would be committed under',
       );
+    }
+    // P0-1: validate + freeze every present contract BEFORE creating the root, so an
+    // empty/partial contract is a pre-write refusal (no root is leaked) rather than a
+    // `commitPlan` failure after the root exists.
+    const completions = validateCandidateCompletions(candidates);
+    if (!completions.ok) {
+      throw new Error(`workbench could not commit workflow plan: completion-refused ${completions.reason}`);
     }
     const existing = new Map(this.store.all().map((t) => [t.taskId, { taskId: t.taskId, dependencies: t.dependencies } as const]));
     existing.set(spec.taskId, { taskId: spec.taskId, dependencies: [] as string[] });
@@ -1664,19 +1676,31 @@ unDecisionCycle can read a real TickResult. */
         // (attempt-integration.ts §F5), so gating on `ok` here would leave that id
         // unbound and drop real evidence. A run-less refusal recorded nothing, so it
         // must not advance the cursor — that keeps the nth-id pairing intact.
-        if (entry.outcome.run === undefined) continue;
+        const boundRun = entry.outcome.run;
+        if (boundRun === undefined) continue;
         const ids = attemptIdsByTask[entry.taskId];
         if (ids === undefined) continue;
         const at = cursor.get(entry.taskId) ?? 0;
         if (at >= ids.length) continue;
         cursor.set(entry.taskId, at + 1);
-        this.rememberAttemptEvidence(ids[at]!, entry.taskId, entry.outcome.run);
+        this.rememberAttemptEvidence(ids[at]!, entry.taskId, boundRun);
+        // P0-1: bind the attempt id `AttemptStore.append` just minted, the SEALED dispatch
+        // session AND the exact `RunResult` it appended that record for, to the execution
+        // proof the orchestrator recorded for this run. Correlation only — it decides
+        // nothing and creates no proof; completion re-reads the store to verify it.
+        const boundFacts = dispatchFacts.get(entry.taskId);
+        this.orchestrator.recordAttemptBinding(entry.taskId, {
+          attemptId: ids[at]!,
+          sessionId: boundFacts?.sessionId ?? null,
+          run: boundRun,
+        });
       }
     }
     for (const entry of tick.outcomes) {
       // Same run-presence gate as the cursor loop above: a rework execution whose
       // write-back was refused still executed, so its result is still the evidence.
-      if (!reworkIds.has(entry.taskId) || entry.outcome.run === undefined) continue;
+      const reworkRun = entry.outcome.run;
+      if (!reworkIds.has(entry.taskId) || reworkRun === undefined) continue;
       const identity = identityOf(entry.taskId);
       if (identity === null) { notRecorded.push(entry.taskId); continue; }
       // T1-b/T1-d: read the DISPATCH-TIME session the run actually used, from its
@@ -1694,7 +1718,7 @@ unDecisionCycle can read a real TickResult. */
         modelId: identity.modelId,
         ...(reworkSession === null ? {} : { sessionId: reworkSession.sessionId }),
         ...(reworkFacts?.leaseVersion === undefined ? {} : { leaseVersion: reworkFacts.leaseVersion }),
-        result: entry.outcome.run,
+        result: reworkRun,
         budgetUnits: identity.budgetUnits,
         taskType: identity.taskType,
         isRework: true,
@@ -1703,7 +1727,14 @@ unDecisionCycle can read a real TickResult. */
       else evidenceRecorded.push(entry.taskId);
       // The rework attempt gets the same treatment: its id and its run are in this one
       // iteration, so the pairing is exact rather than inferred.
-      if (rec !== null) this.rememberAttemptEvidence(rec.attemptId, entry.taskId, entry.outcome.run);
+      if (rec !== null) this.rememberAttemptEvidence(rec.attemptId, entry.taskId, reworkRun);
+      if (rec !== null) {
+        this.orchestrator.recordAttemptBinding(entry.taskId, {
+          attemptId: rec.attemptId,
+          sessionId: reworkSession?.sessionId ?? null,
+          run: reworkRun,
+        });
+      }
       this.pendingReworks.delete(entry.taskId);
     }
     for (const entry of tick.outcomes) {

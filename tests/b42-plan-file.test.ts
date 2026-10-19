@@ -1,5 +1,5 @@
 /**
- * tests/b42-plan-file.test.ts â€?B4.2: the user-adaptable structured PLAN FILE drives the
+ * tests/b42-plan-file.test.ts â€” B4.2: the user-adaptable structured PLAN FILE drives the
  * EXISTING production chain, end to end.
  *
  * WHAT IS REAL vs INJECTED
@@ -121,18 +121,18 @@ interface Round {
  * Identify which plan role a run belongs to, and whether it is the integration task.
  *
  * The prompt is `Work:\n<THIS task's criteria>\n...handoffs...`, so the CURRENT task's role
- * is the FIRST occurrence â€?a downstream brief echoes its dependencies' outputs (which may
+ * is the FIRST occurrence â€” a downstream brief echoes its dependencies' outputs (which may
  * themselves contain `collaborator N (role)`), so matching ANY occurrence would misattribute.
  */
 function classifyPrompt(prompt: string, roles: readonly RoleSpec[]): { kind: 'step'; role: string; scope: string; collaborator: number | null } | { kind: 'integration'; token: string } | null {
   const integration = /:: integration \(collaborator (\d+) carries integration responsibility\)/.exec(prompt);
   if (integration !== null) return { kind: 'integration', token: `integration (collaborator ${integration[1]} carries integration responsibility)` };
-  const collab = /:: collaborator (\d+) \(([\w-]+)\) â€?file scope:/.exec(prompt);
+  const collab = /:: collaborator (\d+) \(([\w-]+)\) â€” file scope:/.exec(prompt);
   if (collab !== null) {
     const role = collab[2]!;
     return { kind: 'step', role, collaborator: Number(collab[1]), scope: roles.find((r) => r.role === role)?.scope ?? role };
   }
-  const seq = /:: ([\w-]+) â€?deliverable:/.exec(prompt);
+  const seq = /:: ([\w-]+) â€” deliverable:/.exec(prompt);
   if (seq !== null) {
     const role = seq[1]!;
     return { kind: 'step', role, collaborator: null, scope: roles.find((r) => r.role === role)?.scope ?? role };
@@ -212,7 +212,7 @@ async function planRound(opts: {
         writeFileSync(join(cwd, relPath), body, 'utf8');
         changedFiles = [relPath];
         // The acceptance criteria are the task's OWN description. A collaboration member's
-        // criteria token is `collaborator N (role)`, so the claimed output echoes it â€?this
+        // criteria token is `collaborator N (role)`, so the claimed output echoes it â€” this
         // is what the material-driven provider judges, exactly as in production.
         output = parsed.collaborator === null
           ? `OUT_${parsed.role}: wrote ${relPath}`
@@ -276,7 +276,7 @@ async function planRound(opts: {
           if (toVerify !== undefined && rawMaterial !== undefined) {
             const material = JSON.parse(rawMaterial) as { objective: string; entries: Array<{ taskId: string; acceptanceCriteria: string; output: string; executionMissing: boolean }> };
             const entry = material.entries.find((e) => e.taskId === toVerify.taskId);
-            const token = entry === undefined ? '' : (entry.acceptanceCriteria.split(':: ')[1] ?? '').split(' â€?)[0] ?? '';
+            const token = entry === undefined ? '' : (entry.acceptanceCriteria.split(':: ')[1] ?? '').split(' â€”')[0] ?? '';
             const isIntegration = token.startsWith('integration (');
             const satisfies = entry !== undefined && material.objective.trim() !== '' &&
               entry.acceptanceCriteria.trim() !== '' && !entry.executionMissing && entry.output.trim() !== '' &&
@@ -355,6 +355,16 @@ function contractFor(role: string, fileScope: string) {
   };
 }
 
+/**
+ * P0-1: the integration task is a coding leaf too, so the plan must declare its
+ * EXPLICIT completion contract. The fixture writes exactly `src/integration/combined.txt`.
+ */
+const INTEGRATOR_CONTRACT = {
+  expectedArtifacts: ['src/integration/combined.txt'],
+  allowedScope: ['src/integration'],
+  test: { executable: 'node', argv: ['-e', 'process.exit(0)'], cwd: '.' },
+};
+
 const SEQUENTIAL_PLAN = {
   kind: 'sequential',
   plans: [{
@@ -383,6 +393,7 @@ const DUO_PLAN = {
       { role: 'styles', taskType: 'implementation', fileScope: 'src/styles/**', deliverable: 'the styles', ...contractFor('styles', 'src/styles') },
     ],
     integratorMember: 1,
+    integratorCompletion: INTEGRATOR_CONTRACT,
   }],
 };
 const DUO_ROLES: RoleSpec[] = [
@@ -401,6 +412,7 @@ const TRIO_PLAN = {
       { role: 'specs', taskType: 'test', fileScope: 'tests/specs/**', deliverable: 'the specs and their outcome', ...contractFor('specs', 'tests/specs') },
     ],
     integratorMember: 2,
+    integratorCompletion: INTEGRATOR_CONTRACT,
   }],
 };
 const TRIO_ROLES: RoleSpec[] = [
@@ -426,7 +438,6 @@ section('1: a CUSTOM sequential plan runs in order and each step consumes the re
       (w.steps as Array<{ role: string; fileScope: string }>).map((s) => s.role).join(',') === 'api-research,server,e2e' &&
       (w.steps as Array<{ fileScope: string }>).every((s) => s.fileScope !== null),
     JSON.stringify(w.steps));
-  process.stdout.write(`DEBUGSEQ report=${JSON.stringify(r.report)}\n`);
   check('seq: exactly three runs, in the declared order', r.requests.length === 3 &&
     r.requests[0]!.prompt.includes('api-research') && r.requests[1]!.prompt.includes('server') && r.requests[2]!.prompt.includes('e2e'),
     r.requests.map((q) => q.prompt.slice(0, 40)).join(' | '));
@@ -441,7 +452,7 @@ section('1: a CUSTOM sequential plan runs in order and each step consumes the re
     filesUnder(r.cwd).join(','));
   check('seq: the round completed and ok, exit 0', r.report.ok === true && r.report.executionIncomplete === false && r.exitCode === 0,
     `ok=${String(r.report.ok)} incomplete=${String(r.report.executionIncomplete)} exit=${r.exitCode}`);
-  check('seq: a single offered plan is recorded by RULE â€?LAYA is never asked',
+  check('seq: a single offered plan is recorded by RULE â€” LAYA is never asked',
     r.planQuestions === 0 && String(w.source).includes('single candidate'), `planQuestions=${r.planQuestions} source=${String(w.source)}`);
 }
 
@@ -480,7 +491,7 @@ section('2: a CUSTOM duo collaboration plan writes real files and integrates the
 }
 
 // =========================================================================
-section('3: a CUSTOM trio sanity â€?distinct pairs, integrator inheritance, independent sessions');
+section('3: a CUSTOM trio sanity â€” distinct pairs, integrator inheritance, independent sessions');
 
 {
   const r = await planRound({
@@ -573,7 +584,7 @@ section('5: a step that RAN but produced NO deliverable blocks integration (real
 }
 
 // =========================================================================
-section('6: compatibility â€?the built-in entry and fixed constraints are untouched');
+section('6: compatibility â€” the built-in entry and fixed constraints are untouched');
 
 {
   // No plan file: the built-in full/lean plans still work (a custom file is OPT-IN).
@@ -598,7 +609,7 @@ section('6: compatibility â€?the built-in entry and fixed constraints are untouc
 }
 
 // =========================================================================
-section('7: explicit dependencies:[] is a SEQUENTIAL workflow â€?independent writes run, not stall');
+section('7: explicit dependencies:[] is a SEQUENTIAL workflow â€” independent writes run, not stall');
 
 {
   // B4.2a: the exact shape the audit found. Two steps with `dependencies: []` used to be
@@ -647,6 +658,7 @@ section('8: explicit dependencies:[] members in a collaboration plan also run in
         { role: 'right', taskType: 'implementation', fileScope: 'src/right', deliverable: 'right', dependencies: [], ...contractFor('right', 'src/right') },
       ],
       integratorMember: 1,
+      integratorCompletion: INTEGRATOR_CONTRACT,
     }],
   };
   const r = await planRound({
@@ -752,4 +764,3 @@ if (cleanupFailures.length) process.stdout.write(`cleanup failures (must fail th
 if (fatal !== undefined) process.stdout.write(`fatal (must fail the test): ${String((fatal as Error).message)}\n`);
 process.stdout.write('\n');
 process.exitCode = failed === 0 && cleanupFailures.length === 0 && fatal === undefined ? 0 : 1;
-

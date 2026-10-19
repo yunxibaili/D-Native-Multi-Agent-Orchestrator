@@ -169,6 +169,36 @@ function memberRoleOf(prompt: string): { kind: 'member'; index: number; role: st
 }
 
 /**
+ * P0-1: the built-in `duo`/`trio` groups now declare NO completion contract (the accepted
+ * artifact set/scope/test are business acceptance only the USER can authorise). This
+ * fixture supplies the SAME group shapes as an explicit user-approved plan FILE, with
+ * contracts naming exactly the artifact the fixture runtime writes (`<scope>/<role>.txt`)
+ * plus the integration artifact.
+ */
+const member = (role: string, taskType: 'implementation' | 'test', scope: string) => ({
+  role, taskType, fileScope: `${scope}/**`, deliverable: `the ${role} change, with the files it touched`,
+  expectedArtifacts: [`${scope}/${role}.txt`], allowedScope: [scope],
+  test: { executable: 'node', argv: ['-e', 'process.exit(0)'], cwd: '.' },
+});
+const B46_PLAN_FILE = {
+  kind: 'collaborate',
+  plans: [
+    {
+      id: 'duo', label: 'two models build the goal together, one of them integrates',
+      members: [member('provider', 'implementation', 'src/provider'), member('consumer', 'implementation', 'src/consumer')],
+      integratorMember: 1,
+      integratorCompletion: { expectedArtifacts: ['src/integration/combined.txt'], allowedScope: ['src/integration'], test: { executable: 'node', argv: ['-e', 'process.exit(0)'], cwd: '.' } },
+    },
+    {
+      id: 'trio', label: 'three models build the goal together, the middle one integrates',
+      members: [member('core', 'implementation', 'src/core'), member('cli', 'implementation', 'src/cli'), member('checks', 'test', 'tests')],
+      integratorMember: 2,
+      integratorCompletion: { expectedArtifacts: ['src/integration/combined.txt'], allowedScope: ['src/integration'], test: { executable: 'node', argv: ['-e', 'process.exit(0)'], cwd: '.' } },
+    },
+  ],
+};
+
+/**
  * Run ONE real production round with `--workflow collaborate`, optionally opting in to
  * the checkpoint. The user's answer is controlled through `checkpointInput`; the CLI
  * validates it, so this fixture never claims a valid answer it did not supply.
@@ -286,11 +316,17 @@ async function collabRound(opts: {
     },
   };
 
+  // P0-1: drive the group from an explicit user-approved plan FILE (absolute path), never
+  // the contract-free built-in.
+  const planFilePath = join(ownDir(), 'plans.json');
+  writeFileSync(planFilePath, JSON.stringify(B46_PLAN_FILE), 'utf8');
+
   const argv = [
     'add a retry budget to the http client',
     '--json', '--cwd', cwd,
     '--max-children', '4', '--max-concurrent', '2',
     '--workflow', 'collaborate',
+    '--workflow-plan', planFilePath,
     ...(opts.checkpoint === true ? ['--checkpoint'] : []),
   ];
   const before = process.stdout.write.bind(process.stdout);

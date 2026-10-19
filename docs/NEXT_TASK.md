@@ -1,25 +1,28 @@
-# 唯一下一实施任务 — P0-1 已定位缺口有界续修
+# 唯一下一任务 — P0-3a checkpoint系统/用户来源分离（待Owner授权）
 
-更新：2026-10-16。当前P0-1独立裁定BLOCKED，部分实现保留；本轮首次实现+一次返工均已使用，不能自行发起第三轮。下一实施须Owner新任务授权。P0-2/3和第四次真实E2E仍未授权。
+当前唯一事实见docs/PROJECT_BASELINE.md §7.41。
 
-## 只处理以下明确缺陷
+## 当前裁定
 
-1. src/orchestration/orchestrator.ts applyVerification：按implementation/test适用性强制完整契约；缺字段/证据拒绝。覆盖直接调用、completeTask、review-loop、人工accept；research/review保留明确兼容路径。内置/动态任务也不能用契约缺省绕过。
-2. completion-evidence.ts：allowedScope比较本Attempt完整before→afterTest增删改，不排除测试脚本写入；旧dirty未变不归因，新改动必须归因。
-3. workspace-manifest.ts：大文件变化必须改变最终证据版本（完整hash或明确保守拒绝），校验实际根和路径链的link/Junction，不能stat跟随后直接safe=true；保留Windows边界。
-4. 当前Attempt/Session/RunResult/lease/Workspace与测试产物版本绑定，最终提交同步核对；已有runFingerprint不能只生成不消费，不用旧proof认新执行。
-5. 新增批准测试进程的may-start/stop确认必须参与同一资源claim保护；测试停止未知时不能使用前一个Agent的确认释放写保护。沿用ManagedProcess，不新增进程/状态权威。
-6. tests/b42-plan-file.test.ts UTF-8编码/279行字符串/DEBUGSEQ残留修复；迁移直接受影响计划与stage夹具（B43当前missing-field），保留有意义断言，不删除新门禁或把编码任务改成research求绿。
+P0-1沿用PASS；P0-2已完成有限离线收口PASS。范围是已确认stage、冻结文件计划、完整任务完成契约、声明free/included池、并发1、retry0、no-handoff、有限POST和显式checkpoint优先；不等于真实模型、原生权限/费用或完整后端封板。
 
-## 离线验收
+最终静态审核复核源码及A–F日志，当前CLI/测试哈希匹配75/0记录，其他生产代码未漂移。本轮未运行测试/typecheck或模型；未改生产代码。详细矩阵：project-progress/p02-final-static-review-20261019/closure.md。
 
-- 复跑project-progress/p01-review-20261016T070858Z/codex-final-probes.json四类反例：缺契约编码拒绝、测试越界拒绝、大文件变更使证据失效、Junction根保守拒绝/可靠归属。
-- 新增同Task错误Attempt/Session/RunResult与测试后文件变化、测试停止未确认保持claim的承重回归；精确路径成功/错误目录拒绝/dirty增量/测试真实exit0与非0/超时、非编码兼容。
-- npm run typecheck；p01-completion-gate、b42-plan-file、b43-stage-material、CLI/workbench/contract相关回归，git diff --check。禁止full suite/真实LAYA/产品Agent/Native Review。
-- Handoff本轮前后388/26、失败签名与主要错误标准化完全一致；26 pre-existing B5.1-WF failures remain open，仍不要求全面修复。
+## 唯一下一片建议
 
-## 分工与停止
+批准P0-3a，仅修复现有checkpoint报告的来源归属：
 
-先按research-before-work复核当前源码及已读官方Node/Win32资料。OpenCode负责新授权下有界实现，指定opencode-go/deepseek-v4.1-flash；Codex独立审核/复跑。不能用wrapper exit0或57/0直接宣称通过。
-本轮证据见docs/PROJECT_BASELINE.md §7.3及ignored project-progress/p01-review-20261016T070858Z/；audit旁路目录只读。未修改/重装原生Agent、未改账户付款，未运行真实产品Round。
-保留当前草稿、历史dirty与before快照；不得reset/clean/stash/commit/push/merge。P0-1通过后停止，P0-2仅可评估开始条件，不自动实施。
+- Owner明确输入stop，才记录为用户主动停止。
+- 输入EOF、读取异常、超时等系统失败不得伪记user_stop/source=user；非法答复应保留输入事实与解析失败事实，不伪造用户停止意图。
+- 复用workflow-checkpoint.ts、round-cli checkpointGate和现有结果形状，保持停止、deadline及资源保护；不新建TaskStore/状态机/恢复引擎。
+- 同步报告和面向用户的原因，不能一处改source但文案仍声称用户主动停止。
+
+实施前确认最小字段/兼容性范围；必要时只向Gemini索取Node24输入结束/错误/超时及事件归属的官方依据，不移植框架。当前尚未授权修改生产或新增测试，不自动实施。
+
+## 本片不包含
+
+不实现跨进程恢复、隔天继续、完整pending持久化；不开放并行写，不调用真实产品Agent/LAYA/Native Review，不启动下一次真实E2E。
+
+P0-3完整异常等待与最终Human Gate仍未通过；后续真实闭环需新调用/费用/数据范围授权。OpenCode路由保留但当前Free 403，Desktop固定环境密码方案未通过源码准入；接入旁支暂停，不拖住本地来源问题的调查。
+
+9/26历史失败边界保留，历史规划信用68/100不因测试数自动增加。HEAD/index/范围外dirty保持，无commit/push/merge；audit只读，本机进度页ignored；正式前端未授权。

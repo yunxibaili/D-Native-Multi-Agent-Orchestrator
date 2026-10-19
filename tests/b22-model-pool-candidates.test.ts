@@ -27,7 +27,7 @@
  * Run: node tests/b22-model-pool-candidates.test.ts
  */
 
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -264,6 +264,11 @@ async function runRound(opts: {
       requests.push(req);
       runN += 1;
       const role = /:: ([\w-]+) — deliverable:/.exec(req.prompt)?.[1] ?? 'unknown';
+      // P0-1: deliver the built-in workflow's approved artifact for a coding step.
+      if (role === 'implementation' || role === 'test') {
+        const rel = `work/${role}/${role}.txt`;
+        try { mkdirSync(join(req.cwd, rel, '..'), { recursive: true }); writeFileSync(join(req.cwd, rel), `${role}\n`, 'utf8'); } catch { /* synthetic cwd */ }
+      }
       const result: RunResult = {
         taskId: `t${runN}`, threadId: null, agentId: req.agentId,
         state: 'succeeded', startedAt: NOW, endedAt: NOW,

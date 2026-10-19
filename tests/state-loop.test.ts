@@ -24,13 +24,15 @@
  * must not be required to run a unit test) and the runtime process.
  */
 
-import { mkdtempSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { Orchestrator } from '../src/orchestration/orchestrator.ts';
 import { TaskStore } from '../src/orchestration/store.ts';
 import { TaskScheduler } from '../src/orchestration/scheduler.ts';
+import { AttemptStore } from '../src/orchestration/attempt-store.ts';
+import { recordAndBindTick, recordAndBindOutcome } from './helpers/p01-binding.ts';
 import { OrchestrationController } from '../src/orchestration/controller.ts';
 import { observeTasks, toDecisionState } from '../src/orchestration/observation.ts';
 import {
@@ -168,11 +170,25 @@ interface Recorded { req: RunRequest }
  * Counts invocations, which is how "wait dispatches nothing" is proved: if the
  * brain could reach the runtime, this counter would move.
  */
+/**
+ * P0-1: the approved completion contract these coding fixtures carry. The fake runtime
+ * REALLY writes the named artifact into the actual run cwd, so a coding task the fixture
+ * dispatches is genuinely completable (a controlled fake-runtime delivery).
+ */
+const COMPLETION = {
+  expectedArtifacts: ['out.txt'],
+  allowedScope: ['out.txt'],
+  test: { executable: 'node', argv: ['-e', 'process.exit(0)'], cwd: '.' },
+};
+
 function fakeRuntime(state: 'succeeded' | 'failed' = 'succeeded'): { runtime: RuntimeRunner; requests: Recorded[] } {
   const requests: Recorded[] = [];
   const runtime: RuntimeRunner = {
     run(req: RunRequest): RunHandle {
       requests.push({ req });
+      if (state === 'succeeded') {
+        try { writeFileSync(join(req.cwd, 'out.txt'), 'ok\n', 'utf8'); } catch { /* synthetic cwd in non-completion tests */ }
+      }
       const result = {
         taskId: 'rt-1', agentId: req.agentId, state, error: state === 'failed'
           ? { code: 'NONZERO_EXIT', message: 'scripted failure' } : null,
@@ -223,10 +239,30 @@ function providerAnswering(
 
 const tmpDir = (): string => mkdtempSync(join(tmpdir(), 'p6a-loop-'));
 
+/**
+ * P0-1: the identity resolver a lower caller hands `recordExecutions`, read from the REAL
+ * store (never a caller-supplied label).
+ */
+const identityFromStore = (o: Orchestrator) => (taskId: string) => {
+  const t = o.getStore().get(taskId);
+  return t === null ? null : { agentId: t.agentId, modelId: t.modelId, budgetUnits: t.budgetUnits, taskType: t.taskType };
+};
+
 /** Root + `n` pool-model children, ready to dispatch. */
-function seed(o: Orchestrator, ids: readonly string[]): void {
+function seed(o: Orchestrator, ids: readonly string[], completion = false): void {
   o.createRoot({ taskId: 'r', agentId: AGENT, taskType: impl, acceptanceCriteria: 'root' });
   for (const id of ids) {
+    if (completion) {
+      // P0-1: a coding task that must reach `succeeded` needs an approved contract;
+      // `spawnChild` has no contract channel, so the fixture creates it via the store.
+      const created = o.getStore().create({
+        taskId: id, parentTaskId: 'r', agentId: AGENT, modelId: SB,
+        taskType: impl, acceptanceCriteria: 'do the work', budgetUnits: 10,
+        completionContract: COMPLETION,
+      }, NOW);
+      if (!created.ok) throw new Error(`fixture could not create ${id}: ${created.code}`);
+      continue;
+    }
     o.spawnChild({
       taskId: id, parentTaskId: 'r', agentId: AGENT, modelId: SB,
       taskType: impl, acceptanceCriteria: 'do the work', budgetUnits: 10,
@@ -242,7 +278,7 @@ section('P6-A 1. observation maps real TaskStore state (no hand-built fixture)')
   const dir = tmpDir();
   const { runtime, requests } = fakeRuntime();
   const o = new Orchestrator({ gate: gateSources(['r', 'c1', 'c2']), now, runtime, defaultCwd: dir });
-  seed(o, ['c1', 'c2']);
+  seed(o, ['c1', 'c2'], true);
   const store = o.getStore();
 
   const obs = observeTasks(store, { now: NOW });
@@ -260,6 +296,9 @@ section('P6-A 1. observation maps real TaskStore state (no hand-built fixture)')
   // run one child for real, through the scheduler
   const scheduler = new TaskScheduler({ orchestrator: o, cwd: dir });
   const tick = await scheduler.tick();
+  // P0-1: correlate the accepted executions to the attempts they actually produced, the
+  // SAME way the Workbench does (no Workbench is in this lower-caller path).
+  recordAndBindTick(o, new AttemptStore(), tick, identityFromStore(o));
   check('the scheduler really dispatched the ready children', tick.admitted.length === 2, JSON.stringify(tick.admitted));
   check('the runtime was actually asked to run them', requests.length === 2, `ran ${requests.length}`);
 
@@ -299,8 +338,13 @@ section('P6-A 2. dependency state matches the scheduler readiness definition');
   const { runtime } = fakeRuntime();
   const o = new Orchestrator({ gate: gateSources(['r', 'c1', 'c2']), now, runtime, defaultCwd: dir });
   o.createRoot({ taskId: 'r', agentId: AGENT, taskType: impl, acceptanceCriteria: 'root' });
-  o.spawnChild({ taskId: 'c1', parentTaskId: 'r', agentId: AGENT, modelId: SB, taskType: impl, acceptanceCriteria: 'upstream', budgetUnits: 10 });
-  // c2 depends on c1, so it is planned but NOT ready.
+  // P0-1: c1 must be completable so it can satisfy c2's dependency, so it carries a
+  // real approved contract (created via the store — `spawnChild` has no contract field).
+  o.getStore().create({
+    taskId: 'c1', parentTaskId: 'r', agentId: AGENT, modelId: SB, taskType: impl,
+    acceptanceCriteria: 'upstream', budgetUnits: 10, completionContract: COMPLETION,
+  }, NOW);
+  // c2 depends on c1, so it is planned but NOT ready (and never needs to complete).
   o.spawnChild({
     taskId: 'c2', parentTaskId: 'r', agentId: AGENT, modelId: SB, taskType: impl,
     acceptanceCriteria: 'downstream', budgetUnits: 10, dependencies: ['c1'],
@@ -318,6 +362,8 @@ section('P6-A 2. dependency state matches the scheduler readiness definition');
   // definition of "ready" and dispatch uses another.
   const scheduler = new TaskScheduler({ orchestrator: o, cwd: dir });
   const tick = await scheduler.tick();
+  // P0-1: correlate c1's accepted execution to the attempt it produced (lower caller).
+  recordAndBindTick(o, new AttemptStore(), tick, identityFromStore(o));
   check('the scheduler agrees: only c1 was admitted',
     tick.admitted.length === 1 && tick.admitted[0] === 'c1', JSON.stringify(tick.admitted));
   check('the scheduler skips c2 for the same reason the observation gives',
@@ -1076,8 +1122,16 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
     })),
   });
 
-  /** Root + children under a real Orchestrator, optionally parked in `to_verify`. */
-  const makeTree = (specs: Array<{ id: string; toVerify: boolean }>): Orchestrator => {
+  /**
+   * Root + children under a real Orchestrator, optionally parked in `to_verify`.
+   *
+   * P0-1: a child that must reach `to_verify` carries a REAL approved contract and is
+   * driven through the real execution edge (`executeTask`) — the only place completion
+   * evidence and the attempt binding are gathered. A hand-written `applyRunResult` proof
+   * is deliberately NOT used. This keeps the section's own point — `complete` must go
+   * THROUGH applyVerification — intact.
+   */
+  const makeTree = async (specs: Array<{ id: string; toVerify: boolean }>): Promise<Orchestrator> => {
     const o = new Orchestrator({
       gate: gateSources(['r', ...specs.map((s) => s.id)]),
       now,
@@ -1085,17 +1139,23 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
       defaultCwd: dir,
     });
     o.createRoot({ taskId: 'r', agentId: AGENT, taskType: impl, acceptanceCriteria: 'root' });
+    const toRun: string[] = [];
     for (const s of specs) {
-      o.spawnChild({
+      const created = o.getStore().create({
         taskId: s.id, parentTaskId: 'r', agentId: AGENT, modelId: SB,
         taskType: impl, acceptanceCriteria: `work ${s.id}`, budgetUnits: 10,
-      });
-      if (s.toVerify) {
-        const st = o.getStore();
-        st.transition(s.id, 'queued', NOW);
-        st.transition(s.id, 'running', NOW);
-        st.transition(s.id, 'to_verify', NOW);
-      }
+        completionContract: COMPLETION,
+      }, NOW);
+      if (!created.ok) throw new Error(`fixture could not create ${s.id}: ${created.code}`);
+      if (s.toVerify) toRun.push(s.id);
+    }
+    // P0-1: the lower caller reaches the SAME existing authorities the Workbench uses to
+    // correlate an accepted execution to its attempt.
+    const p01Evidence = new AttemptStore();
+    for (const id of toRun) {
+      const ran = await o.executeTask({ taskId: id });
+      if (!ran.ok) throw new Error(`fixture dispatch refused for ${id}: ${ran.code} ${ran.reason}`);
+      recordAndBindOutcome(o, p01Evidence, id, ran, identityFromStore(o));
     }
     return o;
   };
@@ -1195,7 +1255,7 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
 
   // --- TWO eligible tasks: the provider must be able to name the SECOND, with no params ---
   {
-    const o = makeTree([{ id: 't1', toVerify: true }, { id: 't2', toVerify: true }]);
+    const o = await makeTree([{ id: 't1', toVerify: true }, { id: 't2', toVerify: true }]);
     const material = materialFor('two eligible tasks', [
       { taskId: 't1', criteria: 't1 :: member — deliverable: a', output: 't1 member deliverable produced' },
       { taskId: 't2', criteria: 't2 :: member — deliverable: b', output: 't2 member deliverable produced' },
@@ -1229,7 +1289,7 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
 
   // --- a key for a task that is NOT eligible (not to_verify) is refused as unoffered ---
   {
-    const o = makeTree([{ id: 't1', toVerify: true }, { id: 't2', toVerify: false }]);
+    const o = await makeTree([{ id: 't1', toVerify: true }, { id: 't2', toVerify: false }]);
     const material = materialFor('one eligible', [
       { taskId: 't1', criteria: 't1 :: member — deliverable: a', output: 't1 produced' },
     ]);
@@ -1257,7 +1317,7 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
 
   // --- a bounded key PLUS a contradictory target parameter is refused, not merged ---
   {
-    const o = makeTree([{ id: 't1', toVerify: true }, { id: 't2', toVerify: true }]);
+    const o = await makeTree([{ id: 't1', toVerify: true }, { id: 't2', toVerify: true }]);
     const material = materialFor('contradictory target', [
       { taskId: 't1', criteria: 't1 :: member — deliverable: a', output: 't1 produced' },
       { taskId: 't2', criteria: 't2 :: member — deliverable: b', output: 't2 produced' },
@@ -1283,7 +1343,7 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
 
   // --- a bounded key PLUS any other target/action parameter is refused, not merged ---
   {
-    const o = makeTree([{ id: 't1', toVerify: true }]);
+    const o = await makeTree([{ id: 't1', toVerify: true }]);
     const material = materialFor('extra params', [{ taskId: 't1', criteria: 't1 :: member', output: 't1 produced' }]);
     const offered = offeredFor(o, material);
     const key1 = completeKeysIn(offered)[0]!;
@@ -1313,7 +1373,7 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
       { label: 'no entry at all', material: materialFor('none', []) },
     ];
     for (const c of cases) {
-      const o = makeTree([{ id: 't1', toVerify: true }]);
+      const o = await makeTree([{ id: 't1', toVerify: true }]);
       const offered = offeredFor(o, c.material);
       const completed: string[] = [];
       const before = JSON.stringify(o.getStore().all());
@@ -1336,7 +1396,7 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
 
   // --- a task OUTSIDE the observed root is never a target ---
   {
-    const o = makeTree([{ id: 't1', toVerify: true }]);
+    const o = await makeTree([{ id: 't1', toVerify: true }]);
     o.createRoot({ taskId: 'x', agentId: AGENT, taskType: impl, acceptanceCriteria: 'root x' });
     o.spawnChild({ taskId: 'x1', parentTaskId: 'x', agentId: AGENT, modelId: SB, taskType: impl, acceptanceCriteria: 'work x1', budgetUnits: 10 });
     const st = o.getStore();
@@ -1368,7 +1428,7 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
 
   // --- a status change while the provider is thinking must not be accepted stale ---
   {
-    const o = makeTree([{ id: 't1', toVerify: true }]);
+    const o = await makeTree([{ id: 't1', toVerify: true }]);
     const material = materialFor('stale', [{ taskId: 't1', criteria: 't1 :: member', output: 't1 produced' }]);
     const completed: string[] = [];
     const cycle = await runDecisionCycle({
@@ -1392,7 +1452,7 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
 
   // --- legacy contract: no material -> the full vocabulary and parameter path stay ---
   {
-    const o = makeTree([{ id: 't1', toVerify: true }]);
+    const o = await makeTree([{ id: 't1', toVerify: true }]);
     const obs = observeTasks(o.getStore(), { now: NOW, rootTaskId: 'r' });
     const legacyOffered = Object.keys((orchestrationDecisionRequest(obs).questions['next_action'] as { criteria: Record<string, string> }).criteria);
     check('LAYA-ACTION: a no-material request still offers the original eleven actions',
@@ -1419,7 +1479,7 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
   // ---------------------------------------------------------------------------
   section('Laya-context 14. bounded request compacts metadata but preserves exact evidence');
   {
-    const o = makeTree([{ id: 't1', toVerify: true }, { id: 't2', toVerify: true }]);
+    const o = await makeTree([{ id: 't1', toVerify: true }, { id: 't2', toVerify: true }]);
     const objective = 'obj — 多行\nsecond line\ttab; tail: 末尾 ✓';
     const criteria1 = 't1 :: member — deliverable: add\nmultiline criteria';
     const output1 = 'line1: add(2, 3) returns 5\nДругая строка — 中文 ✓\nTAIL_SENTINEL_1';
@@ -1485,8 +1545,8 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
 
   section('Laya-context 14b. native token/checkpoint visibility is fail-closed before dispatch');
   {
-    const oneEligible = (): { o: Orchestrator; material: AcceptanceMaterial } => {
-      const o = makeTree([{ id: 't1', toVerify: true }]);
+    const oneEligible = async (): Promise<{ o: Orchestrator; material: AcceptanceMaterial }> => {
+      const o = await makeTree([{ id: 't1', toVerify: true }]);
       const material = materialFor('guard', [{ taskId: 't1', criteria: 't1 :: member', output: 't1 produced' }]);
       return { o, material };
     };
@@ -1494,7 +1554,7 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
     const runGuard = async (meta: NativeMeta): Promise<{
       status: string; code: string | null; completed: string[];
     }> => {
-      const { o, material } = oneEligible();
+      const { o, material } = await oneEligible();
       const completed: string[] = [];
       const { provider } = nativeProvider(() => 'complete', meta);
       const before = JSON.stringify(o.getStore().all());
@@ -1530,7 +1590,7 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
     }
 
     for (const checkpoint of ['english', 'multilingual'] as const) {
-      const { o, material } = oneEligible();
+      const { o, material } = await oneEligible();
       const completed: string[] = [];
       const { provider, seen } = nativeProvider(
         (offered) => (offered.includes('complete') ? 'complete' : 'wait'),
@@ -1553,7 +1613,7 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
     // and a request the provider reports as saturated is refused with no retry.
     const longOutput = `${'LE'.repeat(2000)}\nTAIL_LONG_SENTINEL`;
     {
-      const { o } = oneEligible();
+      const { o } = await oneEligible();
       const longMaterial = materialFor('long', [{ taskId: 't1', criteria: 't1 :: member', output: longOutput }]);
       const obs = observeTasks(o.getStore(), { now: NOW, rootTaskId: 'r' });
       const req = orchestrationDecisionRequest(obs, { acceptanceMaterial: longMaterial });
@@ -1564,7 +1624,7 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
         parsed.entries[0]?.output === longOutput, `len=${parsed.entries[0]?.output.length}`);
     }
     {
-      const { o, material } = oneEligible();
+      const { o, material } = await oneEligible();
       const completed: string[] = [];
       const before = JSON.stringify(o.getStore().all());
       const { provider, seen } = nativeProvider(() => 'complete', { inputTokens: 512 });
@@ -1584,7 +1644,7 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
 
     // A non-LAYA bounded seam is NOT subject to the native budget guard.
     {
-      const { o, material } = oneEligible();
+      const { o, material } = await oneEligible();
       const completed: string[] = [];
       const cycle = await runDecisionCycle({
         store: o.getStore(),
@@ -1648,7 +1708,7 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
 
     // --- no ready child, TWO eligible completion targets: no continue, both kept ---
     {
-      const o = makeTree([{ id: 't1', toVerify: true }, { id: 't2', toVerify: true }]);
+      const o = await makeTree([{ id: 't1', toVerify: true }, { id: 't2', toVerify: true }]);
       const material = materialFor('two targets, no ready child', [
         { taskId: 't1', criteria: 't1 :: member — deliverable: a', output: 't1 member deliverable produced' },
         { taskId: 't2', criteria: 't2 :: member — deliverable: b', output: 't2 member deliverable produced' },
@@ -1687,7 +1747,7 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
         { label: 'no entry at all', material: materialFor('none', []) },
       ];
       for (const c of cases) {
-        const o = makeTree([{ id: 't1', toVerify: true }]);
+        const o = await makeTree([{ id: 't1', toVerify: true }]);
         const offered = offeredFor(o, c.material);
         check(`quality: ${c.label} offers EXACTLY wait+abort (two choices, no fake question)`,
           offered.length === 2 && offered.includes('wait') && offered.includes('abort'), offered.join(','));
@@ -1778,7 +1838,7 @@ section('Laya-action 13. bounded workflow answers resolve to the OFFERED task on
 
     // --- a state change while the provider is thinking cannot grant an unoffered continue ---
     {
-      const o = makeTree([{ id: 't1', toVerify: true }]);
+      const o = await makeTree([{ id: 't1', toVerify: true }]);
       const material = materialFor('async', [{ taskId: 't1', criteria: 't1 :: member', output: 't1 produced' }]);
       const completed: string[] = [];
       const cycle = await runDecisionCycle({

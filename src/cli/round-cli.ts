@@ -128,7 +128,7 @@ import {
   decideExecutionTopology,
   type RawExecutionTopology,
 } from '../decision/execution-topology.ts';
-import type { TaskStatus } from '../orchestration/task.ts';
+import type { Task, TaskStatus } from '../orchestration/task.ts';
 import type { TaskStore } from '../orchestration/store.ts';
 import {
   buildReviewPacket,
@@ -180,6 +180,7 @@ import {
   StageMaterialError,
   parseStageMaterial,
   stageBindingDigest,
+  stageMaterialDigest,
   stageMaterialEmbed,
   stageMaterialRef,
   type StageMaterial,
@@ -262,8 +263,8 @@ import type { TaskClassification } from '../decision/routing.ts';
 import type { TaskType } from '../quota/types.ts';
 // TeamRun T3-a.5: the current execution bundle names the result correlated to the current
 // Attempt, so `RunResult` is part of the projection's own vocabulary here.
-import type { RunResult, SelectionSpec } from '../core/types.ts';
-import { resolveSelection, fixedPairOf } from '../core/types.ts';
+import type { RunResult } from '../core/types.ts';
+import { resolveSelection, fixedPairOf, type SelectionSpec } from '../core/types.ts';
 
 const USAGE = `orchestrator round - ONE execution round: decide - execute - observe - report
 
@@ -346,7 +347,18 @@ OPTIONS
                          it. This is a deliberate LOCAL user act, not identity or auth.
   --stage-check          with --stage: validate the material and print its status + digest
                          (and the exact --confirm value) WITHOUT creating or running
-                         anything, then stop.
+                         anything, then stop. Include --checkpoint to bind step-wise
+                         supervision; this preflight reads no checkpoint input.
+  MACHINE AUTO-ADVANCE (--stage WITHOUT --checkpoint) additionally REQUIRES: --workflow-plan,
+                         a completion contract on every step/member and the integrator, a
+                         --model-pool with at least one currently eligible free/included model,
+                         --max-concurrent 1, --retry-max 0, --no-handoff, and an explicit
+                         --laya-post-max <n> (0 is valid and forbids every POST). The POST budget
+                         is REQUIRED here: it bounds the sends a machine-supervised round may
+                         make, so a send can never be an unbounded retry around the approval
+                         re-check. Any missing one is refused before the provider, the probes or
+                         any task (never a silent downgrade to LAYA 'complete'), and
+                         --stage-check only prints a digest once they all hold.
   --laya-url <url>       laya-serve base URL (default: http://127.0.0.1:8077)
   --laya-timeout <ms>    decision timeout (default: 60000)
   --laya-post-max <n>    OPT-IN per-ROUND cumulative HARD budget on LAYA POSTs (default:
@@ -665,9 +677,8 @@ function parse(argv: readonly string[]): RoundOptions | { error: string } {
     }
     // B4.6a: the opt-in single-step USER checkpoint only makes sense where the bounded
     // workflow loop actually runs. The legacy path has no workflow members, and
-    // `--classify-only` / `--stage-check` never reach the loop, so every other
-    // combination is a usage error raised HERE - before any file read, provider call,
-    // quota probe or task write.
+    // `--classify-only` never reaches the loop. `--stage-check` remains a read-only
+    // exception: it must project checkpoint mode so its confirmation can bind that mode.
     // B4.6a: `--checkpoint` is a BARE boolean flag and accepts NO value. Both
     // `--checkpoint=true` (the `=` form) and `--checkpoint true` (the space form) parse to
     // a STRING here, so the old `flags.checkpoint === true` test silently read them as
@@ -684,9 +695,6 @@ function parse(argv: readonly string[]): RoundOptions | { error: string } {
     }
     if (checkpoint && flags['classify-only'] === true) {
       return { error: '--checkpoint cannot be combined with --classify-only' };
-    }
-    if (checkpoint && stageCheck) {
-      return { error: '--checkpoint cannot be combined with --stage-check: nothing is executed to checkpoint' };
     }
     const agentFlag = s('agent');
     const modelFlag = s('model');
@@ -896,12 +904,34 @@ export function normalizedPlanScope(mode: string | undefined, planFile: PlanFile
   if (mode === 'sequential') {
     return planFile !== null
       ? planFile.plans.filter(isSequentialPlan).map((p) => ({ id: p.id, label: p.label, steps: p.steps.map(stepScope) }))
-      : WORKFLOW_PLAN_CHOICES.map((c) => ({ id: c.choice, label: c.label, steps: c.steps.map((s) => stepScope({ role: s.role, taskType: s.taskType, deliverable: s.deliverable })) }));
+      : WORKFLOW_PLAN_CHOICES.map((c) => ({
+          id: c.choice, label: c.label,
+          steps: c.steps.map((s) => stepScope({
+            role: s.role, taskType: s.taskType, deliverable: s.deliverable,
+            ...(s.fileScope === undefined ? {} : { fileScope: s.fileScope }),
+            ...(s.completion === undefined ? {} : { completion: s.completion }),
+          })),
+        }));
   }
   if (mode === 'collaborate') {
+    const integratorScope = (c: { completion?: CompletionContract }) => c.completion === undefined ? null : {
+      expectedArtifacts: [...c.completion.expectedArtifacts],
+      allowedScope: [...c.completion.allowedScope],
+      test: { executable: c.completion.test.executable, argv: [...c.completion.test.argv], cwd: c.completion.test.cwd },
+    };
     return planFile !== null
-      ? planFile.plans.filter(isCollaborationPlan).map((p) => ({ id: p.id, label: p.label, integratorMember: p.integratorMember, members: p.members.map(stepScope) }))
-      : COLLABORATION_PLAN_CHOICES.map((c) => ({ id: c.choice, label: c.label, integratorMember: c.integratorMember, members: c.members.map((m) => stepScope({ role: m.role, taskType: m.taskType, fileScope: m.fileScope, deliverable: m.deliverable })) }));
+      ? planFile.plans.filter(isCollaborationPlan).map((p) => ({
+          id: p.id, label: p.label, integratorMember: p.integratorMember, members: p.members.map(stepScope),
+          // P0-1: the integrator's explicit contract is part of what a stage confirmation
+          // binds, so a change to it invalidates an old confirmation rather than slipping
+          // through as an approval gap.
+          integratorCompletion: integratorScope({ ...(p.integratorCompletion === undefined ? {} : { completion: p.integratorCompletion }) }),
+        }))
+      : COLLABORATION_PLAN_CHOICES.map((c) => ({
+          id: c.choice, label: c.label, integratorMember: c.integratorMember,
+          members: c.members.map((m) => stepScope({ role: m.role, taskType: m.taskType, fileScope: m.fileScope, deliverable: m.deliverable, ...(m.completion === undefined ? {} : { completion: m.completion }) })),
+          integratorCompletion: integratorScope({ ...(c.integratorCompletion === undefined ? {} : { completion: c.integratorCompletion }) }),
+        }));
   }
   // The legacy (shape-based) path has no explicit plan; the objective + workflow still bind.
   return null;
@@ -939,6 +969,31 @@ function readPlanFileForRound(cwd: string, workflowPlan: string, workflow: strin
     throw new Error(`--workflow-plan declares kind "${planFile.kind}" but --workflow is "${String(workflow)}"; they must match`);
   }
   return planFile;
+}
+
+/**
+ * P0-2: the pure identity of a task a machine-auto-advance round is ALLOWED to act on.
+ *
+ * It is the task's DEFINITION (type, worker pair, completion contract) — NOT its status.
+ * A normal `planned -> queued -> running -> to_verify -> succeeded` progression must not
+ * read as drift, but a changed type, a re-bound worker pair or a changed completion
+ * contract MUST. This is a plain string; it holds no reference to the task.
+ */
+function machineTaskIdentity(t: Task): string {
+  return JSON.stringify({
+    taskType: t.taskType,
+    agentId: t.agentId,
+    modelId: t.modelId,
+    completion: t.completionContract === undefined ? null : {
+      expectedArtifacts: [...t.completionContract.expectedArtifacts],
+      allowedScope: [...t.completionContract.allowedScope],
+      test: {
+        executable: t.completionContract.test.executable,
+        argv: [...t.completionContract.test.argv],
+        cwd: t.completionContract.test.cwd,
+      },
+    },
+  });
 }
 
 /**
@@ -1112,11 +1167,116 @@ export async function runRoundCli(
    * authentication, and it does not constrain a native agent's own internal actions — it only
    * decides whether THIS entry starts the stage at all.
    */
-  let stage: { material: StageMaterial; digest: string; ref: string; context: string } | null = null;
+  let stage: {
+    material: StageMaterial;
+    digest: string;
+    ref: string;
+    context: string;
+    planScope: unknown;
+    authorization: unknown;
+  } | null = null;
   // B4.3a: the plan file is read + FROZEN here (once) when a stage is confirmed, so the
   // confirmation covers the ACTUAL plan and the plan block below cannot see a different file.
   let frozenPlanFile: PlanFile | null = null;
   let planFileFrozen = false;
+
+  /*
+   * P0-2: the BOUNDED effective-execution-authorization projection.
+   *
+   * The material+objective+workflow+plan digest (P1-1) already binds WHAT will run. It does
+   * NOT bind the execution SURFACE the confirmation implicitly relies on: which Agent×Model
+   * selection is effective, which declared no-additional-charge pool (and its expiry) applies,
+   * which concrete agent commands/configs will launch, which skill/MCP catalogues were
+   * declared, what the CLI limits are, and which LAYA endpoint + review agent are used. This
+   * plain value adds exactly those dimensions so a confirmation of one surface cannot
+   * silently authorize a different one.
+   *
+   * It reads ONLY already-resolved, local values (`runtime.agentIds`/`configFor`/
+   * `projectSelection`, the parsed model pool, the parsed catalogues, and the parsed CLI
+   * options). It performs no discovery, no inference, and carries no secret: `AgentConfig`
+   * holds command/model/role/sandbox/cwd/timeout and never a credential, so nothing here can
+   * leak one. The projection is injected into `stageBindingDigest` as a pure value.
+   */
+  // P0-2: the SINGLE-AXIS preference (`--agent` alone or `--model` alone) is NOT a
+  // `SelectionSpec` (only `auto`/`fixed` exist there), so it is recorded EXPLICITLY as
+  // `requested`: a preferred worker must not vanish from the approved surface.
+  const requestedAxis = { agentId: o.agent ?? null, modelId: o.model ?? null, select: o.select ?? null };
+  const stageTaskSelection: SelectionSpec | undefined =
+    o.select === 'auto'
+      ? { mode: 'auto' }
+      : (o.agent !== undefined && o.model !== undefined
+        ? { mode: 'fixed', agentId: o.agent, modelId: o.model }
+        : undefined);
+  // P0-2: a PURE-VALUE projection. It re-reads the LIVE `runtime.projectSelection` on EVERY
+  // call and copies it into a fresh, reference-free value, so the projection cannot ride on
+  // an object the runtime may mutate, and a changed project selection is a real difference.
+  const projectSelectionProjection = (): SelectionSpec | null => {
+    const ps = (runtime as { projectSelection?: () => SelectionSpec | undefined }).projectSelection?.();
+    if (ps === undefined) return null;
+    return ps.mode === 'fixed'
+      ? { mode: 'fixed', agentId: ps.agentId, modelId: ps.modelId }
+      : { mode: 'auto' };
+  };
+  const buildApprovalAuthorization = (): unknown => {
+    const project = projectSelectionProjection();
+    const agentIds = [...runtime.agentIds()].sort();
+    const agents: Record<string, unknown> = {};
+    for (const id of agentIds) {
+      const cfg = runtime.configFor(id);
+      agents[id] = {
+        command: cfg.command ?? null,
+        model: cfg.model ?? null,
+        role: cfg.role ?? null,
+        sandbox: cfg.sandbox ?? null,
+        cwd: cfg.cwd ?? null,
+        timeoutMs: cfg.timeoutMs ?? null,
+      };
+    }
+    return {
+      // The supervision MODE is approval content: a machine-auto-advance confirmation is a
+      // different grant than a step-wise checkpoint one.
+      mode: o.checkpoint === true ? 'checkpoint' : 'machine-auto',
+      selection: {
+        requested: requestedAxis,
+        task: stageTaskSelection ?? null,
+        project,
+        effective: resolveSelection(stageTaskSelection, project ?? undefined),
+      },
+      workflowChoice: o.workflowChoice ?? null,
+      cwd: o.cwd,
+      modelPool: modelPool === null ? null : {
+        policy: modelPool.policy,
+        models: modelPool.models.map((m) => ({
+          agentId: m.agentId, modelId: m.modelId, billing: m.billing,
+          source: m.source, observedAt: m.observedAt, expiresAt: m.expiresAt,
+        })),
+      },
+      // P0-2: the RESOLVED catalogue CONTENT, not the file path. A confirmation binds the
+      // declarations that were actually admitted, so editing the file after approval is a
+      // drift even when its path is unchanged.
+      skillCatalog,
+      mcpCatalog,
+      limits: {
+        maxChildren: o.maxChildren,
+        maxConcurrent: o.maxConcurrent,
+        budgetUnits: o.budgetUnits,
+        retryMax: o.retryMax,
+        handoff: o.handoff,
+        handoffMax: o.handoffMax,
+        executionTimeoutMs: o.executionTimeoutMs,
+        layaTimeoutMs: o.layaTimeoutMs,
+        reviewTimeoutMs: o.reviewTimeoutMs,
+        layaPostMax: o.layaPostMax ?? null,
+      },
+      laya: { url: o.layaUrl, allowRemote: o.allowRemoteLaya },
+      review: {
+        enabled: o.review,
+        agent: o.reviewAgent,
+        model: runtime.configFor(o.reviewAgent).model ?? null,
+      },
+      agents,
+    };
+  };
   if (o.stage !== undefined) {
     const stagePath = resolve(o.cwd, o.stage);
     const refuse = (error: string, pending: readonly string[]): number => {
@@ -1189,13 +1349,73 @@ export async function runRoundCli(
         ]);
       }
     }
-    // The confirmation binds the material AND the actual objective / workflow / plan content.
+    /*
+     * P0-2: the MACHINE-AUTO prerequisites. A confirmed stage WITHOUT `--checkpoint` advances
+     * by MACHINE verification, so every condition it relies on must be TRUE here — before the
+     * provider, the probes or any task — and a missing one is a REFUSAL, never a silent
+     * downgrade to LAYA-driven `complete`. The strict `--checkpoint` user path is untouched.
+     */
+    if (o.checkpoint !== true) {
+      const missing: string[] = [];
+      if (o.workflowPlan === undefined) {
+        missing.push('pass --workflow-plan <file>: a built-in plan carries no completion contract, so machine auto-advance has nothing it may verify');
+      }
+      if (frozenPlanFile !== null) {
+        const problemOf = (c: CompletionContract | undefined): string | null => {
+          if (c === undefined) return 'no completion contract';
+          if (c.allowedScope.length === 0) return 'completion contract has an empty allowedScope';
+          if (c.test.executable.trim() === '') return 'completion contract has an empty approved test executable';
+          return null;
+        };
+        for (const p of frozenPlanFile.plans) {
+          if (isSequentialPlan(p)) {
+            p.steps.forEach((s, i) => {
+              const problem = problemOf(s.completion);
+              if (problem !== null) missing.push(`plan "${p.id}" step ${i + 1} (${s.role}): ${problem}`);
+            });
+          } else if (isCollaborationPlan(p)) {
+            p.members.forEach((m, i) => {
+              const problem = problemOf(m.completion);
+              if (problem !== null) missing.push(`plan "${p.id}" member ${i + 1} (${m.role}): ${problem}`);
+            });
+            const integratorProblem = problemOf(p.integratorCompletion);
+            if (integratorProblem !== null) missing.push(`plan "${p.id}" integrator: ${integratorProblem}`);
+          }
+        }
+      }
+      const pool = modelPool;
+      if (pool === null) {
+        missing.push('pass --model-pool <file>: machine auto-advance requires a declared no-additional-charge pool with at least one currently eligible free/included model');
+      } else {
+        const eligible = pool.models.filter((m) =>
+          (m.billing === 'free' || m.billing === 'included') &&
+          admitUserModelPoolPair(pool, { agentId: m.agentId, modelId: m.modelId }, Date.now()).allowed);
+        if (eligible.length === 0) {
+          missing.push('the declared model pool has no currently eligible free/included model (all expired, refused, or declared paid/unknown)');
+        }
+      }
+      if (o.maxConcurrent !== 1) missing.push(`set --max-concurrent 1 (got ${o.maxConcurrent}): machine auto-advance runs one member at a time`);
+      if (o.retryMax !== 0) missing.push(`set --retry-max 0 (got ${o.retryMax}): machine auto-advance performs no automatic retry`);
+      if (o.handoff !== false) missing.push('pass --no-handoff: machine auto-advance makes exactly one attempt per task (an unspecified handoff is NOT silently treated as off)');
+      // P0-2: the send boundary is BOUNDED here. The existing hard per-round POST budget is
+      // REQUIRED in auto mode, so every LAYA POST is capped and can never be an unbounded
+      // retry around the approval re-check. `0` is a valid, explicit "send nothing".
+      if (o.layaPostMax === undefined) missing.push('pass --laya-post-max <n>: machine auto-advance requires an explicit bounded POST budget (0 is valid and forbids every POST) so the sends around the approval re-check can never be unbounded');
+      if (missing.length > 0) {
+        return refuse('machine auto-advance is not fully configured; nothing was created or run', missing);
+      }
+    }
+    // The confirmation binds the material AND the actual objective / workflow / plan content,
+    // AND (P0-2) the bounded effective-execution-authorization surface that was resolved here.
+    const planScope = normalizedPlanScope(o.workflow, frozenPlanFile);
+    const authorization = buildApprovalAuthorization();
     const digest = stageBindingDigest({
       material,
       objective: o.objective,
       workflow: o.workflow ?? 'legacy',
       planRef,
-      planScope: normalizedPlanScope(o.workflow, frozenPlanFile),
+      planScope,
+      authorization,
     });
     const confirmHint = `--confirm ${digest}`;
     const planSummary = {
@@ -1205,11 +1425,15 @@ export async function runRoundCli(
       planRef,
     };
     if (o.stageCheck === true) {
+      // P0-2: the ACTUAL projection is printed before the digest, so the operator sees
+      // exactly which execution surface they are about to confirm. No model is called and
+      // nothing is created — this returns immediately.
       if (o.json) {
-        w(JSON.stringify({ ok: true, stage: 'stage-check', stageId: material.stageId, digest, ref, plan: planSummary, pending: [`to run this stage, pass ${confirmHint}`] }, null, 2));
+        w(JSON.stringify({ ok: true, stage: 'stage-check', stageId: material.stageId, digest, ref, plan: planSummary, authorization, pending: [`to run this stage, pass ${confirmHint}`] }, null, 2));
       } else {
         w(`stage material OK: ${material.stageId} (${ref})`);
         w(`  plan          ${planSummary.workflow}; file=${planSummary.planFile ?? '(built-in)'}; ids=[${planSummary.offeredPlanIds.join(', ')}]; planRef=${planSummary.planRef ?? '(none)'}`);
+        w(`  authorization ${JSON.stringify(authorization)}`);
         w(`  confirm with: ${confirmHint}`);
         w('  nothing was created or run');
       }
@@ -1223,15 +1447,138 @@ export async function runRoundCli(
     if (o.confirm !== digest) {
       return refuse('the confirmation does not match this material AND plan', [
         `the material is stage "${material.stageId}"; re-confirm with ${confirmHint}`,
-        'a changed stage/scope/requirement/acceptance/planRef, a changed plan (id or content), or a changed objective/workflow invalidates an old confirmation',
+        'a changed stage/scope/requirement/acceptance/planRef, a changed plan (id or content), a changed objective/workflow, or a changed execution surface (selection, model pool, agent config, catalogues, limits, LAYA endpoint, review) invalidates an old confirmation',
       ]);
     }
-    stage = { material, digest, ref, context };
+    // P0-2: a JSON deep copy, so `stage.authorization` shares NO reference with the live
+    // projection object. It is a bounded plain value and is NOT an identity/authentication claim.
+    stage = { material, digest, ref, context, planScope, authorization: JSON.parse(JSON.stringify(authorization)) as unknown };
   }
   // The objective that ACTUALLY reaches classification, the plan and every task's
   // acceptance criteria / brief. Without a confirmed stage it is the user's own text,
   // byte-identical to before this entry existed.
   const roundObjective = stage === null ? o.objective : `${o.objective}\n${stage.context}`;
+
+  /*
+   * P0-2: BOUNDED AUTO-ADVANCE. A CONFIRMED stage without `--checkpoint` is the machine-
+   * supervised mode: the round may machine-verify an executed member through the EXISTING
+   * completion authority and let the EXISTING scheduler advance, WITHOUT a step-wise user
+   * prompt. `--checkpoint` keeps the legacy step-wise user supervision, and no stage keeps
+   * the legacy entry byte-identical.
+   */
+  const autoMode = stage !== null && o.checkpoint !== true;
+
+  /*
+   * P0-2: the FROZEN, pure-value allowlist of tasks a machine-auto-advance round may act on.
+   * It is built AFTER planning + assignment (so it carries the real worker pair and contract)
+   * and re-read against the TaskStore at every real admission. `null` until it exists, so the
+   * field is never mistaken for "the whole plan is authorized" before it is built.
+   */
+  let frozenAutoTaskAllowlist: Map<string, string> | null = null;
+
+  /**
+   * P0-2: re-read the FROZEN files a stage confirmation binds, and report the FIRST drift.
+   *
+   * The material, plan, model-pool, skill and MCP files CAN change AFTER the confirmation
+   * while this process runs, so EACH is re-read with its OWN existing reader and compared to
+   * the approved value (a changed file is a REFUSAL, never a silent re-approval). The
+   * authorization projection is rebuilt from live resolved values and compared to the approved
+   * one, so a changed project selection or agent config is caught too. Once planning has
+   * completed the frozen task allowlist is checked against the store, so a task that was
+   * CREATED or whose definition/pair/contract CHANGED is refused (a normal status change is
+   * not). Returns `null` when nothing changed, else a human reason; it NEVER throws (a read
+   * failure is itself a refusal, so the gate fails closed).
+   */
+  const approvalDrift = (): string | null => {
+    if (stage === null) return null;
+    try {
+      const p = resolve(o.cwd, o.stage as string);
+      if (!existsSync(p) || !statSync(p).isFile()) {
+        return `the stage material file "${o.stage}" is no longer a readable file`;
+      }
+      const freshMaterial = parseStageMaterial(JSON.parse(readFileSync(p, 'utf8')));
+      if (stageMaterialDigest(freshMaterial) !== stageMaterialDigest(stage.material)) {
+        return 'the stage material file changed after it was confirmed';
+      }
+    } catch (e) {
+      return `the stage material file could not be re-read (${thrownMessage(e)})`;
+    }
+    try {
+      const freshPlan = o.workflowPlan !== undefined ? readPlanFileForRound(o.cwd, o.workflowPlan, o.workflow) : null;
+      if (JSON.stringify(normalizedPlanScope(o.workflow, freshPlan)) !== JSON.stringify(stage.planScope)) {
+        return 'the plan file changed after it was confirmed';
+      }
+    } catch (e) {
+      return `the plan file could not be re-read (${thrownMessage(e)})`;
+    }
+    if (o.modelPool !== undefined) {
+      try {
+        const freshPool = readUserModelPoolForRound(o.cwd, o.modelPool);
+        if (JSON.stringify(freshPool) !== JSON.stringify(modelPool)) {
+          return 'the model pool file changed after it was confirmed';
+        }
+        // The declarations may still be byte-identical yet no longer authorized: an approved
+        // free/included pair that has since expired (checked at NOW, not at the round start)
+        // no longer admits anything.
+        const stillEligible = freshPool.models.some((m) =>
+          (m.billing === 'free' || m.billing === 'included') &&
+          admitUserModelPoolPair(freshPool, { agentId: m.agentId, modelId: m.modelId }, Date.now()).allowed);
+        if (!stillEligible) {
+          return 'the approved model pool has no currently eligible free/included model (its declarations expired)';
+        }
+      } catch (e) {
+        return `the model pool file could not be re-read (${thrownMessage(e)})`;
+      }
+    }
+    if (o.skillCatalog !== undefined) {
+      try {
+        if (JSON.stringify(readSkillCatalogForRound(o.cwd, o.skillCatalog)) !== JSON.stringify(skillCatalog)) {
+          return 'the skill catalogue file changed after it was confirmed';
+        }
+      } catch (e) {
+        return `the skill catalogue file could not be re-read (${thrownMessage(e)})`;
+      }
+    }
+    if (o.mcpCatalog !== undefined) {
+      try {
+        if (JSON.stringify(readMcpCatalogForRound(o.cwd, o.mcpCatalog)) !== JSON.stringify(mcpCatalog)) {
+          return 'the MCP catalogue file changed after it was confirmed';
+        }
+      } catch (e) {
+        return `the MCP catalogue file could not be re-read (${thrownMessage(e)})`;
+      }
+    }
+    if (JSON.stringify(buildApprovalAuthorization()) !== JSON.stringify(stage.authorization)) {
+      return 'the effective execution authorization changed after it was confirmed (agent config, project selection, or another resolved value differs)';
+    }
+    if (frozenAutoTaskAllowlist !== null && liveStore !== null) {
+      for (const t of liveStore.all()) {
+        const expected = frozenAutoTaskAllowlist.get(t.taskId);
+        if (expected === undefined) {
+          return `task ${t.taskId} was created after the plan was approved; machine auto-advance may not expand the approved plan`;
+        }
+        if (expected !== machineTaskIdentity(t)) {
+          return `task ${t.taskId} changed its definition, worker pair or completion contract after the plan was approved`;
+        }
+      }
+    }
+    return null;
+  };
+  if (autoMode) {
+    // Re-verify BEFORE the first provider call (classification) so a file changed since the
+    // confirmation cannot reach the model. The fresh values are never used to self-re-approve:
+    // a drift is a refusal, not a silent re-freeze.
+    const drift = approvalDrift();
+    if (drift !== null) {
+      if (o.json) w(JSON.stringify({ ok: false, stage: 'approval', error: drift }, null, 2));
+      else {
+        note(`approval refused: ${drift}`);
+        note('nothing was created or run.');
+      }
+      return 2;
+    }
+  }
+
 
   // R4: the round's own clock, read ONCE here so the reported window spans everything the
   // round did. Deliberately not `Date.now()` at report time: a round timeline that
@@ -1250,6 +1597,25 @@ export async function runRoundCli(
   // round. A substituted `provider` cannot enforce it, so that combination is refused
   // BEFORE any probe, provider call or task rather than claiming a budget that would not
   // apply; a controlled test instead injects `layaFetchImpl` BELOW the real provider.
+  //
+  // P0-2: a machine-auto round additionally refuses an injected `provider` outright. Its whole
+  // send boundary is the `layaFetchImpl` seam BELOW the real provider, so an opaque brain that
+  // never calls that transport would BYPASS the send gate entirely. This is refused BEFORE the
+  // probes, the budget, the classification or any task, and the provider is NEVER swapped for
+  // another one. A controlled acceptance uses `layaFetchImpl`, not a substitute brain.
+  if (autoMode && overrides.provider !== undefined) {
+    const msg =
+      'machine auto-advance cannot run on an injected provider override: its approval re-check ' +
+      'lives on the real LAYA transport, and an opaque provider would bypass that gate. Remove ' +
+      'the override provider; a controlled test instead injects the `layaFetchImpl` transport ' +
+      'seam BELOW the real provider.';
+    if (o.json) w(JSON.stringify({ ok: false, stage: 'approval', error: msg }, null, 2));
+    else {
+      note(`machine auto-advance refused: ${msg}`);
+      note('nothing was created or run.');
+    }
+    return 2;
+  }
   if (o.layaPostMax !== undefined && overrides.provider !== undefined) {
     const msg =
       '--laya-post-max cannot be enforced on an injected provider override, so this round is ' +
@@ -1265,10 +1631,52 @@ export async function runRoundCli(
   }
   const postBudget: LayaPostBudget | null =
     o.layaPostMax === undefined ? null : createLayaPostBudget(o.layaPostMax);
+  /*
+   * P0-2: the ONE send gate shared by every LAYA POST of a machine-auto round.
+   *
+   * A machine-supervised stage was confirmed against frozen files, and those files may change
+   * WHILE the round runs, so the approval is RE-CHECKED immediately before the underlying
+   * transport is entered. The wrapper below wraps the SAME transport the real provider would
+   * use (`overrides.layaFetchImpl ?? globalThis.fetch`), so every POST — classify, plan,
+   * assignment, each action cycle, skill/MCP choice — passes through this single gate. It calls
+   * `approvalDrift()` SYNCHRONOUSLY with NO `await` between the guard and the real fetch; a
+   * non-null drift records a clear `approval-revoked` reason and THROWS, so the underlying
+   * fetch is NEVER reached. When there is no drift, `input`/`init` are passed through
+   * byte-for-byte (stream body, signal, headers, duplex and redirect are not touched).
+   *
+   * `attempts` counts the POSTs the gate ALLOWED to reach the transport, and `refusals` holds
+   * the PRE-SEND rejection reasons. Both are CONSERVATIVE: a refusal is NOT a sent HTTP request,
+   * and a budget reservation/`used` increment taken below this gate (before it) is NOT a
+   * transmitted request and is never refunded here. Nothing here claims real network bytes or
+   * billing.
+   */
+  const sendGate = {
+    enabled: autoMode,
+    attempts: 0,
+    refusals: [] as string[],
+  };
   /** Attaches the truthful budget snapshot to a machine report, only when a budget is on. */
   const attachBudget = (target: Record<string, unknown>): void => {
     if (postBudget !== null) target.layaPostBudget = readLayaPostBudgetReport(postBudget);
+    if (autoMode) target.layaSendGate = { ...sendGate, refusals: [...sendGate.refusals] };
   };
+  /*
+   * The real transport the wrapper sits in front of. Non-auto keeps the EXACT previous path
+   * (`overrides.layaFetchImpl` when present, else nothing is injected at all).
+   */
+  const realFetch: typeof fetch = overrides.layaFetchImpl ?? globalThis.fetch;
+  const gatedFetch: typeof fetch = autoMode
+    ? (input, init) => {
+        const drift = approvalDrift();
+        if (drift !== null) {
+          const reason = `approval-revoked: ${drift}`;
+          sendGate.refusals.push(reason);
+          throw new Error(reason);
+        }
+        sendGate.attempts += 1;
+        return realFetch(input, init);
+      }
+    : realFetch;
   let provider;
   try {
     provider = overrides.provider ?? createLayaDecisionProvider({
@@ -1276,7 +1684,9 @@ export async function runRoundCli(
       allowRemote: o.allowRemoteLaya,
       timeoutMs: o.layaTimeoutMs,
       ...(postBudget === null ? {} : { postBudget }),
-      ...(overrides.layaFetchImpl === undefined ? {} : { fetchImpl: overrides.layaFetchImpl }),
+      ...(autoMode
+        ? { fetchImpl: gatedFetch }
+        : overrides.layaFetchImpl === undefined ? {} : { fetchImpl: overrides.layaFetchImpl }),
     });
   } catch (e) {
     process.stderr.write(`Laya provider could not be configured: ${(e as Error).message}\n`);
@@ -1374,7 +1784,14 @@ export async function runRoundCli(
     maxConcurrency: o.maxConcurrent,
     maxChildren: o.maxChildren,
     maxConcurrentAgents: o.maxConcurrent,
-    taskPolicyAllows: true,
+    // P0-2: in machine-auto mode this is a LIVE re-verification, not a constant. The spawn
+    // gate reads it synchronously at the REAL admission for every dispatch, so a stage
+    // material / plan file changed after confirmation refuses the dispatch (`false` =>
+    // `task-policy-denied`) instead of silently executing an unconfirmed surface. Outside
+    // auto mode it stays the previous constant `true`, so no legacy path changes.
+    get taskPolicyAllows(): boolean {
+      return autoMode ? approvalDrift() === null : true;
+    },
     // B2.1: the FROZEN user pool is carried on the gate sources, so the SAME value is
     // re-evaluated at the REAL dispatch time (buildSpawnGateInput uses `Date.now()`),
     // not just at assignment. Absent, the field is not added at all.
@@ -1820,6 +2237,10 @@ export async function runRoundCli(
         : collabPlans!.find((p) => p.id === collabChosen.id)!;
       collaborationMembers = collabSpec.members as readonly PlanFileStep[];
       collaborationIntegratorMember = collabSpec.integratorMember;
+      // P0-1: the integration task is a coding leaf, so its EXPLICIT completion contract
+      // must travel with the chosen plan (built-in or file). Absent means the integration
+      // task is refused at completion, never silently passed.
+      const collaborationIntegratorCompletion = (collabSpec as { integratorCompletion?: CompletionContract }).integratorCompletion;
       collaborationIds = planFileCollaborationTaskIds(rootId, collaborationMembers.length, collaborationIntegratorMember);
       // B4.5: bind the PHYSICAL workspace owner now that the group's shape is known.
       // The root owns the shared worktree; every member and the integration task
@@ -1855,7 +2276,7 @@ export async function runRoundCli(
             `(${distinctPairs.length === 0 ? 'none' : distinctPairs.join(', ')}); no pair is duplicated to fill a seat`,
         );
       }
-      planned = wb.planWithCandidates(spec, buildCollaborationMemberCandidates(collaborationMembers, collaborationIntegratorMember, roundObjective, rootId), [
+      planned = wb.planWithCandidates(spec, buildCollaborationMemberCandidates(collaborationMembers, collaborationIntegratorMember, roundObjective, rootId, collaborationIntegratorCompletion), [
         `${planFile === null ? 'B4.1' : 'B4.2 file'} collaboration group: ${collaborationPlanUsed} (${workflowPlanSource}); ` +
           `${collaborationMembers.length} members + 1 integration task by collaborator ${collaborationIntegratorMember}`,
       ]);
@@ -1902,7 +2323,14 @@ export async function runRoundCli(
       workflowPlanSource = chosen.source;
       sequentialSteps = planFile === null
         ? (WORKFLOW_PLAN_CHOICES.find((c) => c.choice === chosen.id)?.steps ?? [])
-            .map((s) => ({ role: s.role, taskType: s.taskType, deliverable: s.deliverable }))
+            .map((s) => ({
+              role: s.role, taskType: s.taskType, deliverable: s.deliverable,
+              // P0-1: carry the built-in step's EXPLICIT completion contract (and scope)
+              // through to the candidate, so a built-in coding step is governed exactly
+              // like a plan-file step.
+              ...(s.fileScope === undefined ? {} : { fileScope: s.fileScope }),
+              ...(s.completion === undefined ? {} : { completion: s.completion }),
+            }))
         : seqPlans!.find((p) => p.id === chosen.id)!.steps;
       planned = wb.planWithCandidates(spec, buildSequentialStepCandidates(sequentialSteps, roundObjective, rootId), [
         `${planFile === null ? 'B4.0' : 'B4.2 file'} sequential workflow plan: ${workflowChoiceUsed} (${workflowPlanSource})`,
@@ -2043,6 +2471,14 @@ export async function runRoundCli(
   }
 
   const unassigned = assigned.filter((a) => !a.ok);
+
+  // P0-2: freeze the pure-value allowlist of tasks the approved plan may act on. It is built
+  // ONLY once planning + assignment have finished, so it captures the REAL worker pair and
+  // completion contract; the gate compares against it (it is never re-derived), so no later
+  // task creation or re-definition can be mistaken for the approved plan.
+  if (autoMode) {
+    frozenAutoTaskAllowlist = new Map(wb.store.all().map((t) => [t.taskId, machineTaskIdentity(t)]));
+  }
 
   // The first real state: every child now has an identity, a session and a workspace.
   observe(Date.now());
@@ -2423,7 +2859,7 @@ export async function runRoundCli(
   };
 
   const decisionCapabilities =
-    o.retryMax > 0
+    o.retryMax > 0 && !autoMode
       ? wb.decisionCapabilities({
           retry: async (req) => {
             // `Orchestrator.retry` answers in `MutateOutcome` terms (it hands back
@@ -2441,6 +2877,13 @@ export async function runRoundCli(
         })
       : wb.decisionCapabilities();
 
+  // P0-2: the ONE refusal shape for an authority-expanding action refused by auto-advance.
+  const autoRefused = (action: string): { ok: boolean; code: string; reason: string } => ({
+    ok: false,
+    code: `auto-advance-refuses-${action}`,
+    reason: `bounded auto-advance does not permit ${action}; the confirmed stage authorization is closed and does not expand`,
+  });
+
   // R2-3 P1-3: guard the REASSIGN TARGET before the migration happens.
   //
   // Wrapping the EXISTING reassign capability is the only seam where both facts exist:
@@ -2452,6 +2895,26 @@ export async function runRoundCli(
   // target the budget has already spent.
   const handoffCapabilities = {
     ...decisionCapabilities,
+    /*
+     * P0-2: machine auto-advance is a CLOSED authorization. It advances only along the
+     * confirmed plan by machine-verifying executed members; it never expands the plan or the
+     * authority. So every authority-expanding decision (`rework` re-runs, `replan`/`split_task`/
+     * `parallelize` reshape the graph, `add_task` grows it, `retry` asks for another attempt) is
+     * REFUSED with the action's own name. A refusal makes the decision loop stop rather than
+     * silently doing something else. `retry` is additionally capability-OFF above.
+     */
+    ...(autoMode ? {
+      rework: async () => autoRefused('rework'),
+      replan: async () => autoRefused('replan'),
+      retry: async () => autoRefused('retry'),
+      addTask: async () => autoRefused('addTask'),
+      splitTask: async () => autoRefused('splitTask'),
+      parallelize: async () => autoRefused('parallelize'),
+      // P0-2: LAYA may NOT complete a member on its own in machine-auto mode. Completion is
+      // the machine gate's job ALONE (contract + real execution + the existing authority), so
+      // the `complete` action is refused here and never becomes a second quality authority.
+      complete: async () => autoRefused('complete'),
+    } : {}),
     // T3-a.3: capture the receipt the Decision Loop uses, so the round knows exactly which
     // members started an execution THIS round (and which were refused/pending).
     dispatch: async () => {
@@ -2467,6 +2930,10 @@ export async function runRoundCli(
       return receipt;
     },
     reassign: async (req: { taskId: string; agentId?: string; modelId?: string; strategy?: 'explicit' | 'assignment'; reason?: string }) => {
+      // P0-2: auto-advance refuses RELAY. Moving a started task to another worker is exactly
+      // the authority expansion a closed machine authorization forbids; it is refused at the
+      // one seam where the decision names a target and nothing has been written yet.
+      if (autoMode) return autoRefused('reassign');
       // B5.1: the STOP gate is enforced at EVERY reassign entry, not only inside the
       // canonical continuation driver. A task whose current attempt is an EXECUTED session
       // failure with an UNCONFIRMED process-tree stop must not be migrated by any caller
@@ -2624,6 +3091,32 @@ export async function runRoundCli(
   const checkpointEntries: CheckpointEntry[] = [];
   const checkpointedAttempts = new Set<string>();
   let checkpointStop: { taskId: string; reason: string; blockedTaskIds: string[] } | null = null;
+
+  /*
+   * P0-2: the machine-verification record for bounded auto-advance.
+   *
+   * These entries are provenance for a MACHINE decision, deliberately separate from the
+   * `source: 'user'` checkpoint entries: a machine verification must never be readable as a
+   * human acceptance, and the round must never auto-fill a human verdict. `machineStop` is the
+   * ONE fact the rest of the round reads when auto-advance refused a verification: it withholds
+   * the handoff/continuation and the review exactly as a user stop does, and it is a report
+   * fact, never a second state authority.
+   */
+  interface MachineVerificationEntry {
+    readonly taskId: string;
+    readonly attemptId: string | null;
+    readonly agentId: string;
+    readonly modelId: string | null;
+    readonly sessionId: string | null;
+    readonly source: 'system';
+    readonly outcome: 'completed' | 'refused' | 'not-executed';
+    /** The real code from the existing verification authority, or the local gate code. */
+    readonly code: string;
+    readonly reason: string;
+  }
+  const machineEntries: MachineVerificationEntry[] = [];
+  const machineSeen = new Set<string>();
+  let machineStop: { taskId: string; code: string; reason: string; blockedTaskIds: string[] } | null = null;
 
   let outcome: Awaited<ReturnType<typeof runDecisionCycle>> = await runOneCycle();
   let workflowCycles = 1;
@@ -2825,6 +3318,89 @@ export async function runRoundCli(
       return null;
     };
 
+    /*
+     * P0-2: the machine auto-advance gate.
+     *
+     * It runs at the TOP of each loop iteration — after a member really ran (so it is
+     * `to_verify` with a CURRENT execution) and BEFORE the next cycle hands work to LAYA — and
+     * it is the ONLY place auto-advance turns an executed member into a `succeeded` one. It
+     * goes through the EXISTING completion authority (`wb.completeTask` -> `applyVerification`,
+     * with the P0-1 contract enforced) and nowhere else: no direct store write, no second
+     * verification, no new state. Each attempt is offered AT MOST ONCE (keyed by attemptId), so
+     * a no-progress re-read never re-verifies.
+     *
+     * Every decision is explicit and fail-closed:
+     *   - an EXECUTED `to_verify` member with a confirmed stop AND a completion contract is
+     *     machine-verified;
+     *   - a `to_verify` member with NO current execution result is REFUSED (never left to fall
+     *     back to LAYA, which would read as a silent quality downgrade);
+     *   - a `to_verify` member with NO completion contract is REFUSED (there is nothing the
+     *     contract-enforcing authority could verify).
+     * A refusal stops the loop with the REAL code, immediately; there is no retry-to-pass. A
+     * successful completion returns `progress` so the caller re-checks the TOP (all-succeeded)
+     * BEFORE spending another LAYA call.
+     */
+    const machineGate = (): { kind: 'refused'; taskId: string; code: string; reason: string } | { kind: 'progress' } | null => {
+      if (!autoMode) return null;
+      let progressed = false;
+      for (const id of memberIds) {
+        const task = wb.store.get(id);
+        if (task === null || task.status !== 'to_verify') continue;
+        const actual = currentActualOf(id);
+        if (actual === null || actual.run === null) {
+          const key = `no-run:${id}`;
+          if (machineSeen.has(key)) continue;
+          machineSeen.add(key);
+          const reason = `the member ${id} is awaiting verification but has no current execution result; an unexecuted task is never machine-completed`;
+          machineEntries.push({
+            taskId: id,
+            attemptId: actual?.attemptId ?? null,
+            agentId: actual?.agentId ?? task.agentId,
+            modelId: actual?.modelId ?? task.modelId,
+            sessionId: actual?.sessionId ?? null,
+            source: 'system',
+            outcome: 'refused',
+            code: 'not-executed',
+            reason,
+          });
+          return { kind: 'refused', taskId: id, code: 'not-executed', reason };
+        }
+        if (machineSeen.has(actual.attemptId)) continue;
+        machineSeen.add(actual.attemptId);
+        if (task.completionContract === undefined) {
+          const reason = `the member ${id} has no completion contract, so machine auto-advance cannot verify it`;
+          machineEntries.push({
+            taskId: id, attemptId: actual.attemptId, agentId: actual.agentId, modelId: actual.modelId,
+            sessionId: actual.sessionId, source: 'system', outcome: 'refused', code: 'completion-contract-missing', reason,
+          });
+          return { kind: 'refused', taskId: id, code: 'completion-contract-missing', reason };
+        }
+        if (actual.run.cleanup?.treeStopConfirmed !== true) {
+          const reason = `the current attempt ${actual.attemptId} process-tree stop is NOT confirmed`;
+          machineEntries.push({
+            taskId: id, attemptId: actual.attemptId, agentId: actual.agentId, modelId: actual.modelId,
+            sessionId: actual.sessionId, source: 'system', outcome: 'refused', code: 'tree-not-stopped', reason,
+          });
+          return { kind: 'refused', taskId: id, code: 'tree-not-stopped', reason };
+        }
+        const applied = wb.completeTask(id, `machine auto-advance: the round's confirmed authorization covers ${id}`);
+        if (!applied.ok) {
+          machineEntries.push({
+            taskId: id, attemptId: actual.attemptId, agentId: actual.agentId, modelId: actual.modelId,
+            sessionId: actual.sessionId, source: 'system', outcome: 'refused', code: applied.code, reason: applied.reason,
+          });
+          return { kind: 'refused', taskId: id, code: applied.code, reason: applied.reason };
+        }
+        machineEntries.push({
+          taskId: id, attemptId: actual.attemptId, agentId: actual.agentId, modelId: actual.modelId,
+          sessionId: actual.sessionId, source: 'system', outcome: 'completed', code: 'completed',
+          reason: 'verified as done through the existing verification authority (P0-1 contract enforced)',
+        });
+        progressed = true;
+      }
+      return progressed ? { kind: 'progress' } : null;
+    };
+
     if (outcome.status !== 'ok') {
       workflowStop = `cycle-${outcome.status}`;
     } else {
@@ -2845,13 +3421,37 @@ export async function runRoundCli(
           workflowStop = 'handoff-boundary';
           break;
         }
-        // B4.6a/B4.6b: the USER checkpoint sits between "a member really ran" and "LAYA
-        // may verify it and schedule downstream work". A stop ends the loop here; an
-        // ACCEPT is applied through the existing verification authority, and then the
-        // loop re-checks the bounded workflow's OWN completion at the TOP before any
-        // further model decision (so a final member that just succeeded ends as
-        // all-succeeded WITHOUT an extra, actionless LAYA call).
-        if (o.checkpoint === true) {
+        // P0-2: machine auto-advance sits at the SAME seam a user checkpoint does, and for
+        // the same reason: between "a member really ran" and "LAYA may schedule more work".
+        // FIRST re-verify the confirmed files (a drift revokes the round), THEN machine-verify
+        // every executed member through the existing completion authority. A refusal stops the
+        // loop with the real code and withholds everything downstream.
+        if (autoMode) {
+          const drift = approvalDrift();
+          if (drift !== null) {
+            workflowStop = 'approval-revoked';
+            machineStop = { taskId: '', code: 'approval-revoked', reason: drift, blockedTaskIds: blockedByStop() };
+            break;
+          }
+          const result = machineGate();
+          if (result !== null) {
+            if (result.kind === 'refused') {
+              workflowStop = 'machine-verification-stop';
+              machineStop = { taskId: result.taskId, code: result.code, reason: result.reason, blockedTaskIds: blockedByStop() };
+              break;
+            }
+            // A real machine completion happened. Re-check the TOP (a last member just
+            // succeeding ends as all-succeeded) BEFORE spending another LAYA call; a partial
+            // completion re-reads the store and only then asks the provider for the next step.
+            continue;
+          }
+        } else if (o.checkpoint === true) {
+          // B4.6a/B4.6b: the USER checkpoint sits between "a member really ran" and "LAYA
+          // may verify it and schedule downstream work". A stop ends the loop here; an
+          // ACCEPT is applied through the existing verification authority, and then the
+          // loop re-checks the bounded workflow's OWN completion at the TOP before any
+          // further model decision (so a final member that just succeeded ends as
+          // all-succeeded WITHOUT an extra, actionless LAYA call).
           const result = await checkpointGate();
           if (result !== null) {
             if (result.kind === 'stop') {
@@ -3079,7 +3679,10 @@ export async function runRoundCli(
   // NEW attempt on another agent, which is exactly "further work", so it is not started
   // when the user stopped at a checkpoint. Existing failure/protection paths are
   // unchanged: this only withholds the continuation the stop already ended.
-  if (o.handoff && checkpointStop === null) {
+  // P0-2: machine auto-advance refuses RELAY entirely (`!autoMode`) and a machine
+  // verification refusal withholds it too, so no second attempt is started outside the
+  // confirmed plan.
+  if (o.handoff && checkpointStop === null && machineStop === null && !autoMode) {
     try {
       continuation = await runHandoffContinuation({
         async readOutcomes() { return readRoundOutcomes(); },
@@ -3648,6 +4251,25 @@ export async function runRoundCli(
     }
   }
 
+  /*
+   * P0-2: the MACHINE supervision record, separate from the `source: 'user'` checkpoint
+   * entries. It reports WHICH approved stage authorized it (the digest), which members the
+   * machine VERIFIED, which it REFUSED (with the real code), the one stop fact, and the
+   * task / attempt / session / pair behind each entry. It carries NO user-accept field — a
+   * machine verification is never a human verdict, and a `not-executed` member is NOT `ran`.
+   */
+  report.machineSupervision = {
+    source: 'system',
+    enabled: autoMode,
+    digest: stage === null ? null : stage.digest,
+    workflowStop,
+    completed: machineEntries.filter((e) => e.outcome === 'completed'),
+    refused: machineEntries.filter((e) => e.outcome === 'refused'),
+    notExecuted: machineEntries.filter((e) => e.outcome === 'not-executed'),
+    stop: machineStop,
+    note: 'MACHINE verification through the existing completion authority; a system provenance record, never a human acceptance. A `notExecuted` member did NOT run.',
+  };
+
   // `report.ok` must not contradict the Human Gate. An incomplete execution set is not a failure
   // of anything that ran, but it is NOT a complete round, so it cannot be reported as ok. The
   // two facts are reported separately: `executionIncomplete` says the execution set is
@@ -3968,6 +4590,30 @@ export async function runRoundCli(
     }
   }
 
+  /*
+   * P0-2: the machine-auto REVIEW blockers. A machine-supervised stage may be reviewed ONLY
+   * when it actually completed AND its approval still holds AND its reviewer is usable. Any
+   * other state — a stop, a revoked approval, a machine refusal, a missing reviewer model, or
+   * a reviewer pair the pool does not currently admit — WITHHOLDS the review rather than
+   * calling the reviewer for a round that is not a clean machine completion. The pool only
+   * constrains orchestrator-managed runs, so this never claims the reviewer is free.
+   */
+  const autoReviewBlockers: string[] = (() => {
+    if (!autoMode) return [];
+    const blockers: string[] = [];
+    if (workflowStop !== 'all-succeeded') blockers.push(`the workflow did not complete (${workflowStop ?? 'not run'})`);
+    const drift = approvalDrift();
+    if (drift !== null) blockers.push(drift);
+    if (machineStop !== null) blockers.push(`the machine gate stopped: ${machineStop.code} — ${machineStop.reason}`);
+    const reviewerModel = runtime.configFor(o.reviewAgent).model ?? null;
+    if (reviewerModel === null) {
+      blockers.push(`the reviewer "${o.reviewAgent}" has no configured model`);
+    } else if (modelPool === null || !admitUserModelPoolPair(modelPool, { agentId: o.reviewAgent, modelId: reviewerModel }, Date.now()).allowed) {
+      blockers.push(`the reviewer pair "${o.reviewAgent}/${reviewerModel}" is not currently admitted by the user model pool`);
+    }
+    return blockers;
+  })();
+
   let unifiedReview: UnifiedReviewResult;
   if (groupReviewWithheld !== null) {
     // B4.5 (P1-1): the group's physical workspace is not usable, so no read review is run.
@@ -4051,6 +4697,21 @@ export async function runRoundCli(
       code: null,
       reviewedAt: null,
     };
+  } else if (autoReviewBlockers.length > 0) {
+    // P0-2: a machine-supervised round that is not a clean machine completion is NOT reviewed.
+    // This reuses the existing WITHHELD shape (`execution_incomplete`) — the reviewer never
+    // ran and holds no opinion — and keeps the REAL cause, rather than synthesising a verdict.
+    unifiedReview = {
+      status: 'execution_incomplete',
+      reviewer: o.reviewAgent,
+      verdict: null,
+      reason: `no review was run: ${autoReviewBlockers.join('; ')}. The pool constrains orchestrator-managed runs only, so this is NOT a claim that the reviewer is free.`,
+      findings: [],
+      recommendations: [],
+      outputTail: null,
+      code: 'machine-supervision-not-run',
+      reviewedAt: null,
+    };
   } else {
     try {
       unifiedReview = await runUnifiedReview(runtime, reviewPacket, {
@@ -4076,6 +4737,50 @@ export async function runRoundCli(
         reviewedAt: null,
       };
     }
+  }
+
+  /*
+   * P0-2: the UNIFIED machine-auto FAILURE PROJECTION, applied to the SAME `report.ok` the
+   * final `return` reads, BEFORE the round-result construction and the JSON output (so the exit
+   * code and the printed JSON cannot disagree). A machine-supervised round is NOT a success when
+   * the workflow did not reach all-succeeded, the machine gate stopped, the approval drifted or
+   * was revoked, a POST was refused at the send gate, or a REQUESTED review was not completed /
+   * was withheld. The reasons are projected into the EXISTING `report.machineSupervision`
+   * (`source: 'system'`) field, beside the independent send-gate record. The `source: 'user'`
+   * checkpoint entries, the Task states and any acceptance are left completely untouched — no
+   * accept is fabricated. A `--no-review` offline entry keeps its honest `not_requested` status
+   * and is NOT forced to fail for a review it never requested.
+   */
+  if (autoMode) {
+    const finalDrift = approvalDrift();
+    const finalFailures: string[] = [];
+    if (workflowStop !== 'all-succeeded') {
+      finalFailures.push(`the workflow did not complete (${workflowStop ?? 'not run'})`);
+    }
+    if (machineStop !== null) {
+      finalFailures.push(`the machine gate stopped: ${machineStop.code} — ${machineStop.reason}`);
+    }
+    if (finalDrift !== null) finalFailures.push(finalDrift);
+    if (sendGate.refusals.length > 0) finalFailures.push(...sendGate.refusals);
+    if (finalFailures.length > 0) report.ok = false;
+    const reviewRequestedNotClean =
+      o.review && (autoReviewBlockers.length > 0 || unifiedReview.status !== 'completed');
+    if (reviewRequestedNotClean) report.ok = false;
+    report.machineSupervision = {
+      ...(report.machineSupervision as Record<string, unknown>),
+      finalOk: report.ok,
+      finalFailures,
+      reviewRequested: o.review,
+      reviewNotClean: reviewRequestedNotClean,
+      reviewBlockers: autoReviewBlockers,
+      sendGate: { ...sendGate, refusals: [...sendGate.refusals] },
+      note: 'The FINAL machine-auto verdict. `ok` is false whenever the workflow did not reach ' +
+        'all-succeeded, the machine gate stopped, the approval drifted or was revoked, a POST ' +
+        'was refused before send, or a REQUESTED review was not completed. A PRE-SEND send-gate ' +
+        'refusal is NOT a sent HTTP request, and any budget counter taken before the gate is a ' +
+        'conservative attempt count — never transmitted bytes or billing. No Task state or ' +
+        'user acceptance is changed here.',
+    };
   }
 
   const unified = buildUnifiedRoundReport(reviewPacket, unifiedReview);

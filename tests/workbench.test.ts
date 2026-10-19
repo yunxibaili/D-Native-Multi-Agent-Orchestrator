@@ -14,7 +14,7 @@
  *                         review rework - re-dispatch on the SAME worker; sessions
  *                         track every run; handoffs surface real results.
  */
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -76,6 +76,18 @@ const registryWith = (entries: Array<[string, string, string[]]>): ModelRegistry
   return reg;
 };
 
+/**
+ * P0-1: the approved completion contract the coding fixtures carry. The fake runtime
+ * REALLY writes the named artifact into the actual run cwd, so a coding task the fixture
+ * dispatches is genuinely completable (a controlled fake-runtime delivery, not a fake
+ * proof).
+ */
+const COMPLETION = {
+  expectedArtifacts: ['out.txt'],
+  allowedScope: ['out.txt'],
+  test: { executable: 'node', argv: ['-e', 'process.exit(0)'], cwd: '.' },
+};
+
 const fakeRuntime = (): { runtime: RuntimeRunner; requests: RunRequest[] } => {
   const requests: RunRequest[] = [];
   const rt = new RuntimeOrch({
@@ -86,7 +98,16 @@ const fakeRuntime = (): { runtime: RuntimeRunner; requests: RunRequest[] } => {
       createFakeAdapter({ id: OTHER, script: [{ kind: 'exit', code: 0 }], capabilities: { newTask: true, review: true, modelSelection: true } }),
     ],
   });
-  return { runtime: { run: (r: RunRequest) => { requests.push(r); return rt.run(r); } }, requests };
+  return {
+    runtime: {
+      run: (r: RunRequest) => {
+        requests.push(r);
+        try { writeFileSync(join(r.cwd, 'out.txt'), 'ok\n', 'utf8'); } catch { /* synthetic cwd in non-completion tests */ }
+        return rt.run(r);
+      },
+    },
+    requests,
+  };
 };
 
 function makeWorkbench(opts: { maxConcurrency?: number; preferred?: { agentId: string; modelId?: string }; rootAgentId?: string; onRun?: (index: number) => void } = {}): {
@@ -138,6 +159,28 @@ function makeWorkbench(opts: { maxConcurrency?: number; preferred?: { agentId: s
     ...(opts.rootAgentId !== undefined ? { rootAgentId: opts.rootAgentId } : {}),
   });
   return { wb, requests, dir, cleanup: () => { rmSync(dir, { recursive: true, force: true }); } };
+}
+
+/**
+ * P0-1: plan ONE implementation child that carries a real approved completion contract,
+ * so a positive completion path exists. `wb.plan` cannot attach a contract
+ * (`CandidateTask.completion` is the only channel), so this goes through
+ * `planWithCandidates` with the SAME description/acceptance criteria shape.
+ */
+function planSingleWithContract(
+  wb: NativeWorkbench,
+  spec: { taskId: string; objective: string; taskType?: string; preferredAgent?: string; budgetUnits?: number },
+  childId = `${spec.taskId}-s1`,
+): void {
+  wb.planWithCandidates(spec as never, [{
+    taskId: childId,
+    parentTaskId: spec.taskId,
+    taskType: 'implementation' as const,
+    description: spec.objective,
+    dependencies: [] as string[],
+    requiredTaskTypes: ['implementation' as const],
+    completion: COMPLETION,
+  }] as never);
 }
 
 const runResult = (state: RunResult['state'], agentId = AGENT): RunResult =>
@@ -334,7 +377,9 @@ async function section4(): Promise<void> {
     constraints: ['no new dependencies'], budgetUnits: 10,
     preferredAgent: OTHER, preferredModel: MIMO,
   };
-  const plan = wb.plan(spec as never, null);
+  // P0-1: the child carries a real approved contract so the later pass can complete.
+  planSingleWithContract(wb, spec);
+  const plan = { root: wb.store.get('r'), children: wb.store.children('r') };
   check('the root exists and children were committed', plan.root !== null && plan.children.length === 1, String(plan.children.length));
   const childId = plan.children[0]!.taskId;
 
@@ -440,7 +485,8 @@ async function section5(): Promise<void> {
   {
     const { wb, cleanup } = makeWorkbench();
     wb.orchestrator.createRoot({ taskId: 'u', agentId: AGENT, taskType: impl, acceptanceCriteria: 'chain' });
-    wb.spawnChild({ taskId: 'uA', parentTaskId: 'u', agentId: AGENT, modelId: SB, taskType: impl, budgetUnits: 10, acceptanceCriteria: 'A' });
+    // P0-1: uA carries a real approved contract so it can be verified to satisfy uB.
+    wb.store.create({ taskId: 'uA', parentTaskId: 'u', agentId: AGENT, modelId: SB, taskType: impl, budgetUnits: 10, acceptanceCriteria: 'A', completionContract: COMPLETION }, NOW);
     wb.spawnChild({ taskId: 'uB', parentTaskId: 'u', agentId: AGENT, modelId: SB, taskType: impl, budgetUnits: 10, acceptanceCriteria: 'B', dependencies: ['uA'], allowUnmetDependencies: true });
     const d = await wb.dispatch();
     check('the dependant is NOT admitted while its dependency is unfinished', d.tick?.admitted.includes('uB') === false, JSON.stringify(d.tick?.admitted));
@@ -829,7 +875,8 @@ async function section6(): Promise<void> {
     // task is already `queued`, so the `rework -> queued` re-entry is refused. The
     // point is that the caller can TELL, which the old `{status:'ok'}` could not.
     const { wb, cleanup } = makeWorkbench();
-    wb.plan({ taskId: 'r', objective: 'rework refusal', taskType: impl, shape: 'single', budgetUnits: 10 } as never, null);
+    // P0-1: the child carries a real approved contract so the pass verdict can complete.
+    planSingleWithContract(wb, { taskId: 'r', objective: 'rework refusal', taskType: impl, budgetUnits: 10 });
     wb.assignChildren('r', { taskId: 'r', taskType: impl } as never);
     await wb.dispatch();
     const childId = 'r-s1';
@@ -1157,7 +1204,11 @@ async function section7(): Promise<void> {
     const { wb, cleanup } = makeWorkbench();
     wb.orchestrator.createRoot({ taskId: 'r', agentId: AGENT, taskType: impl, acceptanceCriteria: 'replan me' });
     wb.spawnChild({ taskId: 'old-1', parentTaskId: 'r', agentId: AGENT, modelId: SB, taskType: impl, budgetUnits: 10, acceptanceCriteria: 'old' });
-    wb.spawnChild({ taskId: 'kept-1', parentTaskId: 'r', agentId: AGENT, modelId: SB, taskType: impl, budgetUnits: 10, acceptanceCriteria: 'finished' });
+    // P0-1: `kept-1` is a PLACEHOLDER "already finished" task (it never executes), used
+    // only to prove a REPLAN does not destroy completed work. It is therefore declared
+    // `research`: a coding task would (correctly) require a contract/execution, which a
+    // placeholder fixture has no business faking.
+    wb.spawnChild({ taskId: 'kept-1', parentTaskId: 'r', agentId: AGENT, modelId: SB, taskType: 'research', budgetUnits: 10, acceptanceCriteria: 'finished' });
     wb.orchestrator.queue('kept-1'); wb.orchestrator.start('kept-1');
     wb.orchestrator.getStore().transition('kept-1', 'to_verify', NOW);
     const ka = wb.orchestrator.applyVerification('kept-1', { verdict: 'pass', reason: 'done' });
@@ -1232,7 +1283,9 @@ async function section7(): Promise<void> {
   // ---- COMPLETE goes THROUGH applyVerification, never around it ----
   {
     const { wb, cleanup } = makeWorkbench();
-    wb.plan({ taskId: 'r', objective: 'finish me', taskType: impl, shape: 'single', budgetUnits: 10 } as never, null);
+    // P0-1: the child carries a real approved contract so `complete` -> applyVerification
+    // can actually accept it (the happy path this block exists to prove).
+    planSingleWithContract(wb, { taskId: 'r', objective: 'finish me', taskType: impl, budgetUnits: 10 });
     wb.assignChildren('r', { taskId: 'r', taskType: impl } as never);
     const childId = 'r-s1';
     // Spawn a second, never-dispatched child so `complete` has a target that has
@@ -2118,13 +2171,16 @@ async function section10(): Promise<void> {
     const TC = 'codex';
     const MC = 'codex/model-c';
 
-    function makeT1e(opts: { deferPrepare?: boolean; deferRun?: number; rejectRun?: boolean; maxConcurrentAgents?: number } = {}): {
+    function makeT1e(opts: { deferPrepare?: boolean; deferRun?: number; rejectRun?: boolean; maxConcurrentAgents?: number; withCompletion?: boolean } = {}): {
       wb: NativeWorkbench; childId: string; sessionAId: string; sched: TaskScheduler;
       runCount: () => number; requests: RunRequest[]; registry: ModelRegistry;
       releaseDeferred: (r: RunResult) => void; rejectDeferred: (reason: string) => void;
       resolvePrepare: () => void; cleanup: () => void;
     } {
       const dir = mkdtempSync(join(tmpdir(), 't1e-'));
+      // P0-1: the approved artifact is delivered into the workspace cwd before dispatch,
+      // so a contract-bearing child is genuinely completable.
+      if (opts.withCompletion === true) writeFileSync(join(dir, 'out.txt'), 'ok\n', 'utf8');
       const reg = new ModelRegistry();
       for (const [agentId, modelId] of [[TA, MA], [TA, MAB], [TB, MBB], [TC, MC]] as const) {
         reg.upsert({ agentId, modelId, provider: 'test', taskTypes: ['implementation'], modelSource: 'test', quotaSource: 'test' }, TNOW);
@@ -2216,7 +2272,16 @@ async function section10(): Promise<void> {
         quotaRecords: [quotaRecord(TA), quotaRecord(TB), quotaRecord(TC)], cwd: dir, now: () => TNOW,
       });
       const spec = { taskId: 'r', objective: 'T1-e atomic dispatch', taskType: impl, shape: 'single', budgetUnits: 10, preferredAgent: TA, preferredModel: MA };
-      wb.plan(spec as never, null);
+      if (opts.withCompletion === true) {
+        // P0-1: give the child a real approved contract so its positive path can complete.
+        wb.planWithCandidates(spec as never, [{
+          taskId: 'r-s1', parentTaskId: 'r', taskType: 'implementation',
+          description: 'T1-e atomic dispatch', dependencies: [] as string[],
+          requiredTaskTypes: ['implementation' as const], completion: COMPLETION,
+        }] as never);
+      } else {
+        wb.plan(spec as never, null);
+      }
       wb.assignChildren('r', spec as never);
       const sessionA = wb.sessions.sessionForTask('r-s1');
       if (sessionA === null) throw new Error('T1-e fixture: assignChildren did not bind a session');
@@ -2753,7 +2818,7 @@ async function section10(): Promise<void> {
 
     // ---- T2A-13: Unified Codex Review path is unaffected ---------------------
     {
-      const { wb, childId, cleanup } = makeT1e({});
+      const { wb, childId, cleanup } = makeT1e({ withCompletion: true });
       await wb.dispatch(); // success -> to_verify
       const pass = validateReviewVerdict({ verdict: 'pass', reason: 'accepted', findings: [], recommendedAction: 'none', reviewer: 'codex', reviewedAt: TNOW });
       const review = wb.applyReview(childId, pass);

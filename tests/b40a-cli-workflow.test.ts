@@ -14,7 +14,7 @@
  * Run: node tests/b40a-cli-workflow.test.ts
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -110,6 +110,36 @@ const materialsSeenBy = (r: Round): MaterialSeen[] => r.decisionRequests.map((re
  * `reviewVerdictJson` overrides the reviewer frame (the negative control feeds an
  * invalid verdict and keeps the assertion that it is REJECTED).
  */
+/**
+ * P0-1: the built-in `full`/`lean` plans now declare NO completion contract — the
+ * accepted artifact set, scope and approved test are business acceptance only the USER
+ * can authorise, and the first draft invented them. This fixture supplies the SAME
+ * workflow as an explicit user-approved plan FILE (`--workflow-plan`), with contracts
+ * that name exactly the artifact the fixture runtime really writes (`work/<role>/<role>.txt`)
+ * plus a real contained zero-exit command. The workflow/assignment/lifecycle behaviour
+ * under test is unchanged; only the plan source moved from built-in to file.
+ */
+const B40A_PLAN_FILE = {
+  kind: 'sequential',
+  plans: [
+    {
+      id: 'full', label: 'research, then implementation, then test',
+      steps: [
+        { role: 'research', taskType: 'research', fileScope: 'work/research', deliverable: 'a bounded findings note (sources kept)' },
+        { role: 'implementation', taskType: 'implementation', fileScope: 'work/implementation', deliverable: 'the change, with the files it touched', expectedArtifacts: ['work/implementation/implementation.txt'], allowedScope: ['work/implementation'], test: { executable: 'node', argv: ['-e', 'process.exit(0)'], cwd: '.' } },
+        { role: 'test', taskType: 'test', fileScope: 'work/test', deliverable: 'the tests run and their outcome', expectedArtifacts: ['work/test/test.txt'], allowedScope: ['work/test'], test: { executable: 'node', argv: ['-e', 'process.exit(0)'], cwd: '.' } },
+      ],
+    },
+    {
+      id: 'lean', label: 'implementation, then test (research skipped)',
+      steps: [
+        { role: 'implementation', taskType: 'implementation', fileScope: 'work/implementation', deliverable: 'the change, with the files it touched', expectedArtifacts: ['work/implementation/implementation.txt'], allowedScope: ['work/implementation'], test: { executable: 'node', argv: ['-e', 'process.exit(0)'], cwd: '.' } },
+        { role: 'test', taskType: 'test', fileScope: 'work/test', deliverable: 'the tests run and their outcome', expectedArtifacts: ['work/test/test.txt'], allowedScope: ['work/test'], test: { executable: 'node', argv: ['-e', 'process.exit(0)'], cwd: '.' } },
+      ],
+    },
+  ],
+};
+
 async function workflowRound(opts: {
   planChoice?: string;
   outputMode?: 'satisfying' | 'unsatisfying' | 'empty';
@@ -211,6 +241,14 @@ async function workflowRound(opts: {
         rootKilled: false, descendantsReaped: false, note: '', processStart: 'started' as const,
         treeStopConfirmed: opts.treeStopConfirmed === null ? (undefined as unknown as boolean) : (opts.treeStopConfirmed ?? true),
       };
+      // P0-1: a coding step must REALLY deliver the artifact its built-in completion
+      // contract names, or the new completion gate would (correctly) refuse it. A failed
+      // run deliberately writes nothing.
+      if (!failedRun && (role === 'implementation' || role === 'test')) {
+        const rel = `work/${role}/${role}.txt`;
+        mkdirSync(join(req.cwd, rel, '..'), { recursive: true });
+        writeFileSync(join(req.cwd, rel), `${marker}: ${role} deliverable produced`, 'utf8');
+      }
       const result: RunResult = {
         taskId: `t${runN}`, threadId: null, agentId: req.agentId,
         state: failedRun ? 'failed' : 'succeeded',
@@ -344,6 +382,11 @@ async function workflowRound(opts: {
 
   const provider: DecisionProvider = createLayaDecisionProvider({ fetchImpl: layaFetch });
 
+  // P0-1: always drive the workflow from an explicit user-approved plan FILE (never the
+  // contract-free built-in), unless the caller deliberately passes a missing path.
+  const workflowPlanArg = opts.planFile ?? 'plans.json';
+  if (opts.planFile === undefined) writeFileSync(join(dir, 'plans.json'), JSON.stringify(B40A_PLAN_FILE), 'utf8');
+
   const argv = [
     opts.objective ?? 'add a retry to the http client',
     '--json', '--cwd', dir,
@@ -355,7 +398,7 @@ async function workflowRound(opts: {
     ...(opts.checkpoint === true ? ['--checkpoint'] : []),
     ...(opts.postMax !== undefined ? ['--laya-post-max', String(opts.postMax)] : []),
     ...(opts.classifyOnly === true ? ['--classify-only'] : []),
-    ...(opts.planFile !== undefined ? ['--workflow-plan', opts.planFile] : []),
+    '--workflow-plan', workflowPlanArg,
   ];
   const before = process.stdout.write.bind(process.stdout);
   let captured = '';

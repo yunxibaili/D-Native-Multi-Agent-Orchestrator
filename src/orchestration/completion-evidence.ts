@@ -18,12 +18,19 @@
  * `execFile`, no `shell:true`, no bare `spawn`, and no second process manager. A run
  * whose tree stop is unconfirmed is NOT valid evidence.
  *
- * WHAT THIS PROVES (and does not)
+ * WHAT IT PROVES (and does not)
  * -------------------------------
- * It proves the durable before/after file difference and the real exit status of the
- * one approved command. It is NOT a sandbox: it does not claim a transient outside
- * write never happened, and it never treats the model's prose, a tool event, a
- * session's exit or a head-only git status as proof.
+ * It proves the DURABLE before→after-TEST file difference — the worker's writes AND
+ * the approved test's own writes — and the real exit status of the one approved
+ * command. It is NOT a sandbox: it does not claim a transient outside write never
+ * happened, and it never treats the model's prose, a tool event, a session's exit or a
+ * head-only git status as proof.
+ *
+ * SAFETY BEFORE RUNNING
+ * ---------------------
+ * An unsafe workspace (a link/junction in the tree, an unhashable file) or an approved
+ * cwd that TRAVERSES a reparse point is refused BEFORE the test is started: a contained
+ * test must never be launched into an aliased directory.
  */
 
 import { createHash } from 'node:crypto';
@@ -35,6 +42,7 @@ import {
   captureWorkspaceManifest,
   diffWorkspaceManifest,
   manifestDigest,
+  relativePathCrossesLink,
   type WorkspaceManifest,
 } from './workspace-manifest.ts';
 import {
@@ -55,8 +63,27 @@ export interface CompletionTestOutcome {
   readonly signal: string | null;
   readonly timedOut: boolean;
   readonly treeStopConfirmed: boolean;
+  /** True once the process could have been created (so the caller must retain a claim). */
+  readonly mayHaveStarted: boolean;
   readonly outputDigest: string;
   readonly note: string;
+}
+
+export interface RunApprovedTestHooks {
+  /**
+   * Invoked IMMEDIATELY BEFORE the `ManagedProcess` constructor, i.e. before the
+   * execution edge is entered. The caller uses it to raise its own "may have started"
+   * requirement so a throw cannot be misread as "nothing ran".
+   */
+  readonly onMayHaveStarted?: () => void;
+  /**
+   * A NARROW test-only seam for the unconfirmed-stop path. When provided it may only
+   * DOWNGRADE the launcher's own tree-stop verdict, so a test can drive the "we asked
+   * and could not confirm the tree emptied" branch WITHOUT leaving a real orphan
+   * writer. `true` can never manufacture a confirmed stop the launcher did not observe.
+   * Production never passes it.
+   */
+  readonly stopVerdictProbe?: () => boolean;
 }
 
 /**
@@ -71,27 +98,26 @@ export async function runApprovedTest(
   test: CompletionTestCommand,
   workspaceRoot: string,
   timeoutMs: number,
+  hooks: RunApprovedTestHooks = {},
 ): Promise<CompletionTestOutcome> {
   const cwd = test.cwd === '.' ? workspaceRoot : join(workspaceRoot, test.cwd);
+  // A cwd that traverses a reparse point would make "the approved directory" an alias
+  // for somewhere else. Refuse BEFORE starting a process.
+  if (relativePathCrossesLink(workspaceRoot, test.cwd)) {
+    return notRun(test, cwd, `approved cwd "${test.cwd}" traverses a symbolic link/reparse point`);
+  }
   let launcher;
   try {
     launcher = resolveCommand(test.executable).launcher;
   } catch (e) {
-    return {
-      executable: test.executable,
-      argv: [...test.argv],
-      cwd,
-      code: null,
-      signal: null,
-      timedOut: false,
-      treeStopConfirmed: false,
-      outputDigest: digestText(`launcher-unresolved:${(e as Error).message}`),
-      note: `could not resolve the approved test executable "${test.executable}": ${(e as Error).message}`,
-    };
+    return notRun(test, cwd, `could not resolve the approved test executable "${test.executable}": ${(e as Error).message}`);
   }
 
   let stdout = '';
   let stderr = '';
+  // The requirement is raised BEFORE the constructor/edge: `ManagedProcess` may create
+  // an OS process, so from here on no generic failure may read as "nothing started".
+  hooks.onMayHaveStarted?.();
   let proc: ManagedProcess;
   try {
     proc = new ManagedProcess({
@@ -110,6 +136,7 @@ export async function runApprovedTest(
       signal: null,
       timedOut: false,
       treeStopConfirmed: false,
+      mayHaveStarted: true,
       outputDigest: digestText(`spawn-refused:${(e as Error).message}`),
       note: `the approved test could not be started: ${(e as Error).message}`,
     };
@@ -141,13 +168,20 @@ export async function runApprovedTest(
       signal: null,
       timedOut: true,
       treeStopConfirmed,
+      mayHaveStarted: true,
       outputDigest: digestText(`${stdout}\u0000${stderr}`),
       note: `timed out after ${timeoutMs}ms (tree stop ${treeStopConfirmed ? 'confirmed' : 'NOT confirmed'})`,
     };
   }
 
   const e = await proc.exited;
-  const treeStopConfirmed = contained ? proc.isTreeStopConfirmed() : true;
+  // The launcher's OWN confirmed tree-stop is the fact. The test-only probe may only
+  // DOWNGRADE it (drive the "unconfirmed" branch without leaving a real orphan writer);
+  // it can never MANUFACTURE `true` where the launcher did not confirm the stop.
+  const actualTreeStopConfirmed = contained ? proc.isTreeStopConfirmed() : true;
+  const treeStopConfirmed = hooks.stopVerdictProbe !== undefined
+    ? (hooks.stopVerdictProbe() === true && actualTreeStopConfirmed)
+    : actualTreeStopConfirmed;
   return {
     executable: test.executable,
     argv: [...test.argv],
@@ -156,8 +190,24 @@ export async function runApprovedTest(
     signal: e.signal,
     timedOut: false,
     treeStopConfirmed,
+    mayHaveStarted: true,
     outputDigest: digestText(`${stdout}\u0000${stderr}`),
     note: treeStopConfirmed ? '' : 'process tree stop was NOT confirmed',
+  };
+}
+
+function notRun(test: CompletionTestCommand, cwd: string, note: string): CompletionTestOutcome {
+  return {
+    executable: test.executable,
+    argv: [...test.argv],
+    cwd,
+    code: null,
+    signal: null,
+    timedOut: false,
+    treeStopConfirmed: false,
+    mayHaveStarted: false,
+    outputDigest: digestText(`not-run:${note}`),
+    note,
   };
 }
 
@@ -170,11 +220,17 @@ export interface CompletionEvidence {
   readonly leaseVersion: number;
   readonly agentId: string;
   readonly modelId: string | null;
+  /**
+   * The dispatch SESSION this execution ran in, from the freeze-point mapping. Null when
+   * the execution ran sessionless; part of what the proof binds.
+   */
+  readonly sessionId: string | null;
   readonly runFingerprint: string;
   readonly contractDigest: string;
   readonly workspaceRoot: string;
   readonly workspaceDigest: string | null;
   readonly unsafeWorkspace: boolean;
+  /** The TOTAL worker+test difference (baseline → after approved test). */
   readonly changedFiles: readonly string[];
   readonly added: readonly string[];
   readonly modified: readonly string[];
@@ -208,16 +264,18 @@ function artifactKey(p: string): string {
 /**
  * Fold the manifests + the approved test run into one immutable evidence value.
  *
- * `afterRun` is taken AFTER the agent run but BEFORE the approved test, so the test's
- * own (pre-approved) writes are not attributed to the worker. The staleness digest is
- * taken AFTER the approved test, so ANY later change — including to an allowed path —
- * invalidates the proof.
+ * The scope comparison is `baseline (BEFORE the worker)` → `afterTest (AFTER the
+ * approved test)`, so BOTH the worker's writes and the test's own writes are counted:
+ * a test that touches a path outside `allowedScope` is refused, it is not silently
+ * attributed to "the test, not the worker". An unchanged pre-existing dirty file
+ * produces no diff entry, so it is never attributed to the attempt.
  */
 export async function buildCompletionEvidence(input: {
   taskId: string;
   leaseVersion: number;
   agentId: string;
   modelId: string | null;
+  sessionId: string | null;
   contract: CompletionContract;
   workspaceRoot: string;
   before: WorkspaceManifest;
@@ -225,14 +283,30 @@ export async function buildCompletionEvidence(input: {
   runFingerprint: string;
   timeoutMs: number;
   now: number;
+  hooks?: RunApprovedTestHooks;
 }): Promise<CompletionEvidence> {
-  const diff = diffWorkspaceManifest(input.before, input.afterRun);
-  const changedFiles = [...new Set([...diff.added, ...diff.modified, ...diff.deleted])].sort();
-  const outOfScope = changedFiles.filter((p) => !isPathAllowed(p, input.contract.allowedScope));
+  // Unsafe BEFORE the test: do not launch a contained command into a workspace whose
+  // artifact set cannot be certified.
+  const cwdCrossesLink = relativePathCrossesLink(input.workspaceRoot, input.contract.test.cwd);
+  const unsafeBefore = !input.before.safe || !input.afterRun.safe || cwdCrossesLink;
+  const test = unsafeBefore
+    ? notRun(
+        input.contract.test,
+        input.contract.test.cwd === '.' ? input.workspaceRoot : join(input.workspaceRoot, input.contract.test.cwd),
+        !input.before.safe || !input.afterRun.safe
+          ? 'not run: the workspace manifest is unsafe (link/reparse point or unhashable file)'
+          : 'not run: the approved cwd traverses a symbolic link/reparse point',
+      )
+    : await runApprovedTest(input.contract.test, input.workspaceRoot, input.timeoutMs, input.hooks ?? {});
 
-  const test = await runApprovedTest(input.contract.test, input.workspaceRoot, input.timeoutMs);
   const afterTest = captureWorkspaceManifest(input.workspaceRoot);
   const workspaceDigest = manifestDigest(afterTest);
+
+  // TOTAL difference: baseline → after the approved test. Both the worker and the test
+  // count. A path the test wrote outside the allowed scope therefore fails the gate.
+  const diff = diffWorkspaceManifest(input.before, afterTest);
+  const changedFiles = [...new Set([...diff.added, ...diff.modified, ...diff.deleted])].sort();
+  const outOfScope = changedFiles.filter((p) => !isPathAllowed(p, input.contract.allowedScope));
 
   const present = new Set(afterTest.files.map(artifactKey));
   const missingArtifacts = input.contract.expectedArtifacts.filter((a) => !present.has(artifactKey(a)));
@@ -243,11 +317,12 @@ export async function buildCompletionEvidence(input: {
     leaseVersion: input.leaseVersion,
     agentId: input.agentId,
     modelId: input.modelId,
+    sessionId: input.sessionId,
     runFingerprint: input.runFingerprint,
     contractDigest: completionContractDigest(input.contract),
     workspaceRoot: input.workspaceRoot,
     workspaceDigest,
-    unsafeWorkspace: !input.afterRun.safe || !afterTest.safe,
+    unsafeWorkspace: unsafeBefore || !afterTest.safe,
     changedFiles: Object.freeze(changedFiles),
     added: diff.added,
     modified: diff.modified,

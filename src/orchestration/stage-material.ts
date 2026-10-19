@@ -161,6 +161,15 @@ export function stageBindingDigest(input: {
   readonly workflow: string;
   readonly planRef: string | null;
   readonly planScope: unknown;
+  /**
+   * P0-2: the bounded EFFECTIVE-EXECUTION-AUTHORIZATION projection (a plain value the
+   * caller builds from the already-resolved selection, model pool, agent configs, skill/MCP
+   * catalogue declarations, CLI limits, LAYA endpoint and review choice). When present it is
+   * appended to the canonical payload, so approval of one execution surface no longer
+   * authorizes a different one. When ABSENT the payload is byte-identical to before, so every
+   * existing caller keeps its exact digest.
+   */
+  readonly authorization?: unknown;
 }): string {
   const canonical = JSON.stringify({
     material: {
@@ -174,6 +183,9 @@ export function stageBindingDigest(input: {
     workflow: input.workflow,
     planRef: input.planRef,
     planScope: input.planScope,
+    // Appended last and ONLY when supplied: the compatibility guarantee is that a call
+    // without `authorization` produces the identical canonical string it always did.
+    ...(input.authorization === undefined ? {} : { authorization: input.authorization }),
   });
   return createHash('sha256').update(canonical, 'utf8').digest('hex');
 }

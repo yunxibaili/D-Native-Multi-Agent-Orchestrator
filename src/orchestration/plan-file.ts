@@ -110,6 +110,16 @@ export interface PlanFileCollaborationPlan {
   readonly members: readonly PlanFileStep[];
   /** 1-based index of the member that carries INTEGRATION RESPONSIBILITY. */
   readonly integratorMember: number;
+  /**
+   * P0-1: the EXPLICIT completion contract the INTEGRATION task must prove.
+   *
+   * The integration task is always an `implementation` leaf, so it is governed by the
+   * completion gate exactly like any other coding leaf. A collaboration plan that
+   * declares an integrator MUST also declare this — there is no contract source that
+   * could be inferred from the deliverable prose, so without it the integration task
+   * simply cannot be completed (a refusal, never a silent pass).
+   */
+  readonly integratorCompletion?: CompletionContract;
 }
 
 export interface PlanFile {
@@ -210,6 +220,7 @@ function parseStep(raw: unknown, where: string): PlanFileStep {
       completion = parseCompletionContract(
         { expectedArtifacts: raw.expectedArtifacts, allowedScope: raw.allowedScope, test: raw.test },
         where,
+        { taskType },
       );
     } catch (e) {
       if (e instanceof CompletionContractError) throw new PlanFileError(e.code, e.detail);
@@ -306,7 +317,37 @@ function parseCollaborationPlan(raw: Record<string, unknown>, where: string): Pl
       `${where}.integratorMember must be an integer in 1..${members.length} (got ${JSON.stringify(integratorMember)})`,
     );
   }
-  return Object.freeze({ id, label, members: Object.freeze(members), integratorMember });
+  // P0-1: the integration task is an `implementation` leaf, so its explicit completion
+  // contract is parsed with the SAME fail-closed validator the members use. Absent is
+  // allowed here only so a legacy file that declares no integration contract is refused
+  // later (at completion), never silently passed.
+  let integratorCompletion: CompletionContract | undefined;
+  if (raw.integratorCompletion !== undefined) {
+    if (!isRecord(raw.integratorCompletion)) {
+      throw new PlanFileError('invalid-field', `${where}.integratorCompletion must be an object`);
+    }
+    try {
+      integratorCompletion = parseCompletionContract(
+        {
+          expectedArtifacts: raw.integratorCompletion.expectedArtifacts,
+          allowedScope: raw.integratorCompletion.allowedScope,
+          test: raw.integratorCompletion.test,
+        },
+        `${where}.integratorCompletion`,
+        { taskType: 'implementation' },
+      );
+    } catch (e) {
+      if (e instanceof CompletionContractError) throw new PlanFileError(e.code, e.detail);
+      throw e;
+    }
+  }
+  return Object.freeze({
+    id,
+    label,
+    members: Object.freeze(members),
+    integratorMember,
+    ...(integratorCompletion === undefined ? {} : { integratorCompletion }),
+  });
 }
 
 /**
@@ -418,6 +459,7 @@ export function buildCollaborationMemberCandidates(
   integratorIndex: number,
   objective: string,
   rootTaskId: string,
+  integratorCompletion?: CompletionContract,
 ): CandidateTask[] {
   const { memberIds, integratorId } = collaborationTaskIds(rootTaskId, members.length, integratorIndex);
   const deps = dependenciesFor(members, memberIds);
@@ -440,9 +482,13 @@ export function buildCollaborationMemberCandidates(
     description:
       `${objective} :: integration (collaborator ${integratorIndex} carries integration responsibility) — ` +
       `deliverable: one combined result built from the deliveries listed in this task's handoffs, ` +
-      `naming each collaborator's actual contribution — a summary of what everyone finished is NOT a deliverable`,
+      `naming each collaborator's actual contribution — a summary of what everyone finished is NOT a deliverable` +
+      (integratorCompletion === undefined ? '' : ` — approved test: ${integratorCompletion.test.executable} ${integratorCompletion.test.argv.join(' ')} (cwd ${integratorCompletion.test.cwd})`),
     dependencies: Object.freeze([...memberIds]),
     requiredTaskTypes: Object.freeze(['implementation'] as const),
+    // P0-1: the integration task is a coding leaf; it carries the plan's EXPLICIT
+    // integration contract verbatim (never synthesized from the deliverable prose).
+    ...(integratorCompletion === undefined ? {} : { completion: integratorCompletion }),
   });
   return [...memberCandidates, integrator];
 }
