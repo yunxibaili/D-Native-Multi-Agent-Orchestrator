@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-19。当前裁定§7.49：P0-3c.1独立PASS，P0-3按既定有界离线范围收口PASS。Runner仅新增一条已审核离线suite，真实单次116/0、exit0、outer Job确认空，P03-F1关闭。Codex审核实际diff/原日志/当前哈希，未重跑测试/typecheck或调用模型。下一步仅准备P0-4非推理准入，真实E2E仍需新授权。
+更新：2026-10-19。当前见§7.51：P0-4.1 Demo材料静态审核PASS，五项哈希一致、workspace为空、两步契约与Reviewer路径已补。Owner明确确认两模型本轮可用/免费或订阅包含且不使用额外余额，仅为声明，不授权调用。下一步待批准将该新声明写入Demo池并单次无推理stage-check；原生配置/权限仍未知，真实执行BLOCKED。Codex未跑CLI、测试、typecheck或模型。
 
 ## 1. 权责与当前结论
 
@@ -114,7 +114,7 @@ B4.7.3：Space Bunny Free+MiMo V2.6 Flash Free，三个真实独立任务/会话
 
 LAYA：既有Python环境0.3.21，缓存D:/AI/laya-cache，固定权重revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851。历史离线CUDA加载和GET health通过；typed分类中英/计划/pair小样本通过。next_action的正向质量验收曾多次continue或wait，不能改成complete；置信度裁剪等原有限制不因文档更新消失。默认不常驻，不升级/下载/切权重。
 
-## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.49）
+## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.51）
 
 Owner批准日期：2026-10-16。**Owner approved / Not yet implemented / Not yet tested**。正式未来默认覆盖旧“仅显式实验”建议，未改变当前生产或历史报告。
 
@@ -142,7 +142,7 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
 
 ## 6. 唯一下一步与授权
 
-P0-1/P0-2及P0-3有界离线实施现均PASS；不等于原生账户、费用、权限和真实E2E通过。唯一建议P0-4.0：由OpenCode只读整理现有隔离Demo、准确CLI和一次真实闭环授权清单，核对当前实现与历史材料是否匹配，未知资格如实列出；不跑测试、改代码、启动模型或自作费用承诺。Owner另行确认模型/次数/费用/时限/数据后，才能启动P0-4真实执行。
+P0-1/2/3有界离线PASS，P0-4.1 Demo材料静态PASS，真实准入仍BLOCKED。唯一建议P0-4.2：获Owner转交批准后，OpenCode只将本轮新Owner费用/资格声明写入新Demo pool，并执行一次无--live-agent的stage-check，生成实际digest和authorization。不能改旧Demo、调整原生权限、启动LAYA或模型；若声明有效期已过则停止，不自行滚动延长。原生配置/权限与120秒机器测试及真实调用授权仍另列待确认。
 
 真实产品Agent/LAYA/Native Review/E2E调用保持关闭，旧剩余次数不继承。OpenCode最近一次Free CLI探测403仍是接入线索，不能推断当前必然可用或不可用；先完成本地确定性缺口，再按新授权核实模型/费用/数据/次数。阶段裁定后可按Owner既有授权推送独立审核分支，不合并main。
 
@@ -634,6 +634,24 @@ P0-1/P0-2及P0-3有界离线实施现均PASS；不等于原生账户、费用、
 - HEAD/index/范围外dirty、9/26历史债务及68/100信用保留，audit只读，进度页ignored。Owner既有阶段完成归档授权适用：本片拟以dd35904540eee399b156b77c96465b414520b99d为父提交，独立codex/p03c1-final-closure-20261019仅含CLI/测试/Runner及基线/NEXT/审核记录共六文件；远端SHA、manifest及临时索引清理以本轮实际归档记录为准，不合并main。
 - 唯一下一步P0-4.0非推理执行范围准备，不提前开发新功能。真实产品Agent/LAYA/Native Review/E2E授权仍关闭，不能继承旧剩余调用。新资格/费用事实需要官方或Owner账户确认，不能从名称free或历史成功推断。
 
+### 7.50 P0-4.0准备报告独立审核（真实准入BLOCKED）
+
+- 已读Owner转交的准备报告与当前计划/阶段/池配置，报告“不具备真实执行准入”的主结论接受。D:/workbench-demo/plans.json两步没有expectedArtifacts/allowedScope/test，parsePlanFile经parseCompletionContract会拒绝；两条pool声明expiresAt=1792115473307已过期，不能刷新时间冒充新观察。LAYA当前监听状态未探测，保留unknown，不把历史未监听视为当前事实。
+- 另发现报告遗漏：orchestrator.json中Reviewer command仍指向bin/2e5e00daee91c61d/codex.exe，文件不存在。只读Get-Command与目录元数据指向当前bin/896a0166b774037a/codex.exe，该路径存在；没有启动CLI，路径存在不证明模型可调用、认证或订阅资格。
+- 纠正数据隔离表述：allowedScope/Workspace清单用于完成时写入差异验收，不构成读取、网络或原生工具权限沙箱。旧Demo根含历史结果、状态和审计材料，不宜当作“干净目标”直接提供Worker；当前项目opencode.json没有显式permission/tools字段，全局继承及有效权限尚未知，不能据此宣称仅能访问Demo。
+- 纠正时限与启动命令：准备报告没有显式--laya-timeout，源码默认60000；可在拟执行命令写明90000并重新绑定digest。--review-timeout只是handle.result等待上限，Reviewer实际deadline须由agents.codex.timeoutMs=90000进入preflight/session。批准测试的DEFAULT_COMPLETION_TEST_TIMEOUT_MS实际为120000，CLI未传completionTimeoutMs，并不受Worker的90000覆盖；应在新授权中单列120秒或另行提出最小改动，不能谎称全链每进程90秒。报告中的裸python服务命令也不能代替已审核的固定离线缓存、loopback及owned containment/启动停止路径。
+- 本轮仅读取源码、Demo非敏感字段、文件/命令路径元数据并更新文档/页面；未启动模型、Agent版本/目录探针、LAYA、stage-check、测试或typecheck，没有修改生产/测试/Demo。P0-1/2/3、9/26债务与68/100信用保留，HEAD/index不变，未commit/push。
+- 唯一下一步P0-4.1为待批准的Demo配置准备，不再扩建产品：新建干净workspace/control并分离控制记录，补准确CJS产物/批准命令及Reviewer路径，不创建目标源码/测试、不伪造池资格、不运行命令。准备完成仍需Owner提供当前费用/账户事实和新的真实调用授权；外部官方资格/费用规则可交Gemini检索，不能由文献替代账户证据。
+
+### 7.51 P0-4.1干净Demo静态验收（材料PASS；真实执行仍BLOCKED）
+
+- 已读新目录D:/workbench-demo/p04-20261019T035918Z的五个control文件，当前SHA256与OpenCode报告逐项相符；workspace为空，没有目标源码、测试或package.json。新/旧pool字节一致，仍保留过期声明。Reviewer新路径存在、timeoutMs=90000保留，storeDir在control/.orchestrator-state。未改旧Demo或项目实现。
+- plans两步使用现有完成契约：implementation只交付/修改根add.js并以批准Node断言验证；test只交付/修改add.test.js并消费前序真实产物。stage绑定p04-demo，CJS约定一致；workspace及沿途父目录均无package.json。该结论为源码/schema静态核对，不宣称已执行parsePlanFile或stage-check。控制材料分离不是原生读取沙箱，有效OpenCode模型/small_model/路由/权限仍未知，祖先opencode.json是否继承不能凭文件位置断言。
+- Owner在本轮明确答复“两项均已确认（不授权调用）”：Worker opencode/space-bunny-free本轮可用且零新增收费，Reviewer codex/gpt-6.1-sol订阅包含额度足够且不使用额外credits/API按量余额。按收到后的记录时间2026-10-19T04:05:24.8676681Z（Unix ms 1792382724867）保存到project-progress/p041-demo-review-20261019/owner-declaration.json；这是Owner声明记录时间，不是Provider调用/账户测量时间，不生成真实执行授权。
+- 原池未被Codex修改。唯一建议下一片P0-4.2只更新新Demo的声明来源/时间并单次无推理stage-check：若采用已有30分钟声明窗口，expiresAt=1792384524867，超期不得自行刷新；执行前先本地检查声明时间。stage-check在Provider/probes前返回，不需要先启动LAYA。明确不加--live-agent，不写目标产物、不运行批准测试；这次配置/CLI操作待Owner转交授权。
+- 真实执行仍待原生有效配置与权限核实、机器测试120秒边界及新调用预算批准，不能把Owner声明或stage-check当实际模型/计费认证。LAYA后续启停必须用已有固定缓存/loopback/owned containment，当前监听仍unknown。旧README中“受控启动LAYA后再stage-check”的顺序不是预检必需条件，后续命令说明应纠正，不为此重做Demo。
+- Codex本轮仅读文件、哈希、源码和路径元数据，0 CLI/测试/typecheck/模型、0 Demo修改。材料PASS不等于产品阶段真实闭环PASS，不新增规划信用，9/26历史债务、PARALLEL_WRITE=CLOSED及NONE保持。独立审核文档拟按Owner既有归档授权提交codex/p041-demo-materials-20261019，仅基线与NEXT；Demo/control/pool和本机证据不上传。实际远端SHA及现场保护以本轮归档记录为准。
+
 ## 8. 规划估算与本机快照
 
 沿用历史十项权重信用68/100（固定分母为完整后端需求，不含正式UI）；页面按5%档显示约70%、剩30%，旧合理剩余区间30–50%。这不是工时、可用率、自动化完成率或MVP成功概率。本轮文档不增分；下一真实E2E仍未成功，必须看具体阻塞和证据，不能用百分比代替它。
@@ -642,18 +660,18 @@ P0-1/P0-2及P0-3有界离线实施现均PASS；不等于原生账户、费用、
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-19T03:41:10.4612605Z",
+  "updatedAt": "2026-10-19T04:07:02.3052008Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-3",
-    "name": "有界离线异常收口通过",
+    "id": "P0-4.1",
+    "name": "干净Demo材料静态验收通过",
     "status": "done",
-    "summary": "P0-3c.1独立PASS：Runner单项登记，单次116/0、实际exit0、outer Job空，P03-F1关闭。P0-3按既定有界离线范围PASS；真实MVP仍PARTIAL，不支持跨进程恢复。"
+    "summary": "五项哈希/空workspace/两步契约/Reviewer路径核对通过；Owner提供新的资格费用声明但不授权调用。待更新Demo池并无推理stage-check；真实准入仍BLOCKED。"
   },
   "next": {
-    "id": "P0-4.0",
-    "name": "只读整理真实闭环准入与新授权范围；不启动模型",
+    "id": "P0-4.2",
+    "name": "待批准：仅写入新Owner池声明并单次无推理stage-check",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -731,9 +749,9 @@ P0-1/P0-2及P0-3有界离线实施现均PASS；不等于原生账户、费用、
     {
       "severity": "P1",
       "kind": "当前验收缺口",
-      "title": "P0-4真实执行资格及新授权待确认",
-      "detail": "P0-1/2/3有界离线通过；当前Worker/Reviewer可调用性、免费或订阅额度及真实闭环尚未验收，历史调用授权不继承。",
-      "next": "先只读整理隔离Demo、准确命令与调用/费用/数据/时限清单，未知项如实列出；另获Owner授权后才实跑。"
+      "title": "新声明尚未写入Demo；原生配置与真实执行未验收",
+      "detail": "Demo契约及路径已补，Owner已声明两模型资格费用；旧pool仍过期，实际原生路由/权限与真实闭环未知，机器测试另有120秒上限。",
+      "next": "获批后仅按新声明更新池并单次无推理stage-check；禁止试模型/刷新过期时间冒充新观察，真实调用和120秒边界仍另行授权。"
     },
     {
       "severity": "P1",
@@ -1084,6 +1102,16 @@ P0-1/P0-2及P0-3有界离线实施现均PASS；不等于原生账户、费用、
     }
   ],
   "checks": [
+    {
+      "name": "P0-4.1 Demo材料静态验收",
+      "source": "PROJECT_BASELINE.md §7.51；project-progress/p041-demo-review-20261019/",
+      "result": "材料PASS：五项哈希一致，workspace空，契约/CJS及Reviewer路径静态符合；Owner新声明已记录但池未改，0 CLI/测试/模型。真实执行BLOCKED。"
+    },
+    {
+      "name": "P0-4.0准备报告独立审核",
+      "source": "PROJECT_BASELINE.md §7.50；project-progress/p04-readiness-review-20261019/",
+      "result": "BLOCKED：静态确认契约缺失/池过期，补发现Reviewer路径失效；纠正读取隔离与机器测试120秒事实。0测试/CLI/模型，P0-1/2/3原PASS保持。"
+    },
     {
       "name": "P0-3c.1最终独立验收PASS",
       "source": "project-progress/p03c1-runner-registration-20261019/run.json；PROJECT_BASELINE.md §7.49",
