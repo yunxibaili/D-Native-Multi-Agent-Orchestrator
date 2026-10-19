@@ -4927,7 +4927,32 @@ export async function runRoundCli(
   // run belonged to.
   const attemptEvidence: Record<string, TaskEvidenceInput> = wb.attemptEvidenceMap();
 
+  // Reuse the published result for attention material, without certifying stop safety or recovery.
+  const pendingActual = checkpointStop === null ? null : currentActualOf(checkpointStop.taskId);
+  const pendingUser = checkpointStop === null || checkpointStop.code === 'user-stop' ? undefined : {
+    attentionRequired: true as const,
+    source: 'system' as const,
+    code: checkpointStop.code,
+    reason: checkpointStop.reason,
+    taskId: checkpointStop.taskId,
+    displayedAttemptId: checkpointEntries.at(-1)?.attemptId ?? null,
+    currentAttemptId: pendingActual?.attemptId ?? null,
+    currentSessionId: pendingActual?.sessionId ?? null,
+    stageDigest: stage?.digest ?? null,
+    workerTreeStopConfirmed: pendingActual?.run?.cleanup?.treeStopConfirmed ?? null,
+    retainedProtectionTaskIds: [...new Set([
+      ...(workspace?.retainedResourceProtections().map((claim) => claim.taskId) ?? []),
+      ...(workspace?.unconfirmedProtections().map((protection) => protection.taskId) ?? []),
+    ])],
+    stopSafetyCertified: false as const,
+    resumeSupported: false as const,
+    note: 'Inspect the preserved deliveries, unfinished tasks and per-attempt evidence in this report. ' +
+      'This memo is not approval, a resumable TaskStore snapshot or proof that every approved test/process stopped. ' +
+      'Do not start another writer while stop safety is unconfirmed; any later execution needs a fresh explicit authorization.',
+  };
+
   const roundResult: RoundResult = buildRoundResult({
+    ...(pendingUser === undefined ? {} : { pendingUser }),
     identity: {
       roundId: rootId,
       startedAt,
@@ -4977,6 +5002,7 @@ export async function runRoundCli(
   // Published for the dashboard to READ. It is a report artifact: a missing or failed
   // write changes nothing about the round, so the failure is reported and then ignored.
   report.roundResult = roundResult;
+  if (roundResult.pendingUser !== undefined) report.pendingUser = roundResult.pendingUser;
   report.roundResultReport = renderRoundResult(roundResult);
   const published = publishRoundResult(roundResult, {
     onError: (message) => note(message),

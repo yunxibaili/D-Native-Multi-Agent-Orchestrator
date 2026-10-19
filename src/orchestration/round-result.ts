@@ -505,6 +505,25 @@ export interface NextRoundInput {
  * user-facing sentence. A reader can take any one without inheriting the others'
  * authority.
  */
+/** A read-only attention memo, never a paused task or a recovery checkpoint. */
+export interface PendingUserSummary {
+  readonly attentionRequired: true;
+  readonly source: 'system';
+  readonly code: string;
+  readonly reason: string;
+  readonly taskId: string;
+  readonly displayedAttemptId: string | null;
+  readonly currentAttemptId: string | null;
+  readonly currentSessionId: string | null;
+  readonly stageDigest: string | null;
+  /** Only this current Worker's RunResult; not an aggregate test/round stop proof. */
+  readonly workerTreeStopConfirmed: boolean | null;
+  readonly retainedProtectionTaskIds: readonly string[];
+  readonly stopSafetyCertified: false;
+  readonly resumeSupported: false;
+  readonly note: string;
+}
+
 export interface RoundResult {
   readonly identity: RoundIdentity;
   readonly plan: RoundPlanSummary;
@@ -528,6 +547,7 @@ export interface RoundResult {
   readonly gate: HumanGate;
   /** Where the append-only evidence lives, for anyone who wants to walk it. */
   readonly evidenceNote: string;
+  readonly pendingUser?: PendingUserSummary;
 }
 
 // ---------------------------------------------------------------------------
@@ -567,6 +587,7 @@ export interface AttemptEvidenceInput {
 export type TaskEvidenceInput = AttemptEvidenceInput;
 
 export interface BuildRoundResultInput {
+  readonly pendingUser?: PendingUserSummary;
   readonly identity: RoundIdentity;
   /** The ORIGINAL request text, as the user gave it. */
   readonly originalRequest: string;
@@ -896,6 +917,9 @@ export function buildRoundResult(input: BuildRoundResultInput): RoundResult {
     summary: buildUserFacingSummary(input, taskSummaries, attemptSummaries, handoffSummaries, reviewSummary, gate),
     gate,
     evidenceNote: input.evidenceNote,
+    ...(input.pendingUser === undefined ? {} : {
+      pendingUser: { ...input.pendingUser, retainedProtectionTaskIds: [...input.pendingUser.retainedProtectionTaskIds] },
+    }),
   };
 }
 
@@ -1431,6 +1455,19 @@ function appendAttemptEvidence(out: string[], a: AttemptSummary, indent: string)
 export function renderRoundDelivery(result: RoundResult): string {
   const out: string[] = [];
   out.push('## User delivery — per executable task (observed tool records, not verified files)');
+
+  if (result.pendingUser !== undefined) {
+    const pending = result.pendingUser;
+    out.push('', 'OWNER ATTENTION REQUIRED (report only)',
+      `  reason: ${pending.code} (source=${pending.source}): ${pending.reason}`,
+      `  task: ${pending.taskId}; displayed attempt=${pending.displayedAttemptId ?? 'unknown'}; current attempt=${pending.currentAttemptId ?? 'unknown'}; session=${pending.currentSessionId ?? 'unknown'}`,
+      `  approved stage digest: ${pending.stageDigest ?? 'none'}`,
+      `  current worker tree stop: ${pending.workerTreeStopConfirmed === null ? 'unknown' : pending.workerTreeStopConfirmed ? 'confirmed (worker only)' : 'NOT confirmed'}`,
+      `  retained protections: ${pending.retainedProtectionTaskIds.join(', ') || 'none reported; not a stop proof'}`,
+      '  whole-round stop safety: NOT CERTIFIED; resumeSupported=false',
+      `  ${pending.note}`,
+      '  Preserved task deliveries and per-attempt evidence follow; unfinished tasks remain unaccepted.');
+  }
 
   for (const root of result.machine.tasks.filter((t) => !isExecutableTask(t))) {
     out.push(`- ${root.taskId} is the round's container (the original request), not an executable unit of work`);

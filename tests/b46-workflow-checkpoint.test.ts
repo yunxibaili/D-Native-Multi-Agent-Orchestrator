@@ -18,7 +18,7 @@
  */
 
 import {
-  existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync,
+  existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -27,6 +27,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { PassThrough } from 'node:stream';
 
 import { runRoundCli } from '../src/cli/round-cli.ts';
+import type { RoundResult } from '../src/orchestration/round-result.ts';
 import { Orchestrator as RuntimeOrchestrator } from '../src/orchestrator/orchestrator.ts';
 import { createFakeAdapter } from './helpers.ts';
 import {
@@ -209,6 +210,7 @@ const B46_PLAN_FILE = {
 async function collabRound(opts: {
   checkpoint?: boolean;
   checkpointInput?: (snapshot: WorkflowCheckpointSnapshot) => string | Promise<string>;
+  workerTreeStopConfirmed?: boolean;
 } = {}): Promise<Round> {
   const cwd = ownDir();
   const reportDir = join(ownDir(), 'reports');
@@ -264,7 +266,7 @@ async function collabRound(opts: {
         exitCode: 0, signal: null,
         output, outputTruncated: false, transcriptPath: null,
         usage: {}, toolCalls, error: null, diagnostics: [],
-        cleanup: { rootKilled: false, descendantsReaped: false, note: '', treeStopConfirmed: true, processStart: 'started' },
+        cleanup: { rootKilled: false, descendantsReaped: false, note: '', treeStopConfirmed: opts.workerTreeStopConfirmed ?? true, processStart: 'started' },
       };
       return { result: async () => result } as unknown as RunHandle;
     },
@@ -402,6 +404,8 @@ section('collaboration continue: all members and integration proceed, one prompt
     JSON.stringify(cp.entries.map((e) => e.choice)));
   check('continue: the integration entry carries the integrator\'s own output',
     cp.entries.some((e) => /integration/.test(e.role ?? '') && e.output.includes('integrated')), JSON.stringify(cp.entries.map((e) => e.role)));
+  check('continue: no pending-user memo is invented', !('pendingUser' in r.report) &&
+    (r.report.roundResult as RoundResult).pendingUser === undefined);
 }
 
 // =========================================================================
@@ -417,6 +421,7 @@ section('collaboration stop: the first member blocks the rest, and its file surv
   check('stop: the integration never ran', !r.requests.some((q) => q.prompt.includes('carries integration responsibility')) && !existsSync(join(r.cwd, 'src/integration/combined.txt')),
     `n=${r.requests.length}`);
   check('stop: the loop stopped on user-stop', workflowOf(r).stop === 'user-stop', String(workflowOf(r).stop));
+  check('stop: an explicit user stop is not reinterpreted as awaiting input', !('pendingUser' in r.report));
   check('stop: explicit input alone is recorded as a user stop',
     cp.entries[0]?.choice === 'stop' && cp.entries[0].source === 'user' && cp.entries[0].code === 'user-stop' &&
     cp.stop?.source === 'user' && cp.stop.code === 'user-stop', JSON.stringify(cp));
@@ -464,6 +469,34 @@ for (const code of ['input-not-terminal', 'input-disconnected', 'input-timeout',
   check(`${code}: user-facing checkpoint, handoff and review text do not invent a user stop`,
     !/user STOPPED/i.test(cp.note) && !/the user stopped/i.test(JSON.stringify([r.report.handoff, r.report.unifiedReview])),
     JSON.stringify([cp.note, r.report.handoff, r.report.unifiedReview]));
+  const result = r.report.roundResult as RoundResult;
+  const pending = result.pendingUser;
+  check(`${code}: pending material binds the actual task, Attempt and Session without claiming recovery`,
+    pending?.attentionRequired === true && pending.source === 'system' && pending.code === code &&
+    pending.taskId === cp.entries[0]?.taskId && pending.displayedAttemptId === cp.entries[0]?.attemptId &&
+    pending.currentAttemptId === cp.entries[0]?.attemptId && pending.currentSessionId === cp.entries[0]?.sessionId &&
+    pending.workerTreeStopConfirmed === true && pending.stopSafetyCertified === false && pending.resumeSupported === false &&
+    result.machine.unfinished.length > 0 && result.gate.automaticPostRoundAction === 'none', JSON.stringify(pending));
+  const published = r.report.roundResultPublished as { ok: boolean; path: string };
+  const saved = published.ok ? JSON.parse(readFileSync(published.path, 'utf8')) as RoundResult : null;
+  check(`${code}: actual published result preserves memo, delivery and unfinished facts`,
+    published.ok && saved?.pendingUser?.currentAttemptId === pending?.currentAttemptId &&
+    saved?.pendingUser?.code === code && saved?.pendingUser?.resumeSupported === false &&
+    saved?.machine.attempts.length === result.machine.attempts.length && saved?.machine.unfinished.length === result.machine.unfinished.length &&
+    JSON.stringify(saved?.pendingUser) === JSON.stringify(r.report.pendingUser), JSON.stringify(published));
+  check(`${code}: the normal user delivery renders attention and no-resume wording`,
+    String(r.report.roundResultReport).includes('OWNER ATTENTION REQUIRED') &&
+    String(r.report.roundResultReport).includes('resumeSupported=false') &&
+    String(r.report.roundResultReport).includes('NOT CERTIFIED'));
+}
+
+{
+  const r = await collabRound({ checkpoint: true, workerTreeStopConfirmed: false, checkpointInput: () => { throw new Error('input lost'); } });
+  const result = r.report.roundResult as RoundResult;
+  check('unconfirmed stop: attention memo retains false stop fact, never a safe pending/resume claim',
+    result.pendingUser?.workerTreeStopConfirmed === false && result.pendingUser.stopSafetyCertified === false &&
+    result.pendingUser.resumeSupported === false && r.requests.length === 1 && r.reviewRequests.length === 0 &&
+    r.exitCode !== 0 && String(r.report.roundResultReport).includes('NOT confirmed'), JSON.stringify(result.pendingUser));
 }
 
 {

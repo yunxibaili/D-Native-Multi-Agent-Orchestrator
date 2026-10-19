@@ -1,18 +1,18 @@
-# 唯一下一任务 — P0-3b 异常待人工材料与安全停止事实（待Owner授权）
+# 唯一下一任务 — P0-3c 自动模式异常的待人工汇总（待Owner授权）
 
-当前事实见PROJECT_BASELINE.md §7.42。P0-1、P0-2保留原范围PASS；P0-3a来源归属修复离线PASS，既有checkpoint单文件一次77/0，typecheck最终通过。P0-3整体、真实MVP及正式前端未封板。
+当前事实见PROJECT_BASELINE.md §7.43。P0-1/P0-2/P0-3a保留原范围PASS；P0-3b检查点异常报告投影离线PASS（单文件一次92/0，typecheck一次PASS）。P0-3整体及真实MVP仍未封板。
 
 ## 唯一下一片建议
 
-仅准备异常后的最小用户交付：复用现有checkpoint/round-result及观察文件，把真实停止原因、Task/Attempt/Session、已有产物、未完成事项和停止确认事实形成可读待办。系统失败不是Owner stop；没有真实输入就没有user_accept。
+先映射默认machine-auto的machineStop、授权撤销、LAYA wait/预算耗尽与Review未完成等实际返回路径：哪些需要用户决定、哪些只是有界等待，保留真实原因。复用P0-3b已有round-result交付与同源pendingUser材料；无执行身份时保持null，不捏造Attempt或停止事实。
 
-- 活动执行资源先按既有机制停止；停止未确认保留保护，不允许新写者。
-- 不新建TaskStore、恢复引擎或第二套状态机；材料落盘不表示跨进程恢复。
-- 明确resumeSupported=false，不承诺隔天继续；不扩大60秒之外的Worker/Reviewer/LAYA执行deadline或费用预算。
-- 尚未授权实施或新增测试。若涉及新的pending/恢复语义，先给Gemini具体资料单，Owner确认最小契约后实施。
+- 材料是报告，不是Task状态、用户accept或恢复授权；resumeSupported=false。
+- Worker树停止不能冒充批准测试/整轮安全；停止未知保留原WRITE保护，不启动新写者。
+- 必要时先交Gemini官方机制检索单；不照搬LangGraph/Temporal持久化，不承诺exactly-once或隔天恢复。
+- 后续实施、新增/修改测试及真实模型调用尚未授权，不自动运行真实E2E。
 
-## 当前边界
+## 已完成片的边界
 
-本轮P0-3a由Codex依既有直接推进授权实施；并非OpenCode交付或第三方独立审计。OpenCode Free403与Desktop配对旁支保持暂停。真实产品Agent/LAYA/Native Review调用关闭，不自动运行第四次真实E2E，不开放并行写。
+P0-3b仅检查点非显式user-stop异常。真实reader四种故障已验证实际材料落盘；正常继续与明确stop不新增待人工材料。Codex实施与源码复核，不称OpenCode委派或第三方独立审计。默认自动异常统一交付尚未完成，不能把本片PASS等同P0-3整体。
 
-Owner已授权阶段完成后归档独立审核分支；不合并main。9/26历史失败保持原边界，规划信用68/100；主HEAD/index/范围外dirty保持，audit只读，project-progress ignored。
+阶段完成后按Owner授权推送独立审核分支，不合并main。OpenCode Free403及Desktop接入旁支保持暂停；不调用产品Agent/LAYA/Native Review。原9/26失败边界与68/100规划信用保留；主HEAD/index/范围外dirty保持，audit只读，进度页ignored，正式前端未授权。
