@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-19。当前见§7.62：P0-4.7唯一返工静态实施/源码审核PASS。JSON判断沿用原严格验证，reviewer/单次reviewedAt由调用方补入并复用；未运行测试或真实Review，P0-4.6仍PARTIAL。下一步P0-4.8只读映射既有批准测试证据到Review/最终报告的最小出口，不实现新验证权威、不调用模型。
+更新：2026-10-19。当前见§7.63：P0-4.8只读源码映射独立审核PASS（限映射），批准测试事实已有内存来源，缺安全报告出口。下一步P0-4.9为待Owner转交的最小事实投影实施；Attempt关联必须复用既有出处核对，不能只比fingerprint。P0-4.7静态PASS保持，P0-4.6真实E2E仍PARTIAL，真实调用授权关闭。
 
 ## 1. 权责与当前结论
 
@@ -114,7 +114,7 @@ B4.7.3：Space Bunny Free+MiMo V2.6 Flash Free，三个真实独立任务/会话
 
 LAYA：既有Python环境0.3.21，缓存D:/AI/laya-cache，固定权重revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851。历史离线CUDA加载和GET health通过；typed分类中英/计划/pair小样本通过。next_action的正向质量验收曾多次continue或wait，不能改成complete；置信度裁剪等原有限制不因文档更新消失。默认不常驻，不升级/下载/切权重。
 
-## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.62）
+## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.63）
 
 Owner批准日期：2026-10-16。**Owner approved / Not yet implemented / Not yet tested**。正式未来默认覆盖旧“仅显式实验”建议，未改变当前生产或历史报告。
 
@@ -142,7 +142,7 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
 
 ## 6. 唯一下一步与授权
 
-P0-4.7静态实施与独立源码审核PASS（§7.62），P0-4.6真实执行仍PARTIAL。唯一下一步P0-4.8只读映射现有CompletionEvidence中的批准测试事实如何进入ReviewPacket和Round结果；不新建验证系统，不直接开放可变证明对象，不修补历史证据，不运行测试/模型。父任务歧义及UTF-8记录问题继续保留。
+P0-4.8只读映射独立审核PASS（§7.63），P0-4.7静态PASS保持，P0-4.6真实执行仍PARTIAL。唯一下一步P0-4.9：待Owner转交OpenCode后，最小投影既有批准测试事实到ReviewPacket和RoundResult；不改变验证权威、不返回内部可变证明、不回填历史结果。本轮未实现或运行检查/测试/模型。父任务歧义及UTF-8记录问题继续保留。
 
 真实产品Agent/LAYA/Native Review/E2E调用保持关闭，旧剩余次数不继承。OpenCode最近一次Free CLI探测403仍是接入线索，不能推断当前必然可用或不可用；先完成本地确定性缺口，再按新授权核实模型/费用/数据/次数。阶段裁定后可按Owner既有授权推送独立审核分支，不合并main。
 
@@ -745,6 +745,16 @@ P0-4.7静态实施与独立源码审核PASS（§7.62），P0-4.6真实执行仍P
 - 裁定PASS仅限本片按批准轻量标准的静态实施与源码审核，不证明真实模型遵循JSON或新的Native Review已通过。P0-4.6仍PARTIAL；批准测试事实未投影、planned父任务歧义、观察端UTF-8损坏仍开放。费用/调用授权不恢复，不新增Round或Review，不改变Human Gate决定。
 - 唯一下一步P0-4.8为只读源码映射：现有orchestration/orchestrator.ts私有completionEvidence Map保存CompletionEvidence，test已有命令/cwd/code/signal/timedOut/treeStopConfirmed/mayHaveStarted/outputDigest；CLI目前构建ReviewPacket，round-result仍UNREPORTED。先确认现有身份/lease/runFingerprint绑定和最小只读事实出口，再由Codex裁定实施范围；不建立第二套TestStore或暴露可变证明使外部调用者能影响原验证门，不从短control/Worker PASS拼造历史证据。
 - 独立记录在ignored project-progress/p047-final-review-20261019；基线/NEXT/进度页同步。按阶段授权精确归档已接受的单个源码及两份文档，不包含其他dirty源码/测试、Demo或ignored材料。远端SHA与临时索引清理以实际记录为准；主HEAD/index/范围外dirty保留，9/26债务、68/100规划信用不变。
+### 7.63 P0-4.8批准测试事实源码映射独立审核（仅映射PASS；实施尚未开始）
+
+- 已读取Owner转交的只读映射及当前completion-evidence.ts、orchestrator.ts、completion-gate.ts、workbench.ts、unified-review.ts、round-result.ts和round-cli.ts直接链路。确认runApprovedTest经现有ManagedProcess产生code/signal/timedOut/treeStopConfirmed/mayHaveStarted、命令/argv/cwd及outputDigest；CompletionEvidence保存Task/Session/lease/pair/runFingerprint/contract/workspace关联。CLI没有安全读取该私有Map的出口，ReviewPacket未携带批准测试，Round交付文本无条件UNREPORTED；AttemptRecord不存该测试，不能事后回填P0-4.6。
+- 接受最小出口及两个消费者的映射，修正Attempt建议：proof fingerprint相同并不足以信任AttemptId。新只读出口须复用attemptBindingRefusal核对现有AttemptStore及acceptedRuns/runProvenanceOf的同store/同record/同attempt出处，再核对evidence与当前task/proof的身份、lease、session、pair、fingerprint和contract关联。失配/缺失返回null，不猜测关联；真实测试失败仍可作为正确绑定的失败事实展示，不能变成PASS。
+- 不得调用整个completionRefusal来生成报告：它会重读当前工作区并重跑完成资格判断，后续任务的合法变更可能使第一步历史摘要不再相同。报告只携带采集时的事实，不认证当前文件未变；Verification仍是唯一任务完成权威。同一副本进入ReviewPacket与最终RoundResult，仅属于当前实际执行，不复制给历史Attempt或未启动成员。
+- CompletionEvidence只有外层浅冻结，test/argv仍可变；新出口应显式复制并冻结视图与argv，不能返回原test/Map/proof引用，无需通用递归冻结框架。缺证据或旧可选字段继续UNREPORTED；不从Worker shell命令/PASS、Job耗时推导成功，不生成第二套验证结果。
+- 两点事实限制须保留：validatedAt是调用buildCompletionEvidence前传入的时钟，不是测试结束时刻；outputDigest来自按行收集的stdout/stderr字符串或not-run/spawn-refused合成说明，不是原始字节日志。配置timeoutMs未保存在结构化证据中，本片不补造该事实。内存Map退出即失，未来新结果可持久化副本，旧P0-4.6仍PARTIAL/UNREPORTED。
+- 下一实施最小范围为completion-evidence.ts、orchestrator.ts、unified-review.ts、round-result.ts、round-cli.ts；index.ts仅确有类型导出需要才改。保持collector/gate/applyVerification/AttemptRecord/adapter/调度/Human Gate不变，不合并父任务和UTF-8问题。下一任务待Owner转交；本轮仅静态走查，没有执行typecheck、测试、CLI或真实调用，未证明投影行为或真实Review通过。
+- 本轮只维护基线/NEXT及ignored进度记录，按既有阶段授权精确归档两份审核文档；远端SHA与临时资源清理看实际归档记录。主HEAD/index/范围外dirty保留，9/26历史债务及68/100规划信用不变。
+
 ## 8. 规划估算与本机快照
 
 沿用历史十项权重信用68/100（固定分母为完整后端需求，不含正式UI）；页面按5%档显示约70%、剩30%，旧合理剩余区间30–50%。这不是工时、可用率、自动化完成率或MVP成功概率。本轮文档不增分；下一真实E2E仍未成功，必须看具体阻塞和证据，不能用百分比代替它。
@@ -753,18 +763,18 @@ P0-4.7静态实施与独立源码审核PASS（§7.62），P0-4.6真实执行仍P
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-19T12:12:04.0233562Z",
+  "updatedAt": "2026-10-19T12:40:23.6637111Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-4.7",
-    "name": "Review契约与调用方元数据接线静态PASS",
+    "id": "P0-4.8",
+    "name": "批准测试证据最小出口只读映射审核PASS",
     "status": "done",
-    "summary": "唯一返工+13/-4静态审核PASS，调用方元数据经原严格验证，时钟只读一次。Worker日志无diagnostics，未重复检查/运行模型；真实E2E仍PARTIAL。"
+    "summary": "确认现有内存测试事实与两个报告缺口；Attempt投影须复用原出处校验，返回复制冻结事实，不重新验收历史工作区。未实现/运行检查或模型，真实E2E仍PARTIAL。"
   },
   "next": {
-    "id": "P0-4.8",
-    "name": "只读映射批准测试证据到Review/最终报告的最小出口",
+    "id": "P0-4.9",
+    "name": "待Owner转交：批准测试事实只读出口及Review/最终报告接线",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1195,6 +1205,11 @@ P0-4.7静态实施与独立源码审核PASS（§7.62），P0-4.6真实执行仍P
     }
   ],
   "checks": [
+    {
+      "name": "P0-4.8只读源码映射独立审核",
+      "source": "PROJECT_BASELINE.md §7.63；Owner附件c77824ac-b0cb-43fd-a33b-ec2914f6e403及本机直接源码",
+      "result": "仅映射PASS：现有批准测试有内存事实但无安全报告出口；收紧Attempt出处关联与时间/摘要语义。未实现、未运行检查/测试/CLI/模型；P0-4.6仍PARTIAL。"
+    },
     {
       "name": "P0-4.7唯一返工独立验收",
       "source": "PROJECT_BASELINE.md §7.62；project-progress/p047-final-review-20261019/review.json；Worker两份静态检查日志",

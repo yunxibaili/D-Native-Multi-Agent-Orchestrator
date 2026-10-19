@@ -1,20 +1,26 @@
-# 唯一下一任务 — P0-4.8 批准测试证据最小投影源码映射（只读，待Owner转交）
+# 唯一下一任务 — P0-4.9 批准测试事实最小投影（待Owner转交OpenCode）
 
-P0-4.7静态实施与独立审核PASS，见PROJECT_BASELINE.md §7.62。P0-4.6真实E2E仍PARTIAL，所有真实调用授权保持关闭。下一步先查清现有证据出口，不新增验证系统、不直接开始编码。
+P0-4.8只读映射独立审核PASS，见PROJECT_BASELINE.md §7.63；P0-4.7静态PASS保持，P0-4.6真实E2E仍PARTIAL。本文是下一片实施范围，尚未启动开发，不恢复真实产品调用授权。Owner转交此任务后由OpenCode实施、Codex独立审核；不自动运行模型或新Round。
 
-## 范围
+## 唯一目标与允许文件
 
-只读src/orchestration/orchestrator.ts、completion-evidence.ts、completion-gate.ts、workbench.ts、unified-review.ts、round-result.ts、src/cli/round-cli.ts及必要直接调用者。可静态读取相关已有测试了解兼容约束，不修改/运行它们。复用本地源码已足够，不重复外部检索或试模型。
+把现有CompletionEvidence中的批准测试事实以不可修改的副本送入ReviewPacket和RoundResult/交付文本；不改完成门禁，不新增证据/状态权威。
 
-已知入口：Orchestrator私有completionEvidence Map，runApprovedTest/buildCompletionEvidence，原applyVerification身份/新鲜度门，CLI的buildReviewPacket/runUnifiedReview/buildRoundResult；不要从Worker testsRun/PASS字符串或control时长推导批准测试成功。
+仅允许src/orchestration/completion-evidence.ts、orchestrator.ts、unified-review.ts、round-result.ts、src/cli/round-cli.ts；index.ts仅在确有新类型导出需要时修改。不新增依赖、包装层或通用深冻结工具。Codex在独立审核后维护基线、NEXT及进度页，Worker不改它们。
 
-## 一页交付，回答四项
+## 实施要求
 
-1. 权威批准测试事实已有字段和生产者在哪里？列命令/cwd/真实code/signal/timeout/treeStop/outputDigest及身份关联（Task/Attempt/Session/lease/runFingerprint）的实际来源，缺字段如实写缺。
-2. 当前是否有安全可复用的只读出口？没有则指出最小插入位置。只提出脱离内部可变引用的事实副本，不允许返回可修改的原始证明使调用者影响Verification，不新建状态/验证权威。
-3. ReviewPacket和RoundResult最少各需消费什么事实，才能区分真实批准测试、Worker观察命令和缺证据？列具体文件/函数/行号，缺证据继续UNREPORTED，不伪造PASS或回填P0-4.6历史结果。
-4. 建议的最小实施文件清单、兼容影响与两项承重负例（只列，不写/跑测试）。内存证据可达性和退出后能否追溯必须区分；父任务呈现、观察端UTF-8不合并扩张。
+1. Orchestrator作为私有Map所有者提供只读出口。复用attemptBindingRefusal及现有AttemptStore/acceptedRuns/runProvenanceOf的同store、同record、同attempt核对；仅fingerprint相同不能认定Attempt绑定。再核对CompletionEvidence与当前task/proof的taskId、lease、session、agent/model、runFingerprint及contractDigest；缺失/失配返回null，不猜测、不从调用者填写的ID建立信任。
+2. 视图显式复制事实并冻结对象及复制的argv，不返回内部test/Map/proof引用。至少保留命令/argv/cwd、code/signal/timedOut/treeStopConfirmed/mayHaveStarted/outputDigest/note，以及Task/Attempt/Session/lease/pair/runFingerprint/contractDigest/validatedAt。保留现有时间和摘要语义：validatedAt不是测试结束时刻；摘要不是原始字节日志；没有结构化timeoutMs就不补造。正确绑定的失败测试可以展示其失败事实，不把code0变成任务PASS。
+3. 不调用整个completionRefusal、不重读文件系统来认证报告、不重新运行批准测试。后续合法任务会改变共享工作区，不能因此抹去第一步已采集的历史测试事实。采集时事实不代表当前文件新鲜度，原applyVerification仍独立执行原门禁。
+4. CLI对当前实际执行取得同一视图，送入ReviewPacket与最终RoundResult机器JSON及人类交付文本。只归属视图命名的当前Attempt；未启动任务/失配证据为null，不复制给其他历史Attempt。沿用现有current execution/receipt语义，不能从累计latest记录借证据。
+5. 两个渲染出口区分批准测试事实与Worker观察shell命令，后者明确NOT test verdicts。新字段可选，undefined/null继续UNREPORTED，不从Worker PASS或Job耗时推断。用既有有界文本能力控制Review文本，不发送原始stdout/stderr；最终JSON保留必要事实。不得新建判断层或自动PASS标签。
+6. 不改采集器执行、completion-gate/applyVerification、AttemptRecord、原生adapter、调度、Review判断/Human Gate；不改父任务呈现、观察端UTF-8、模型/费用/权限。P0-4.6旧结果不得回填，仍PARTIAL。
 
-仅返回简明表格及最小改动建议；如需落盘，只允许新建project-progress/p048-test-evidence-map-20261019/report.md（ignored），不要修改audit目录、源码、测试或基线。Codex根据映射裁定实施范围并维护项目文档。
+## 轻量验收与停止
 
-不运行测试/typecheck/CLI/模型/LAYA/Review/Round，不新增脚本，不读凭据，不改Demo/全局/安装；不commit/push/reset/clean/stash。完成READY FOR CODEX REVIEW或BLOCKED后停止，不自行启动实施。
+先读取相关源码及§7.63；纯本机内部接线，已有来源足够，不重复联网检索。提交实际diff和两条静态负控走查：缺CompletionEvidence时即使Worker报告PASS仍UNREPORTED；身份失配不关联Attempt，失败/超时/停止未确认保留失败事实且不生成成功标签。
+
+按Owner转交范围仅运行一次npm run typecheck和git diff --check；保留命令、输出及真实退出码，Codex不重复运行。不得新增/修改/运行测试文件，不写临时验证脚本，不启动产品Agent/LAYA/Native Review/Round。若发现需改变证据采集或验证契约，停止并报告，不自行扩张。首次实现加至多一次有明确证据的返工；连续两次检查失败立即停止。
+
+保持主HEAD/index及范围外dirty，不commit/push/merge/reset/clean/stash，不读凭据、不改Demo/全局/安装。完成后READY FOR CODEX REVIEW或BLOCKED即停止；归档由Codex负责。
