@@ -1,12 +1,12 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-19。当前裁定§7.41：P0-2 PASS（限已批准的有界离线实现）。只读静态复核源码/契约/A–F日志，当前文件哈希与75/0记录一致，未重跑测试或typecheck、0模型调用。自动完成经唯一Verification，授权撤销/失败/wait/Review拒绝及人工模式边界对应证据成立；原生费用/权限、真实Owner输入/模型E2E不在此PASS内。P0-3来源与异常待人工仍未实施，唯一下一片为待授权P0-3a来源归属，不自行启动。
+更新：2026-10-19。当前裁定§7.46：P0-3整体静态收口BLOCKED，剩P03-F1最终授权复查未进入持久化待人工材料；a/b/c有限离线证据保持原范围。本轮只读源码/日志/哈希，无生产修改、测试、typecheck或模型调用。真实MVP仍PARTIAL，后续只建议单点结果投影修复，不启动真实E2E。
 
 ## 1. 权责与当前结论
 
 本文唯一维护当前事实、阶段状态、证据与进度快照。[产品方向](PRODUCT_DIRECTION.md)管已确认定位/取舍；[后端需求](BACKEND_REQUIREMENTS.md)保留全部目标；[路线](BACKEND_DELIVERY_PLAN.md)管顺序；[阶段分析](STAGE_ANALYSIS.md)解释新策略；[NEXT_TASK](NEXT_TASK.md)只列下一有界任务；[研究索引](ENGINEERING_RESEARCH_REFERENCES.md)管来源，不各自宣布封板。
 
-**当前P0-1沿用独立PASS（§7.10），P0-2 PASS（限已批准的有界离线实现，§7.41）。源码/契约/A–F75/0证据静态映射及当前哈希核对完成，本轮未跑测试或模型。不是第三方独立审计、真实费用/权限认证或MVP封板。P0-3a来源归属与P0-3b检查点异常材料已离线PASS（§7.42/§7.43）；P0-3c自动异常汇总及非pass Review结果投影已有限离线PASS（§7.45）；P0-3整体仍待最终静态收口，真实MVP未完成。** 以下为前轮P0-1 Final Closure曾BLOCKED的历史事实，不能当作当前状态：Attempt重放/换绑与空产物入口已关闭，原51项失败按A5/B40/C6逐项对应最终独立通过；额外3套件9项失败已通过修改前字节快照复跑确认同签名，仍开放，不纳入历史26项豁免。本轮返工违反离线授权，旧cancel.test.ts运行3次造成6次真实Codex执行；3个成功会话实证模型gpt-6.1-sol，3个取消会话无可见推理结果。费用未独立核实，不能称零新增收费。一次实现+一次返工轮次已用完，返工由Codex停止，无第三次委派。P0-2/3及第四次E2E仍未授权。
+**当前P0-1沿用独立PASS（§7.10），P0-2 PASS（限已批准的有界离线实现，§7.41）。源码/契约/A–F75/0证据静态映射及当前哈希核对完成，本轮未跑测试或模型。不是第三方独立审计、真实费用/权限认证或MVP封板。P0-3a来源归属与P0-3b检查点异常材料已离线PASS（§7.42/§7.43）；P0-3c自动异常汇总及非pass Review结果投影已有限离线PASS（§7.45）；P0-3整体静态收口BLOCKED（§7.46）：最终授权失效原因未完整落盘；真实MVP未完成。** 以下为前轮P0-1 Final Closure曾BLOCKED的历史事实，不能当作当前状态：Attempt重放/换绑与空产物入口已关闭，原51项失败按A5/B40/C6逐项对应最终独立通过；额外3套件9项失败已通过修改前字节快照复跑确认同签名，仍开放，不纳入历史26项豁免。本轮返工违反离线授权，旧cancel.test.ts运行3次造成6次真实Codex执行；3个成功会话实证模型gpt-6.1-sol，3个取消会话无可见推理结果。费用未独立核实，不能称零新增收费。一次实现+一次返工轮次已用完，返工由Codex停止，无第三次委派。P0-2/3及第四次E2E仍未授权。
 
 主要开发Worker依Owner最新指令恢复为OpenCode，复用既有opencode-agent及DeepSeek V4.1 Flash Free覆盖值；DSH接入旁支暂停。本片沿用Owner此前让Codex直接推进主项目的授权，完成P0-3a最小来源修复；不改变长期OpenCode开发/Codex审核分工。LAYA仍为任务级选择权威，TaskStore仍为任务状态权威。正式Windows桌面路线保持，具体UI需求/实现未开始。PARALLEL_WRITE=CLOSED、automaticPostRoundAction=NONE。
 
@@ -113,7 +113,7 @@ B4.7.3：Space Bunny Free+MiMo V2.6 Flash Free，三个真实独立任务/会话
 
 LAYA：既有Python环境0.3.21，缓存D:/AI/laya-cache，固定权重revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851。历史离线CUDA加载和GET health通过；typed分类中英/计划/pair小样本通过。next_action的正向质量验收曾多次continue或wait，不能改成complete；置信度裁剪等原有限制不因文档更新消失。默认不常驻，不升级/下载/切权重。
 
-## 5. Owner新裁定与现有代码的差距
+## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.46）
 
 Owner批准日期：2026-10-16。**Owner approved / Not yet implemented / Not yet tested**。正式未来默认覆盖旧“仅显式实验”建议，未改变当前生产或历史报告。
 
@@ -141,9 +141,9 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
 
 ## 6. 唯一下一步与授权
 
-**当前以§7.10为准：P0-1独立PASS。** 本轮Owner仅授权迁移旧Case24/32，已完成且四个指定单文件全绿。唯一后续为申请P0-2“授权范围内自动推进”的有界实施；本轮不实施、不调用真实产品模型，不开放并行写。下段为此前授权历史，不再作为当前下一任务。
+P0-1/P0-2及P0-3a/b/c保持已验收的有限范围；P0-3整体因P03-F1未收口。唯一建议P0-3c.1：复用已计算的最终授权失效事实，使其进入既有待人工材料和持久化结果，并只补一项Review期间撤销的受控负例。源代码/测试修改及运行均待Owner新授权，不自动实施。
 
-**P0-1续修独立BLOCKED：新授权的一次实现和唯一返工均结束，不追加开发调用。下一步仅建议补齐统一契约/精确Attempt关联与直接受影响调用者，须Owner新授权。** 门禁独立通过后再P0-2授权范围内默认自动推进，再P0-3异常等待/最终交付，最后P0-4另行授权的真实闭环；不能在P0-1先开放新默认。 本轮仅已授权的OpenCode开发委派，不自动第四次E2E，不修改模型或重新审计B1–B5。后续真实运行重新确认模型/免费或订阅资格、会话/POST/timeout/数据范围；free名称和pool声明不是当前账户事实。本轮只授权P0-1必要源码/测试与最多两轮开发委派；真实产品推理、正式前端和P0-2/3未授权。P1自然语言计划、P2模型/Skill/MCP配置、P3正式桌面UI顺序保持。
+真实产品Agent/LAYA/Native Review/E2E调用保持关闭，旧剩余次数不继承。OpenCode最近一次Free CLI探测403仍是接入线索，不能推断当前必然可用或不可用；先完成本地确定性缺口，再按新授权核实模型/费用/数据/次数。阶段裁定后可按Owner既有授权推送独立审核分支，不合并main。
 
 ## 7. 文档更新与历史
 
@@ -597,6 +597,15 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
 - 本片PASS不等于P0-3整体/真实MVP或前端通过。唯一下一步为P0-3最终只读静态收口：把已批准监督/异常/交付契约映射到a/b/c源码与现有证据，不追加实现、suite或模型调用；随后才能另行申请真实E2E的最新模型/费用/数据/次数授权。本片没有必须再交Gemini的新外部机制问题，后续外部API或恢复语义未知时再给具体检索单。
 - 按Owner阶段归档授权，以P0-3b远端294d31cc886fa78e14eec5a06dc71a01d200edb7为父基准，独立分支仅提交本片及基线/NEXT/报告；推送以实际远端SHA核对为准，不合并main。主HEAD/index/范围外dirty与规划信用68/100保持，进度页ignored，audit只读。
 
+### 7.46 P0-3整体只读收口（BLOCKED：P03-F1最终授权事实未持久化）
+
+- Owner批准继续最终静态收口；本轮只读核对批准需求§20、路线P0-3及a/b/c源码/日志/哈希，没有生产或测试修改、typecheck、suite或真实模型调用，不重复B1–B5审核。
+- 主要路径可对应既有有限证据：系统/用户来源、合法accept唯一Verification、机器验收失败、wait、预算0/2、Review withheld/reject/rework、身份null与材料实际写入、保持WRITE保护及最终动作NONE。当前CLI/checkpoint/result/两测试Git blob匹配已归档1e3315d；b46与p02的raw SHA匹配历史92/0和104/0，其他121个生产/native文件对照前次快照无漂移。本轮不声称重新获得Job物理证据或第三方独立审核。
+- 发现唯一直接阻断P03-F1：round-cli:4803最终approvalDrift在Review后可检测模型池过期/材料变更，令外层ok=false并加入machineSupervision.finalFailures；但4963的automaticAttention不读取该事实。若workflow all-succeeded、Review completed/pass、无发送拒绝/预算拒绝/machineStop，attentionCause为空；5043仅持久化RoundResult，外层finalFailures未进入落盘结果。因此可能出现CLI失败但持久化交付遗漏授权失效原因。此为源码可达条件分析，未做新实验；不宣称执行门禁被绕过或实际发生额外派发。
+- P0-3整体BLOCKED，a/b/c的原有限PASS不撤销也不扩大，104/0不覆盖此末端失效窗口。材料仍是只读attention而非安全paused/resume；stopSafetyCertified=false/resumeSupported=false的限制保留。
+- 唯一最小后续P0-3c.1：把既有最终授权复查结果提升为Round内单一事实，接入现有attention选择与实际持久化，不改变Task/Review/预算/停止权威；一项既有p02单文件负控，在受控Review回调期间撤销材料/池，断言两Worker已完成/原Review pass保留/外层失败/落盘approval-revoked/无额外派发。实施和测试均未授权，不自动修复。纯本地数据流遗漏已有明确依据，无需Gemini外部检索才能定位。
+- 证据project-progress/p03-final-static-review-20261019/evidence-integrity.json与docs/P03_FINAL_CLOSURE_REVIEW.md。阶段审核记录按Owner既有推送授权归档独立分支，不合并main；主HEAD/index/范围外dirty、9/26历史边界与68/100规划信用保持，audit只读、进度页ignored。
+
 ## 8. 规划估算与本机快照
 
 沿用历史十项权重信用68/100（固定分母为完整后端需求，不含正式UI）；页面按5%档显示约70%、剩30%，旧合理剩余区间30–50%。这不是工时、可用率、自动化完成率或MVP成功概率。本轮文档不增分；下一真实E2E仍未成功，必须看具体阻塞和证据，不能用百分比代替它。
@@ -605,18 +614,18 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-19T02:56:13.5689383Z",
+  "updatedAt": "2026-10-19T03:06:10.8252779Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-3c",
-    "name": "自动模式异常与Review非pass结果",
-    "status": "done",
-    "summary": "有限离线PASS：自动异常材料实际保存、无身份保持null，wait/预算不改写，Review reject/rework外层非成功；单文件一次104/0，最终typecheck通过，Job空，无真实模型。"
+    "id": "P0-3-CLOSURE",
+    "name": "整体静态收口",
+    "status": "blocked",
+    "summary": "BLOCKED：P03-F1 Review期间授权失效虽令外层失败，但未进入最终待人工/落盘结果。a/b/c历史有限证据保留；本轮0源码修改/0测试/0模型。"
   },
   "next": {
-    "id": "P0-3-CLOSURE",
-    "name": "P0-3最终只读静态收口与真实闭环准入差距核对（不运行模型）",
+    "id": "P0-3c.1",
+    "name": "待Owner授权：最终授权失效事实接入现有待人工材料及一项受控负例",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -694,9 +703,9 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
     {
       "severity": "P1",
       "kind": "当前验收缺口",
-      "title": "P0-3异常待人工与恢复仍未完成",
-      "detail": "P0-3a/b/c有限离线片已通过；尚待整体契约静态收口。材料不是可恢复TaskStore，不认证全程原生权限/费用或整轮停止，真实MVP仍PARTIAL。",
-      "next": "先只读静态收口，仍不得自动发起真实模型调用。"
+      "title": "P03-F1：最终授权失效未进入持久化材料",
+      "detail": "Review结束后检测过期/变更可令外层ok=false，但attention选择忽略该事实，已保存RoundResult可能遗漏实际失败原因。",
+      "next": "仅修既有最终授权事实到attention的接线，并补Review期间撤销的一项离线负控；需Owner授权。"
     },
     {
       "severity": "P1",
@@ -1034,9 +1043,9 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
     {
       "id": "P0-3",
       "title": "异常等待与最终Human Gate",
-      "status": "planned",
+      "status": "blocked",
       "deliverable": "用户/系统来源区分，安全资源释放，pending结果与恢复限制",
-      "evidence": "依赖前两片；当前内存状态不支持安全隔天恢复。"
+      "evidence": "a/b/c有限离线通过；最终静态收口发现P03-F1末端授权失效未持久化，待单点修复，无跨进程恢复。"
     },
     {
       "id": "P0-4",
@@ -1047,6 +1056,11 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
     }
   ],
   "checks": [
+    {
+      "name": "P0-3最终静态审核",
+      "source": "docs/P03_FINAL_CLOSURE_REVIEW.md；project-progress/p03-final-static-review-20261019/",
+      "result": "BLOCKED P03-F1；源码/测试与归档及92/104旧日志哈希一致，121其他生产文件无漂移；本轮0测试/typecheck/模型，不将旧证据升级为全流程PASS。"
+    },
     {
       "name": "P0-3c最终定向验收",
       "source": "project-progress/p03c-auto-attention-20261019/",
@@ -1278,6 +1292,10 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
     {
       "title": "P0-3c自动异常收口",
       "path": "docs/P03C_AUTO_ATTENTION_REVIEW.md"
+    },
+    {
+      "title": "P0-3静态收口阻断",
+      "path": "docs/P03_FINAL_CLOSURE_REVIEW.md"
     }
   ],
   "nativeFrontendRoute": "Windows正式桌面工作台；具体UI需求待单独确认，本机进度页不等于产品前端"
