@@ -1,26 +1,22 @@
-# 唯一下一任务 — P0-4.9 批准测试事实最小投影（待Owner转交OpenCode）
+# 唯一下一任务 — P0-4.10 现有UTF-8结果出口与下一轮观察方案（只读，待Owner转交）
 
-P0-4.8只读映射独立审核PASS，见PROJECT_BASELINE.md §7.63；P0-4.7静态PASS保持，P0-4.6真实E2E仍PARTIAL。本文是下一片实施范围，尚未启动开发，不恢复真实产品调用授权。Owner转交此任务后由OpenCode实施、Codex独立审核；不自动运行模型或新Round。
+P0-4.9有界静态实施/独立源码审核PASS，见PROJECT_BASELINE.md §7.64；P0-4.6真实E2E仍PARTIAL。当前不授权CLI/模型/服务/测试或新Round，也不修改生产源码、Demo、账户和观察脚本。本片先复用既有结果发布，不建立第二套观察/运行框架。
 
-## 唯一目标与允许文件
+## 唯一目标
 
-把现有CompletionEvidence中的批准测试事实以不可修改的副本送入ReviewPacket和RoundResult/交付文本；不改完成门禁，不新增证据/状态权威。
+为下一轮真实闭环给出可执行的最小证据留存方案，避免把PowerShell损坏的stdout当唯一机器证据；只读确认路径与源码，不实际启动执行或宣称READY。
 
-仅允许src/orchestration/completion-evidence.ts、orchestrator.ts、unified-review.ts、round-result.ts、src/cli/round-cli.ts；index.ts仅在确有新类型导出需要时修改。不新增依赖、包装层或通用深冻结工具。Codex在独立审核后维护基线、NEXT及进度页，Worker不改它们。
+## 优先复用与阅读范围
 
-## 实施要求
+- src/orchestration/round-observation.ts：defaultObservationDir/defaultRoundResultPath、publishRoundResult/readRoundResult；UTF-8写入、临时文件rename、覆盖及发布失败语义。
+- src/cli/round-cli.ts：发布调用、roundResultPublished的ok/path/code、Round身份以及最终stdout差异；必要时只读src/cli/round-observation.ts。
+- docs/PROJECT_BASELINE.md §7.60–7.64、本机project-progress/p046-independent-review-20261019与p049-static-review-20261019；已存在的D:/workbench-demo/p04-20261019T035918Z/evidence-p046材料仅用于确认原执行方式。不要重新解析、修补或覆盖已确认损坏的round-p046.stdout.json。
 
-1. Orchestrator作为私有Map所有者提供只读出口。复用attemptBindingRefusal及现有AttemptStore/acceptedRuns/runProvenanceOf的同store、同record、同attempt核对；仅fingerprint相同不能认定Attempt绑定。再核对CompletionEvidence与当前task/proof的taskId、lease、session、agent/model、runFingerprint及contractDigest；缺失/失配返回null，不猜测、不从调用者填写的ID建立信任。
-2. 视图显式复制事实并冻结对象及复制的argv，不返回内部test/Map/proof引用。至少保留命令/argv/cwd、code/signal/timedOut/treeStopConfirmed/mayHaveStarted/outputDigest/note，以及Task/Attempt/Session/lease/pair/runFingerprint/contractDigest/validatedAt。保留现有时间和摘要语义：validatedAt不是测试结束时刻；摘要不是原始字节日志；没有结构化timeoutMs就不补造。正确绑定的失败测试可以展示其失败事实，不把code0变成任务PASS。
-3. 不调用整个completionRefusal、不重读文件系统来认证报告、不重新运行批准测试。后续合法任务会改变共享工作区，不能因此抹去第一步已采集的历史测试事实。采集时事实不代表当前文件新鲜度，原applyVerification仍独立执行原门禁。
-4. CLI对当前实际执行取得同一视图，送入ReviewPacket与最终RoundResult机器JSON及人类交付文本。只归属视图命名的当前Attempt；未启动任务/失配证据为null，不复制给其他历史Attempt。沿用现有current execution/receipt语义，不能从累计latest记录借证据。
-5. 两个渲染出口区分批准测试事实与Worker观察shell命令，后者明确NOT test verdicts。新字段可选，undefined/null继续UNREPORTED，不从Worker PASS或Job耗时推断。用既有有界文本能力控制Review文本，不发送原始stdout/stderr；最终JSON保留必要事实。不得新建判断层或自动PASS标签。
-6. 不改采集器执行、completion-gate/applyVerification、AttemptRecord、原生adapter、调度、Review判断/Human Gate；不改父任务呈现、观察端UTF-8、模型/费用/权限。P0-4.6旧结果不得回填，仍PARTIAL。
+## 一页回答
 
-## 轻量验收与停止
+1. 现有最终结果文件写到哪里，如何确定实际路径、roundId和本轮归属？与完整CLI report分别包含什么，批准测试事实是否随TaskSummary写入？仅源码事实和已存材料，不把静态接线说成真实落盘成功。
+2. 该路径是单个latest文件还是不可变历史？后续Round/并行既有应用是否可能覆盖？如何用已有文件复制/哈希能力在下一轮结束后留存到该轮隔离evidence目录，不修改共享配置或新建框架？操作必须先核对发布ok、匹配roundId、完成时间及必要字段；失败/失配不能借旧文件。
+3. 是否无需生产修改，仅采用现有UTF-8结果文件作为结构化任务/Review/Human Gate事实，再单列真实调用预算、退出/Job清理及服务日志，即可避开stdout中文解码问题？最终RoundResult未包含的事实明确列缺，不能声称替代整个CLI report。若仍需修观察端，指出原有入口及最小差异方案，只提方案不实施、不新建脚本。
+4. 给出下一次执行前唯一最小待批准范围：是否有代码缺口、准确证据路径/操作与仍需新确认的模型/费用/时限/调用上限。旧授权和过期pool不复活；不运行stage-check或刷新时间戳，不生成新digest。
 
-先读取相关源码及§7.63；纯本机内部接线，已有来源足够，不重复联网检索。提交实际diff和两条静态负控走查：缺CompletionEvidence时即使Worker报告PASS仍UNREPORTED；身份失配不关联Attempt，失败/超时/停止未确认保留失败事实且不生成成功标签。
-
-按Owner转交范围仅运行一次npm run typecheck和git diff --check；保留命令、输出及真实退出码，Codex不重复运行。不得新增/修改/运行测试文件，不写临时验证脚本，不启动产品Agent/LAYA/Native Review/Round。若发现需改变证据采集或验证契约，停止并报告，不自行扩张。首次实现加至多一次有明确证据的返工；连续两次检查失败立即停止。
-
-保持主HEAD/index及范围外dirty，不commit/push/merge/reset/clean/stash，不读凭据、不改Demo/全局/安装。完成后READY FOR CODEX REVIEW或BLOCKED即停止；归档由Codex负责。
+已有本机源码足够时不重复联网；确有外部API问题时只列1–2个问题交Owner/Gemini，不猜参数。不要合并父任务呈现、调度、权限或历史债务。不得运行检查/测试/CLI/探针/模型/服务，不新增或改动文件、不读凭据、不做Git写操作。报告READY FOR CODEX REVIEW或BLOCKED后停止，由Codex审核并决定是否需要实施或申请新的真实执行授权。

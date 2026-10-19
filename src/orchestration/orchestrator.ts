@@ -67,7 +67,7 @@ import {
 import { runGit } from './git.ts';
 // P0-1: the completion gate's fact-gathering helpers (value-only) and the pure decision.
 import { captureWorkspaceManifest, manifestDigest, type WorkspaceManifest } from './workspace-manifest.ts';
-import { buildCompletionEvidence, runFingerprintOf, DEFAULT_COMPLETION_TEST_TIMEOUT_MS, type CompletionEvidence } from './completion-evidence.ts';
+import { buildCompletionEvidence, runFingerprintOf, DEFAULT_COMPLETION_TEST_TIMEOUT_MS, projectCompletionTestEvidence, type CompletionEvidence, type CompletionTestEvidenceView } from './completion-evidence.ts';
 import { completionContractDigest, isCodingTaskType, parseCompletionContract, CompletionContractError } from './completion-contract.ts';
 import { evaluateCompletionGate } from './completion-gate.ts';
 // P0-1: read-only correlation against the EXISTING evidence authority. This is not a
@@ -1159,6 +1159,33 @@ export class Orchestrator {
       };
     }
     return null;
+  }
+
+  completionTestEvidence(taskId: string): CompletionTestEvidenceView | null {
+    const task = this.store.get(taskId);
+    if (task === null) return null;
+    const evidence = this.completionEvidence.get(taskId);
+    if (evidence === undefined) return null;
+    const proof = this.executionProof.get(taskId) ?? null;
+    if (proof === null) return null;
+    if (this.attemptBindingRefusal(task, proof) !== null) return null;
+    if (proof.attemptId === null) return null;
+    if (evidence.taskId !== task.taskId) return null;
+    if (evidence.leaseVersion !== task.leaseVersion || evidence.leaseVersion !== proof.leaseVersion) return null;
+    if (evidence.agentId !== task.agentId || evidence.agentId !== proof.agentId) return null;
+    if (evidence.modelId !== task.modelId || evidence.modelId !== proof.modelId) return null;
+    if (evidence.sessionId !== proof.sessionId) return null;
+    if (evidence.runFingerprint !== proof.runFingerprint) return null;
+    const contract = task.completionContract;
+    if (contract === undefined) return null;
+    let contractDigest: string;
+    try {
+      contractDigest = completionContractDigest(contract);
+    } catch {
+      return null;
+    }
+    if (evidence.contractDigest !== contractDigest) return null;
+    return projectCompletionTestEvidence(evidence, proof.attemptId);
   }
 
   /**

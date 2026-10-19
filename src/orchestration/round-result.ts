@@ -57,6 +57,7 @@ import {
 import { TASK_STATUSES, type Task, type TaskStatus } from './task.ts';
 import type { TaskType } from '../quota/types.ts';
 import { HANDOFF_REASONS, type HandoffReason } from './continuation.ts';
+import type { CompletionTestEvidenceView } from './completion-evidence.ts';
 
 // ---------------------------------------------------------------------------
 // 1. Round identity
@@ -127,6 +128,7 @@ export interface TaskSummary {
   /** Execution outcome as classified for the review; `null` when never classified. */
   readonly outcome: ExecutionOutcomeKind | null;
   readonly executed: boolean;
+  readonly approvedTest?: CompletionTestEvidenceView | null;
   /** Declared artifacts, paths only. Never contents. */
   readonly artifacts: readonly { readonly name: string; readonly path: string }[];
   readonly errorCode: string | null;
@@ -635,6 +637,7 @@ export interface BuildRoundResultInput {
    * empty. It is NEVER filled from a sibling attempt.
    */
   readonly evidence?: Readonly<Record<string, AttemptEvidenceInput>>;
+  readonly completionTests?: Readonly<Record<string, CompletionTestEvidenceView | null>>;
   /**
    * Where the append-only evidence lives. Passed in because `UnifiedRoundReport` does not
    * carry it (the review packet does), and this file must not go looking for a store.
@@ -740,6 +743,7 @@ export function buildRoundResult(input: BuildRoundResultInput): RoundResult {
     // picking an arbitrary attempt among several would be a guess; "latest" is the only
     // choice that is both defined and true.
     const latest = workAttempts.length > 0 ? workAttempts[workAttempts.length - 1]! : undefined;
+    const projected = input.completionTests?.[t.taskId] ?? null;
     return {
       taskId: t.taskId,
       objective: t.acceptanceCriteria,
@@ -751,6 +755,9 @@ export function buildRoundResult(input: BuildRoundResultInput): RoundResult {
       attemptCount: workAttempts.length,
       outcome: classified?.outcome ?? null,
       executed: classified?.executed ?? false,
+      ...(input.completionTests === undefined ? {} : {
+        approvedTest: projected !== null && projected.attemptId === latest?.attemptId ? projected : null,
+      }),
       artifacts: t.artifacts.map((a) => ({ name: a.name, path: a.path })),
       errorCode: latest?.errorCode ?? null,
       errorMessage: latest?.errorMessage ?? null,
@@ -1442,8 +1449,8 @@ function appendAttemptEvidence(out: string[], a: AttemptSummary, indent: string)
  *     never as produced; an observed write is a TOOL RECORD, not proof the file exists
  *     now.
  *   - It does NOT classify any observed shell command as a passing or failing test.
- *     There is no structured test result in this round, so the test/verification
- *     outcome is reported as UNREPORTED.
+ *     A structured approved-test fact is reported only when this round's current
+ *     execution produced one; otherwise the test/verification outcome is UNREPORTED.
  *   - It NEVER copies one attempt's evidence onto a sibling. A missing evidence entry
  *     is reported as unavailable/unknown.
  *   - It treats the round's ROOT as a CONTAINER, not as unexecuted missing work, and it
@@ -1539,11 +1546,24 @@ export function renderRoundDelivery(result: RoundResult): string {
         `${j.attemptId} agent=${j.agentId} outcome=${j.outcome} evidence=${evidenceAvailability(j.evidenceState)}`);
     }
 
-    // Separated from the task lifecycle / Verification status above on purpose: this line
-    // reports only that NO structured test result exists here, NOT that acceptance is
-    // unknown. The task's acceptance is the lifecycle/Verification status, not this line.
-    out.push('  structured test result: UNREPORTED (no structured test result exists; ' +
-      'the observed commands above are not test verdicts; task acceptance is the lifecycle/Verification status above)');
+    // Separated from the task lifecycle / Verification status above on purpose: this block
+    // reports the recorded approved-test fact or UNREPORTED, never acceptance. The task's
+    // acceptance is the lifecycle/Verification status, not these lines.
+    if (task.approvedTest === undefined || task.approvedTest === null) {
+      out.push('  approved completion test: UNREPORTED (no structured approved-test evidence for the current execution; ' +
+        'the observed commands above are NOT test verdicts; task acceptance is the lifecycle/Verification status above)');
+    } else {
+      const at = task.approvedTest;
+      out.push(`  approved completion test (structured, attempt ${at.attemptId}): ` +
+        `${at.test.executable} ${at.test.argv.join(' ')} (cwd=${at.test.cwd})`);
+      out.push(`    code=${at.test.code === null ? 'none' : at.test.code} signal=${at.test.signal ?? 'none'} ` +
+        `timedOut=${at.test.timedOut} treeStopConfirmed=${at.test.treeStopConfirmed} mayHaveStarted=${at.test.mayHaveStarted}`);
+      out.push(`    outputDigest=${at.test.outputDigest}${at.test.note === '' ? '' : ` note=${at.test.note}`}`);
+      out.push(`    bound: task=${at.taskId} attempt=${at.attemptId} session=${at.sessionId ?? 'none'} lease=${at.leaseVersion} ` +
+        `agent=${at.agentId}/${at.modelId ?? 'default'} runFingerprint=${at.runFingerprint} ` +
+        `contractDigest=${at.contractDigest} validatedAt=${at.validatedAt}`);
+      out.push('    this is a recorded test fact, NOT a task PASS; task acceptance is the lifecycle/Verification status above');
+    }
   }
   return out.join('\n');
 }

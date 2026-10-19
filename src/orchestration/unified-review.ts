@@ -61,6 +61,7 @@ import type { RunHandle, RunRequest, RunResult, TaskState } from '../core/types.
 import type { TaskStatus } from './task.ts';
 import type { TaskType } from '../quota/types.ts';
 import type { TaskHandoff } from './workbench-handoff.ts';
+import type { CompletionTestEvidenceView } from './completion-evidence.ts';
 import {
   normalizeReviewOutput,
   reviewInstructions,
@@ -337,6 +338,7 @@ export interface ReviewPacketTask {
   readonly prompt: BoundedText | null;
   /** The existing evidence projection. Null when no run happened. */
   readonly handoff: TaskHandoff | null;
+  readonly approvedTest?: CompletionTestEvidenceView | null;
   readonly attemptIds: readonly string[];
   /** The assignment lease version this evidence ran under (R2-2). */
   readonly leaseVersion: number | null;
@@ -454,13 +456,32 @@ export function renderReviewPacket(packet: ReviewPacket): string {
       lines.push(`evidence: runState=${h.runState ?? 'none'}, changedFiles=${h.changedFiles.length}, ` +
         `testsRun=${h.testsRun.length}, artifacts=${h.artifacts.length}`);
       if (h.changedFiles.length > 0) lines.push(`  files it actually wrote: ${h.changedFiles.join(', ')}`);
-      if (h.testsRun.length > 0) lines.push(`  tests it actually ran: ${h.testsRun.join(' ; ')}`);
+      if (h.testsRun.length > 0) {
+        lines.push(`  observed shell commands (NOT test verdicts): ${h.testsRun.join(' ; ')}`);
+      }
       if (h.completedWork !== null) lines.push(`  what it says it did: ${h.completedWork}`);
       // Rendered even when empty, matching the handoff brief's own rule: "none reported"
       // is information, and an absent section reads as "not applicable".
       lines.push(`  decisions it stated: ${h.decisions ?? 'none reported'}`);
       lines.push(`  unresolved it stated: ${h.unresolved.length > 0 ? h.unresolved.join('; ') : 'none reported'}`);
       if (h.transcriptPath !== null) lines.push(`  transcript: ${h.transcriptPath}`);
+    }
+    if (t.approvedTest === undefined || t.approvedTest === null) {
+      lines.push('approved completion test: UNREPORTED (no structured approved-test evidence for this execution)');
+    } else {
+      const at = t.approvedTest;
+      const argv = tailText(at.test.argv.join(' '), 600);
+      lines.push(`approved completion test: ${at.test.executable} ${argv.text}` +
+        `${argv.truncated ? ` [argv truncated from ${argv.originalLength} chars]` : ''} (cwd=${at.test.cwd})`);
+      lines.push(`  code=${at.test.code === null ? 'none' : at.test.code} signal=${at.test.signal ?? 'none'} ` +
+        `timedOut=${at.test.timedOut} treeStopConfirmed=${at.test.treeStopConfirmed} mayHaveStarted=${at.test.mayHaveStarted}`);
+      const note = tailText(at.test.note, 400);
+      lines.push(`  outputDigest=${at.test.outputDigest}` +
+        `${note.text === '' ? '' : ` note=${note.text}${note.truncated ? ' [truncated]' : ''}`}`);
+      lines.push(`  bound: task=${at.taskId} attempt=${at.attemptId} session=${at.sessionId ?? 'none'} lease=${at.leaseVersion} ` +
+        `agent=${at.agentId}/${at.modelId ?? 'default'} runFingerprint=${at.runFingerprint} ` +
+        `contractDigest=${at.contractDigest} validatedAt=${at.validatedAt}`);
+      lines.push('  this is a recorded test fact, NOT a task PASS; task status/outcome above is separate');
     }
     lines.push(`attempts recorded: ${t.attemptIds.length === 0 ? '(none)' : t.attemptIds.join(', ')}`);
     if (t.leaseVersion !== null) lines.push(`assignment lease version: ${t.leaseVersion}`);

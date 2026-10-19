@@ -167,6 +167,7 @@ import {
   type PlanFileStep,
 } from '../orchestration/plan-file.ts';
 import type { CompletionContract } from '../orchestration/completion-contract.ts';
+import type { CompletionTestEvidenceView } from '../orchestration/completion-evidence.ts';
 import {
   COLLABORATION_MAX_MEMBERS,
   COLLABORATION_MIN_MEMBERS,
@@ -4507,6 +4508,9 @@ export async function runRoundCli(
       : wb.evidence.history(t.taskId);
     const lastAttempt = history.length > 0 ? history[history.length - 1]! : undefined;
     const refused = unassigned.find((a) => a.taskId === t.taskId);
+    const currentActual = fanActual ?? currentActualOf(t.taskId);
+    const projected = currentActual === null ? null : wb.orchestrator.completionTestEvidence(t.taskId);
+    const approvedTest = projected !== null && projected.attemptId === currentActual?.attemptId ? projected : null;
 
     const identityAgentId = fanMember !== undefined
       ? (fanActual?.agentId ?? null)
@@ -4541,6 +4545,7 @@ export async function runRoundCli(
       // `null` when nothing ran: no run means no evidence, and inventing an empty handoff
       // would read as "ran and changed nothing".
       handoff: run === null ? null : wb.handoffFor(t.taskId, run),
+      approvedTest,
       attemptIds: outcome.attemptIds,
       leaseVersion: lastAttempt?.leaseVersion ?? null,
       errorCode: outcome.code,
@@ -4557,6 +4562,9 @@ export async function runRoundCli(
       }),
     });
   }
+
+  const completionTests: Record<string, CompletionTestEvidenceView | null> = {};
+  for (const p of packetTasks) completionTests[p.taskId] = p.approvedTest ?? null;
 
   // Quota and resource signals are the REAL observations the round already made, not a
   // summary written after the fact. An agent with no usable quota record is named.
@@ -5039,6 +5047,7 @@ export async function runRoundCli(
           agentChain: continuation.agentChain,
         },
     evidence: attemptEvidence,
+    completionTests,
     evidenceNote,
     // TeamRun T3-b.1a: the SAME final execution-completeness fact that set `report.ok` and
     // withheld the Unified Review, so the Human Gate cannot report a round complete that the

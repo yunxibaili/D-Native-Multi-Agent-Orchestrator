@@ -242,6 +242,62 @@ export interface CompletionEvidence {
   readonly validatedAt: number;
 }
 
+export interface CompletionTestOutcomeView {
+  readonly executable: string;
+  readonly argv: readonly string[];
+  readonly cwd: string;
+  readonly code: number | null;
+  readonly signal: string | null;
+  readonly timedOut: boolean;
+  readonly treeStopConfirmed: boolean;
+  readonly mayHaveStarted: boolean;
+  readonly outputDigest: string;
+  readonly note: string;
+}
+
+export interface CompletionTestEvidenceView {
+  readonly taskId: string;
+  readonly attemptId: string;
+  readonly leaseVersion: number;
+  readonly agentId: string;
+  readonly modelId: string | null;
+  readonly sessionId: string | null;
+  readonly runFingerprint: string;
+  readonly contractDigest: string;
+  readonly validatedAt: number;
+  readonly test: CompletionTestOutcomeView;
+}
+
+export function projectCompletionTestEvidence(
+  evidence: CompletionEvidence,
+  attemptId: string,
+): CompletionTestEvidenceView {
+  const test = evidence.test;
+  return Object.freeze({
+    taskId: evidence.taskId,
+    attemptId,
+    leaseVersion: evidence.leaseVersion,
+    agentId: evidence.agentId,
+    modelId: evidence.modelId,
+    sessionId: evidence.sessionId,
+    runFingerprint: evidence.runFingerprint,
+    contractDigest: evidence.contractDigest,
+    validatedAt: evidence.validatedAt,
+    test: Object.freeze({
+      executable: test.executable,
+      argv: Object.freeze([...test.argv]),
+      cwd: test.cwd,
+      code: test.code,
+      signal: test.signal,
+      timedOut: test.timedOut,
+      treeStopConfirmed: test.treeStopConfirmed,
+      mayHaveStarted: test.mayHaveStarted,
+      outputDigest: test.outputDigest,
+      note: test.note,
+    }),
+  });
+}
+
 /** A stable fingerprint of the run whose result the evidence describes. */
 export function runFingerprintOf(input: {
   taskId: string;
