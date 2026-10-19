@@ -1,25 +1,23 @@
-# 唯一下一任务 — P0-4.4 Demo原生固定配置（先等Gemini版本依据，待Owner转交）
+# 唯一下一任务 — P0-4.5 一次无推理有效配置核验（待Owner转交批准）
 
-当前P0-4.3本地调查已接受，真实准入BLOCKED，见PROJECT_BASELINE.md §7.53。npm包元数据1.19.3，不是本轮native --version实测；B47仅1.18.35接口证据不能扩大。
+P0-4.4静态准备已独立PASS，见PROJECT_BASELINE.md §7.55。不重做配置，不宣称真实E2E READY；当前池仍过期，真实模型授权保持关闭。
 
-## 前置条件
+## 目标与复用
 
-先取得Owner转交的Gemini对应1.19.3官方源码/文档，明确：非Git项目配置搜索及合并/OPENCODE_CONFIG优先级、small_model与辅助调用、无TTY ask及默认agent语义。无法确认的仍写unknown，不开始改文件，不用最新主分支猜安装版。
+仅核对原生最终采用的主/辅助模型、provider白名单、build Agent及权限来源。复用已有OPENCODE_CONFIG、原生debug config与owned containment，不改生产或新建执行入口。
 
-当前未授权实施。以下是取得资料后拟批准的最小配置任务，Owner须明确转交批准后执行；本任务不包含模型或预检运行。
+Demo为D:/workbench-demo/p04-20261019T035918Z；cwd为workspace，显式配置为control/opencode-demo.json。模型保持opencode/space-bunny-free，不切换为开发委派的DeepSeek模型。
 
-## 拟允许范围
+## 先排除副作用，再执行一次
 
-仅D:/workbench-demo/p04-20261019T035918Z/control内新增一份专用OpenCode配置，更新README；如确有必要，仅将orchestrator.json中agents.opencode.role显式设build（复用现有cfg.role→req.role→--agent，不改生产）。不改其他Agent、模型pair、timeout、池、stage、plans或workspace。
+复用§7.54/§7.55固定版本来源，不重复外检或试模型。debug/config.ts读取Config.Service.get后脱敏输出；加载器可能初始化插件依赖，不能预设完全只读。先核对适用配置/.opencode目录的非敏感字段与安装触发条件，以及已有contained入口。无法排除安装/升级、全局或祖先配置写入，或需要新脚本/放宽权限才能contain时，停止并报告，不回退裸进程。
 
-主模型和small_model都固定opencode/space-bunny-free，provider限定及白名单只用已证实支持的最小字段，不加凭据、Go/收费fallback、plugins或权限放宽。不能把配置放在p04根就称加载问题已解决，因为该位置仍需要祖先发现。优先复用现有逐进程OPENCODE_CONFIG绝对路径接口，但必须依据版本资料说明它与祖先/全局配置的合并和覆盖，不能宣称是完全隔离profile。
+满足边界且获Owner转交批准后，只允许一次原生debug config：cwd固定workspace，进程局部OPENCODE_CONFIG为专用绝对路径；30秒deadline，失败不重试，无prompt/session/模型请求。参数须按版本源码确认，不猜run --dir适用于debug。经既有ManagedProcess/Job启动并核对可信最终停止事实。仅留存白名单非敏感字段及必要脱敏证据，不打印或保存完整原始配置、环境、auth.json/API Key/密码。
 
-## 仅静态交付
+## 交付与停止
 
-提供资料采纳/拒绝表、精确配置diff、配置哈希、拟设置的进程局部环境和最终argv（均不执行），说明主/辅助模型/Agent/permission哪些字段已确定，哪些仍未知。原生工具权限与OS沙箱分开，不发明新权限框架，不因追求强隔离扩大工程。
+返回实际命令/cwd/配置哈希、主/小模型、provider限定、Agent及permission有效字段与来源、实际退出码/耗时、treeStopConfirmed/ActiveProcessesFinal/cleanupFailures。未观察到的写unknown；副作用无法排除则BLOCKED且不执行。配置输出不证明认证/费用资格，也不覆盖所有执行路径中的权限行为。
 
-读取费用/资格声明只作历史来源，当前池已过期；不刷新、不再问同一声明、不生成digest。临近最终授权时再统一更新池和预检。
+不改Demo/workspace/pool/stage/plans、仓库源码/测试/全局配置；不运行stage-check、测试/typecheck、LAYA、Worker、Review或Round；不读取凭据、不安装、不增加费用、不滚动刷新池；不commit/push/reset/clean/stash。Git归档由Codex负责。
 
-不运行debug config/版本/模型目录探针、stage-check、测试、typecheck、服务或模型。没有必要的配置改动就直接报告，不为完成任务制造文件。受阻一次就报告，不盲试不同配置。
-
-完成后返回READY FOR CODEX REVIEW或BLOCKED并停止；不报告真实E2E READY。Git提交/推送仅由Codex负责。
+完成后READY FOR CODEX REVIEW或BLOCKED即停止。真实执行仍需Owner新的次数/费用/时限/数据授权，含单独接受机器批准测试120秒默认值。
