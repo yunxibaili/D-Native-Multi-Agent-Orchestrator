@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-19。当前见§7.61：P0-4.7请求helper已接入，静态diff正确；整片仍BLOCKED。四字段模型输出缺reviewer/reviewedAt，parseReviewOutput不补元数据。唯一一次返工拟在同文件用现有normalize/validate组件补调用方身份/时钟，不改parser或让模型自报可信来源；不运行真实模型。
+更新：2026-10-19。当前见§7.62：P0-4.7唯一返工静态实施/源码审核PASS。JSON判断沿用原严格验证，reviewer/单次reviewedAt由调用方补入并复用；未运行测试或真实Review，P0-4.6仍PARTIAL。下一步P0-4.8只读映射既有批准测试证据到Review/最终报告的最小出口，不实现新验证权威、不调用模型。
 
 ## 1. 权责与当前结论
 
@@ -114,7 +114,7 @@ B4.7.3：Space Bunny Free+MiMo V2.6 Flash Free，三个真实独立任务/会话
 
 LAYA：既有Python环境0.3.21，缓存D:/AI/laya-cache，固定权重revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851。历史离线CUDA加载和GET health通过；typed分类中英/计划/pair小样本通过。next_action的正向质量验收曾多次continue或wait，不能改成complete；置信度裁剪等原有限制不因文档更新消失。默认不常驻，不升级/下载/切权重。
 
-## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.61）
+## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.62）
 
 Owner批准日期：2026-10-16。**Owner approved / Not yet implemented / Not yet tested**。正式未来默认覆盖旧“仅显式实验”建议，未改变当前生产或历史报告。
 
@@ -142,7 +142,7 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
 
 ## 6. 唯一下一步与授权
 
-P0-4.6真实执行PARTIAL保留，P0-4.7首次实现请求接线正确但元数据契约缺口未关（§7.61）。唯一下一步同文件一次有界返工：严格normalize后用调用方身份/时钟补元数据并走原validate；helper/parser不变。Worker静态检查报告PASS，Codex未重复验证。测试证据呈现、父任务歧义及UTF-8记录问题仍开放，不自动重跑E2E。
+P0-4.7静态实施与独立源码审核PASS（§7.62），P0-4.6真实执行仍PARTIAL。唯一下一步P0-4.8只读映射现有CompletionEvidence中的批准测试事实如何进入ReviewPacket和Round结果；不新建验证系统，不直接开放可变证明对象，不修补历史证据，不运行测试/模型。父任务歧义及UTF-8记录问题继续保留。
 
 真实产品Agent/LAYA/Native Review/E2E调用保持关闭，旧剩余次数不继承。OpenCode最近一次Free CLI探测403仍是接入线索，不能推断当前必然可用或不可用；先完成本地确定性缺口，再按新授权核实模型/费用/数据/次数。阶段裁定后可按Owner既有授权推送独立审核分支，不合并main。
 
@@ -737,6 +737,14 @@ P0-4.6真实执行PARTIAL保留，P0-4.7首次实现请求接线正确但元数�
 - 不优先让模型自报来源：ReviewVerdict类型注明reviewedAt来自调用方时钟，真实reviewer已在options.reviewer，now亦为既有注入。最小返工可保持原单文件范围：用既有normalizeReviewOutput严格解码得到JSON对象，以对象展开组合调用方reviewer/单次now（可信字段放最后，不接受模型覆盖），再用原validateReviewVerdict严格验收；成功结果复用同一个validated timestamp。原helper/schema/parseReviewOutput/validator实现均保持不变，不默认任何判断字段、不接受自然语言、不新增执行/重试/状态权威。
 - 原始JSON非法、缺少判断字段、非法枚举等继续经现有失败路径拒绝；所有原生调用预算与Human Gate不变。该建议仅为一次定向返工，不由Codex接管实现，不新建测试或验证脚本，不调用真实LAYA/Worker/Review/Round。Worker最多一次typecheck及diff check，Codex仅审核日志/差异，不重复检查。
 - 当前P0-4.7 BLOCKED而不是PASS，P0-4.6保持PARTIAL，后续真实调用仍关闭。独立记录在ignored project-progress/p047-contract-review-20261019；更新基线/NEXT/页面，仅按阶段授权归档两份审核文档，不把尚未收口源码冒充通过快照。主HEAD/index/范围外dirty保留，9/26历史债务、可信测试投影/父任务呈现/UTF-8记录缺口及68/100估算不变。
+### 7.62 P0-4.7唯一返工独立验收（有界静态PASS；真实Review未再运行）
+
+- 实际差异仅src/orchestration/unified-review.ts，相对HEAD为+13/-4，SHA256=2951256C28F26F6224C3FEBE58E3040A9407CBCEBEEB617F0AAB73A8FF1A29F8。相对上一审核快照，除该文件及Codex维护的基线/NEXT外未发现其他原文件哈希变化；review-verdict.ts哈希AD938CF24B9543EBE64246C78C8B72098CCE10A68BB30FEDDA45031E9662E3A8保持，helper/normalizer/validator/parser没有被改写，归档父版本依赖语义差异核对为空。
+- 调用链静态复核：原完整subject经reviewInstructions进入唯一reviewer.review；仅在run succeeded后，于原try/catch内严格normalize输出（已保证JSON对象），对象展开后以options.reviewer和一次options.now覆盖模型自报来源，交原validateReviewVerdict。判断字段没有缺省填充或文本猜测；prose/非法JSON/缺判断字段/非法枚举仍沿原异常失败路径，调用方身份/时钟非法也不能放行。成功UnifiedReviewResult.reviewedAt直接复用verdict.reviewedAt，避免第二次读时钟；任务状态/重试/超时/Human Gate未改。
+- 已实际读取Worker两份日志：C:/Users/Admin/AppData/Local/Temp/opencode/p047-rework-typecheck.log为tsc --noEmit且无diagnostics；p047-rework-diff-check.log只有既有基线CRLF提示。退出0及各一次来自Worker交付，Codex未重复运行typecheck/diff check或测试，不将日志读取写成独立行为实验。首次实现+唯一返工已完成，无第三轮实现或真实模型。
+- 裁定PASS仅限本片按批准轻量标准的静态实施与源码审核，不证明真实模型遵循JSON或新的Native Review已通过。P0-4.6仍PARTIAL；批准测试事实未投影、planned父任务歧义、观察端UTF-8损坏仍开放。费用/调用授权不恢复，不新增Round或Review，不改变Human Gate决定。
+- 唯一下一步P0-4.8为只读源码映射：现有orchestration/orchestrator.ts私有completionEvidence Map保存CompletionEvidence，test已有命令/cwd/code/signal/timedOut/treeStopConfirmed/mayHaveStarted/outputDigest；CLI目前构建ReviewPacket，round-result仍UNREPORTED。先确认现有身份/lease/runFingerprint绑定和最小只读事实出口，再由Codex裁定实施范围；不建立第二套TestStore或暴露可变证明使外部调用者能影响原验证门，不从短control/Worker PASS拼造历史证据。
+- 独立记录在ignored project-progress/p047-final-review-20261019；基线/NEXT/进度页同步。按阶段授权精确归档已接受的单个源码及两份文档，不包含其他dirty源码/测试、Demo或ignored材料。远端SHA与临时索引清理以实际记录为准；主HEAD/index/范围外dirty保留，9/26债务、68/100规划信用不变。
 ## 8. 规划估算与本机快照
 
 沿用历史十项权重信用68/100（固定分母为完整后端需求，不含正式UI）；页面按5%档显示约70%、剩30%，旧合理剩余区间30–50%。这不是工时、可用率、自动化完成率或MVP成功概率。本轮文档不增分；下一真实E2E仍未成功，必须看具体阻塞和证据，不能用百分比代替它。
@@ -745,18 +753,18 @@ P0-4.6真实执行PARTIAL保留，P0-4.7首次实现请求接线正确但元数�
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-19T11:59:01.9273113Z",
+  "updatedAt": "2026-10-19T12:12:04.0233562Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
     "id": "P0-4.7",
-    "name": "Review请求已接线，可信元数据缺口待返工",
-    "status": "blocked",
-    "summary": "首次实现接入reviewInstructions正确；parseReviewOutput仍缺reviewer/reviewedAt，整片BLOCKED。下一步同文件唯一返工：调用方元数据+原normalize/validate，不补跑模型。"
+    "name": "Review契约与调用方元数据接线静态PASS",
+    "status": "done",
+    "summary": "唯一返工+13/-4静态审核PASS，调用方元数据经原严格验证，时钟只读一次。Worker日志无diagnostics，未重复检查/运行模型；真实E2E仍PARTIAL。"
   },
   "next": {
-    "id": "P0-4.7",
-    "name": "同文件唯一返工：调用方身份/时钟接入既有严格验证",
+    "id": "P0-4.8",
+    "name": "只读映射批准测试证据到Review/最终报告的最小出口",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -834,9 +842,9 @@ P0-4.6真实执行PARTIAL保留，P0-4.7首次实现请求接线正确但元数�
     {
       "severity": "P1",
       "kind": "当前验收缺口",
-      "title": "Review请求接线已完成，模型判断与调用方元数据尚未对齐",
-      "detail": "首次接线没有补齐严格验证所需reviewer/reviewedAt；须由现有调用方身份/时钟提供，不能仅依赖模型输出JSON。真实Round仍PARTIAL，额度已用完。",
-      "next": "唯一一次同文件返工，复用normalizeReviewOutput和validateReviewVerdict并注入调用方元数据；不改parser、不默认pass、不运行模型。"
+      "title": "Review契约接线已静态通过，批准测试事实未投影到审核/结果",
+      "detail": "元数据接线已收口但未实跑Review；批准测试事实仍在既有内存证据，Review/报告未呈现，父任务及UTF-8缺口开放，真实Round仍PARTIAL。",
+      "next": "只读盘点现有CompletionEvidence身份/测试字段、只读事实出口及两个消费点，给最小实施范围；不改代码/运行模型或拼造旧证据。"
     },
     {
       "severity": "P1",
@@ -1187,6 +1195,11 @@ P0-4.6真实执行PARTIAL保留，P0-4.7首次实现请求接线正确但元数�
     }
   ],
   "checks": [
+    {
+      "name": "P0-4.7唯一返工独立验收",
+      "source": "PROJECT_BASELINE.md §7.62；project-progress/p047-final-review-20261019/review.json；Worker两份静态检查日志",
+      "result": "静态实施/源码审核PASS：单文件+13/-4，原normalize/validate保留，调用方身份/单次时间可信组合并复用；日志无diagnostics。未重复检查/测试/真实模型，P0-4.6仍PARTIAL。"
+    },
     {
       "name": "P0-4.7首次实现独立审核",
       "source": "PROJECT_BASELINE.md §7.61；project-progress/p047-contract-review-20261019/review.json",

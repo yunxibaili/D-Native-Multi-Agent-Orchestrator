@@ -62,7 +62,9 @@ import type { TaskStatus } from './task.ts';
 import type { TaskType } from '../quota/types.ts';
 import type { TaskHandoff } from './workbench-handoff.ts';
 import {
-  parseReviewOutput,
+  normalizeReviewOutput,
+  reviewInstructions,
+  validateReviewVerdict,
   type ReviewFinding,
   type ReviewVerdict,
   type ReviewVerdictValue,
@@ -578,7 +580,7 @@ export async function runUnifiedReview(
   } as const;
   const maxChars = options.maxTextChars ?? DEFAULT_TEXT_TAIL_CHARS;
 
-  const prompt = [
+  const subject = [
     'You are reviewing ONE completed execution round of a multi-agent orchestrator.',
     'You did NOT produce this work. Audit it independently against the machine evidence below.',
     '',
@@ -588,6 +590,7 @@ export async function runUnifiedReview(
     'machine evidence supports what it claims. Say so plainly when a claim is unsupported by the evidence.',
     'Report only. Do not ask for anything to be re-run: the user alone decides the next round.',
   ].join('\n');
+  const prompt = reviewInstructions(subject);
 
   let handle: RunHandle;
   try {
@@ -634,7 +637,13 @@ export async function runUnifiedReview(
   // from reading as approval.
   let verdict: ReviewVerdict;
   try {
-    verdict = parseReviewOutput(run.output);
+    const parsed = normalizeReviewOutput(run.output) as Record<string, unknown>;
+    const reviewedAt = options.now();
+    verdict = validateReviewVerdict({
+      ...parsed,
+      reviewer: options.reviewer,
+      reviewedAt,
+    });
   } catch (e) {
     return {
       ...base,
@@ -658,7 +667,7 @@ export async function runUnifiedReview(
          'nothing was re-run automatically'],
     outputTail: tailText(run.output ?? '', maxChars),
     code: null,
-    reviewedAt: options.now(),
+    reviewedAt: verdict.reviewedAt,
   };
 }
 

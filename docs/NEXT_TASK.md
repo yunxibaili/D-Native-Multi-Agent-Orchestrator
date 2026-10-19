@@ -1,19 +1,20 @@
-# 唯一下一任务 — P0-4.7 唯一一次定向返工：可信Review元数据接线
+# 唯一下一任务 — P0-4.8 批准测试证据最小投影源码映射（只读，待Owner转交）
 
-先读PROJECT_BASELINE.md §7.61。首次+3/-1接线正确，但整片仍BLOCKED；parseReviewOutput不补reviewer/reviewedAt，按helper四字段输出仍失败。P0-4.6保持PARTIAL，无新的真实调用授权。
+P0-4.7静态实施与独立审核PASS，见PROJECT_BASELINE.md §7.62。P0-4.6真实E2E仍PARTIAL，所有真实调用授权保持关闭。下一步先查清现有证据出口，不新增验证系统、不直接开始编码。
 
-## 唯一允许修改
+## 范围
 
-仍只改src/orchestration/unified-review.ts，保留已接入的reviewInstructions及原subject。不得修改review-verdict.ts或parser/schema实现，不新增helper/模块。
+只读src/orchestration/orchestrator.ts、completion-evidence.ts、completion-gate.ts、workbench.ts、unified-review.ts、round-result.ts、src/cli/round-cli.ts及必要直接调用者。可静态读取相关已有测试了解兼容约束，不修改/运行它们。复用本地源码已足够，不重复外部检索或试模型。
 
-在run成功后的既有try/catch中，复用normalizeReviewOutput严格解析模型输出，再用调用方options.reviewer和一次options.now()提供可信元数据，调用原validateReviewVerdict。只补reviewer/reviewedAt，不填任何verdict/reason/findings/recommendedAction默认值。组合时用对象展开，可信字段放最后，不允许模型伪造/覆盖来源；normalizer已保证JSON对象，必要的类型收窄限该已检查值。不得从自然语言提取或猜verdict。
+已知入口：Orchestrator私有completionEvidence Map，runApprovedTest/buildCompletionEvidence，原applyVerification身份/新鲜度门，CLI的buildReviewPacket/runUnifiedReview/buildRoundResult；不要从Worker testsRun/PASS字符串或control时长推导批准测试成功。
 
-成功UnifiedReviewResult.reviewedAt复用已验证verdict.reviewedAt，不再次读时钟产生两份不一致时间。其他状态、单次调用、超时、invalid-output失败关闭、Human Gate和任务状态行为全部保留。不重跑Review。
+## 一页交付，回答四项
 
-## 轻量验收
+1. 权威批准测试事实已有字段和生产者在哪里？列命令/cwd/真实code/signal/timeout/treeStop/outputDigest及身份关联（Task/Attempt/Session/lease/runFingerprint）的实际来源，缺字段如实写缺。
+2. 当前是否有安全可复用的只读出口？没有则指出最小插入位置。只提出脱离内部可变引用的事实副本，不允许返回可修改的原始证明使调用者影响Verification，不新建状态/验证权威。
+3. ReviewPacket和RoundResult最少各需消费什么事实，才能区分真实批准测试、Worker观察命令和缺证据？列具体文件/函数/行号，缺证据继续UNREPORTED，不伪造PASS或回填P0-4.6历史结果。
+4. 建议的最小实施文件清单、兼容影响与两项承重负例（只列，不写/跑测试）。内存证据可达性和退出后能否追溯必须区分；父任务呈现、观察端UTF-8不合并扩张。
 
-只由Worker运行一次现有typecheck和git diff --check，保存脱敏输出日志到现有ignored记录区，不编写验证脚本或新增/修改/运行测试。Codex审核diff/日志，不重复运行检查。
+仅返回简明表格及最小改动建议；如需落盘，只允许新建project-progress/p048-test-evidence-map-20261019/report.md（ignored），不要修改audit目录、源码、测试或基线。Codex根据映射裁定实施范围并维护项目文档。
 
-静态逐项说明：四判断字段的合法JSON可由框架补可信元数据后进入原严格验证；prose/缺字段/非法枚举仍失败；模型自报reviewer/时间不能覆盖真实调用者；成功结果复用单次时间。不能把静态走查说成已实测或真实模型通过。
-
-这是本片唯一一次返工。失败或权限阻断就停止，不扩大到helper/parser/适配器或第三轮实现。禁止模型/LAYA/Native Review/真实Round；禁止源码范围外修改、历史证据修补、commit/push/reset/clean/stash。测试证据投影、父任务呈现和UTF-8记录问题仍开放。本次完成READY FOR CODEX REVIEW或BLOCKED即停止。
+不运行测试/typecheck/CLI/模型/LAYA/Review/Round，不新增脚本，不读凭据，不改Demo/全局/安装；不commit/push/reset/clean/stash。完成READY FOR CODEX REVIEW或BLOCKED后停止，不自行启动实施。
