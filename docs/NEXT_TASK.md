@@ -1,31 +1,25 @@
-# 唯一下一任务 — P0-4.3 原生配置与权限来源静态核对（只读）
+# 唯一下一任务 — P0-4.4 Demo原生固定配置（先等Gemini版本依据，待Owner转交）
 
-P0-4.2无推理预检材料PASS，见PROJECT_BASELINE.md §7.52；当前池已过期，真实执行仍关闭。不要重复问已确认过的资格，也不要现在刷新池或重跑stage-check。先把原生配置核清，临近实跑再统一生成新声明/digest。
+当前P0-4.3本地调查已接受，真实准入BLOCKED，见PROJECT_BASELINE.md §7.53。npm包元数据1.19.3，不是本轮native --version实测；B47仅1.18.35接口证据不能扩大。
 
-## 范围
+## 前置条件
 
-读取AGENTS、研究Skill、最新基线/NEXT、audit相关只读记录、新Demo control、workspace及必要的父级项目配置来源。跟踪src/adapters/opencode.ts createTransport、实际RunRequest构造、src/runtime/spawn.ts buildEnv和当前安装包可读的配置解析实现。
+先取得Owner转交的Gemini对应1.19.3官方源码/文档，明确：非Git项目配置搜索及合并/OPENCODE_CONFIG优先级、small_model与辅助调用、无TTY ask及默认agent语义。无法确认的仍写unknown，不开始改文件，不用最新主分支猜安装版。
 
-不读取auth.json、账户令牌、Key/密码；原生配置仅提取所需非敏感字段，不输出完整全局配置或环境变量。对环境只记录必要变量名是否设置，配置路径可在确认非敏感后报告。不能执行debug config、版本/模型目录探针、原生Agent或任何模型调用来代替静态证据。
+当前未授权实施。以下是取得资料后拟批准的最小配置任务，Owner须明确转交批准后执行；本任务不包含模型或预检运行。
 
-## 仅回答一张表
+## 拟允许范围
 
-对下列字段列出：产品传入值、原生可核实来源/优先级、实际已知值或unknown、费用/权限影响：
-1. 主模型--model及provider；
-2. small_model、原生辅助调用与fallback来源；
-3. --agent/build/default agent：没有role时谁决定；
-4. OPENCODE_CONFIG、父目录opencode.json和全局配置是否可能参与；
-5. read/write/edit/bash及external_directory等有效权限，是否存在未答复ask导致headless挂起；
-6. cwd、allowedScope与原生权限各自能约束什么。
+仅D:/workbench-demo/p04-20261019T035918Z/control内新增一份专用OpenCode配置，更新README；如确有必要，仅将orchestrator.json中agents.opencode.role显式设build（复用现有cfg.role→req.role→--agent，不改生产）。不改其他Agent、模型pair、timeout、池、stage、plans或workspace。
 
-仅围绕本次两个Worker和一个Reviewer，不扩展全部模型、Skill/MCP或历史阶段。
+主模型和small_model都固定opencode/space-bunny-free，provider限定及白名单只用已证实支持的最小字段，不加凭据、Go/收费fallback、plugins或权限放宽。不能把配置放在p04根就称加载问题已解决，因为该位置仍需要祖先发现。优先复用现有逐进程OPENCODE_CONFIG绝对路径接口，但必须依据版本资料说明它与祖先/全局配置的合并和覆盖，不能宣称是完全隔离profile。
 
-本机包装层目前已知：--model来自req.model，只有req.role存在才传--agent；spawn允许继承OPENCODE_CONFIG；adapter无OS sandbox能力。不可据此臆测small_model已固定或文件读取已隔离。
+## 仅静态交付
 
-无法从当前版本可读源码或已有官方依据确认的，标记unknown，最多列3个具体问题交Gemini。禁止逆向提取凭据、扫描进程内存、盲试配置或用最新仓库行为冒充安装版行为。
+提供资料采纳/拒绝表、精确配置diff、配置哈希、拟设置的进程局部环境和最终argv（均不执行），说明主/辅助模型/Agent/permission哪些字段已确定，哪些仍未知。原生工具权限与OS沙箱分开，不发明新权限框架，不因追求强隔离扩大工程。
 
-## 交付与停止
+读取费用/资格声明只作历史来源，当前池已过期；不刷新、不再问同一声明、不生成digest。临近最终授权时再统一更新池和预检。
 
-返回READY/BLOCKED（仅针对原生配置核对）、来源路径/行号、唯一最小配置建议及仍需Owner接受的真实执行边界。无必要就不制造实现任务；严格数据隔离无法由现有能力保证时明确说明，不新建沙箱/网关/权限框架。
+不运行debug config/版本/模型目录探针、stage-check、测试、typecheck、服务或模型。没有必要的配置改动就直接报告，不为完成任务制造文件。受阻一次就报告，不盲试不同配置。
 
-不修改任何文件，不启动服务，不跑CLI/stage-check/测试/typecheck，不刷新池，不做Git写操作。完成后停止，交Codex审核。代码/文档提交推送由Codex负责。
+完成后返回READY FOR CODEX REVIEW或BLOCKED并停止；不报告真实E2E READY。Git提交/推送仅由Codex负责。

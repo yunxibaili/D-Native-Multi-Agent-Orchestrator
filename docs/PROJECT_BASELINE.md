@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-19。当前见§7.52：P0-4.2单次无推理预检材料审核PASS；原stdout为stage-check ok、池与authorization一致、workspace/状态目录无任务文件。该池窗口已于北京时间12:35:24.867到期，当前不能凭旧digest执行。下一步只读核清原生配置与权限，临近实跑再确认新池；不反复刷新窗口。P0-1/2/3原有限PASS保持，真实执行未授权。
+更新：2026-10-19。当前见§7.53：P0-4.3本地配置来源调查已独立接受，真实准入仍BLOCKED。npm包元数据为1.19.3，全局small_model指向本轮未授权Go路由；对应版本的配置发现/合并、辅助调用和headless ask仍unknown。根目录四键文件建议不能消除祖先发现未知，暂不实施。下一步由Gemini核实版本依据，再准备Demo专用固定配置；池不滚动刷新、模型调用关闭。
 
 ## 1. 权责与当前结论
 
@@ -114,7 +114,7 @@ B4.7.3：Space Bunny Free+MiMo V2.6 Flash Free，三个真实独立任务/会话
 
 LAYA：既有Python环境0.3.21，缓存D:/AI/laya-cache，固定权重revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851。历史离线CUDA加载和GET health通过；typed分类中英/计划/pair小样本通过。next_action的正向质量验收曾多次continue或wait，不能改成complete；置信度裁剪等原有限制不因文档更新消失。默认不常驻，不升级/下载/切权重。
 
-## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.52）
+## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.53）
 
 Owner批准日期：2026-10-16。**Owner approved / Not yet implemented / Not yet tested**。正式未来默认覆盖旧“仅显式实验”建议，未改变当前生产或历史报告。
 
@@ -142,7 +142,7 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
 
 ## 6. 唯一下一步与授权
 
-P0-4.2已有一次stage-check通过证据，不重跑。当前池已过期且真实调用未授权。唯一建议P0-4.3由OpenCode只读核对生产adapter实际argv/cwd/env来源、原生main/small_model/provider/默认agent及工具权限来源，并把已证实/声明/未知分开；不运行debug config或模型探针、不改权限，不重复全量准入。原生配置准备好之后再临近实跑统一确认池、生成digest与最终授权，避免每个准备步骤刷新一次窗口。
+P0-4.3配置来源调查已完成，主模型传入与全局small_model风险已定位；真实准入仍BLOCKED。唯一下一步先由Owner转交Gemini，核实1.19.3的配置发现/合并、辅助模型及headless ask行为；拿回版本依据后再由OpenCode有界准备Demo专用原生配置及显式加载方案，不改产品或全局配置、不调用模型。不能把配置放到另一个祖先目录就宣称已消除发现语义未知。池临近实跑时再统一确认，不重复刷新或重跑预检。
 
 真实产品Agent/LAYA/Native Review/E2E调用保持关闭，旧剩余次数不继承。OpenCode最近一次Free CLI探测403仍是接入线索，不能推断当前必然可用或不可用；先完成本地确定性缺口，再按新授权核实模型/费用/数据/次数。阶段裁定后可按Owner既有授权推送独立审核分支，不合并main。
 
@@ -661,6 +661,16 @@ P0-4.2已有一次stage-check通过证据，不重跑。当前池已过期且真
 - 现有OpenCode adapter把req.model写--model，只有req.role存在才写--agent；spawn白名单可继承OPENCODE_CONFIG。它们不能证明native small_model/provider/权限或默认agent有效值。适配器声明sandbox=false；目录分离/allowedScope不是读取或网络沙箱。下一步仅静态核清这几个来源，缺外部机制证据则交Gemini，不能试推理、放宽工具或新建执行层。
 - Codex本轮0 CLI/测试/typecheck/模型、0 Demo修改，未复跑预检。P0-1/2/3原PASS、120秒机器测试待授权、9/26债务和68/100信用保留。阶段审核文档拟以26be5cc41ff9ceba588d0052f0e9d9bfdc0c63a0为父归档codex/p042-stage-preflight-20261019，仅基线/NEXT；Demo和本机证据不上传，远端及临时索引清理以实际记录为准。
 
+### 7.53 P0-4.3原生配置来源独立审核（调查接受；真实执行BLOCKED）
+
+- 已读Owner附件报告及本机非敏感配置字段、package元数据、adapter/execute/preflight/spawn源码和B47旧版本约束。当前opencode-ai/package.json为1.19.3，bin指向opencode.exe；这只是包元数据，不是本轮--version或原生会话版本实测，旧1.18.35历史证据不扩用。没有启动CLI、debug config、模型或服务，也未读取认证文件/输出Key密码。
+- 主模型由task.modelId进入RunRequest再到--model；execute不填role，当前agents.opencode.role亦为空，所以未显式--agent。adapter可接extraArgs，但本轮正式请求未提供small_model/辅助调用控制；transport未传env，底层buildEnv允许继承OPENCODE_CONFIG。全局非敏感model/small_model均为opencode-go/deepseek-v4.1-flash；祖先D:/workbench-demo/opencode.json为space-bunny-free主/小模型、仅opencode provider及白名单。两者均未显式permission，最终原生继承和合并有效值仍unknown。
+- 本轮产品允许pair只有opencode/space-bunny-free，不能把全局Go辅助路由当作已获授权。另一provider路由不等于已经产生新增费用，也不能仅因主模型free就证明辅助调用免费。B47辅助配置接口仅记录1.18.35已验证，不修改该版本白名单或将其认证扩展至1.19.3。
+- 接受报告的来源表及unknown分级，不接受“在p04根新建四键配置即可不依赖祖先发现”的推论：workspace不在p04根，该文件仍依赖尚未知的向上搜索。改进应在版本依据确认后选择可证明的配置位置/显式加载，并记录与全局合并关系；现阶段不实施任何候选配置，不自动设置OPENCODE_CONFIG或更改role。
+- 对应1.19.3的无TTY ask处理、非Git祖先发现/配置合并、small_model调用与argv关系交Gemini核实，官方不可变源码或对应版本文档优先；普通当前文档不能直接提升为安装版事实。若无精确版本证据，保留unknown，不反编译/提取内存/试模型。原生权限是协作式工具控制，不是OS读取/网络沙箱；严格隔离不能由cwd/allowedScope/Job Object保证，不为本片新建安全框架。
+- 本轮Codex仅静态源码/必要字段审核，0 CLI/测试/typecheck/模型，0 Demo或全局配置修改。P0-1/2/3原有限PASS、P0-4.1/2材料PASS不撤销；当前池继续过期，120秒机器测试及真实执行仍待新授权，9/26债务与68/100信用不变。调查报告/本机字段记录在ignored project-progress/p043-native-config-review-20261019，认证与全局配置原文不保存/上传。
+- 按阶段归档授权，拟以15911e2274efca84696574ddb9b582a86a93b439为父归档codex/p043-native-config-review-20261019，只包含基线/NEXT；远端SHA及主HEAD/index/临时索引清理以实际归档记录为准。唯一下一片P0-4.4需先获得Gemini版本依据并由Owner转交，不新增实现任务消耗试错。
+
 ## 8. 规划估算与本机快照
 
 沿用历史十项权重信用68/100（固定分母为完整后端需求，不含正式UI）；页面按5%档显示约70%、剩30%，旧合理剩余区间30–50%。这不是工时、可用率、自动化完成率或MVP成功概率。本轮文档不增分；下一真实E2E仍未成功，必须看具体阻塞和证据，不能用百分比代替它。
@@ -669,18 +679,18 @@ P0-4.2已有一次stage-check通过证据，不重跑。当前池已过期且真
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-19T06:17:00.2758278Z",
+  "updatedAt": "2026-10-19T06:31:26.0352688Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-4.2",
-    "name": "单次无推理stage-check材料验收通过",
+    "id": "P0-4.3",
+    "name": "原生配置来源静态调查完成",
     "status": "done",
-    "summary": "原stdout预检ok、pool与authorization一致、workspace空；本片PASS。池12:35已过期，当前不能用旧digest执行；待核清native配置/权限，真实调用关闭。"
+    "summary": "本地来源与1.19.3包元数据核实；全局small_model有未授权Go路由风险，3项版本语义unknown，真实准入BLOCKED。先交Gemini核实，不盲改配置/试模型。"
   },
   "next": {
-    "id": "P0-4.3",
-    "name": "只读核清native主/辅助模型、路由、默认agent与权限来源；不运行模型或预检",
+    "id": "P0-4.4",
+    "name": "先取得Gemini版本依据，再有界准备Demo原生固定配置及显式加载；待Owner转交",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -758,9 +768,9 @@ P0-4.2已有一次stage-check通过证据，不重跑。当前池已过期且真
     {
       "severity": "P1",
       "kind": "当前验收缺口",
-      "title": "原生配置与真实执行未验收；当前池已过期",
-      "detail": "新池曾在窗口内通过stage-check，本片材料PASS但不代表模型实测；主/辅助模型路由与有效权限未知，机器测试120秒和真实调用仍未授权。",
-      "next": "先静态核清原生配置来源，准备完成后临近实跑统一确认新池/digest及授权；不自动刷新或试模型。"
+      "title": "全局辅助模型与1.19.3加载/ask语义未确定",
+      "detail": "主模型已固定，但全局small_model为本轮未授权Go路由；父配置合并、辅助调用及headless ask版本行为unknown，当前池已过期。",
+      "next": "Gemini先提供对应版本依据，随后只准备Demo固定配置和可证明加载方案；不改变全局/生产，不试模型或滚动刷新池。"
     },
     {
       "severity": "P1",
@@ -1111,6 +1121,11 @@ P0-4.2已有一次stage-check通过证据，不重跑。当前池已过期且真
     }
   ],
   "checks": [
+    {
+      "name": "P0-4.3配置来源独立审核",
+      "source": "PROJECT_BASELINE.md §7.53；project-progress/p043-native-config-review-20261019/",
+      "result": "本地调查接受；包元数据1.19.3、全局small_model=Go、产品只固定主模型。3项原生版本行为unknown交Gemini；根目录四键建议不能消除祖先发现未知，真实准入BLOCKED。"
+    },
     {
       "name": "P0-4.2无推理预检材料独立审核",
       "source": "PROJECT_BASELINE.md §7.52；Demo control/stage-check-p042.stdout.log；project-progress/p042-stage-review-20261019/",
