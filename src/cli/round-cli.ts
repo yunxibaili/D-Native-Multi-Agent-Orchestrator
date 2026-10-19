@@ -223,7 +223,9 @@ import {
 import {
   CHECKPOINT_OUTPUT_MAX_CHARS,
   createStdinCheckpointReader,
+  CheckpointInputError,
   parseCheckpointAnswer,
+  type CheckpointInputFailureCode,
   type WorkflowCheckpointSnapshot,
 } from './workflow-checkpoint.ts';
 import { buildDispatchReceipt } from '../orchestration/dispatch-receipt.ts';
@@ -3064,6 +3066,7 @@ export async function runRoundCli(
    * EXISTING `wb.completeTask` -> `applyVerification` edge; the checkpoint holds no state
    * authority of its own.
    */
+  type CheckpointStopCode = CheckpointInputFailureCode | 'user-stop' | 'checkpoint-invalid-input' | 'checkpoint-accept-refused';
   interface CheckpointEntry {
     readonly taskId: string;
     readonly status: string;
@@ -3076,8 +3079,8 @@ export async function runRoundCli(
     readonly output: string;
     readonly outputTruncated: boolean;
     readonly treeStopConfirmed: boolean | null;
-    readonly choice: 'continue' | 'stop' | 'accept';
-    /** For a `stop`, why; for a refused `accept`, the refusal; else null. */
+    readonly choice: 'continue' | 'stop' | 'accept' | 'invalid' | 'unavailable';
+    /** Why this checkpoint stopped, including input failures and refused acceptance. */
     readonly stopReason: string | null;
     /** B4.6b: the user's non-empty acceptance reason, when they chose accept. */
     readonly acceptReason: string | null;
@@ -3085,12 +3088,15 @@ export async function runRoundCli(
     readonly acceptOutcome: 'applied' | 'refused' | null;
     /** B4.6b: which live re-check refused the accept, when it did. */
     readonly acceptRefusal: string | null;
-    /** B4.6b: the provenance of the verdict - always the USER, never a model. */
-    readonly source: 'user';
+    /** Input provenance, separate from the system's decision to stop safely. */
+    readonly source: 'user' | 'system';
+    readonly code: CheckpointStopCode | null;
+    readonly rawAnswer: string | null;
+    readonly rawAnswerTruncated: boolean;
   }
   const checkpointEntries: CheckpointEntry[] = [];
   const checkpointedAttempts = new Set<string>();
-  let checkpointStop: { taskId: string; reason: string; blockedTaskIds: string[] } | null = null;
+  let checkpointStop: { taskId: string; reason: string; code: CheckpointStopCode; source: 'user' | 'system'; blockedTaskIds: string[] } | null = null;
 
   /*
    * P0-2: the machine-verification record for bounded auto-advance.
@@ -3186,7 +3192,7 @@ export async function runRoundCli(
      * between the final check and `wb.completeTask`.
      */
     const checkpointGate = async (): Promise<
-      { kind: 'stop'; taskId: string; reason: string } | { kind: 'accept' } | null
+      { kind: 'stop'; taskId: string; reason: string; code: CheckpointStopCode; source: 'user' | 'system' } | { kind: 'accept' } | null
     > => {
       if (o.checkpoint !== true) return null;
       for (const id of memberIds) {
@@ -3218,12 +3224,15 @@ export async function runRoundCli(
           treeStopConfirmed: run.cleanup?.treeStopConfirmed ?? null,
         });
         const record = (
-          choice: 'continue' | 'stop' | 'accept',
+          choice: CheckpointEntry['choice'],
           extra: {
             stopReason?: string | null;
             acceptReason?: string | null;
             acceptOutcome?: 'applied' | 'refused' | null;
             acceptRefusal?: string | null;
+            source?: 'user' | 'system';
+            code?: CheckpointStopCode;
+            rawAnswer?: string;
           } = {},
         ): void => {
           checkpointEntries.push({
@@ -3233,7 +3242,10 @@ export async function runRoundCli(
             acceptReason: extra.acceptReason ?? null,
             acceptOutcome: extra.acceptOutcome ?? null,
             acceptRefusal: extra.acceptRefusal ?? null,
-            source: 'user',
+            source: extra.source ?? 'user',
+            code: extra.code ?? null,
+            rawAnswer: extra.rawAnswer?.slice(0, CHECKPOINT_OUTPUT_MAX_CHARS) ?? null,
+            rawAnswerTruncated: (extra.rawAnswer?.length ?? 0) > CHECKPOINT_OUTPUT_MAX_CHARS,
           });
         };
 
@@ -3247,19 +3259,23 @@ export async function runRoundCli(
             : await createStdinCheckpointReader()(snapshot);
         } catch (e) {
           const reason = `the checkpoint answer could not be read (${thrownMessage(e)}); stopping this round`;
-          record('stop', { stopReason: reason });
-          return { kind: 'stop', taskId: id, reason };
+          const code = e instanceof CheckpointInputError ? e.code : 'input-error';
+          record('unavailable', { stopReason: reason, source: 'system', code });
+          return { kind: 'stop', taskId: id, reason, code, source: 'system' };
         }
         const decision = parseCheckpointAnswer(typeof raw === 'string' ? raw : '');
         if (decision.action === 'continue') { record('continue'); continue; }
         if (decision.action === 'stop') {
-          record('stop', { stopReason: decision.reason });
-          return { kind: 'stop', taskId: id, reason: decision.reason };
+          record('stop', { stopReason: decision.reason, code: 'user-stop' });
+          return { kind: 'stop', taskId: id, reason: decision.reason, code: 'user-stop', source: 'user' };
         }
         if (decision.action === 'invalid') {
           const reason = `the checkpoint answer was not understood (${decision.detail}); stopping this round`;
-          record('stop', { stopReason: reason });
-          return { kind: 'stop', taskId: id, reason };
+          record('invalid', { stopReason: reason, code: 'checkpoint-invalid-input',
+            source: typeof raw === 'string' ? 'user' : 'system',
+            ...(typeof raw === 'string' ? { rawAnswer: raw } : {}),
+          });
+          return { kind: 'stop', taskId: id, reason, code: 'checkpoint-invalid-input', source: 'system' };
         }
 
         /*
@@ -3267,15 +3283,16 @@ export async function runRoundCli(
          * awaited answer, BEFORE applying anything. The snapshot above is only what the
          * user was SHOWN; it authorises nothing on its own.
          */
-        const refuseAccept = (detail: string): { kind: 'stop'; taskId: string; reason: string } => {
+        const refuseAccept = (detail: string): { kind: 'stop'; taskId: string; reason: string; code: CheckpointStopCode; source: 'system' } => {
           const reason = `the user's accept was refused: ${detail}; stopping this round (no task was marked done)`;
           record('accept', {
             acceptReason: decision.reason,
             acceptOutcome: 'refused',
             acceptRefusal: detail,
             stopReason: reason,
+            code: 'checkpoint-accept-refused',
           });
-          return { kind: 'stop', taskId: id, reason };
+          return { kind: 'stop', taskId: id, reason, code: 'checkpoint-accept-refused', source: 'system' };
         };
         const freshTask = wb.store.get(id);
         if (freshTask === null) return refuseAccept(`task ${id} no longer exists`);
@@ -3455,8 +3472,8 @@ export async function runRoundCli(
           const result = await checkpointGate();
           if (result !== null) {
             if (result.kind === 'stop') {
-              workflowStop = 'user-stop';
-              checkpointStop = { taskId: result.taskId, reason: result.reason, blockedTaskIds: blockedByStop() };
+              workflowStop = result.code;
+              checkpointStop = { taskId: result.taskId, reason: result.reason, code: result.code, source: result.source, blockedTaskIds: blockedByStop() };
               break;
             }
             // A real user acceptance was applied. If downstream remains, the existing
@@ -3677,7 +3694,7 @@ export async function runRoundCli(
   let continuation: ContinuationResult | null = null;
   // B4.6a: a user STOP ends the round's work. A handoff/continuation exists to start a
   // NEW attempt on another agent, which is exactly "further work", so it is not started
-  // when the user stopped at a checkpoint. Existing failure/protection paths are
+  // when a checkpoint stopped the round. Existing failure/protection paths are
   // unchanged: this only withholds the continuation the stop already ended.
   // P0-2: machine auto-advance refuses RELAY entirely (`!autoMode`) and a machine
   // verification refusal withholds it too, so no second attempt is started outside the
@@ -4076,9 +4093,8 @@ export async function runRoundCli(
          */
         note: (() => {
           if (checkpointStop !== null) {
-            const refusedAccept = checkpointEntries.some((e) => e.acceptOutcome === 'refused');
-            return 'OPT-IN user supervision only: no supervisor model was called. The user STOPPED at a checkpoint'
-              + (refusedAccept ? ' (an accept was refused by a checkpoint recheck or the existing verification authority)' : '')
+            return 'OPT-IN user supervision only: no supervisor model was called. '
+              + (checkpointStop.code === 'user-stop' ? 'The user STOPPED at a checkpoint' : `The checkpoint stopped safely (${checkpointStop.code}); this is NOT a user stop`)
               + ': the step awaiting verification is left UNVERIFIED, tasks verified BEFORE the stop keep their verdict, and nothing further runs. A stop is not a certification that any artifact exists or any test passed.';
           }
           if (checkpointEntries.some((e) => e.acceptOutcome === 'applied')) {
@@ -4664,9 +4680,9 @@ export async function runRoundCli(
           ? `a known session failure left an execution whose process-tree stop was never confirmed ` +
             `(${continuation?.stopped.code ?? 'stop-unconfirmed'}), so no second writer was started and no ` +
             'review was run; the round is unfinished rather than reviewed'
-          // B4.6a (P2): a real user STOP is named as a checkpoint stop, not as a fan-out.
+          // Preserve the actual checkpoint cause, never label a system failure as user intent.
           : checkpointStop !== null
-            ? `the user stopped at a checkpoint on ${checkpointStop.taskId}: ${checkpointStop.reason}; ` +
+            ? `the checkpoint stopped (${checkpointStop.code}, source=${checkpointStop.source}) on ${checkpointStop.taskId}: ${checkpointStop.reason}; ` +
               `${checkpointStop.blockedTaskIds.length} task(s) were withheld` +
               `${checkpointStop.blockedTaskIds.length === 0 ? '' : ` (${checkpointStop.blockedTaskIds.join(', ')})`}, ` +
               'so no review was run; the round is unfinished rather than reviewed'
@@ -4841,13 +4857,13 @@ export async function runRoundCli(
   // task, which attempt) rather than as a narrative, so the stop reason is always visible
   // — including when no handoff happened, which must not read as "everything was fine".
   report.handoff = checkpointStop !== null
-    // B4.6a: the user stopped at a checkpoint, so the continuation was deliberately not
+    // A checkpoint stopped the round, so the continuation was deliberately not
     // started. Reported as such — NEVER as "--no-handoff", which would be a false reason.
     ? {
         enabled: o.handoff, happened: 0, limit: o.handoffMax, handoffs: [],
         stopped: {
-          code: 'user-stop',
-          reason: `the user stopped at a checkpoint on ${checkpointStop.taskId}: ${checkpointStop.reason}`,
+          code: checkpointStop.code,
+          reason: `the checkpoint stopped (${checkpointStop.code}, source=${checkpointStop.source}) on ${checkpointStop.taskId}: ${checkpointStop.reason}`,
         },
       }
     : continuation === null

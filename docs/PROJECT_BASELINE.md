@@ -6,9 +6,9 @@
 
 本文唯一维护当前事实、阶段状态、证据与进度快照。[产品方向](PRODUCT_DIRECTION.md)管已确认定位/取舍；[后端需求](BACKEND_REQUIREMENTS.md)保留全部目标；[路线](BACKEND_DELIVERY_PLAN.md)管顺序；[阶段分析](STAGE_ANALYSIS.md)解释新策略；[NEXT_TASK](NEXT_TASK.md)只列下一有界任务；[研究索引](ENGINEERING_RESEARCH_REFERENCES.md)管来源，不各自宣布封板。
 
-**当前P0-1沿用独立PASS（§7.10），P0-2 PASS（限已批准的有界离线实现，§7.41）。源码/契约/A–F75/0证据静态映射及当前哈希核对完成，本轮未跑测试或模型。不是第三方独立审计、真实费用/权限认证或MVP封板。P0-3系统/用户来源缺陷仍open，唯一下一片为待授权P0-3a。** 以下为前轮P0-1 Final Closure曾BLOCKED的历史事实，不能当作当前状态：Attempt重放/换绑与空产物入口已关闭，原51项失败按A5/B40/C6逐项对应最终独立通过；额外3套件9项失败已通过修改前字节快照复跑确认同签名，仍开放，不纳入历史26项豁免。本轮返工违反离线授权，旧cancel.test.ts运行3次造成6次真实Codex执行；3个成功会话实证模型gpt-6.1-sol，3个取消会话无可见推理结果。费用未独立核实，不能称零新增收费。一次实现+一次返工轮次已用完，返工由Codex停止，无第三次委派。P0-2/3及第四次E2E仍未授权。
+**当前P0-1沿用独立PASS（§7.10），P0-2 PASS（限已批准的有界离线实现，§7.41）。源码/契约/A–F75/0证据静态映射及当前哈希核对完成，本轮未跑测试或模型。不是第三方独立审计、真实费用/权限认证或MVP封板。P0-3a来源归属修复现已离线PASS（§7.42）；P0-3整体异常待人工/恢复仍未完成，唯一下一片为待授权P0-3b。** 以下为前轮P0-1 Final Closure曾BLOCKED的历史事实，不能当作当前状态：Attempt重放/换绑与空产物入口已关闭，原51项失败按A5/B40/C6逐项对应最终独立通过；额外3套件9项失败已通过修改前字节快照复跑确认同签名，仍开放，不纳入历史26项豁免。本轮返工违反离线授权，旧cancel.test.ts运行3次造成6次真实Codex执行；3个成功会话实证模型gpt-6.1-sol，3个取消会话无可见推理结果。费用未独立核实，不能称零新增收费。一次实现+一次返工轮次已用完，返工由Codex停止，无第三次委派。P0-2/3及第四次E2E仍未授权。
 
-主要开发Worker依Owner最新指令恢复为OpenCode，复用既有opencode-agent及DeepSeek V4.1 Flash Free覆盖值；DSH接入旁支暂停。本次Codex直接实施例外仅wait离线负例，不接管生产开发。LAYA仍为任务级选择权威，TaskStore仍为任务状态权威。正式Windows桌面路线保持，具体UI需求/实现未开始。PARALLEL_WRITE=CLOSED、automaticPostRoundAction=NONE。
+主要开发Worker依Owner最新指令恢复为OpenCode，复用既有opencode-agent及DeepSeek V4.1 Flash Free覆盖值；DSH接入旁支暂停。本片沿用Owner此前让Codex直接推进主项目的授权，完成P0-3a最小来源修复；不改变长期OpenCode开发/Codex审核分工。LAYA仍为任务级选择权威，TaskStore仍为任务状态权威。正式Windows桌面路线保持，具体UI需求/实现未开始。PARALLEL_WRITE=CLOSED、automaticPostRoundAction=NONE。
 
 2026-10-18 Owner明确协作方式：Codex牵头掌握本机事实、制定最小切片、委派OpenCode开发并独立审核；Gemini仅按检索单提供外部参考，由Owner居中转交和审批，不接管本机规划。已提供的有效资料结合本地源码过滤后采用，不重复检索；本地明确的类型/接线问题不因外检阻塞。新安全门禁、协议/恢复或验收规则需要外部依据时，由Codex在报告末尾给出Gemini检索单。本轮不修改全局或项目AGENTS/配置。
 
@@ -557,6 +557,16 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
 - P0-3未实施：checkpoint读取异常/EOF/超时/非法输入仍可能被记录为source=user，这是明确后续缺陷；默认异常待人工材料与跨进程恢复不能由本次PASS推导。唯一下一片建议P0-3a仅做来源归属最小修复，先区分显式用户stop与系统读取失败，不扩建状态机/跨进程恢复；仍待Owner授权。可向Gemini索取Node24官方输入结束/错误/超时语义作为下一片资料，不阻塞已完成P0-2裁定。
 - 证据project-progress/p02-final-static-review-20261019/：before.json、evidence-integrity.json、closure.md（逐项契约/源码/证据矩阵）、final-state.json。只更新本基线/NEXT_TASK及ignored页面，HEAD/index/全部生产测试及范围外dirty保持，无commit/push/merge，audit只读，68/100历史规划信用不按测试数自动增加。
 
+### 7.42 P0-3a checkpoint来源归属修复（PASS，限离线验证）
+
+- Owner批准继续P0-3a，并明确允许仅修改既有tests/b46-workflow-checkpoint.test.ts及运行一次。按此前主项目直接实施授权由Codex完成，未调用当前403阻断的OpenCode开发入口；本轮不是OpenCode委派或第三方独立审核。
+- 复用现有workflow-checkpoint reader、CheckpointInputError、round-cli checkpointGate及结果投影。reader错误具有input-not-terminal/input-timeout/input-disconnected/input-error代码；真实stop保持user-stop。未读取到答复记choice=unavailable/source=system；非法答复记invalid并保留最多2000字符及截断标志，输入来源与系统安全停止分开。用户accept被现有门禁拒绝时保留accept意图，停止归checkpoint-accept-refused/source=system。
+- 同步workflow.stop、checkpoints.stop/note、handoff和Review未运行原因，不再把系统失败描述成Owner主动停止；原有完成身份复查、Verification、60秒等待、deadline、停止保护与Human Gate不变，无新状态权威。
+- 首次typecheck因测试报告接口choice未同步报TS2367，修正该测试类型后第二次typecheck exit0。唯一单文件离线验证77 passed/0 failed、exit0、约3.78s，含真实reader四种故障经真实CLI投影、普通异常、非法/超长答复、拒绝accept及原有continue/stop/accept路径。受控Worker/Review不是实际模型或Owner输入；无其他suite/真实产品Round/真实LAYA或Agent调用。outer contained Job ActiveProcessesFinal=0、treeStopConfirmed=true。
+- 源码与证据静态复核范围为两个生产文件和一个测试文件；记录project-progress/p03a-source-20261019/，含原字节/全现场哈希、类型检查两次事实、唯一测试日志和Job记录。原9/26历史失败未运行、未修改，P0-1/P0-2既有裁定不被本次重新认证。
+- 本片PASS不等于P0-3整体、真实E2E或跨进程恢复通过。唯一后续建议P0-3b：最小待人工交付材料及安全停止事实投影，明确不支持跨进程resume；尚未授权实施或真实模型调用。规划信用保持68/100。
+- Owner本轮另授权阶段完成后推送独立审核分支；以既有P0-1归档12e21bb为父基准，分离归档已验收P0-1/P0-2依赖与本片P0-3a变更，不合并main；推送事实以远端SHA核对及本机归档结果为准。主HEAD/index/范围外dirty必须保持。
+
 ## 8. 规划估算与本机快照
 
 沿用历史十项权重信用68/100（固定分母为完整后端需求，不含正式UI）；页面按5%档显示约70%、剩30%，旧合理剩余区间30–50%。这不是工时、可用率、自动化完成率或MVP成功概率。本轮文档不增分；下一真实E2E仍未成功，必须看具体阻塞和证据，不能用百分比代替它。
@@ -565,18 +575,18 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-19T02:05:15.4582581Z",
+  "updatedAt": "2026-10-19T02:28:07.6589903Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-2-CLOSURE",
-    "name": "有界自动推进离线收口",
+    "id": "P0-3a",
+    "name": "checkpoint系统/用户来源分离",
     "status": "done",
-    "summary": "P0-2有限离线PASS：源码/契约/A–F75/0证据静态映射完成，文件哈希一致；本轮0测试/0模型。非真实模型/费用/人工E2E认证，P0-3异常来源缺陷保留，下一片待授权。"
+    "summary": "离线PASS：系统读取失败、非法答复与明确用户stop分离；既有单文件一次77/0，typecheck最终通过，Job空。无真实模型/跨进程恢复；P0-3整体未封板。"
   },
   "next": {
-    "id": "P0-3a",
-    "name": "待Owner授权：checkpoint系统读取失败与显式用户stop来源分离",
+    "id": "P0-3b",
+    "name": "待Owner授权：异常待人工交付材料与停止事实投影（不承诺跨进程恢复）",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -654,9 +664,9 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
     {
       "severity": "P1",
       "kind": "当前验收缺口",
-      "title": "P0-3系统/用户来源与异常待人工尚未实施",
-      "detail": "P0-2已有限离线收口；reader异常/超时/EOF等仍可能被记为source=user。真实用户stop与系统故障来源尚未正确分离，不能宣称首尾监督完整可用。",
-      "next": "Owner另行批准P0-3a最小来源修复，保留执行deadline/停止保护，不扩建恢复引擎。"
+      "title": "P0-3异常待人工与恢复仍未完成",
+      "detail": "P0-3a系统/用户来源已离线PASS；完整异常待人工材料、用户处理与恢复尚未验收，真实MVP仍PARTIAL。",
+      "next": "先申请P0-3b最小材料投影，再另行授权真实闭环。"
     },
     {
       "severity": "P1",
@@ -1008,6 +1018,11 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
   ],
   "checks": [
     {
+      "name": "P0-3a来源归属",
+      "source": "project-progress/p03a-source-20261019/",
+      "result": "单文件仅一次77/0、exit0；typecheck首次测试接口choice未同步，修正后PASS。真实模型0，Job最终进程0。"
+    },
+    {
       "name": "P0-2最终静态收口",
       "source": "project-progress/p02-final-static-review-20261019/closure.md",
       "result": "有限离线PASS：批准契约/真实调用链/A–F75/0日志对应，当前哈希匹配，无其他生产漂移。本轮0测试/typecheck/模型；P0-3来源缺陷及真实E2E边界保留。"
@@ -1206,6 +1221,10 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
     {
       "title": "本轮P0-1最终收口",
       "path": "docs/PROJECT_BASELINE.md §7.10；project-progress/p01-lifecycle-migration-20261018/final-result.json"
+    },
+    {
+      "title": "P0-3a来源修复与离线验证",
+      "path": "docs/PROJECT_BASELINE.md §7.42；project-progress/p03a-source-20261019/independent-test.json"
     }
   ],
   "nativeFrontendRoute": "Windows正式桌面工作台；具体UI需求待单独确认，本机进度页不等于产品前端"

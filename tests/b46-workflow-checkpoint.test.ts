@@ -140,15 +140,18 @@ interface CheckpointEntryReport {
   taskId: string; status: string; role: string | null; acceptanceCriteria: string;
   attemptId: string; agentId: string; modelId: string | null; sessionId: string | null;
   output: string; outputTruncated: boolean; treeStopConfirmed: boolean | null;
-  choice: 'continue' | 'stop' | 'accept'; stopReason: string | null;
+  choice: 'continue' | 'stop' | 'accept' | 'invalid' | 'unavailable'; stopReason: string | null;
   acceptReason: string | null; acceptOutcome: 'applied' | 'refused' | null; acceptRefusal: string | null;
-  source: 'user';
+  source: 'user' | 'system';
+  code: string | null;
+  rawAnswer: string | null;
+  rawAnswerTruncated: boolean;
 }
 interface CheckpointsReport {
   enabled: boolean;
   prompts: number;
   entries: CheckpointEntryReport[];
-  stop: { taskId: string; reason: string; blockedTaskIds: string[] } | null;
+  stop: { taskId: string; reason: string; code: string; source: 'user' | 'system'; blockedTaskIds: string[] } | null;
   note: string;
 }
 interface Round {
@@ -414,6 +417,9 @@ section('collaboration stop: the first member blocks the rest, and its file surv
   check('stop: the integration never ran', !r.requests.some((q) => q.prompt.includes('carries integration responsibility')) && !existsSync(join(r.cwd, 'src/integration/combined.txt')),
     `n=${r.requests.length}`);
   check('stop: the loop stopped on user-stop', workflowOf(r).stop === 'user-stop', String(workflowOf(r).stop));
+  check('stop: explicit input alone is recorded as a user stop',
+    cp.entries[0]?.choice === 'stop' && cp.entries[0].source === 'user' && cp.entries[0].code === 'user-stop' &&
+    cp.stop?.source === 'user' && cp.stop.code === 'user-stop', JSON.stringify(cp));
   check('stop: the report records the reason and blocks the member + integration',
     cp.stop !== null && cp.stop.reason === 'member 1 is not acceptable' && cp.stop.blockedTaskIds.length >= 2 &&
       cp.stop.blockedTaskIds.some((id) => id.endsWith('-m2')) && cp.stop.blockedTaskIds.some((id) => id.endsWith('-int')),
@@ -429,6 +435,74 @@ section('collaboration stop: the first member blocks the rest, and its file surv
 }
 
 // =========================================================================
+section('P0-3a: real reader failures stop the CLI without inventing a user stop');
+
+for (const code of ['input-not-terminal', 'input-disconnected', 'input-timeout', 'input-error'] as const) {
+  const r = await collabRound({ checkpoint: true, checkpointInput: async (snapshot) => {
+    const input = new PassThrough();
+    (input as unknown as { isTTY: boolean }).isTTY = code !== 'input-not-terminal';
+    const guard = setInterval(() => {}, 1000);
+    try {
+      const answer = createStdinCheckpointReader({ input, output: new PassThrough(), timeoutMs: 30 })(snapshot);
+      if (code === 'input-disconnected') setImmediate(() => input.end());
+      if (code === 'input-error') setImmediate(() => input.emit('error', new Error('fixture input failed')));
+      return await answer;
+    } finally { clearInterval(guard); input.destroy(); }
+  } });
+  const cp = cpOf(r)!;
+  check(`${code}: actual reader failure reaches the report with system provenance`,
+    cp.entries.length === 1 && cp.entries[0]?.choice === 'unavailable' && cp.entries[0].source === 'system' &&
+    cp.entries[0].code === code && cp.entries[0].rawAnswer === null && cp.stop?.source === 'system' && cp.stop.code === code,
+    JSON.stringify(cp));
+  check(`${code}: workflow and handoff preserve the actual failure code`,
+    workflowOf(r).stop === code && (r.report.handoff as { stopped?: { code: string } }).stopped?.code === code,
+    JSON.stringify(r.report.handoff));
+  check(`${code}: no downstream, review, false completion or success`,
+    r.requests.length === 1 && r.reviewRequests.length === 0 && r.report.ok === false &&
+    r.report.executionIncomplete === true && r.exitCode !== 0 && cp.entries[0]?.status === 'to_verify',
+    `runs=${r.requests.length} reviews=${r.reviewRequests.length} exit=${r.exitCode}`);
+  check(`${code}: user-facing checkpoint, handoff and review text do not invent a user stop`,
+    !/user STOPPED/i.test(cp.note) && !/the user stopped/i.test(JSON.stringify([r.report.handoff, r.report.unifiedReview])),
+    JSON.stringify([cp.note, r.report.handoff, r.report.unifiedReview]));
+}
+
+{
+  const r = await collabRound({ checkpoint: true, checkpointInput: () => { throw new Error('callback failed'); } });
+  const cp = cpOf(r)!;
+  check('untyped read exception: classified as input-error, never a user stop',
+    cp.entries[0]?.source === 'system' && cp.entries[0].choice === 'unavailable' && cp.stop?.code === 'input-error' &&
+    r.requests.length === 1 && r.reviewRequests.length === 0 && r.exitCode !== 0, JSON.stringify(cp));
+}
+
+for (const raw of ['maybe later', 'stop', 'accept', `invalid ${'x'.repeat(2100)}`]) {
+  const r = await collabRound({ checkpoint: true, checkpointInput: () => raw });
+  const cp = cpOf(r)!;
+  check('invalid input: retain bounded input and parse failure, not stop intent',
+    cp.entries[0]?.choice === 'invalid' && cp.entries[0].source === 'user' &&
+    cp.entries[0].rawAnswer === raw.slice(0, 2000) && cp.entries[0].rawAnswerTruncated === (raw.length > 2000) &&
+    cp.entries[0].code === 'checkpoint-invalid-input' && cp.stop?.source === 'system' && cp.stop.code === 'checkpoint-invalid-input',
+    JSON.stringify(cp.entries[0]));
+  check('invalid input: system stops safely without downstream or review',
+    workflowOf(r).stop === 'checkpoint-invalid-input' && r.requests.length === 1 && r.reviewRequests.length === 0 &&
+    r.report.ok === false && r.exitCode !== 0 && !/user STOPPED/i.test(cp.note), JSON.stringify(cp.stop));
+}
+
+{
+  const ownedStart = tmpDirs.length;
+  const r = await collabRound({ checkpoint: true, checkpointInput: () => {
+    rmSync(join(tmpDirs[ownedStart]!, 'src/provider/provider.txt'));
+    return 'accept fixture deliberately removed the required artifact';
+  } });
+  const cp = cpOf(r)!;
+  check('refused accept: preserves user acceptance intent and records a SYSTEM refusal',
+    cp.entries[0]?.choice === 'accept' && cp.entries[0].source === 'user' && cp.entries[0].acceptOutcome === 'refused' &&
+    cp.entries[0].code === 'checkpoint-accept-refused' && cp.stop?.source === 'system' && cp.stop.code === 'checkpoint-accept-refused',
+    JSON.stringify(cp));
+  check('refused accept: never reports an explicit user stop or dispatches downstream',
+    workflowOf(r).stop === 'checkpoint-accept-refused' && r.requests.length === 1 && r.reviewRequests.length === 0 &&
+    r.exitCode !== 0 && !/user STOPPED/i.test(cp.note), JSON.stringify(cp.stop));
+}
+
 section('collaboration accept: the user completes each DISPLAYED member, the group finishes');
 
 {

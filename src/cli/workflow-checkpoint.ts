@@ -134,10 +134,16 @@ export function parseCheckpointAnswer(raw: string): CheckpointDecision {
 }
 
 /** Raised by the production reader when no trustworthy answer can be obtained. */
+export type CheckpointInputFailureCode =
+  | 'input-not-terminal' | 'input-timeout' | 'input-disconnected' | 'input-error';
+
 export class CheckpointInputError extends Error {
-  constructor(message: string) {
+  readonly code: CheckpointInputFailureCode;
+
+  constructor(message: string, code: CheckpointInputFailureCode = 'input-error') {
     super(message);
     this.name = 'CheckpointInputError';
+    this.code = code;
   }
 }
 
@@ -198,6 +204,7 @@ export function createStdinCheckpointReader(
     if ((input as { readonly isTTY?: boolean }).isTTY !== true) {
       throw new CheckpointInputError(
         'stdin is not a terminal; refusing to read a checkpoint answer (fail closed)',
+        'input-not-terminal',
       );
     }
     output.write(renderCheckpointPrompt(snapshot));
@@ -211,7 +218,7 @@ export function createStdinCheckpointReader(
           fn();
         };
         const timer = setTimeout(
-          () => settle(() => reject(new CheckpointInputError(`no checkpoint answer within ${timeoutMs} ms (fail closed)`))),
+          () => settle(() => reject(new CheckpointInputError(`no checkpoint answer within ${timeoutMs} ms (fail closed)`, 'input-timeout'))),
           timeoutMs,
         );
         (timer as unknown as { unref?: () => void }).unref?.();
@@ -219,8 +226,9 @@ export function createStdinCheckpointReader(
         rl.question('', (answer) => done(() => resolve(answer)));
         rl.once('close', () => done(() => reject(new CheckpointInputError(
           'stdin closed before a checkpoint answer was given (fail closed)',
+          'input-disconnected',
         ))));
-        rl.once('error', (e) => done(() => reject(e)));
+        rl.once('error', (e) => done(() => reject(new CheckpointInputError(e.message, 'input-error'))));
       });
     } finally {
       rl.removeAllListeners();

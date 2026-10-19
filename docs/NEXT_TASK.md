@@ -1,28 +1,18 @@
-# 唯一下一任务 — P0-3a checkpoint系统/用户来源分离（待Owner授权）
+# 唯一下一任务 — P0-3b 异常待人工材料与安全停止事实（待Owner授权）
 
-当前唯一事实见docs/PROJECT_BASELINE.md §7.41。
-
-## 当前裁定
-
-P0-1沿用PASS；P0-2已完成有限离线收口PASS。范围是已确认stage、冻结文件计划、完整任务完成契约、声明free/included池、并发1、retry0、no-handoff、有限POST和显式checkpoint优先；不等于真实模型、原生权限/费用或完整后端封板。
-
-最终静态审核复核源码及A–F日志，当前CLI/测试哈希匹配75/0记录，其他生产代码未漂移。本轮未运行测试/typecheck或模型；未改生产代码。详细矩阵：project-progress/p02-final-static-review-20261019/closure.md。
+当前事实见PROJECT_BASELINE.md §7.42。P0-1、P0-2保留原范围PASS；P0-3a来源归属修复离线PASS，既有checkpoint单文件一次77/0，typecheck最终通过。P0-3整体、真实MVP及正式前端未封板。
 
 ## 唯一下一片建议
 
-批准P0-3a，仅修复现有checkpoint报告的来源归属：
+仅准备异常后的最小用户交付：复用现有checkpoint/round-result及观察文件，把真实停止原因、Task/Attempt/Session、已有产物、未完成事项和停止确认事实形成可读待办。系统失败不是Owner stop；没有真实输入就没有user_accept。
 
-- Owner明确输入stop，才记录为用户主动停止。
-- 输入EOF、读取异常、超时等系统失败不得伪记user_stop/source=user；非法答复应保留输入事实与解析失败事实，不伪造用户停止意图。
-- 复用workflow-checkpoint.ts、round-cli checkpointGate和现有结果形状，保持停止、deadline及资源保护；不新建TaskStore/状态机/恢复引擎。
-- 同步报告和面向用户的原因，不能一处改source但文案仍声称用户主动停止。
+- 活动执行资源先按既有机制停止；停止未确认保留保护，不允许新写者。
+- 不新建TaskStore、恢复引擎或第二套状态机；材料落盘不表示跨进程恢复。
+- 明确resumeSupported=false，不承诺隔天继续；不扩大60秒之外的Worker/Reviewer/LAYA执行deadline或费用预算。
+- 尚未授权实施或新增测试。若涉及新的pending/恢复语义，先给Gemini具体资料单，Owner确认最小契约后实施。
 
-实施前确认最小字段/兼容性范围；必要时只向Gemini索取Node24输入结束/错误/超时及事件归属的官方依据，不移植框架。当前尚未授权修改生产或新增测试，不自动实施。
+## 当前边界
 
-## 本片不包含
+本轮P0-3a由Codex依既有直接推进授权实施；并非OpenCode交付或第三方独立审计。OpenCode Free403与Desktop配对旁支保持暂停。真实产品Agent/LAYA/Native Review调用关闭，不自动运行第四次真实E2E，不开放并行写。
 
-不实现跨进程恢复、隔天继续、完整pending持久化；不开放并行写，不调用真实产品Agent/LAYA/Native Review，不启动下一次真实E2E。
-
-P0-3完整异常等待与最终Human Gate仍未通过；后续真实闭环需新调用/费用/数据范围授权。OpenCode路由保留但当前Free 403，Desktop固定环境密码方案未通过源码准入；接入旁支暂停，不拖住本地来源问题的调查。
-
-9/26历史失败边界保留，历史规划信用68/100不因测试数自动增加。HEAD/index/范围外dirty保持，无commit/push/merge；audit只读，本机进度页ignored；正式前端未授权。
+Owner已授权阶段完成后归档独立审核分支；不合并main。9/26历史失败保持原边界，规划信用68/100；主HEAD/index/范围外dirty保持，audit只读，project-progress ignored。
