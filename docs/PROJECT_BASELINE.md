@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-19。当前见§7.59：P0-4.5补观测有界PASS。新control支持目标exit0/Job最终0；脱敏报告主/小模型及provider白名单均为批准Free路由，缺显式build不阻断内置Agent。累计2次诊断已用完，不再补跑。真实推理/费用资格与E2E未验收；下一步仅待Owner新授权一次P0-4.6真实Round及当前费用事实。
+更新：2026-10-19。当前见§7.60：P0-4.6真实Round独立裁定PARTIAL，两Worker交付/原生Review进程及Human Gate已发生，Review自然语言输出不满足JSON verdict契约；所有7份control支持对应Job停止。批准测试结构化证据与Round输出编码缺口保留。调用额度已消耗，不补跑；下一步拟仅复用现有reviewInstructions修复请求契约，待Owner批准。
 
 ## 1. 权责与当前结论
 
@@ -114,7 +114,7 @@ B4.7.3：Space Bunny Free+MiMo V2.6 Flash Free，三个真实独立任务/会话
 
 LAYA：既有Python环境0.3.21，缓存D:/AI/laya-cache，固定权重revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851。历史离线CUDA加载和GET health通过；typed分类中英/计划/pair小样本通过。next_action的正向质量验收曾多次continue或wait，不能改成complete；置信度裁剪等原有限制不因文档更新消失。默认不常驻，不升级/下载/切权重。
 
-## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.59）
+## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.60）
 
 Owner批准日期：2026-10-16。**Owner approved / Not yet implemented / Not yet tested**。正式未来默认覆盖旧“仅显式实验”建议，未改变当前生产或历史报告。
 
@@ -142,7 +142,7 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
 
 ## 6. 唯一下一步与授权
 
-P0-4.5补观测有界PASS（§7.59），不继续诊断或改配置。唯一下一步P0-4.6：Owner新授权一次真实Round，临近执行时确认两项当前费用资格、接受批准测试120秒与现有原生权限边界，再刷新声明并生成新digest。当前没有真实执行授权，不自动启动。
+P0-4.6真实执行PARTIAL（§7.60），不是E2E PASS。当前唯一优先拟为P0-4.7复用现成reviewInstructions补齐Review请求输出协议，保持严格parser及失败关闭；不重跑Review/模型。可信测试证据呈现、原始输出编码等缺口仍开放，不能只修格式就声称真实闭环通过。
 
 真实产品Agent/LAYA/Native Review/E2E调用保持关闭，旧剩余次数不继承。OpenCode最近一次Free CLI探测403仍是接入线索，不能推断当前必然可用或不可用；先完成本地确定性缺口，再按新授权核实模型/费用/数据/次数。阶段裁定后可按Owner既有授权推送独立审核分支，不合并main。
 
@@ -721,6 +721,15 @@ P0-4.5补观测有界PASS（§7.59），不继续诊断或改配置。唯一下�
 - permission缺键不等于deny-all。版本源码给build合并内置权限（一般allow，外目录默认ask并有原生临时/工具目录白名单等），run非交互时另加规则；这属于源码规则，不是本次工具执行权限实测，也不是OS读取/网络沙箱。不放宽工具或追加--auto。共享db/log写入归属仍未知，不以mtime跨窗口直接证明所有因果；模型可调用/费用/辅助推理及真实E2E未验证。
 - 本片裁定PASS限无推理配置核验：关键Free配置观测与原生目标/Job停止事实齐备，build疑点由固定源码关闭；不封板整个后端或MVP。累计2次诊断（首次观察端失败+新增一次成功）均已消耗，剩余授权0，禁止第三次诊断。下一步拟仅一次P0-4.6真实Round，须Owner新的会话/POST/费用/时限/数据授权、当前费用声明、接受120秒批准测试及现有原生权限边界；旧池/digest不得沿用。
 - Codex本轮0新原生进程/测试/模型，未改Demo/生产。证据在ignored project-progress/p045-config-acceptance-20261019；基线/NEXT/本机页面同步。按既有阶段归档仅推送两份文档，不上传Demo、control、ignored审计或凭据；主HEAD/index/范围外dirty保留。历史债务与68/100估算不变。
+### 7.60 P0-4.6单次真实Round独立审核（PARTIAL；无合法Review verdict）
+
+- 已读Demo/evidence-p046的Owner授权原文、LAYA启动/停止与服务日志、原始Round落盘文件、三个原生任务/线程/转录及两份产物；不重复运行CLI、测试、LAYA或模型。Owner声明19:32:00.947至20:02:00.947，实际记录动作在该窗口内；声明不是独立账单。两Worker线程分别ses_eac0bf23dffeWXr4jcLzIBK2g4、ses_eac0bc12effeH92Y8VDxUdcF53，原生任务均succeeded/exit0，持久化model均opencode/space-bunny-free；对应att_0001/att_0002及ws_0001/ws_0002见系统完成审计。Review线程01a153f4-66eb-7e12-9811-b74a092d9fdb已实际运行，进程exit0，业务Review failed/reviewer-output-invalid/verdict null。现有记录不支持Worker模型错配，不能直接采信Reviewer该自然语言判断。
+- 实际根目录add.js=80B/SHA256 95B2D074CDFB139E37FA38565F5B6078499AFCF3F1B97AA19D33F10887CC0F3B；add.test.js=149B/SHA256 6BF24AF1134953D34BA7835340495041966CF69E5E4840F26992167BA381EF82，内容为CommonJS加法与独立断言。原生工具事件含node断言/P04_STEP1_OK及node add.test.js/P04_TEST_OK和exit0，不重跑。系统machineSupervision记录两步P0-1完成门禁、all-succeeded；源码确有runApprovedTest及统一验证门，但本次批准测试的完整结构化结果未呈现到报告/Review packet。两份短control不能独立证明具体argv，不将相关性推断升级为完整测试证据，也不把UNREPORTED直接当验证门被绕过。
+- LAYA stdout核对3次POST /v1/systemone 200和2次health GET，与报告预算max/reserved/used=3、remaining0、exhausted true、rejected false相符。2 Worker+1 Native Review+3 LAYA POST已消耗，后续授权0。持久化w1 totalTokens实际10129，w2为10004，修正Worker摘要中w1=10004；usage/cost0不是独立费用认证，Reviewer usage未上报。
+- 已读6份w1ctl-91920-*.txt及LAYA w1ctl-84252-e617b0642c57.txt，对应producer/consumer契约字段complete1、最终done、treeStopped1、activeProcessesFinal0；前6份status success（非Git探测rootExit128，余0），LAYA为stopRequested1/status terminated/rootExit1。control证明对应Job树停止，不证明所有共享桌面进程全空；不会删除历史control、按名称强杀或将CLI stopSafetyCertified=false改写成true。LAYA portClosed来自既有stop证据，Codex未新增端口探测。
+- 直接原因已定位：src/orchestration/unified-review.ts runUnifiedReview请求只要求独立审核与报告，未调用src/orchestration/review-verdict.ts既有reviewInstructions(subject)，但随后parseReviewOutput严格要求JSON。持久化Review原文确为自然语言，不是仅落盘编码损坏制造的假错误；原生--json只控制事件流，不等于模型最终文本符合verdict schema。唯一最小修复候选是复用现成helper包装原审核subject，保留独立审计及禁止重跑指令、不削弱parser，不增重试或自动pass。本轮不授权源码实现。
+- 原round-p046.stdout.json哈希F98825D244F92E46333DAB43B9A39B4F22304C5C3286DD3EC2453A003464FCDB。普通及-AsHashtable两种标准JSON读取均失败，已停止解析尝试、不修复原件；因此不仅非字节原始证据，也不能作为完整机器可读JSON。ASCII片段只作有限旁证，原生store/产物/control/log分别保留。可信测试投影、parent planned任务呈现为refused带来的Review歧义、观察端UTF-8捕获问题仍开放，不并入本次格式修复或声称已解决。
+- 最终PARTIAL：CLI报告exit1，Review未通过，Human Gate waiting_for_user、roundComplete仅表达执行已结算，automaticPostRoundAction NONE；不替Owner决定或伪造Native verdict。独立记录在ignored project-progress/p046-independent-review-20261019，基线/NEXT/页面同步。按既有归档授权仅推送两份文档，不上传Demo/控制文件/ignored材料；主HEAD/index/范围外dirty保留。P0-1/2/3/4.5有界历史结论、9/26债务、68/100估算不变，无第五次Round或额外Review。
 ## 8. 规划估算与本机快照
 
 沿用历史十项权重信用68/100（固定分母为完整后端需求，不含正式UI）；页面按5%档显示约70%、剩30%，旧合理剩余区间30–50%。这不是工时、可用率、自动化完成率或MVP成功概率。本轮文档不增分；下一真实E2E仍未成功，必须看具体阻塞和证据，不能用百分比代替它。
@@ -729,18 +738,18 @@ P0-4.5补观测有界PASS（§7.59），不继续诊断或改配置。唯一下�
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-19T08:15:18.1319210Z",
+  "updatedAt": "2026-10-19T11:48:43.1114133Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-4.5",
-    "name": "补观测有界PASS，真实Round待新授权",
-    "status": "done",
-    "summary": "两次诊断已消耗，新增一次捕获Free主/小模型及provider白名单，Job最终0；内置build无需显式配置。非推理核验PASS，真实推理/费用/E2E未验收。"
+    "id": "P0-4.6",
+    "name": "真实Round PARTIAL：Review缺合法verdict",
+    "status": "blocked",
+    "summary": "两真实Worker产物/原生Review进程及Human Gate已发生；Review无JSON verdict，批准测试结构化证据/落盘编码仍有缺口。7份Job停止事实保留，额度已用完，不补跑。"
   },
   "next": {
-    "id": "P0-4.6",
-    "name": "一次真实Round；待Owner新授权、当前费用声明及测试/权限边界确认",
+    "id": "P0-4.7",
+    "name": "复用reviewInstructions修复Native Review请求契约；待Owner批准",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -818,9 +827,9 @@ P0-4.5补观测有界PASS（§7.59），不继续诊断或改配置。唯一下�
     {
       "severity": "P1",
       "kind": "当前验收缺口",
-      "title": "无推理配置核验已通过；真实Round尚无新授权",
-      "detail": "补观测已捕获Free主/小模型/provider白名单，内置build源码核清；池过期，当前费用资格及真实推理/Review未验收，不能自动启动。",
-      "next": "不再追加诊断；Owner另批一次P0-4.6真实Round并确认当前费用、120秒批准测试及现有权限边界后再执行。"
+      "title": "真实Round已执行但Review无合法verdict，证据呈现仍有缺口",
+      "detail": "真实执行2Worker完成并产出根目录文件；Native Review虽exit0但为自然语言无verdict，报告JSON损坏且批准测试细节未结构化呈现。额度已消耗，Human Gate待Owner。",
+      "next": "唯一优先拟修复现成Review输出契约接线，保持parser失败关闭；不补跑模型，不把测试/编码缺口或Human Gate当已关闭。"
     },
     {
       "severity": "P1",
@@ -1171,6 +1180,11 @@ P0-4.5补观测有界PASS（§7.59），不继续诊断或改配置。唯一下�
     }
   ],
   "checks": [
+    {
+      "name": "P0-4.6真实Round独立审核",
+      "source": "PROJECT_BASELINE.md §7.60；project-progress/p046-independent-review-20261019/review.json；Demo原生store/产物/7份control/LAYA日志",
+      "result": "PARTIAL：两Worker真实交付且node工具退出0；POST3；原生Review自然语言不符verdict协议。7Job最终0，未补跑。请求未复用既有reviewInstructions；测试证据投影与原始JSON编码缺口开放。"
+    },
     {
       "name": "P0-4.5补观测独立验收",
       "source": "PROJECT_BASELINE.md §7.59；project-progress/p045-config-acceptance-20261019/review.json；新control本机保留",
