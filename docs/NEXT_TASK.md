@@ -1,21 +1,19 @@
-# 唯一下一任务 — P0-4.7 Native Review输出契约最小接线（待Owner批准）
+# 唯一下一任务 — P0-4.7 唯一一次定向返工：可信Review元数据接线
 
-P0-4.6独立结论PARTIAL，见PROJECT_BASELINE.md §7.60。真实2Worker/1Reviewer/3LAYA POST已用完，无新的真实调用授权。Human Gate仍由Owner决定；不追加Review、诊断或Round。
+先读PROJECT_BASELINE.md §7.61。首次+3/-1接线正确，但整片仍BLOCKED；parseReviewOutput不补reviewer/reviewedAt，按helper四字段输出仍失败。P0-4.6保持PARTIAL，无新的真实调用授权。
 
-## 已定位缺陷与最小复用
+## 唯一允许修改
 
-runUnifiedReview拼装自然语言审计请求，却未复用review-verdict.ts已有reviewInstructions(subject)，随后parseReviewOutput又严格要求JSON。本次原生Review原文确为自然语言。唯一优先修复该请求/解析契约失配，不改parser、不猜测prose verdict。
+仍只改src/orchestration/unified-review.ts，保留已接入的reviewInstructions及原subject。不得修改review-verdict.ts或parser/schema实现，不新增helper/模块。
 
-## 拟允许实现范围
+在run成功后的既有try/catch中，复用normalizeReviewOutput严格解析模型输出，再用调用方options.reviewer和一次options.now()提供可信元数据，调用原validateReviewVerdict。只补reviewer/reviewedAt，不填任何verdict/reason/findings/recommendedAction默认值。组合时用对象展开，可信字段放最后，不允许模型伪造/覆盖来源；normalizer已保证JSON对象，必要的类型收窄限该已检查值。不得从自然语言提取或猜verdict。
 
-仅src/orchestration/unified-review.ts：导入并调用现有reviewInstructions，将现有完整审核subject包装为严格JSON输出要求。保留原Review packet、独立审核、报告不重跑、单次调用、超时/失败关闭及Human Gate语义。新增helper/schema/provider/router均不需要。不写Demo特例、不强制pass、不增模型调用或重试。
+成功UnifiedReviewResult.reviewedAt复用已验证verdict.reviewedAt，不再次读时钟产生两份不一致时间。其他状态、单次调用、超时、invalid-output失败关闭、Human Gate和任务状态行为全部保留。不重跑Review。
 
-先读该文件和review-verdict.ts及已有其他调用者，仅做本地调查；不需要新外部检索。保持开发由OpenCode实施、Codex审核，Owner手动转交；此文档不是源码实施授权。
+## 轻量验收
 
-## 轻量验收与停止
+只由Worker运行一次现有typecheck和git diff --check，保存脱敏输出日志到现有ignored记录区，不编写验证脚本或新增/修改/运行测试。Codex审核diff/日志，不重复运行检查。
 
-不得新增/修改测试文件或验证脚本，不运行测试套件或真实模型。Worker仅一次现有typecheck及git diff --check，并以静态调用链说明最终传入reviewer.review的prompt含现成schema和无JSON外文本规则；提供真实日志。Codex审核diff及日志，不重复执行同一检查。最多一次实现加一次明确返工，连续两次检查失败停止。
+静态逐项说明：四判断字段的合法JSON可由框架补可信元数据后进入原严格验证；prose/缺字段/非法枚举仍失败；模型自报reviewer/时间不能覆盖真实调用者；成功结果复用单次时间。不能把静态走查说成已实测或真实模型通过。
 
-禁止改review-verdict parser、adapter、TaskStore、Verification、LAYA、调度/资源/身份、Review自动重试；禁止修改或修补原Round证据、全局配置、凭据/安装目录；不commit/push/reset/clean/stash。
-
-返回READY FOR CODEX REVIEW或BLOCKED后停止。静态接线完成不等于真实Review通过；批准测试结构化证据、planned父任务呈现歧义与观察端UTF-8记录问题仍保留，不能把这些一起标成PASS或自动授权新E2E。
+这是本片唯一一次返工。失败或权限阻断就停止，不扩大到helper/parser/适配器或第三轮实现。禁止模型/LAYA/Native Review/真实Round；禁止源码范围外修改、历史证据修补、commit/push/reset/clean/stash。测试证据投影、父任务呈现和UTF-8记录问题仍开放。本次完成READY FOR CODEX REVIEW或BLOCKED即停止。

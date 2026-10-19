@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-19。当前见§7.60：P0-4.6真实Round独立裁定PARTIAL，两Worker交付/原生Review进程及Human Gate已发生，Review自然语言输出不满足JSON verdict契约；所有7份control支持对应Job停止。批准测试结构化证据与Round输出编码缺口保留。调用额度已消耗，不补跑；下一步拟仅复用现有reviewInstructions修复请求契约，待Owner批准。
+更新：2026-10-19。当前见§7.61：P0-4.7请求helper已接入，静态diff正确；整片仍BLOCKED。四字段模型输出缺reviewer/reviewedAt，parseReviewOutput不补元数据。唯一一次返工拟在同文件用现有normalize/validate组件补调用方身份/时钟，不改parser或让模型自报可信来源；不运行真实模型。
 
 ## 1. 权责与当前结论
 
@@ -114,7 +114,7 @@ B4.7.3：Space Bunny Free+MiMo V2.6 Flash Free，三个真实独立任务/会话
 
 LAYA：既有Python环境0.3.21，缓存D:/AI/laya-cache，固定权重revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851。历史离线CUDA加载和GET health通过；typed分类中英/计划/pair小样本通过。next_action的正向质量验收曾多次continue或wait，不能改成complete；置信度裁剪等原有限制不因文档更新消失。默认不常驻，不升级/下载/切权重。
 
-## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.60）
+## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.61）
 
 Owner批准日期：2026-10-16。**Owner approved / Not yet implemented / Not yet tested**。正式未来默认覆盖旧“仅显式实验”建议，未改变当前生产或历史报告。
 
@@ -142,7 +142,7 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
 
 ## 6. 唯一下一步与授权
 
-P0-4.6真实执行PARTIAL（§7.60），不是E2E PASS。当前唯一优先拟为P0-4.7复用现成reviewInstructions补齐Review请求输出协议，保持严格parser及失败关闭；不重跑Review/模型。可信测试证据呈现、原始输出编码等缺口仍开放，不能只修格式就声称真实闭环通过。
+P0-4.6真实执行PARTIAL保留，P0-4.7首次实现请求接线正确但元数据契约缺口未关（§7.61）。唯一下一步同文件一次有界返工：严格normalize后用调用方身份/时钟补元数据并走原validate；helper/parser不变。Worker静态检查报告PASS，Codex未重复验证。测试证据呈现、父任务歧义及UTF-8记录问题仍开放，不自动重跑E2E。
 
 真实产品Agent/LAYA/Native Review/E2E调用保持关闭，旧剩余次数不继承。OpenCode最近一次Free CLI探测403仍是接入线索，不能推断当前必然可用或不可用；先完成本地确定性缺口，再按新授权核实模型/费用/数据/次数。阶段裁定后可按Owner既有授权推送独立审核分支，不合并main。
 
@@ -730,6 +730,13 @@ P0-4.6真实执行PARTIAL（§7.60），不是E2E PASS。当前唯一优先拟�
 - 直接原因已定位：src/orchestration/unified-review.ts runUnifiedReview请求只要求独立审核与报告，未调用src/orchestration/review-verdict.ts既有reviewInstructions(subject)，但随后parseReviewOutput严格要求JSON。持久化Review原文确为自然语言，不是仅落盘编码损坏制造的假错误；原生--json只控制事件流，不等于模型最终文本符合verdict schema。唯一最小修复候选是复用现成helper包装原审核subject，保留独立审计及禁止重跑指令、不削弱parser，不增重试或自动pass。本轮不授权源码实现。
 - 原round-p046.stdout.json哈希F98825D244F92E46333DAB43B9A39B4F22304C5C3286DD3EC2453A003464FCDB。普通及-AsHashtable两种标准JSON读取均失败，已停止解析尝试、不修复原件；因此不仅非字节原始证据，也不能作为完整机器可读JSON。ASCII片段只作有限旁证，原生store/产物/control/log分别保留。可信测试投影、parent planned任务呈现为refused带来的Review歧义、观察端UTF-8捕获问题仍开放，不并入本次格式修复或声称已解决。
 - 最终PARTIAL：CLI报告exit1，Review未通过，Human Gate waiting_for_user、roundComplete仅表达执行已结算，automaticPostRoundAction NONE；不替Owner决定或伪造Native verdict。独立记录在ignored project-progress/p046-independent-review-20261019，基线/NEXT/页面同步。按既有归档授权仅推送两份文档，不上传Demo/控制文件/ignored材料；主HEAD/index/范围外dirty保留。P0-1/2/3/4.5有界历史结论、9/26债务、68/100估算不变，无第五次Round或额外Review。
+### 7.61 P0-4.7首次实现独立审核（请求接线正确；整体BLOCKED，待唯一返工）
+
+- 实际git diff只有src/orchestration/unified-review.ts的reviewInstructions导入、原审计文本改名subject、调用helper生成prompt（+3/-1）；原审核subject、单次reviewer.review、超时、失败关闭及parser均未改。文件SHA256=BDD9E50D607CD1709F2E1818A047006C2597CF58CF4A059C6AC29ADF69CA8D7A。typecheck与diff check均按Worker报告各一次PASS；Codex只审实际diff/相关源码，没有重跑相同检查。日志路径未随报告提供，不将自述提升为独立测试实测。
+- Worker提示的契约缺口属实：reviewInstructions schema只要求verdict/reason/findings/recommendedAction；parseReviewOutput原样调用validateReviewVerdict(normalizeReviewOutput(raw))，没有补reviewer/reviewedAt，而validator严格要求两者。按helper原样生成四字段JSON仍会missing-reviewer；提示词接线正确不等于闭环已可完成。
+- 不优先让模型自报来源：ReviewVerdict类型注明reviewedAt来自调用方时钟，真实reviewer已在options.reviewer，now亦为既有注入。最小返工可保持原单文件范围：用既有normalizeReviewOutput严格解码得到JSON对象，以对象展开组合调用方reviewer/单次now（可信字段放最后，不接受模型覆盖），再用原validateReviewVerdict严格验收；成功结果复用同一个validated timestamp。原helper/schema/parseReviewOutput/validator实现均保持不变，不默认任何判断字段、不接受自然语言、不新增执行/重试/状态权威。
+- 原始JSON非法、缺少判断字段、非法枚举等继续经现有失败路径拒绝；所有原生调用预算与Human Gate不变。该建议仅为一次定向返工，不由Codex接管实现，不新建测试或验证脚本，不调用真实LAYA/Worker/Review/Round。Worker最多一次typecheck及diff check，Codex仅审核日志/差异，不重复检查。
+- 当前P0-4.7 BLOCKED而不是PASS，P0-4.6保持PARTIAL，后续真实调用仍关闭。独立记录在ignored project-progress/p047-contract-review-20261019；更新基线/NEXT/页面，仅按阶段授权归档两份审核文档，不把尚未收口源码冒充通过快照。主HEAD/index/范围外dirty保留，9/26历史债务、可信测试投影/父任务呈现/UTF-8记录缺口及68/100估算不变。
 ## 8. 规划估算与本机快照
 
 沿用历史十项权重信用68/100（固定分母为完整后端需求，不含正式UI）；页面按5%档显示约70%、剩30%，旧合理剩余区间30–50%。这不是工时、可用率、自动化完成率或MVP成功概率。本轮文档不增分；下一真实E2E仍未成功，必须看具体阻塞和证据，不能用百分比代替它。
@@ -738,18 +745,18 @@ P0-4.6真实执行PARTIAL（§7.60），不是E2E PASS。当前唯一优先拟�
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-19T11:48:43.1114133Z",
+  "updatedAt": "2026-10-19T11:59:01.9273113Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-4.6",
-    "name": "真实Round PARTIAL：Review缺合法verdict",
+    "id": "P0-4.7",
+    "name": "Review请求已接线，可信元数据缺口待返工",
     "status": "blocked",
-    "summary": "两真实Worker产物/原生Review进程及Human Gate已发生；Review无JSON verdict，批准测试结构化证据/落盘编码仍有缺口。7份Job停止事实保留，额度已用完，不补跑。"
+    "summary": "首次实现接入reviewInstructions正确；parseReviewOutput仍缺reviewer/reviewedAt，整片BLOCKED。下一步同文件唯一返工：调用方元数据+原normalize/validate，不补跑模型。"
   },
   "next": {
     "id": "P0-4.7",
-    "name": "复用reviewInstructions修复Native Review请求契约；待Owner批准",
+    "name": "同文件唯一返工：调用方身份/时钟接入既有严格验证",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -827,9 +834,9 @@ P0-4.6真实执行PARTIAL（§7.60），不是E2E PASS。当前唯一优先拟�
     {
       "severity": "P1",
       "kind": "当前验收缺口",
-      "title": "真实Round已执行但Review无合法verdict，证据呈现仍有缺口",
-      "detail": "真实执行2Worker完成并产出根目录文件；Native Review虽exit0但为自然语言无verdict，报告JSON损坏且批准测试细节未结构化呈现。额度已消耗，Human Gate待Owner。",
-      "next": "唯一优先拟修复现成Review输出契约接线，保持parser失败关闭；不补跑模型，不把测试/编码缺口或Human Gate当已关闭。"
+      "title": "Review请求接线已完成，模型判断与调用方元数据尚未对齐",
+      "detail": "首次接线没有补齐严格验证所需reviewer/reviewedAt；须由现有调用方身份/时钟提供，不能仅依赖模型输出JSON。真实Round仍PARTIAL，额度已用完。",
+      "next": "唯一一次同文件返工，复用normalizeReviewOutput和validateReviewVerdict并注入调用方元数据；不改parser、不默认pass、不运行模型。"
     },
     {
       "severity": "P1",
@@ -1180,6 +1187,11 @@ P0-4.6真实执行PARTIAL（§7.60），不是E2E PASS。当前唯一优先拟�
     }
   ],
   "checks": [
+    {
+      "name": "P0-4.7首次实现独立审核",
+      "source": "PROJECT_BASELINE.md §7.61；project-progress/p047-contract-review-20261019/review.json",
+      "result": "BLOCKED：+3/-1请求接线正确，Worker报告两静态检查PASS；parser不补reviewer/reviewedAt，四字段JSON仍失败。建议同文件可信元数据接入，未重复检查/运行模型。"
+    },
     {
       "name": "P0-4.6真实Round独立审核",
       "source": "PROJECT_BASELINE.md §7.60；project-progress/p046-independent-review-20261019/review.json；Demo原生store/产物/7份control/LAYA日志",
