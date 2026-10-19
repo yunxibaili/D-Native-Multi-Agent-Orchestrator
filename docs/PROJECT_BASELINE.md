@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-19。当前见§7.57：P0-4.5单字段返工独立PASS，缺$schema回写分支已避开；移除新增行可还原原文件哈希。原生有效配置核验尚未执行，真实准入仍BLOCKED。唯一下一步待Owner合并确认工具自身状态写入/配置元数据读取边界后核验一次，不再改配置、不刷新池，模型调用关闭。
+更新：2026-10-19。当前见§7.58：P0-4.5已执行一次无推理debug config，control支持目标exit0且Job最终为0；观察端崩溃丢失有效字段，整片仍BLOCKED，单次额度已消耗。待Owner另批最多一次补观测，修复双流捕获及统一截止，不改产品/配置、不刷新池，真实模型授权关闭。
 
 ## 1. 权责与当前结论
 
@@ -114,7 +114,7 @@ B4.7.3：Space Bunny Free+MiMo V2.6 Flash Free，三个真实独立任务/会话
 
 LAYA：既有Python环境0.3.21，缓存D:/AI/laya-cache，固定权重revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851。历史离线CUDA加载和GET health通过；typed分类中英/计划/pair小样本通过。next_action的正向质量验收曾多次continue或wait，不能改成complete；置信度裁剪等原有限制不因文档更新消失。默认不常驻，不升级/下载/切权重。
 
-## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.57）
+## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.58）
 
 Owner批准日期：2026-10-16。**Owner approved / Not yet implemented / Not yet tested**。正式未来默认覆盖旧“仅显式实验”建议，未改变当前生产或历史报告。
 
@@ -142,7 +142,7 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
 
 ## 6. 唯一下一步与授权
 
-P0-4.5元数据返工独立PASS（§7.57），实际配置核验尚未发生。唯一下一步是Owner明确一次无推理核验的原生状态写入/配置元数据读取边界后执行一次；不继续追加配置修订或模型实验。原生有效加载/权限/费用及真实E2E未验收，池不滚动刷新。
+P0-4.5元数据返工PASS保留；一次原生配置命令已运行，但观察端丢失有效字段（§7.58），核验未通过。唯一下一步待Owner另批最多一次非推理补观测，只修观察命令的双流捕获/统一截止，不改产品/配置或试模型。既有单次额度已用完，不能自动重跑。
 
 真实产品Agent/LAYA/Native Review/E2E调用保持关闭，旧剩余次数不继承。OpenCode最近一次Free CLI探测403仍是接入线索，不能推断当前必然可用或不可用；先完成本地确定性缺口，再按新授权核实模型/费用/数据/次数。阶段裁定后可按Owner既有授权推送独立审核分支，不合并main。
 
@@ -705,6 +705,14 @@ P0-4.5元数据返工独立PASS（§7.57），实际配置核验尚未发生。�
 - 无需继续配置开发。唯一下一步拟在Owner明确允许原生工具自身db/log/cache必要状态写入，以及已有账户配置元数据读取范围之后，仅一次30秒无推理有效配置核验；不手工读取/输出凭据、不请求模型、不允许安装/升级或改全局/祖先配置。必须在启动前确定既有Job受控deadline、stop及可信control验证方式；无法满足则不运行。不把直接launcher存在当作清理通过，不新增执行层或测试脚本。上述边界尚未获得本轮执行批准。
 - 本轮Codex仅静态文件/哈希审核，0产品执行，未改Demo。基线/NEXT/ignored页面已同步，证据在project-progress/p045-schema-review-20261019；按既有归档授权只推送两份项目文档，不上传Demo或ignored材料。主HEAD/index/范围外dirty保留，9/26历史债务、120秒批准测试待接受和68/100估算不变。P0-4.5整片仍未完成，真实E2E继续关闭。
 
+### 7.58 P0-4.5原生诊断已执行、观察证据丢失（BLOCKED；单次额度已消耗）
+
+- Codex实读UTF-16 control：C:/Users/Admin/AppData/Local/orchestrator/containment-run/w1ctl-88640-21bc6b29bc61.txt，SHA256=E79054D08EEE11AD838DCC61ECD46019F162A9B52ACB3DF866070BE589ABEDE6。与containment.ts严格consumer源码逐项对照：launcherPid85588/rootPid88360、assignedBeforeResume1/resumed1、rootExitObserved1/rootExitCode0、最终phase done/launcherStatus success/complete1、treeStopped1/activeProcessesFinal0。支持本次目标正常退出与该Job停止；未另行执行验证器，不据此认证全机进程为空。
+- Worker报告约07:16:07–07:16:10Z完成，精确耗时与launcher自身退出码随宿主丢失；后者应写unknown，不是未执行的不适用。ManagedProcess清理路径未使用，不能补写cleanupFailures=0。原始control保留，不删除或覆盖；配置新哈希371821341868CAC8CA7B9E6D5902AAAD88313B7C2267D08A7CB57B2BCEC16599不变，workspace为空。
+- 有效model/small_model/provider/Agent/permission字段没有捕获，不能由目标exit0推断路由正确。按Owner转交报告记录OutputDataReceived scriptblock在线程池回调中触发无runspace异常；原始观察命令/异常转录未提供，故异常详细因果未独立复现，不改编排器生产代码。共享桌面/当前开发会话的db/log写入不能归因到此Job；不声称全机零推理或全局零写入。
+- 已核对[.NET重定向流](https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.process.standardoutput)与[WaitForExit](https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.process.waitforexit)/[ReadToEndAsync](https://learn.microsoft.com/en-us/dotnet/api/system.io.streamreader.readtoendasync)官方契约。最小建议是同时启动stdout/stderr的.NET读取Task，在PowerShell主runspace等待/解析，不挂scriptblock事件回调；进程退出与两个读流必须共用一个有界观察截止，不能在WaitForExit(30000)后无界Result/GetResult或额外等待30秒。超时沿用owned marker/Job有界清理，未确认就报告不明，不按裸PID或名称强杀。
+- 单次原生debug config调用已实际消耗，剩余授权0；本轮Codex没有重跑、探针或测试。下一次补观测仅是待Owner批准的建议：最多新增1次同命令，无prompt/Session/模型、不修改配置/源码，不安装，保持原生状态/配置元数据既有边界。直接在原观察命令中改捕获方式，不新建脚本或执行框架；原始输出不得落盘，解析失败不得把原文/完整异常写入报告。仍失败则停止，不开展第三次诊断。
+- 基线/NEXT/ignored进度页同步，独立记录见project-progress/p045-observer-review-20261019。按既有归档授权只推送两份项目文档；主HEAD/index/范围外dirty受保护。P0-1/2/3有限PASS、9/26债务、120秒批准测试待接受、68/100估算保留，真实E2E未授权。
 ## 8. 规划估算与本机快照
 
 沿用历史十项权重信用68/100（固定分母为完整后端需求，不含正式UI）；页面按5%档显示约70%、剩30%，旧合理剩余区间30–50%。这不是工时、可用率、自动化完成率或MVP成功概率。本轮文档不增分；下一真实E2E仍未成功，必须看具体阻塞和证据，不能用百分比代替它。
@@ -713,18 +721,18 @@ P0-4.5元数据返工独立PASS（§7.57），实际配置核验尚未发生。�
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-19T07:08:27.6192989Z",
+  "updatedAt": "2026-10-19T07:22:26.1035558Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
     "id": "P0-4.5",
-    "name": "schema返工已通过，原生核验待授权",
+    "name": "原生命令成功，观察端丢失有效配置字段",
     "status": "blocked",
-    "summary": "单schema行修订已独立PASS并能恢复旧字节哈希；原生有效配置未核验，待Owner明确原生状态/配置元数据边界，模型调用关闭。"
+    "summary": "已用1次原生诊断，control exit0/Job最终0；stdout丢失，核验BLOCKED。剩余授权0，待Owner另批1次修复捕获的补观测，不调用模型。"
   },
   "next": {
     "id": "P0-4.5",
-    "name": "一次无推理有效配置核验；原生状态/配置元数据边界待Owner批准",
+    "name": "最多新增1次非推理补观测；修复双流捕获与统一截止，待Owner批准",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -802,9 +810,9 @@ P0-4.5元数据返工独立PASS（§7.57），实际配置核验尚未发生。�
     {
       "severity": "P1",
       "kind": "当前验收缺口",
-      "title": "schema回写分支已避开；原生有效配置未核验",
-      "detail": "已补schema并保留全部行为键；尚未批准工具自身状态写入和配置元数据读取边界，debug config未执行，权限/费用未知。",
-      "next": "Owner一次性明确非推理边界后核验一次；先确认现有Job deadline/控制记录及无安装，不改配置、不刷新池或调用模型。"
+      "title": "观察端崩溃丢失原生有效配置字段",
+      "detail": "debug config目标exit0且control记录Job最终0，但观察端崩溃，模型/provider/权限字段未捕获；现有单次额度已消耗。",
+      "next": "仅建议Owner另批最多1次补观测，改用并发.NET读取Task与统一30秒截止；不自动重跑、不改产品/配置或调用模型。"
     },
     {
       "severity": "P1",
@@ -1155,6 +1163,11 @@ P0-4.5元数据返工独立PASS（§7.57），实际配置核验尚未发生。�
     }
   ],
   "checks": [
+    {
+      "name": "P0-4.5观察端故障独立审核",
+      "source": "PROJECT_BASELINE.md §7.58；project-progress/p045-observer-review-20261019/review.json；原始control保留在本机",
+      "result": "BLOCKED：已实际消耗1次无推理诊断，control rootExit0/Job最终0，配置哈希未变；有效字段丢失。精确耗时/launcher退出未知，未重跑。"
+    },
     {
       "name": "P0-4.5 schema返工独立审核",
       "source": "PROJECT_BASELINE.md §7.57；project-progress/p045-schema-review-20261019/review.json",
