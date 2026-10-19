@@ -48,6 +48,7 @@ import { launcherFor } from '../src/runtime/launcher.ts';
 import type { RunHandle, RunRequest, RunResult, ToolCall } from '../src/core/types.ts';
 import type { QuotaProbe } from '../src/quota/index.ts';
 import type { WorkflowCheckpointSnapshot } from '../src/cli/workflow-checkpoint.ts';
+import type { PendingUserSummary } from '../src/orchestration/round-result.ts';
 
 let passed = 0;
 let failed = 0;
@@ -305,7 +306,7 @@ async function runCli(drivable: unknown, argv: readonly string[], overrides: Rou
  * This function NEVER deletes its owned directories: the caller asserts against the real
  * on-disk files first, then the top-level finally cleans up.
  */
-async function harness(options: { revokeBeforeSend?: boolean; withholdReview?: boolean; wrongImplementation?: boolean; wait?: boolean; checkpointInput?: (snapshot: WorkflowCheckpointSnapshot) => string } = {}): Promise<CaseResult> {
+async function harness(options: { revokeBeforeSend?: boolean; withholdReview?: boolean; wrongImplementation?: boolean; wait?: boolean; checkpointInput?: (snapshot: WorkflowCheckpointSnapshot) => string; maxLayaPosts?: number; reviewVerdict?: 'reject' | 'rework' } = {}): Promise<CaseResult> {
   const cwd = ownDir('cwd');
   const storeDir = ownDir('store');
   const reportDir = join(ownDir('reports'), 'reports');
@@ -318,7 +319,7 @@ async function harness(options: { revokeBeforeSend?: boolean; withholdReview?: b
 
   const requests: RunRequest[] = [];
   const reviewRequests: RunRequest[] = [];
-  const VERDICT = JSON.stringify({ verdict: 'pass', reason: 'fixture reviewer: the deliveries meet the recorded runs', findings: [], recommendedAction: 'none', reviewer: 'fixture-codex', reviewedAt: 1 });
+  const VERDICT = JSON.stringify({ verdict: options.reviewVerdict ?? 'pass', reason: 'fixture reviewer: the deliveries meet the recorded runs', findings: [], recommendedAction: 'none', reviewer: 'fixture-codex', reviewedAt: 1 });
   const runtime = new RuntimeOrchestrator({
     config: { agents: {} } as never,
     storeDir,
@@ -392,7 +393,7 @@ async function harness(options: { revokeBeforeSend?: boolean; withholdReview?: b
     OBJECTIVE, '--json', '--cwd', cwd, '--max-children', '4', '--max-concurrent', '1', '--retry-max', '0',
     '--workflow', 'sequential', '--workflow-plan', 'plans.json', '--workflow-choice', PLAN_ID,
     '--stage', 'stage.json', '--select', 'fixed', '--agent', AGENT_A, '--model', WORKER_MODEL,
-    '--no-handoff', '--laya-post-max', '3', '--model-pool', 'pool.json',
+    '--no-handoff', '--laya-post-max', String(options.maxLayaPosts ?? 3), '--model-pool', 'pool.json',
     ...(options.checkpointInput === undefined ? [] : ['--checkpoint']),
   ];
 
@@ -443,6 +444,23 @@ function diag(r: CaseResult): string {
   });
 }
 
+function savedAttentionMatches(report: Record<string, unknown>): boolean {
+  const published = report.roundResultPublished as { ok: boolean; path: string } | undefined;
+  if (published?.ok !== true || !existsSync(published.path)) return false;
+  const saved = JSON.parse(readFileSync(published.path, 'utf8')) as { kind?: string; pendingUser?: PendingUserSummary };
+  return saved.pendingUser !== undefined && JSON.stringify(saved.pendingUser) === JSON.stringify(report.pendingUser) &&
+    (report.roundResult !== undefined || saved.kind === 'pre-execution-attention');
+}
+
+function checkAttention(label: string, report: Record<string, unknown>, code: string): void {
+  const memo = report.pendingUser as PendingUserSummary | undefined;
+  check(`${label}: attention preserves system cause without inventing acceptance or recovery`,
+    memo?.source === 'system' && memo.attentionRequired === true && memo.code === code &&
+    memo.resumeSupported === false && memo.stopSafetyCertified === false && typeof memo.stageDigest === 'string', JSON.stringify(memo));
+  check(`${label}: the existing publisher really saved the same attention material`, savedAttentionMatches(report),
+    JSON.stringify(report.roundResultPublished));
+}
+
 // ============================================================================
 // suite — success and bounded negatives
 // ============================================================================
@@ -490,6 +508,7 @@ async function caseA(): Promise<void> {
   // ---- no fabricated human accept (a direct field fact, not a string scan) ----
   const anyUserSource = completed.some((e) => (e as { source?: string }).source === 'user') || (ms.refused ?? []).some((e) => (e as { source?: string }).source === 'user');
   check('A: no completion was fabricated as a human acceptance', !anyUserSource && !Object.prototype.hasOwnProperty.call(r.report, 'checkpoints'), JSON.stringify({ anyUserSource, hasCheckpoints: Object.prototype.hasOwnProperty.call(r.report, 'checkpoints') }));
+  check('A: a clean successful round has no pending-user memo', !Object.prototype.hasOwnProperty.call(r.report, 'pendingUser'));
 }
 
 async function caseB(): Promise<void> {
@@ -505,6 +524,11 @@ async function caseB(): Promise<void> {
   check('B: no Worker or Reviewer was dispatched', r.requests.length === 0 && r.reviewRequests.length === 0, diag(r));
   check('B: no task report or implementation artifact was manufactured', !Object.prototype.hasOwnProperty.call(r.report, 'tasks') && !existsSync(join(r.cwd, 'add.cjs')) && !existsSync(join(r.cwd, 'add.test.cjs')), filesUnder(r.cwd).join(','));
   check('B: no checkpoint input or human acceptance was consumed', r.checkpointCalls === 0 && !Object.prototype.hasOwnProperty.call(r.report, 'checkpoints'), diag(r));
+  checkAttention('B', r.report, 'approval-revoked');
+  const memo = r.report.pendingUser as PendingUserSummary;
+  check('B: pre-execution refusal keeps task/Attempt/Session/stop identity unknown', memo.taskId === null &&
+    memo.currentAttemptId === null && memo.currentSessionId === null && memo.workerTreeStopConfirmed === null &&
+    !Object.prototype.hasOwnProperty.call(r.report, 'roundResult'), JSON.stringify(memo));
 }
 
 async function caseC(): Promise<void> {
@@ -530,7 +554,7 @@ async function caseC(): Promise<void> {
   const payload = line === undefined ? undefined : JSON.parse(line.slice('P02_REVIEW_CHILD '.length)) as {
     exitCode: number; report: Record<string, unknown>; workerRuns: number; reviewRuns: number;
     coderMarker: string; testerMarker: string; checkpointCalls: number; posts: number;
-    cleanupFailures: string[]; fatal: string | null;
+    cleanupFailures: string[]; fatal: string | null; attentionSaved: boolean;
   };
   check('C: real child exited 1 without a terminating signal', exit?.code === 1 && exit.signal === null, JSON.stringify({ exit, stderr: proc.stderrTail.toString() }));
   check('C: child reached the real CLI result, without an unrelated crash', payload !== undefined && payload.exitCode === 1 && payload.fatal === null && payload.cleanupFailures.length === 0, JSON.stringify(payload));
@@ -541,6 +565,10 @@ async function caseC(): Promise<void> {
     check('C: both real machine verifications succeeded before Review was withheld', payload.workerRuns === 2 && machine.workflowStop === 'all-succeeded' && machine.completed?.length === 2 && report.executionIncomplete === false, JSON.stringify(machine));
     check('C: both approved Node tests REALLY executed', payload.coderMarker === 'STEP1_TEST_RAN' && payload.testerMarker === 'STEP2_TEST_RAN', JSON.stringify({ coder: payload.coderMarker, tester: payload.testerMarker }));
     check('C: requested Review was refused specifically by model-pool admission', payload.reviewRuns === 0 && review.status === 'execution_incomplete' && review.code === 'machine-supervision-not-run' && review.verdict === null && review.reason?.includes('not currently admitted by the user model pool') === true, JSON.stringify(review));
+    const memo = report.pendingUser as PendingUserSummary | undefined;
+    check('C: withheld Review has a saved attention memo, not a borrowed Worker identity', payload.attentionSaved &&
+      memo?.code === 'machine-supervision-not-run' && memo.taskId === null && memo.currentAttemptId === null &&
+      memo.currentSessionId === null && memo.resumeSupported === false, JSON.stringify(memo));
     check('C: printed JSON failure agrees with returned and actual child exit', report.ok === false && machine.reviewNotClean === true && payload.exitCode === exit?.code, JSON.stringify({ ok: report.ok, returned: payload.exitCode, actual: exit?.code }));
     check('C: no extra decision or checkpoint was consumed', payload.posts === 3 && payload.checkpointCalls === 0 && !Object.prototype.hasOwnProperty.call(report, 'checkpoints'), JSON.stringify({ posts: payload.posts, checkpointCalls: payload.checkpointCalls }));
   }
@@ -574,6 +602,11 @@ async function caseD(): Promise<void> {
   check('D: no Reviewer was run or assigned a verdict', r.reviewRequests.length === 0 && review.status === 'execution_incomplete' && review.verdict === null, JSON.stringify(review));
   check('D: the round reports failure and incomplete execution', r.exitCode === 1 && r.report.ok === false && r.report.executionIncomplete === true, diag(r));
   check('D: failure caused no further decision or human-input fallback', r.fetchPosts === 2 && r.checkpointCalls === 0 && !Object.prototype.hasOwnProperty.call(r.report, 'checkpoints'), diag(r));
+  checkAttention('D', r.report, 'completion-test-nonzero');
+  const memo = r.report.pendingUser as PendingUserSummary;
+  check('D: test refusal memo belongs to the actually dispatched coder Attempt/Session',
+    memo.taskId === coder?.taskId && memo.currentAttemptId !== null && memo.currentSessionId !== null &&
+    memo.workerTreeStopConfirmed === true && memo.displayedAttemptId === null, JSON.stringify(memo));
 }
 
 // ============================================================================
@@ -601,6 +634,44 @@ async function caseE(): Promise<void> {
   check('E: unexecuted Review holds no verdict', review.status === 'execution_incomplete' && review.verdict === null, JSON.stringify(review));
   check('E: unfinished wait is reported as failure, not completion', r.exitCode === 1 && r.report.ok === false && r.report.executionIncomplete === true, diag(r));
   check('E: decisions stay within budget without a budget or send-gate refusal', r.fetchPosts > 0 && r.fetchPosts <= 3 && budget.max === 3 && budget.used === r.fetchPosts && budget.rejected === false && gate.refusals.length === 0, JSON.stringify({ posts: r.fetchPosts, budget, gate }));
+  checkAttention('E', r.report, 'decision-wait');
+  const memo = r.report.pendingUser as PendingUserSummary;
+  check('E: wait remains a bounded stop with no invented execution identity', memo.taskId === null && memo.currentAttemptId === null &&
+    memo.currentSessionId === null && memo.workerTreeStopConfirmed === null &&
+    String(r.report.roundResultReport).includes('OWNER ATTENTION REQUIRED'), JSON.stringify(memo));
+}
+
+async function caseG(): Promise<void> {
+  section('G: zero/mid-round POST budget refusals preserve attention and real dispatch limits');
+  for (const max of [0, 2]) {
+    const r = await harness({ maxLayaPosts: max });
+    const budget = r.report.layaPostBudget as { max: number; used: number; rejected: boolean };
+    checkAttention(`G${max}`, r.report, 'DECISION_POST_BUDGET_EXHAUSTED');
+    check(`G${max}: no over-budget POST, Review, retry or human input`, r.exitCode === 1 && r.report.ok === false &&
+      budget.max === max && budget.used === max && budget.rejected === true && r.fetchPosts === max &&
+      r.requests.length === (max === 0 ? 0 : 1) && r.reviewRequests.length === 0 && r.checkpointCalls === 0, diag(r));
+    const memo = r.report.pendingUser as PendingUserSummary;
+    check(`G${max}: budget refusal borrows no previous execution identity`, memo.taskId === null &&
+      memo.currentAttemptId === null && memo.currentSessionId === null && memo.workerTreeStopConfirmed === null, JSON.stringify(memo));
+    check(`G${max}: only actually delivered work remains`, max === 0
+      ? !Object.prototype.hasOwnProperty.call(r.report, 'tasks') && !existsSync(join(r.cwd, 'add.cjs'))
+      : existsSync(join(r.cwd, 'add.cjs')) && existsSync(join(r.cwd, MARKER_CODER)) && !existsSync(join(r.cwd, 'add.test.cjs')),
+    filesUnder(r.cwd).join(','));
+  }
+}
+
+async function caseH(): Promise<void> {
+  section('H: completed Review with reject/rework is never a successful round');
+  for (const verdict of ['reject', 'rework'] as const) {
+    const r = await harness({ reviewVerdict: verdict });
+    const review = r.report.unifiedReview as { status: string; verdict: string };
+    checkAttention(`H-${verdict}`, r.report, `review-${verdict}`);
+    check(`H-${verdict}: the real Review result is preserved and fails the outer result`,
+      review.status === 'completed' && review.verdict === verdict && r.report.ok === false && r.exitCode === 1 &&
+      (r.report.machineSupervision as { reviewNotClean: boolean }).reviewNotClean === true, JSON.stringify(review));
+    check(`H-${verdict}: exactly two Workers and one Review, with no extra execution`, r.requests.length === 2 &&
+      r.reviewRequests.length === 1 && r.fetchPosts === 3 && r.checkpointCalls === 0, diag(r));
+  }
 }
 
 // ============================================================================
@@ -660,6 +731,7 @@ async function main(): Promise<void> {
         coderMarker: existsSync(join(r.cwd, MARKER_CODER)) ? readFileSync(join(r.cwd, MARKER_CODER), 'utf8') : '',
         testerMarker: existsSync(join(r.cwd, MARKER_TESTER)) ? readFileSync(join(r.cwd, MARKER_TESTER), 'utf8') : '',
         checkpointCalls: r.checkpointCalls, posts: r.fetchPosts,
+        attentionSaved: savedAttentionMatches(r.report),
       };
       process.exitCode = r.exitCode;
     } else {
@@ -669,6 +741,8 @@ async function main(): Promise<void> {
       await caseD();
       await caseE();
       await caseF();
+      await caseG();
+      await caseH();
     }
   } catch (e) {
     fatal = e;

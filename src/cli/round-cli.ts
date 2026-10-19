@@ -243,6 +243,7 @@ import {
   renderRoundDelivery,
   renderRoundResult,
   type RoundResult,
+  type PendingUserSummary,
   type TaskEvidenceInput,
 } from '../orchestration/round-result.ts';
 // R5-1.2C (§14): the floor and ceiling quoted in `--execution-timeout` help now come
@@ -1657,6 +1658,31 @@ export async function runRoundCli(
     attempts: 0,
     refusals: [] as string[],
   };
+  const attentionMemo = (code: string, reason: string): PendingUserSummary => ({
+    attentionRequired: true, source: 'system', code, reason, taskId: null,
+    displayedAttemptId: null, currentAttemptId: null, currentSessionId: null,
+    stageDigest: stage?.digest ?? null, workerTreeStopConfirmed: null,
+    retainedProtectionTaskIds: [], stopSafetyCertified: false, resumeSupported: false,
+    note: 'Inspect the preserved deliveries, unfinished tasks and per-attempt evidence in this report. ' +
+      'This memo is not approval, a resumable TaskStore snapshot or proof that every approved test/process stopped. ' +
+      'Do not start another writer while stop safety is unconfirmed; any later execution needs a fresh explicit authorization.',
+  });
+  // Pre-execution failures have no correlated execution identity or full RoundResult.
+  const publishEarlyAttention = (target: Record<string, unknown>): void => {
+    if (!autoMode) return;
+    target.ok = false;
+    attachBudget(target);
+    const code = sendGate.refusals.length > 0 ? 'approval-revoked'
+      : postBudget?.rejected === true ? 'DECISION_POST_BUDGET_EXHAUSTED' : `${String(target.stage)}-failed`;
+    const reason = String(target.error ?? 'the round stopped before execution');
+    target.pendingUser = attentionMemo(code, reason);
+    const published = publishRoundResult({ kind: 'pre-execution-attention', ...target }, {
+      onError: (message) => note(message),
+      ...(overrides.roundResultDir === undefined ? {} : { dir: overrides.roundResultDir }),
+    });
+    target.roundResultPublished = { ok: published.ok, path: published.path, code: published.code };
+    if (!o.json) note(`OWNER ATTENTION REQUIRED: ${code}: ${reason}; resumeSupported=false; report ${published.ok ? published.path : 'NOT saved'}`);
+  };
   /** Attaches the truthful budget snapshot to a machine report, only when a budget is on. */
   const attachBudget = (target: Record<string, unknown>): void => {
     if (postBudget !== null) target.layaPostBudget = readLayaPostBudgetReport(postBudget);
@@ -1744,9 +1770,10 @@ export async function runRoundCli(
     classification = await classifyTask(provider, { task: roundObjective });
   } catch (e) {
     const msg = `${(e as Error).name}: ${(e as Error).message}`;
+    const failure: Record<string, unknown> = { ok: false, stage: 'classify', error: msg };
+    attachBudget(failure);
+    publishEarlyAttention(failure);
     if (o.json) {
-      const failure: Record<string, unknown> = { ok: false, stage: 'classify', error: msg };
-      attachBudget(failure);
       w(JSON.stringify(failure, null, 2));
     } else {
       note(`Laya classification failed: ${msg}`);
@@ -2384,6 +2411,7 @@ export async function runRoundCli(
         const msg = `${(e as Error).name}: ${(e as Error).message}`;
         report.stage = 'plan';
         report.error = `execution topology refused: ${msg}`;
+        publishEarlyAttention(report);
         if (o.json) { attachBudget(report); w(JSON.stringify(report, null, 2)); }
         else note(`execution topology refused: ${msg}`);
         notifyWorkbenchSnapshot();
@@ -2395,6 +2423,7 @@ export async function runRoundCli(
       if (!materialized.ok) {
         report.stage = 'plan';
         report.error = `fan-out topology refused: ${materialized.code}: ${materialized.reason}`;
+        publishEarlyAttention(report);
         if (o.json) { attachBudget(report); w(JSON.stringify(report, null, 2)); }
         else note(`fan-out topology refused: ${materialized.code}: ${materialized.reason}`);
         notifyWorkbenchSnapshot();
@@ -2463,6 +2492,7 @@ export async function runRoundCli(
     const msg = `${(e as Error).name}: ${(e as Error).message}`;
     report.stage = 'plan';
     report.error = msg;
+    publishEarlyAttention(report);
     if (o.json) { attachBudget(report); w(JSON.stringify(report, null, 2)); }
     else note(`planning/assignment failed: ${msg}`);
     // T2-a.3: the failure path is a legitimate observation point — a refused initial
@@ -2558,6 +2588,7 @@ export async function runRoundCli(
         const msg = `${(e as Error).name}: ${(e as Error).message}`;
         report.stage = 'skill-choice';
         report.error = `skill choice refused: ${msg}`;
+        publishEarlyAttention(report);
         if (o.json) { attachBudget(report); w(JSON.stringify(report, null, 2)); }
         else note(`skill choice refused: ${msg}; nothing was executed.`);
         notifyWorkbenchSnapshot();
@@ -2653,6 +2684,7 @@ export async function runRoundCli(
         const msg = `${(e as Error).name}: ${(e as Error).message}`;
         report.stage = 'mcp-choice';
         report.error = `mcp tool choice refused: ${msg}`;
+        publishEarlyAttention(report);
         if (o.json) { attachBudget(report); w(JSON.stringify(report, null, 2)); }
         else note(`mcp tool choice refused: ${msg}; nothing was executed.`);
         notifyWorkbenchSnapshot();
@@ -4780,7 +4812,7 @@ export async function runRoundCli(
     if (sendGate.refusals.length > 0) finalFailures.push(...sendGate.refusals);
     if (finalFailures.length > 0) report.ok = false;
     const reviewRequestedNotClean =
-      o.review && (autoReviewBlockers.length > 0 || unifiedReview.status !== 'completed');
+      o.review && (autoReviewBlockers.length > 0 || unifiedReview.status !== 'completed' || unifiedReview.verdict?.verdict !== 'pass');
     if (reviewRequestedNotClean) report.ok = false;
     report.machineSupervision = {
       ...(report.machineSupervision as Record<string, unknown>),
@@ -4927,28 +4959,32 @@ export async function runRoundCli(
   // run belonged to.
   const attemptEvidence: Record<string, TaskEvidenceInput> = wb.attemptEvidenceMap();
 
-  // Reuse the published result for attention material, without certifying stop safety or recovery.
-  const pendingActual = checkpointStop === null ? null : currentActualOf(checkpointStop.taskId);
-  const pendingUser = checkpointStop === null || checkpointStop.code === 'user-stop' ? undefined : {
-    attentionRequired: true as const,
-    source: 'system' as const,
-    code: checkpointStop.code,
-    reason: checkpointStop.reason,
-    taskId: checkpointStop.taskId,
-    displayedAttemptId: checkpointEntries.at(-1)?.attemptId ?? null,
+  // Report existing stop facts; never turn wait, missing identity or a non-pass review into success.
+  const automaticAttention = !autoMode ? null
+    : sendGate.refusals.length > 0 ? { taskId: null, code: 'approval-revoked', reason: sendGate.refusals.join('; ') }
+    : postBudget?.rejected === true ? { taskId: null, code: 'DECISION_POST_BUDGET_EXHAUSTED', reason: decisionPart.note ?? 'the round POST budget refused another request before send' }
+    : machineStop !== null ? { ...machineStop, taskId: machineStop.taskId || null }
+    : workflowStop !== 'all-succeeded' ? {
+      taskId: null, code: decisionPart.code ?? workflowStop ?? 'workflow-incomplete',
+      reason: decisionPart.note ?? `the bounded workflow stopped: ${workflowStop ?? 'not run'}`,
+    }
+    : o.review && (unifiedReview.status !== 'completed' || unifiedReview.verdict?.verdict !== 'pass') ? {
+      taskId: null, code: unifiedReview.status === 'completed' ? `review-${unifiedReview.verdict?.verdict ?? 'missing-verdict'}` : unifiedReview.code ?? `review-${unifiedReview.status}`,
+      reason: unifiedReview.reason ?? 'the requested reviewer produced no passing verdict',
+    } : null;
+  const attentionCause = checkpointStop !== null && checkpointStop.code !== 'user-stop' ? checkpointStop : automaticAttention;
+  const pendingActual = attentionCause?.taskId == null ? null : currentActualOf(attentionCause.taskId);
+  const pendingUser = attentionCause === null ? undefined : {
+    ...attentionMemo(attentionCause.code, attentionCause.reason),
+    taskId: attentionCause.taskId,
+    displayedAttemptId: checkpointStop === null ? null : checkpointEntries.at(-1)?.attemptId ?? null,
     currentAttemptId: pendingActual?.attemptId ?? null,
     currentSessionId: pendingActual?.sessionId ?? null,
-    stageDigest: stage?.digest ?? null,
     workerTreeStopConfirmed: pendingActual?.run?.cleanup?.treeStopConfirmed ?? null,
     retainedProtectionTaskIds: [...new Set([
       ...(workspace?.retainedResourceProtections().map((claim) => claim.taskId) ?? []),
       ...(workspace?.unconfirmedProtections().map((protection) => protection.taskId) ?? []),
     ])],
-    stopSafetyCertified: false as const,
-    resumeSupported: false as const,
-    note: 'Inspect the preserved deliveries, unfinished tasks and per-attempt evidence in this report. ' +
-      'This memo is not approval, a resumable TaskStore snapshot or proof that every approved test/process stopped. ' +
-      'Do not start another writer while stop safety is unconfirmed; any later execution needs a fresh explicit authorization.',
   };
 
   const roundResult: RoundResult = buildRoundResult({

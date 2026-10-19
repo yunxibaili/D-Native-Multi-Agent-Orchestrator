@@ -511,7 +511,7 @@ export interface PendingUserSummary {
   readonly source: 'system';
   readonly code: string;
   readonly reason: string;
-  readonly taskId: string;
+  readonly taskId: string | null;
   readonly displayedAttemptId: string | null;
   readonly currentAttemptId: string | null;
   readonly currentSessionId: string | null;
@@ -1460,7 +1460,7 @@ export function renderRoundDelivery(result: RoundResult): string {
     const pending = result.pendingUser;
     out.push('', 'OWNER ATTENTION REQUIRED (report only)',
       `  reason: ${pending.code} (source=${pending.source}): ${pending.reason}`,
-      `  task: ${pending.taskId}; displayed attempt=${pending.displayedAttemptId ?? 'unknown'}; current attempt=${pending.currentAttemptId ?? 'unknown'}; session=${pending.currentSessionId ?? 'unknown'}`,
+      `  task: ${pending.taskId ?? 'none correlated'}; displayed attempt=${pending.displayedAttemptId ?? 'unknown'}; current attempt=${pending.currentAttemptId ?? 'unknown'}; session=${pending.currentSessionId ?? 'unknown'}`,
       `  approved stage digest: ${pending.stageDigest ?? 'none'}`,
       `  current worker tree stop: ${pending.workerTreeStopConfirmed === null ? 'unknown' : pending.workerTreeStopConfirmed ? 'confirmed (worker only)' : 'NOT confirmed'}`,
       `  retained protections: ${pending.retainedProtectionTaskIds.join(', ') || 'none reported; not a stop proof'}`,

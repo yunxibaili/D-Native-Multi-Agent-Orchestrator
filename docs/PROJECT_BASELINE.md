@@ -6,7 +6,7 @@
 
 本文唯一维护当前事实、阶段状态、证据与进度快照。[产品方向](PRODUCT_DIRECTION.md)管已确认定位/取舍；[后端需求](BACKEND_REQUIREMENTS.md)保留全部目标；[路线](BACKEND_DELIVERY_PLAN.md)管顺序；[阶段分析](STAGE_ANALYSIS.md)解释新策略；[NEXT_TASK](NEXT_TASK.md)只列下一有界任务；[研究索引](ENGINEERING_RESEARCH_REFERENCES.md)管来源，不各自宣布封板。
 
-**当前P0-1沿用独立PASS（§7.10），P0-2 PASS（限已批准的有界离线实现，§7.41）。源码/契约/A–F75/0证据静态映射及当前哈希核对完成，本轮未跑测试或模型。不是第三方独立审计、真实费用/权限认证或MVP封板。P0-3a来源归属与P0-3b检查点异常材料已离线PASS（§7.42/§7.43）；默认自动异常材料与P0-3整体仍未完成，下一片为待授权P0-3c。** 以下为前轮P0-1 Final Closure曾BLOCKED的历史事实，不能当作当前状态：Attempt重放/换绑与空产物入口已关闭，原51项失败按A5/B40/C6逐项对应最终独立通过；额外3套件9项失败已通过修改前字节快照复跑确认同签名，仍开放，不纳入历史26项豁免。本轮返工违反离线授权，旧cancel.test.ts运行3次造成6次真实Codex执行；3个成功会话实证模型gpt-6.1-sol，3个取消会话无可见推理结果。费用未独立核实，不能称零新增收费。一次实现+一次返工轮次已用完，返工由Codex停止，无第三次委派。P0-2/3及第四次E2E仍未授权。
+**当前P0-1沿用独立PASS（§7.10），P0-2 PASS（限已批准的有界离线实现，§7.41）。源码/契约/A–F75/0证据静态映射及当前哈希核对完成，本轮未跑测试或模型。不是第三方独立审计、真实费用/权限认证或MVP封板。P0-3a来源归属与P0-3b检查点异常材料已离线PASS（§7.42/§7.43）；P0-3c自动异常汇总及非pass Review结果投影已有限离线PASS（§7.45）；P0-3整体仍待最终静态收口，真实MVP未完成。** 以下为前轮P0-1 Final Closure曾BLOCKED的历史事实，不能当作当前状态：Attempt重放/换绑与空产物入口已关闭，原51项失败按A5/B40/C6逐项对应最终独立通过；额外3套件9项失败已通过修改前字节快照复跑确认同签名，仍开放，不纳入历史26项豁免。本轮返工违反离线授权，旧cancel.test.ts运行3次造成6次真实Codex执行；3个成功会话实证模型gpt-6.1-sol，3个取消会话无可见推理结果。费用未独立核实，不能称零新增收费。一次实现+一次返工轮次已用完，返工由Codex停止，无第三次委派。P0-2/3及第四次E2E仍未授权。
 
 主要开发Worker依Owner最新指令恢复为OpenCode，复用既有opencode-agent及DeepSeek V4.1 Flash Free覆盖值；DSH接入旁支暂停。本片沿用Owner此前让Codex直接推进主项目的授权，完成P0-3a最小来源修复；不改变长期OpenCode开发/Codex审核分工。LAYA仍为任务级选择权威，TaskStore仍为任务状态权威。正式Windows桌面路线保持，具体UI需求/实现未开始。PARALLEL_WRITE=CLOSED、automaticPostRoundAction=NONE。
 
@@ -577,6 +577,26 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
 - 唯一后续建议P0-3c：先逐项映射默认自动模式的真实异常原因与已有结果，再补最小同源待人工汇总；不重跑成功任务、不新增恢复状态机。若涉及新的等待/恢复/持久化保证，先给Gemini具体官方依据需求单，由Owner确认后实施；当前后续生产/测试及真实调用仍未授权。规划信用保持68/100。
 - Owner阶段归档授权继续适用：本片拟以P0-3a已核实远端b900c88802e3adbaa76737887b76dc67fcbee33d为父提交，独立审核分支只含本片文件与基线/NEXT/报告；实际推送事实以远端SHA核对结果为准，不合并main，主HEAD/index/范围外dirty保持。
 
+### 7.44 P0-3c 自动模式异常汇总草稿（PARTIAL，待单文件验证授权）
+
+- Owner批准继续本地P0-3c；沿用Codex直接推进授权，不重试OpenCode403、不调用真实模型。已读取唯一NEXT、研究Skill、旁路audit入口及实际自动循环/发送预算/Review/结果发布路径；属于已有内部接线，暂无必须交Gemini的新外部规范问题。
+- 本轮仅改src/cli/round-cli.ts与src/orchestration/round-result.ts。复用P0-3b只读attentionMemo，任务/执行身份未知时改为null；分类、计划及工具选择的提前失败可通过原publishRoundResult保存明确kind=pre-execution-attention的材料，不伪造完整RoundResult或Task/Attempt。正常最终汇总关联机器验收拒绝、发送前授权撤销、真实POST预算拒绝、保真的decision-wait、有界停止及Review未完成/非pass结果；既有Verification/Task状态/停止保护不变，resumeSupported=false、stopSafetyCertified=false。
+- 独立源码走查发现既有自动结果只检查Review status=completed，未检查实际verdict；本片已补unifiedReview.verdict?.verdict必须pass的失败投影，reject/rework不应被外层ok当成功。不回写Review或任务状态。该修复目前只有源码/类型证据，尚无新行为验证，不将旧P0-2有限PASS扩大成已验证本项。
+- typecheck首次发现可空Review原因不符合报告reason:string，补明确无verdict原因后第二次exit0。git diff审查完成；未修改任何测试文件，未运行测试、临时探针、真实产品Round或模型。受影响单文件tests/p02-auto-advance.test.ts的新增断言/预算负例和一次离线运行已向Owner请求明确授权，尚未收到答复；上一片b46一次授权不继承。
+- 本片当前为PARTIAL，不标记P0-3c/P0-3整体PASS；未按阶段成果推送未经行为验收的草稿。原P0-3b审核分支294d31cc886fa78e14eec5a06dc71a01d200edb7保持不动，主HEAD/index/范围外dirty保留，9/26历史边界不变。证据project-progress/p03c-auto-attention-20261019/保存修改前字节/全现场哈希及两次typecheck事实；尚无本片Job物理清理新证据（本轮未启动模型或测试进程树）。
+- 唯一下一步：收到现有测试授权问题的明确回复后，仅补/运行该单文件一次，核对A–F及预算0/中途耗尽、真实非pass Review负例；完成静态复核、进度同步后按既有授权推送独立审核分支。不启动真实E2E或恢复引擎。
+
+### 7.45 P0-3c 自动模式异常与非pass Review收口（PASS，限离线范围）
+
+- Owner随后明确批准仅修改/运行tests/p02-auto-advance.test.ts一次。上一节记录的是授权答复前的历史草稿状态；本节为当前最终裁定。Codex继续实施并静态审核，不是OpenCode委派或第三方独立审计。
+- 复用P0-3b attentionMemo/publishRoundResult/round-result renderer：分类/计划/Skill/MCP选择的提前失败保存kind=pre-execution-attention，非完整RoundResult，任务/Attempt/Session/Worker停止事实未知均为null。最终报告按实际发送拒绝、预算rejected、machineStop、原始decision/worfklow停止及Review结果关联材料，不新建Task状态、执行入口或恢复权威；显式checkpoint stop仍不被转换成等待。发布失败沿用原ok/path/code，不假装保存成功。
+- 修复已有自动结果漏检：Review completed但verdict为reject/rework时，现有reviewNotClean/ok/CLI退出投影改为非成功，原Reviewer结果与任务状态保留；只修结果投影，不启动返工。此前P0-2只实测Review被准入拒绝，不追认它已覆盖本项。
+- typecheck共3次：首个nullable Review reason错误，补明确无通过结论原因后第二次通过；获测试修改授权后第三次核对新测试类型通过。实际单文件只运行1次，104 passed/0 failed、exit0、约2.64s；保留A–F，新断言验证提前撤销/空身份/真实文件、可信测试拒绝绑定、wait不改写、预算0与2、Review reject/rework两种真实受控结果和非零退出。C仍以contained独立子进程实际exit1与文件读取事实证明Review未运行，不借外层PASS替代。
+- 所有底层fetch/Agent/Reviewer仍为受控seam；批准Node测试与JSON写入是真实本机动作。真实产品Agent/LAYA/Native Review调用0，outer Job ActiveProcessesFinal=0/treeStopConfirmed=true；没有其他suite或重新运行本文件，未修改b46或9/26历史失败。新测试SHA256 978ff6c4220a8c39279414ab07a91b5373524fc9e6ae4c2ab9ffb6c1a7887580。
+- 证据project-progress/p03c-auto-attention-20261019/保留前后源码、授权前PARTIAL历史status、三次类型事实与唯一测试日志。静态审核限两个生产文件/一个获准测试/相关调用链；配置/探测本身失败且尚未形成已批准执行的入口不被本片宣称全部覆盖。报告明确resumeSupported=false/stopSafetyCertified=false，Worker停止不是全部测试或整轮安全认证。
+- 本片PASS不等于P0-3整体/真实MVP或前端通过。唯一下一步为P0-3最终只读静态收口：把已批准监督/异常/交付契约映射到a/b/c源码与现有证据，不追加实现、suite或模型调用；随后才能另行申请真实E2E的最新模型/费用/数据/次数授权。本片没有必须再交Gemini的新外部机制问题，后续外部API或恢复语义未知时再给具体检索单。
+- 按Owner阶段归档授权，以P0-3b远端294d31cc886fa78e14eec5a06dc71a01d200edb7为父基准，独立分支仅提交本片及基线/NEXT/报告；推送以实际远端SHA核对为准，不合并main。主HEAD/index/范围外dirty与规划信用68/100保持，进度页ignored，audit只读。
+
 ## 8. 规划估算与本机快照
 
 沿用历史十项权重信用68/100（固定分母为完整后端需求，不含正式UI）；页面按5%档显示约70%、剩30%，旧合理剩余区间30–50%。这不是工时、可用率、自动化完成率或MVP成功概率。本轮文档不增分；下一真实E2E仍未成功，必须看具体阻塞和证据，不能用百分比代替它。
@@ -585,18 +605,18 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-19T02:37:39.2550430Z",
+  "updatedAt": "2026-10-19T02:56:13.5689383Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-3b",
-    "name": "检查点异常待人工报告",
+    "id": "P0-3c",
+    "name": "自动模式异常与Review非pass结果",
     "status": "done",
-    "summary": "离线报告投影PASS：实际落盘/身份/交付/未完成事项与Worker停止事实同源；resumeSupported=false、不认证整轮停止。单文件一次92/0、typecheck PASS；无真实模型。"
+    "summary": "有限离线PASS：自动异常材料实际保存、无身份保持null，wait/预算不改写，Review reject/rework外层非成功；单文件一次104/0，最终typecheck通过，Job空，无真实模型。"
   },
   "next": {
-    "id": "P0-3c",
-    "name": "待Owner授权：默认自动模式异常来源映射与最小待人工材料",
+    "id": "P0-3-CLOSURE",
+    "name": "P0-3最终只读静态收口与真实闭环准入差距核对（不运行模型）",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -675,8 +695,8 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
       "severity": "P1",
       "kind": "当前验收缺口",
       "title": "P0-3异常待人工与恢复仍未完成",
-      "detail": "P0-3a来源与P0-3b检查点异常报告已离线PASS；默认自动异常汇总与完整P0-3尚未验收，报告落盘不等于可恢复状态。",
-      "next": "先P0-3c本地映射/必要契约核对，再另行授权真实闭环。"
+      "detail": "P0-3a/b/c有限离线片已通过；尚待整体契约静态收口。材料不是可恢复TaskStore，不认证全程原生权限/费用或整轮停止，真实MVP仍PARTIAL。",
+      "next": "先只读静态收口，仍不得自动发起真实模型调用。"
     },
     {
       "severity": "P1",
@@ -1028,6 +1048,16 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
   ],
   "checks": [
     {
+      "name": "P0-3c最终定向验收",
+      "source": "project-progress/p03c-auto-attention-20261019/",
+      "result": "获授权后单文件仅一次104/0、exit0；预算0/2、wait、机器拒绝、Review reject/rework有真实受控证据；最终typecheck PASS，真实模型0、outer Job最终0。"
+    },
+    {
+      "name": "P0-3c草稿静态检查",
+      "source": "project-progress/p03c-auto-attention-20261019/",
+      "result": "typecheck首次可空reason错误，修正后exit0；本片测试0/模型0，待单文件测试授权，不认证行为PASS。"
+    },
+    {
       "name": "P0-3b检查点异常材料",
       "source": "project-progress/p03b-attention-20261019/",
       "result": "typecheck一次PASS；既有单文件仅一次92/0、exit0；真实模型0、outer Job最终0，含报告落盘与未确认停止负例。"
@@ -1244,6 +1274,10 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
     {
       "title": "P0-3b有界报告审核",
       "path": "docs/P03B_ATTENTION_REPORT_REVIEW.md"
+    },
+    {
+      "title": "P0-3c自动异常收口",
+      "path": "docs/P03C_AUTO_ATTENTION_REVIEW.md"
     }
   ],
   "nativeFrontendRoute": "Windows正式桌面工作台；具体UI需求待单独确认，本机进度页不等于产品前端"
