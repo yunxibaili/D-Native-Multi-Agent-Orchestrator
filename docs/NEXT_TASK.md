@@ -1,23 +1,17 @@
-# 唯一下一任务 — P0-4.5 一次无推理有效配置核验（待Owner转交批准）
+# 唯一下一任务 — P0-4.5 定向返工：仅补Demo配置$schema（待Owner转交批准）
 
-P0-4.4静态准备已独立PASS，见PROJECT_BASELINE.md §7.55。不重做配置，不宣称真实E2E READY；当前池仍过期，真实模型授权保持关闭。
+P0-4.5执行前BLOCKED，原生配置核验未发生，见PROJECT_BASELINE.md §7.56。缺少$schema时原生加载器会尝试回写，违反上一片配置不变要求。本轮不重建配置，不新开产品阶段。
 
-## 目标与复用
+## 拟允许的唯一修改
 
-仅核对原生最终采用的主/辅助模型、provider白名单、build Agent及权限来源。复用已有OPENCODE_CONFIG、原生debug config与owned containment，不改生产或新建执行入口。
+D:/workbench-demo/p04-20261019T035918Z/control/opencode-demo.json：仅新增顶层$schema=https://opencode.ai/config.json，保留model/small_model/enabled_providers/provider四项原值、编码和其余文本。
 
-Demo为D:/workbench-demo/p04-20261019T035918Z；cwd为workspace，显式配置为control/opencode-demo.json。模型保持opencode/space-bunny-free，不切换为开发委派的DeepSeek模型。
+同目录README.md：仅补该元数据修订原因、新哈希、实际核验尚未执行的说明。补字段只关闭本文件缺schema回写分支；不能声称加载完全无副作用或真实准入READY。
 
-## 先排除副作用，再执行一次
+## 静态交付
 
-复用§7.54/§7.55固定版本来源，不重复外检或试模型。debug/config.ts读取Config.Service.get后脱敏输出；加载器可能初始化插件依赖，不能预设完全只读。先核对适用配置/.opencode目录的非敏感字段与安装触发条件，以及已有contained入口。无法排除安装/升级、全局或祖先配置写入，或需要新脚本/放宽权限才能contain时，停止并报告，不回退裸进程。
+读取§7.56及已有v1.19.3来源，使用既有loadConfig行为，不重复试模型。提供单字段diff、JSON解析结果、新SHA256、README差异、其余Demo文件哈希及workspace仍空的事实。不新增验证脚本，不编写node -e/python -c，不运行任何CLI探针、测试或typecheck。
 
-满足边界且获Owner转交批准后，只允许一次原生debug config：cwd固定workspace，进程局部OPENCODE_CONFIG为专用绝对路径；30秒deadline，失败不重试，无prompt/session/模型请求。参数须按版本源码确认，不猜run --dir适用于debug。经既有ManagedProcess/Job启动并核对可信最终停止事实。仅留存白名单非敏感字段及必要脱敏证据，不打印或保存完整原始配置、环境、auth.json/API Key/密码。
+停止于READY FOR CODEX REVIEW；不附带重跑debug config。wellknown/活动账户远端配置、工具数据写入、依赖状态及受控deadline/可信停止证据仍未验证，不能隐藏为PASS。后续应合并剩余执行边界的明确授权后再核验，避免反复刷新池/预检。
 
-## 交付与停止
-
-返回实际命令/cwd/配置哈希、主/小模型、provider限定、Agent及permission有效字段与来源、实际退出码/耗时、treeStopConfirmed/ActiveProcessesFinal/cleanupFailures。未观察到的写unknown；副作用无法排除则BLOCKED且不执行。配置输出不证明认证/费用资格，也不覆盖所有执行路径中的权限行为。
-
-不改Demo/workspace/pool/stage/plans、仓库源码/测试/全局配置；不运行stage-check、测试/typecheck、LAYA、Worker、Review或Round；不读取凭据、不安装、不增加费用、不滚动刷新池；不commit/push/reset/clean/stash。Git归档由Codex负责。
-
-完成后READY FOR CODEX REVIEW或BLOCKED即停止。真实执行仍需Owner新的次数/费用/时限/数据授权，含单独接受机器批准测试120秒默认值。
+禁止改orchestrator、pool、plans、stage、workspace、生产/测试/全局/父目录配置、凭据和外部安装；禁止LAYA、Worker、Native Review或Round；禁止安装/网络探测/付费、commit/push/reset/clean/stash。Git归档仍由Codex负责。

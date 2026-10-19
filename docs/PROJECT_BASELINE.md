@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-19。当前见§7.55：P0-4.4静态配置准备独立PASS，三项文件哈希、既有材料不变、workspace空及role→--agent接线已核对。该结论不代表原生有效配置或真实E2E READY。唯一下一步拟进行一次有界无推理有效配置核验，先检查加载副作用；待Owner转交批准。池不刷新、模型调用关闭。
+更新：2026-10-19。当前见§7.56：P0-4.5在执行前BLOCKED，Demo缺少$schema会命中原生配置回写分支，违反本片禁止配置变更的边界，未启动核验。唯一下一步拟由OpenCode仅补该元数据及README/哈希，待Owner转交批准；不自动重跑debug config。池不刷新、模型调用关闭，真实准入仍BLOCKED。
 
 ## 1. 权责与当前结论
 
@@ -114,7 +114,7 @@ B4.7.3：Space Bunny Free+MiMo V2.6 Flash Free，三个真实独立任务/会话
 
 LAYA：既有Python环境0.3.21，缓存D:/AI/laya-cache，固定权重revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851。历史离线CUDA加载和GET health通过；typed分类中英/计划/pair小样本通过。next_action的正向质量验收曾多次continue或wait，不能改成complete；置信度裁剪等原有限制不因文档更新消失。默认不常驻，不升级/下载/切权重。
 
-## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.55）
+## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.56）
 
 Owner批准日期：2026-10-16。**Owner approved / Not yet implemented / Not yet tested**。正式未来默认覆盖旧“仅显式实验”建议，未改变当前生产或历史报告。
 
@@ -142,7 +142,7 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
 
 ## 6. 唯一下一步与授权
 
-P0-4.4静态准备独立PASS（§7.55），不重新生成配置。唯一下一步拟核验一次原生有效配置；先排除加载触发安装/升级等副作用，再经现有contained机制执行无推理配置显示，须Owner转交批准。不能满足边界就停，不改生产/全局、不新建执行入口。费用及真实E2E未验收，池临近实跑时再统一确认，不重复刷新或重跑stage-check。
+P0-4.4历史静态准备PASS保留，但P0-4.5发现缺少$schema的回写限制（§7.56），实际配置核验尚未发生。唯一下一步拟仅补Demo元数据及README并返回新哈希，不重建配置、不启动CLI；须Owner转交批准。该修订只关闭一项已定位副作用，不代表其他加载/网络/运行数据/超时清理边界已解决。费用及真实E2E未验收，池不滚动刷新。
 
 真实产品Agent/LAYA/Native Review/E2E调用保持关闭，旧剩余次数不继承。OpenCode最近一次Free CLI探测403仍是接入线索，不能推断当前必然可用或不可用；先完成本地确定性缺口，再按新授权核实模型/费用/数据/次数。阶段裁定后可按Owner既有授权推送独立审核分支，不合并main。
 
@@ -689,6 +689,15 @@ P0-4.4静态准备独立PASS（§7.55），不重新生成配置。唯一下一�
 - 下一片P0-4.5拟核验一次无推理有效配置。已读[v1.19.3 debug/config.ts](https://github.com/anomalyco/opencode/blob/v1.19.3/packages/opencode/src/cli/cmd/debug/config.ts)：调用Config.Service.get并经redactConfig输出，不调用session prompt；但加载器可能读取远端配置/初始化插件依赖，不能仅凭命令名声称纯只读。先检查适用配置/目录和已有contained入口，无法排除安装/配置写入或需要新验证脚本则停止，不试运行后补解释。只保留批准的非敏感字段与脱敏证据，不落盘全量配置。
 - 本轮仅文件/哈希/JSON及源码审核，0测试、0原生CLI/模型/服务，未改Demo/全局配置。证据在ignored project-progress/p044-native-config-review-20261019。基线/NEXT及页面同步，按既有阶段授权仅归档两份项目文档，不上传仓库外Demo、ignored审计或凭据；远端SHA和清理以归档记录为准。主HEAD/index及范围外dirty受保护；P0-1/2/3有限PASS、120秒批准测试待接受、9/26债务与68/100估算不变。
 
+### 7.56 P0-4.5副作用核对（执行前BLOCKED；未运行原生配置核验）
+
+- 接受Worker按停止条件不试运行的裁定。Codex复核Demo配置仍无$schema，哈希5B2D836A539408A67E92EEA4A1655093FAE1DCD7A59DAEED8C4E6732EE3CE566；orchestrator/README与§7.55一致，workspace空。未发现必须通过真实试运行确认该副作用的理由。
+- [v1.19.3 config.ts](https://github.com/anomalyco/opencode/blob/v1.19.3/packages/opencode/src/config/config.ts)的loadConfig中缺$schema会补字段并尝试writeFileString，显式OPENCODE_CONFIG走loadFile进入该函数。报告行号与本次所读来源有偏移，以函数/分支定位为准。准确结论为命中且解析成功时尝试写入；不能由静态源码声称进程一定到达且写入成功，但已足以阻断严格配置不变的执行范围。
+- 独立读取非敏感依赖清单，确认全局node_modules/.gitignore存在、package与lock根的@opencode-ai/plugin均为1.18.31，声明依赖名称含请求追加的plugin且被lock覆盖。[core/npm.ts](https://github.com/anomalyco/opencode/blob/v1.19.3/packages/core/src/npm.ts)当前install分支以目录/依赖名判断，不因版本字符串不同就自动推断升级。该状态支持当前无reify的条件性结论，不是永久保证。初次PowerShell解析lock的空键失败，改用-AsHashtable只读解析一次成功；无原生工具执行。
+- wellknown/活动账户远端配置、工具自身db/log/cache写入未验证；不读取auth.json来扩大核对范围。文档化Job launcher有argv/stop边界，但本轮并未执行或验证30秒deadline及完整控制记录解析，不能将launcher存在或哈希相同当作实际停止证明。未运行的exit/treeStopConfirmed/ActiveProcessesFinal/cleanupFailures应为不适用，不能写运行成功或Job已空。
+- 唯一最小返工建议：仅在control/opencode-demo.json新增$schema=https://opencode.ai/config.json，保留四项行为配置，更新同目录README及哈希。该建议待Owner转交批准，不包含debug config、测试、stage-check、池刷新或真实调用；不修改生产/全局/父目录或凭据，不新建脚本。补字段只消除本文件缺schema回写分支，其余未知仍保留。
+- 本轮Codex0测试、0原生CLI/模型/服务，未改Demo。只更新基线/NEXT及ignored进度记录；审查证据在project-progress/p045-sideeffect-review-20261019。按既有阶段归档授权仅推送两份项目文档，远端与临时索引清理以实际记录为准。主HEAD/index/范围外dirty保留，P0-1/2/3有限PASS、9/26债务和68/100估算不变，真实E2E保持关闭。
+
 ## 8. 规划估算与本机快照
 
 沿用历史十项权重信用68/100（固定分母为完整后端需求，不含正式UI）；页面按5%档显示约70%、剩30%，旧合理剩余区间30–50%。这不是工时、可用率、自动化完成率或MVP成功概率。本轮文档不增分；下一真实E2E仍未成功，必须看具体阻塞和证据，不能用百分比代替它。
@@ -697,18 +706,18 @@ P0-4.4静态准备独立PASS（§7.55），不重新生成配置。唯一下一�
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-19T06:46:54.1762827Z",
+  "updatedAt": "2026-10-19T07:01:16.7943044Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-4.4",
-    "name": "Demo静态配置准备独立PASS",
-    "status": "done",
-    "summary": "三处文件哈希、JSON、原材料未变、空workspace及build接线已核对；配置准备PASS，实际加载/权限/费用未验收，真实准入BLOCKED。"
+    "id": "P0-4.5",
+    "name": "配置回写副作用导致执行前阻断",
+    "status": "blocked",
+    "summary": "Demo缺$schema会命中原生回写分支；核验未启动。仅建议单字段静态修订，其他加载/费用/清理未知保留，不调用模型。"
   },
   "next": {
     "id": "P0-4.5",
-    "name": "一次无推理有效配置核验，先排除安装等副作用；待Owner转交批准",
+    "name": "仅补Demo配置$schema并更新README/哈希；待Owner转交批准",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -786,9 +795,9 @@ P0-4.4静态准备独立PASS（§7.55），不重新生成配置。唯一下一�
     {
       "severity": "P1",
       "kind": "当前验收缺口",
-      "title": "Demo静态配置已准备，实际加载与资格未验证",
-      "detail": "专用配置已固定主/小模型及provider白名单，role=build；原生有效合并/权限未运行核验，池已过期，真实E2E仍PARTIAL。",
-      "next": "P0-4.5先排除加载副作用，再经已有contained路径核验一次无推理有效配置；待Owner转交批准，不刷新池或调用模型。"
+      "title": "缺schema触发回写；原生配置核验未运行",
+      "detail": "缺$schema时原生加载器尝试改写显式配置，与上一片禁止配置修改冲突；未执行debug config，其他运行副作用与费用仍未验证。",
+      "next": "只提单字段$schema及README修订，待Owner转交批准；不自动重跑debug config、不刷新池或调用模型。"
     },
     {
       "severity": "P1",
@@ -1139,6 +1148,11 @@ P0-4.4静态准备独立PASS（§7.55），不重新生成配置。唯一下一�
     }
   ],
   "checks": [
+    {
+      "name": "P0-4.5执行前副作用阻断审核",
+      "source": "PROJECT_BASELINE.md §7.56；project-progress/p045-sideeffect-review-20261019/review.json",
+      "result": "BLOCKED：缺$schema触发原生回写分支，Demo哈希未变；当前依赖名检查支持条件性无reify，非永久保证。无原生进程，运行退出/清理事实不适用。"
+    },
     {
       "name": "P0-4.4静态配置独立审核",
       "source": "PROJECT_BASELINE.md §7.55；project-progress/p044-native-config-review-20261019/review.json",
