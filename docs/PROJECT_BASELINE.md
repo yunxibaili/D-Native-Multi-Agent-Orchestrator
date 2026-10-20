@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-20。当前见§7.65：P0-4.10只读核对独立审核PASS。单次串行可复用现有UTF-8结果发布，不需新增生产功能；副本需核对本轮身份并单列CLI/预算/Job事实。P0-4.7/P0-4.9静态PASS保持，真实E2E仍PARTIAL。唯一下一步P0-4.11为待Owner新批准的一次真实串行Round，当前调用授权仍关闭。
+更新：2026-10-20。当前见§7.68：P0-4.11预检BLOCKED经独立复核保持；专用文件被外层Space Bunny覆盖，inline内容未透传。唯一最小建议是获Owner新批准后，在新Demo自有根增加就近opencode.json，不改已有父/全局配置或生产allowlist；本机尚未验证。旧费用窗口已过期，当前调用关闭。P0-4.7/4.9静态PASS、P0-4.10只读PASS及P0-4.6真实PARTIAL保持。
 
 ## 1. 权责与当前结论
 
@@ -114,7 +114,7 @@ B4.7.3：Space Bunny Free+MiMo V2.6 Flash Free，三个真实独立任务/会话
 
 LAYA：既有Python环境0.3.21，缓存D:/AI/laya-cache，固定权重revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851。历史离线CUDA加载和GET health通过；typed分类中英/计划/pair小样本通过。next_action的正向质量验收曾多次continue或wait，不能改成complete；置信度裁剪等原有限制不因文档更新消失。默认不常驻，不升级/下载/切权重。
 
-## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.65）
+## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.68）
 
 Owner批准日期：2026-10-16。**Owner approved / Not yet implemented / Not yet tested**。正式未来默认覆盖旧“仅显式实验”建议，未改变当前生产或历史报告。
 
@@ -142,7 +142,7 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
 
 ## 6. 唯一下一步与授权
 
-P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持，P0-4.6真实执行仍PARTIAL。唯一下一步为Owner新授权的一次串行真实Round，不再增加准备性开发或全面预检。需新费用声明与调用/时限/数据范围；UTF-8结果副本、完整CLI原始输出、预算与Job事实分开留存，不修补旧结果。未取得新授权前不创建Demo、不刷新pool、不运行stage-check/服务/推理。
+P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持，P0-4.6真实执行仍PARTIAL。P0-4.11预检配置冲突BLOCKED经独立复核（§7.68），旧窗口未发生真实产品调用但已过期。唯一下一步建议Owner一并批准新Demo自有根就近配置及新的单次Round范围/费用声明；不优先改生产allowlist或已有父目录。UTF-8结果副本、完整CLI原始输出、预算与Job事实分开留存，不修补旧结果。未重新授权前不创建Demo、不刷新pool、不运行stage-check/服务/推理。
 
 真实产品Agent/LAYA/Native Review/E2E调用保持关闭，旧剩余次数不继承。OpenCode最近一次Free CLI探测403仍是接入线索，不能推断当前必然可用或不可用；先完成本地确定性缺口，再按新授权核实模型/费用/数据/次数。阶段裁定后可按Owner既有授权推送独立审核分支，不合并main。
 
@@ -774,6 +774,30 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 - 无需再开生产实现任务。唯一下一步P0-4.11是待Owner新批准的一次有界真实串行Round，建议沿用固定Space Bunny Free×OpenCode两会话、Codex gpt-6.1-sol一次Review、LAYA POST三次、90s执行/请求及120s机器测试等旧范围，但全部只是待批准建议，不能继承旧授权或过期费用声明。允许时使用全新空Demo工作区，不覆盖P0-4.6；实际命令/新digest及费用窗口在授权后按现有契约准备。
 - 本轮只静态读源码、读取元数据并维护基线/NEXT/ignored快照；没有typecheck、测试、产品CLI、探针、模型、服务、pool更新或新digest，五个P0-4.9已验收源码哈希保持。按既有阶段归档授权仅推送两份审核文档；远端SHA/临时索引及主现场保护见project-progress/p0410-review-20261020。真实E2E仍PARTIAL，历史9/26债务、正式前端边界与68/100估算不变。
 
+### 7.66 P0-4.11 Worker模型选择调整（Owner决定；非执行/费用授权）
+
+- Owner于2026-10-20明确要求“换成deepseek v4.1 flash”。沿用既有明确免费入口opencode/deepseek-v4.1-flash-free，替换P0-4.11待执行的Space Bunny Free；Reviewer仍codex/gpt-6.1-sol，原2 Worker/1 Review/3 LAYA POST及90s/120s、零新增收费等上限不变。历史真实P0-4.6的Space Bunny记录不改写。
+- 本次只更改NEXT_TASK及本基线/本机进度。没有更新Demo/pool/OPENCODE_AGENT_MODEL/原生全局或父目录配置，没有stage-check/digest、模型/服务/测试或生产源码变更。后续获批时新Demo内CLI --model、agents.opencode.model、pool、主/辅助原生model及provider白名单须一致，并核对祖先配置覆盖；不能因名称free或历史目录cost0宣称当前免费/可调用，不能回退Go路由。
+- 该选择不构成P0-4.11真实Round授权，也不是当前费用声明；仍待Owner明确范围与该新模型的当前资格/费用事实。旧声明不能跨模型复用。P0-4.10只读PASS和P0-4.6真实PARTIAL保持，当前调用关闭。本轮无阶段封板，不新增Git归档分支。
+
+### 7.67 P0-4.11单次真实Round预检BLOCKED（OpenCode有效配置冲突；无真实调用）
+
+- Owner于2026-10-20 11:26:24 +08:00发送新授权与费用声明，窗口至11:56:24（UTC 03:26:24–03:56:24），不滚动；声明DeepSeek V4.1 Flash Free当前可用且零新增收费、Codex gpt-6.1-sol订阅额度足额、无额外credits/API按量/自动充值/收费fallback，辅助调用同受约束。原文与窗口另存ignored project-progress/p0411-preflight-blocked-20261020/owner-authorization.md。
+- 只读核对：主HEAD仍8b8add4250d64d2c9c78fe47ded208e7bc285aaf；P0-4.9五源码及spawn.ts当前SHA256已记录；opencode 1.19.3、codex-cli 0.163.0-alpha.10.2、LAYA 0.3.21；未重做B1–B5或POST预算审计。
+- 按NEXT_TASK在D:/workbench-demo下新建本轮拥有的p0411-20261020T1144Z，workspace为空，control含复用自P0-4.6的两步CJS计划/P0-1完成契约、专用opencode-demo.json（主/small/whitelist均为deepseek-v4.1-flash-free）及本轮pool/阶段配置；未预置add.js/add.test.js，未触碰p04-20261019T035918Z。
+- 阻断事实：以该workspace为cwd、进程局部OPENCODE_CONFIG指向专用文件时，`opencode debug config`实际有效值为opencode/space-bunny-free及whitelist ["space-bunny-free"]；祖先D:\workbench-demo\opencode.json（SHA256 13249E06…97CF）在project来源覆盖专用配置。若再设OPENCODE_CONFIG_CONTENT，debug可显示deepseek有效值，但该变量不在src/runtime/spawn.ts:158–187的ENV_ALLOWLIST，round-cli也不传env extras，contained Worker收不到；两者分别留下exit0的原始输出。修改父/全局配置或生产allowlist均被本轮授权禁止，故不存在满足“主/small/whitelist统一deepseek且不继承祖先space-bunny”的合规路径。
+- 按“发现有效合并冲突即停止”执行：未运行stage-check，未生成/沿用digest，未启动LAYA，未发health/POST，无Worker/Reviewer会话、无机器批准测试、无Round、无Human Gate；仅两次本地`opencode debug config`（0/0）作配置取证，不是模型调用或真实推理。授权窗口内未发生任何真实调用，过期后不得补用。
+- 清理：无owned进程/服务启动，检查8077无listener且无laya python进程；本轮新建Demo目录已删除、旧Demo及祖先/全局配置未改；无生产源码/测试/安装/commit/push/merge改动。原始配置取证、哈希、调用计数与清理事实见ignored project-progress/p0411-preflight-blocked-20261020/facts.json。
+- P0-4.11仍BLOCKED而非PARTIAL：未产生新的RoundResult/Review/Gate证据；P0-4.6真实PARTIAL、P0-4.10只读PASS保持，68/100与9/26历史债务不变。后续如需执行，Owner须先明确允许调整祖先配置/有效路由（或批准最小allowlist透传）并重新提供未过期的费用声明，不能由本次转述或旧声明代替。
+### 7.68 P0-4.11配置冲突独立审核（BLOCKED保持；就近配置候选未执行）
+
+- 已读取§7.67、NEXT_TASK、原授权/窗口记录、两份debug有效配置的脱敏字段、facts及cleanup；没有输出provider options/凭据值，也未重新运行debug或网络/进程探针。两份JSON分别确为Space Bunny及DeepSeek的model/small_model/whitelist，退出0来自Worker保存记录；当前六个源码SHA256及外层配置完整哈希与facts相符，本轮已删Demo仍不存在。
+- 本地spawn.ts的ENV_ALLOWLIST含OPENCODE_CONFIG、不含OPENCODE_CONFIG_CONTENT；buildEnv只在extra显式提供时例外加入，当前OpenCode transport不传该extra。故本次已观察的两条路径不能在既定contained Worker内保持指定路由，先停而不扩大源码/配置权限的裁定正确，P0-4.11仍BLOCKED。
+- 不接受“只能改外层配置或生产allowlist”的扩大推论。复读[v1.19.3 Config加载器](https://github.com/anomalyco/opencode/blob/v1.19.3/packages/opencode/src/config/config.ts)及[ConfigPaths.files](https://raw.githubusercontent.com/anomalyco/opencode/v1.19.3/packages/opencode/src/config/paths.ts)：显式文件先于project层，files使用up(...).toReversed()，逐个merge。因此候选最小方案是在获Owner新批准的新Demo自有根新增opencode.json，放在workspace外保持目标空目录，利用就近project覆盖外层；可同时作为专用显式文件，不改任何已有父/全局/旧Demo或生产源码。仅有版本源码依据，仍需一次获批的无推理有效配置核验，后续managed等层影响不能假定已消除。
+- 该就近文件相对旧目录/控制材料约定需Owner明确允许；建议与原一次Round范围及新的30分钟费用声明一次性批准，无须新建开发阶段或放开通用环境变量。配置核验失败即停，不能追加诊断/改源码；成功也不等于当前账户可调用/零收费。旧11:26:24–11:56:24窗口已过期，即使产品调用为0也不得补用。
+- 计数收紧：证据支持报告0次产品Round/Worker/Reviewer/LAYA/机器测试，另有2次本地debug进程，不能将facts.processes.started=0解释为全部OS进程启动为0。删除Demo事实已复核；无8077 listener、无laya进程及清理来自Worker保存记录，本轮未独立重探，无debug Job控制记录可据此宣称全机/所有进程停止。未做账户账单审核，不把“无模型调用”提升为独立费用审计。
+- 本轮只维护两份文档与ignored进度/审核记录，真实调用/测试/诊断重跑均0，源码不变。P0-4.6真实PARTIAL及P0-4.7/4.9静态PASS保留，历史9/26债务与68/100信用不变。阶段文档精确归档、远端SHA与临时索引清理见project-progress/p0411-independent-review-20261020。
+
 ## 8. 规划估算与本机快照
 
 沿用历史十项权重信用68/100（固定分母为完整后端需求，不含正式UI）；页面按5%档显示约70%、剩30%，旧合理剩余区间30–50%。这不是工时、可用率、自动化完成率或MVP成功概率。本轮文档不增分；下一真实E2E仍未成功，必须看具体阻塞和证据，不能用百分比代替它。
@@ -782,18 +806,18 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-20T03:01:23.9007956Z",
+  "updatedAt": "2026-10-20T03:58:31.2793780Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-4.10",
-    "name": "现有UTF-8结果出口只读核对审核PASS",
-    "status": "done",
-    "summary": "单次串行可复用UTF-8发布；复制后核对Round身份/哈希，CLI预算/退出/Job单列。未运行CLI/模型，旧结果不回填；下一真实Round待Owner新授权。"
+    "id": "P0-4.11",
+    "name": "单次真实Round预检BLOCKED（OpenCode有效配置冲突）",
+    "status": "blocked",
+    "summary": "独立复核保持BLOCKED：两份配置及透传链相符；0产品调用、2本地debug。候选改为新Demo自有根就近配置，尚未核验或获授权；旧窗口过期，不改生产allowlist。"
   },
   "next": {
     "id": "P0-4.11",
-    "name": "待Owner新批准：一次串行真实闭环及完整证据留存",
+    "name": "待Owner批准新Demo就近配置及重新授权单次真实闭环",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -868,6 +892,13 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
     ]
   },
   "blockers": [
+    {
+      "severity": "P1",
+      "kind": "当前执行阻断",
+      "title": "OpenCode有效配置被祖先space-bunny覆盖",
+      "detail": "以新Demo workspace为cwd时，专用OPENCODE_CONFIG的deepseek主/small/whitelist被D:/workbench-demo/opencode.json覆盖；OPENCODE_CONFIG_CONTENT可覆盖但不在spawn ENV_ALLOWLIST，Worker收不到。",
+      "next": "优先申请仅在新Demo自有根新增就近opencode.json，保持workspace空且不改已有父/全局/生产allowlist；与新费用声明及单次Round一并授权。候选尚未核验。"
+    },
     {
       "severity": "P1",
       "kind": "当前验收缺口",
@@ -1220,10 +1251,27 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
       "title": "新授权真实闭环",
       "status": "planned",
       "deliverable": "Owner预授权→真实实现/独立测试→机器门→Native Review→Human Gate",
-      "evidence": "P0-4.6真实PARTIAL；P0-4.7/4.9静态PASS，4.10结果出口核对PASS；新执行的模型/费用/次数/时限/数据仍需Owner批准。"
+      "evidence": "P0-4.6真实PARTIAL；P0-4.7/4.9静态PASS，4.10结果出口核对PASS；P0-4.11预检因OpenCode有效配置冲突BLOCKED，未发生真实调用。"
+    },
+    {
+      "id": "P0-4.11",
+      "title": "DeepSeek V4.1 Flash Free单次串行真实闭环",
+      "status": "blocked",
+      "deliverable": "新费用窗口内一次全新空Demo的LAYA→实现→机器验证→独立测试→验证→Codex Review→Human Gate",
+      "evidence": "预检BLOCKED：专用OPENCODE_CONFIG被祖先space-bunny覆盖，OPENCODE_CONFIG_CONTENT不在ENV_ALLOWLIST；0 stage-check/LAYA/POST/Worker/Reviewer/测试/Round，Demo已删、无进程。"
     }
   ],
   "checks": [
+    {
+      "name": "P0-4.11预检BLOCKED独立复核",
+      "source": "PROJECT_BASELINE.md §7.68；project-progress/p0411-independent-review-20261020；v1.19.3配置源码",
+      "result": "BLOCKED保持：脱敏有效字段/源码环境过滤及现存哈希相符；候选就近新Demo配置不需生产改动但未获批/未验证。0重跑诊断/模型/测试；2次原debug不等于0 OS进程启动。"
+    },
+    {
+      "name": "P0-4.11单次真实Round预检",
+      "source": "PROJECT_BASELINE.md §7.67；project-progress/p0411-preflight-blocked-20261020/facts.json；opencode debug config两份原始输出",
+      "result": "BLOCKED：专用OPENCODE_CONFIG被祖先space-bunny覆盖；OPENCODE_CONFIG_CONTENT可覆盖但不在ENV_ALLOWLIST。仅2次本地配置取证exit0，0 stage-check/LAYA/POST/Worker/Reviewer/测试/Round；Demo已删、无进程。"
+    },
     {
       "name": "P0-4.10结果出口只读核对独立审核",
       "source": "PROJECT_BASELINE.md §7.65；project-progress/p0410-review-20261020；round-observation.ts与round-cli.ts",
