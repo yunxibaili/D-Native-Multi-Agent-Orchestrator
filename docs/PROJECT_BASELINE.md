@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-20。当前见§7.71：Owner恢复Codex直接委派OpenCode并独立审核，本轮Go wrapper实际接手；Worker因外目录权限未完成最终交接，不记PASS。Codex核对发现新Demo配置/stage-check已通过，遗留LAYA已按owned Job安全停止。源码不变，产品真实Round授权窗口已过期，当前不继续推理。
+更新：2026-10-20。当前见§7.72：Owner确认产品切Go及30分钟费用窗口后，完成唯一P0-4.11真实Round，结论PARTIAL。两个Worker及结构化批准测试通过，Native Review原生输出契约不兼容、无合法verdict；Human Gate待Owner，全部owned Job final=0，未追加Round。
 
 ## 1. 权责与当前结论
 
@@ -827,22 +827,35 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 
 沿用历史十项权重信用68/100（固定分母为完整后端需求，不含正式UI）；页面按5%档显示约70%、剩30%，旧合理剩余区间30–50%。这不是工时、可用率、自动化完成率或MVP成功概率。本轮文档不增分；下一真实E2E仍未成功，必须看具体阻塞和证据，不能用百分比代替它。
 
+## 7.72 P0-4.11 Go真实Round独立验收（2026-10-20，PARTIAL）
+
+- Owner本次回复“产品也用 Go，上述费用事实均已确认”，与恢复直接委派及既有单次执行边界结合执行。首次本机收到后时钟观察为06:32:49Z，固定窗口至07:02:49Z；这是接收观察时间，不冒充平台消息精确时间。Go额度足够/Use balance关闭、Codex订阅包含额度足够、无额外credits/API余额/自动充值/收费fallback及辅助同边界均属Owner账户声明，非独立账单测量。
+- 开发准备实际经既有opencode-agent：ses_ea7fba2e5ffeCbDPuADS6H6Kyq，原生13个assistant均opencode-go/deepseek-v4.1-flash。仅改现有Demo根opencode.json、control/orchestrator.json、pool.json，原字节备份在Demo/evidence-go-20261020；未在90s内返回最终报告，被owned stop安全终止，不能记开发委派PASS。Codex独立核对配置实际完成、workspace为空，再继续产品执行，未增加开发返工。
+- 保留Demo D:/workbench-demo/p0411-20261020T040805Z；就近配置主/small、enabled provider及Go whitelist、CLI、agents、pool一致改Go；不改全局/祖先/生产源码。原生有效配置核验861ms/exit0，enabled_providers仅opencode-go；深合并仍保留opencode provider定义，不等于启用fallback。stage-check exit0，新digest=c2982e4333196fecfcaf3496c5039813ebb8345a8ceb298016423b04168612df。
+- 单次产品Round round-mvgba79g：06:37:52.806Z→06:39:24.001Z，约91.2s。外层launcher退出0，validated rootExitCode=1，CLI ok=false；不能混淆launcher成功与产品通过。两个Worker真实Session为ses_ea7f7bd73ffeS88c20Zktlb9qr/11.620s、ses_ea7f78f94ffeUWdoUbn9qYRuNe/13.972s，对应att_0001/att_0002、ws_0001/ws_0002；原生导出均确认opencode-go/deepseek-v4.1-flash，未见retry parts（不是内部所有HTTP请求的计数证明）。
+- add.js=81B、add.test.js=154B均真实创建在workspace根，未预置/移动；实现导出CommonJS add(a,b)=a+b，测试读取该实现。两个机器批准测试均code=0/signal=null/timedOut=false/treeStopConfirmed=true/mayHaveStarted=true，Task/Attempt/Session/lease/contractDigest/runFingerprint绑定完整。P0-4.9的approvedTest本轮真实投影并落盘；未重跑测试或suite。父plan任务仍planned且被呈现为refused，属于既有呈现歧义，不能冒称第三个执行任务失败。
+- LAYA固定revision、english/multilingual实际cuda预加载，owned启动观测12.18s内ready；日志3次POST均200，budget used=3/remaining=0/rejected=false、send attempts=3/refusals=[]，最终decision=continue，未伪造wait/complete。产品Worker2/2、Reviewer1/1、LAYA3/3全部耗用，完成或失败即停，无补救Round/Review。
+- Codex原生独立Review Session=01a15808-a546-7562-bfb8-e4a14b206afc，实际40.131s、进程exit0；请求和线程记录模型gpt-6.1-sol，本机默认同值、无review_model覆盖，但原生rollout未提供独立实际模型字段，不能提升为原生模型自报证明。status=failed/verdict=null/code=reviewer-output-invalid。原生EnteredReviewMode含完整JSON contract；ExitedReviewMode却是{findings,overall_correctness,overall_explanation,overall_confidence_score}，最终AgentMessage是自然语言。已证明传入prompt并未丢失；当前adapter仅提取agent_message文本，仍不满足产品verdict契约。不得把patch is correct自动映射成Round PASS。Reviewer声称模型不符，未被两个Worker的原生导出支持。
+- Human Gate=waiting_for_user/roundComplete=true，reviewWithoutVerdict=true，automaticPostRoundAction=none；没有代填人工接受。批准测试结构化事实完整，不再沿用旧UNREPORTED结论；旧结果不回填。CLI原始stdout/stderr按字节捕获，新UTF-8 RoundResult按roundId/complete/时间核对后复制并SHA256一致，源文件仍为默认latest，不改ORCH_HOME。
+- 全部本轮owned控制记录及6个产品内部Job均done/complete/treeStopped/final=0；LAYA使用精确owned marker协同停止，8077关闭，cleanupFailures=[]。未强杀既有桌面Agent。Reviewer原生工具读取了本机Skill指令文件及Demo产物；没有项目源码/凭据读取证据，不将协作式cwd边界描述为OS沙箱。未修改仓库源码/测试，HEAD/index和范围外dirty保持。Native Worker cost合计0.000207798美元仅用量估算，不是新增扣费；账单未独立审计。
+- 证据：project-progress/p0411-go-execution-20261020/{independent-review.json,round.stdout.json,round.stderr.log,result-retention.json,workers-native-identity.json,review-native-contract.json,native-review-items.json,new-controls.json,laya-cleanup.json}，不入Git。结论PARTIAL，不封板整个后端。唯一建议下一步：有限只读核对原生Review结构化事件与现有verdict语义契约的适配面，再由Owner批准最小实现；本轮不修改Reviewer源码、不追加真实调用。
+
 <!-- project-progress:begin -->
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-20T06:26:52.0630832Z",
+  "updatedAt": "2026-10-20T06:43:42.2150393+00:00",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
     "id": "P0-4.11",
-    "name": "新Demo准备已通过；真实Round等待新费用/执行范围",
+    "name": "Go真实Round PARTIAL；Native Review输出契约待适配",
     "status": "blocked",
-    "summary": "接手发现新Demo配置与stage-check已通过，原配置阻断关闭；遗留LAYA已按owned Job停止且8077关闭。Go辅助委派实证但未完成最终文本，源码未改；产品授权窗口已过期。"
+    "summary": "两个Go Worker及可信批准测试实际通过；3/3 LAYA POST；原生Review输出自身结构及自然语言而非合法verdict。Human Gate待Owner，全部owned Job final0，无追加调用。"
   },
   "next": {
-    "id": "P0-4.11",
-    "name": "待Owner确认产品模型与新的费用/执行范围后，直接委派唯一真实闭环",
+    "id": "P0-4.12",
+    "name": "有限只读映射原生Review事件与现有verdict契约；禁止自动转换为PASS",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -919,31 +932,24 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
   "blockers": [
     {
       "severity": "P1",
-      "kind": "当前执行阻断",
-      "title": "新Demo配置阻断已解除，当前等待有效执行窗口",
-      "detail": "此前冲突已由新Demo就近配置解决，保存的882ms配置核验及stage-check均通过；本轮接手已安全停止遗留LAYA，旧12:08:05–12:38:05费用窗口已过期。",
-      "next": "Owner已指定仅在新Demo根新增就近opencode.json，workspace空，deepseek主/small/whitelist，$schema；最多一次30s contained无推理核验。尚待Owner同时重新授权并提供当前费用声明，核验通过且窗口有效后才继续；未执行、未改父/全局/生产allowlist。"
+      "kind": "当前唯一直接阻断",
+      "title": "Native Review原生结构与产品verdict不兼容",
+      "detail": "EnteredReviewMode含JSON约定，ExitedReviewMode为原生overall_correctness结构，adapter最终只取得自然语言。两个Worker/批准测试真实完成，reviewer-output-invalid，不能判E2E PASS。",
+      "next": "只读定位原生事件消费与既有verdict语义适配，Owner确认后有限修改；不重跑Round或补调用。"
     },
     {
-      "severity": "P1",
-      "kind": "当前验收缺口",
-      "title": "Review契约与测试投影静态通过，尚缺新真实闭环验收",
-      "detail": "P0-4.7/4.9静态PASS；P0-4.10确认可复用UTF-8结果文件，但没有新运行证明关联、发布和合法Review。旧Round仍PARTIAL，父任务呈现歧义保留。",
-      "next": "取得新的费用/调用/时限/数据授权后只跑一次串行Round，留存匹配本轮的结果副本、完整CLI原始输出及预算/Job证据；失败即停。"
-    },
-    {
-      "severity": "P1",
-      "kind": "后续依赖",
-      "title": "原生权限/费用资格与真实闭环尚未验收",
-      "detail": "P0-2冻结的是解析后的声明与有界执行面，不是原生Agent完整权限或账户计费认证；Task/Attempt内存不等于可恢复，真实MVP仍PARTIAL。",
-      "next": "P0-2/3既有有界PASS保持；当前仅申请新的单次P0-4真实执行范围，不继承已耗尽或过期授权。"
+      "severity": "P2",
+      "kind": "证据边界",
+      "title": "Reviewer实际模型自报及独立账单尚未取得",
+      "detail": "请求/本地线程模型gpt-6.1-sol，rollout不含独立实际model字段；费用仅当前Owner声明，cost为估算。",
+      "next": "保留未知，不通过付费探测解决。"
     },
     {
       "severity": "P2",
       "kind": "历史风险保留",
-      "title": "26项B5.1-WF失败仍open",
-      "detail": "固定pair/顺序/无接力有限准入不扩大；历史PARTIAL和未完成Review不追认。",
-      "next": "新切片触及共享路径时有限复核，不修无关债务求全绿。"
+      "title": "26项handoff及9项既有失败仍单独开放",
+      "detail": "本轮不触及历史豁免或全量测试；父计划呈现歧义保留。",
+      "next": "仅在相关切片触及共享路径时有界核对。"
     }
   ],
   "tasks": [
@@ -1276,14 +1282,14 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
       "title": "新授权真实闭环",
       "status": "planned",
       "deliverable": "Owner预授权→真实实现/独立测试→机器门→Native Review→Human Gate",
-      "evidence": "P0-4.6真实PARTIAL；P0-4.7/4.9静态PASS，4.10结果出口核对PASS；P0-4.11预检因OpenCode有效配置冲突BLOCKED，未发生真实调用。"
+      "evidence": "P0-4.11真实PARTIAL；批准测试投影及UTF-8留存得到真实证明，Native Review契约仍阻断。"
     },
     {
       "id": "P0-4.11",
-      "title": "DeepSeek V4.1 Flash Free单次串行真实闭环",
+      "title": "Go单次串行真实闭环",
       "status": "blocked",
       "deliverable": "新费用窗口内一次全新空Demo的LAYA→实现→机器验证→独立测试→验证→Codex Review→Human Gate",
-      "evidence": "预检BLOCKED：专用OPENCODE_CONFIG被祖先space-bunny覆盖，OPENCODE_CONFIG_CONTENT不在ENV_ALLOWLIST；0 stage-check/LAYA/POST/Worker/Reviewer/测试/Round，Demo已删、无进程。Owner已指定新Demo根就近opencode.json+单次30s无推理核验口径（§7.69），仍未重新授权/执行。"
+      "evidence": "§7.72真实PARTIAL：两个Worker/批准测试完成，Native Review无合法verdict，Human Gate等待Owner，owned final0。"
     }
   ],
   "checks": [
@@ -1596,6 +1602,11 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
       "name": "历史失败边界",
       "source": "Owner本轮授权及上轮只读审计",
       "result": "9项有限非阻断；B45旧负控未通过；handoff26项UNKNOWN，未补共享停止负控"
+    },
+    {
+      "name": "P0-4.11真实独立核验",
+      "source": "project-progress/p0411-go-execution-20261020/independent-review.json",
+      "result": "Worker2/2，批准测试exit0×2，POST3/3，Review无合法verdict，owned全部final0，PARTIAL"
     }
   ],
   "sources": [
