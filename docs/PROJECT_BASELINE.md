@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-20。见§7.77及补充：官方精确版本tag指向4ebc485；退出有unsubscribe、内部drain/analytics flush后才写最终消息。转交进入日志和stdin/Job根因未获支持；0新模型/测试/生产修改，真实Review仍BLOCKED。
+更新：2026-10-20。见§7.77直接调研补充：analytics POST10s/flush25s及官方进程级关闭路径已核对；RUST_LOG未透传、exec默认error造成观察缺口。现有日志仍未证明7939ms卡在哪个await，0新模型/测试/生产修改，Review仍BLOCKED。
 
 ## 1. 权责与当前结论
 
@@ -909,22 +909,34 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 - thread/unsubscribe取消当前连接订阅的基本含义可采用；官方当前协议另区分unsubscribed/notSubscribed/notLoaded及无订阅后的线程保留，取消订阅不等于线程/进程关闭。原始日志无上述两条标记，也无stdin未关、TIME_WAIT或Job死锁证据，不按此修改底座。
 - 本轮0新CLI/Agent/模型/LAYA/Round/测试，0生产/测试/全局配置修改；P0-4.17候选待授权状态不变，不继续泛查/模型试跑。补充证据exact-version-followup.json位于既有ignored目录，旧assessment与失败证据不覆盖；真实Review仍BLOCKED，旧Round仍PARTIAL。
 
+### 直接退出链调研补充（2026-10-20，0新增真实调用）
+
+- Owner要求直接调研后，沿公开精确commit4ebc485继续读取analytics/client、app-server analytics_utils、thread_processor、core config/otel_init及exec入口，并打开官方analytics配置文档；不再让Owner转发泛化资料，不运行模型/测试/CLI诊断、不改生产源码。
+- 已确定具体等待机制：analytics/src/client.rs:88-90规定HTTP请求timeout10s、flush barrier25s；:214-219在Flush时先send_track_events再ACK。app-server/in_process.rs:793-806先等待processor/outbound任务，再await analytics flush，最后发送shutdown ACK；exec在client.shutdown返回后才写-o。thread_processor.rs:1283-1306另有后台任务10s、线程关闭10s等待，外层processor等待5s后可abort；这些是嵌套预算，不能相加作为固定耗时，不能据此扩大90s。
+- 已有官方、精确源码支持的旁路：config/mod.rs:4619从cfg.analytics.enabled读取；app-server/analytics_utils.rs:7-15传入客户端；analytics/client.rs:314-350在Some(false)时不创建queue，flush遇None直接返回。因此-c analytics.enabled=false是可复用的进程级候选，不是猜测开关，也不是已证明能解决本机超时。精确core/otel_init.rs:69-79只对内置Statsig metrics按analytics consent关闭；自定义OTLP与其他trace/exporter不应被宣称全部关闭，较新在线文档的范围不能覆盖此版本事实。
+- 另一项确定的观察缺口：exec默认EXEC_DEFAULT_LOG_FILTER为error并屏蔽OTEL自诊断（exec/lib.rs:174-175、254-259）；本机spawn.ts的父环境白名单不含RUST_LOG，Codex adapter未传transport.env覆盖。故父进程即使设置RUST_LOG也不会沿当前路径生效，shutdown的warn可被过滤。不能用没有warn反推没有等待；本轮不修改环境白名单或全局日志设置。
+- 对现存logs_2.sqlite使用已有sqlite3.exe -readonly，仅查询该Session及原窗口元数据，匹配thread记录/正文Session标记均0，对应原生model目录错误精确时间亦无匹配；不将共享桌面进程的其他日志归属给本次Reviewer，不输出用户对话/凭据。原始JSONL只有model目录超时诊断，没有各shutdown await的进入/完成时间，无法据此裁定7939ms具体卡点。用户配置白名单读取未发现显式analytics.enabled或metrics exporter，不等于完整有效配置已实测。
+- 官方公开Issue[#30470](https://github.com/openai/codex/issues/30470)记录过0.142.0 Linux TUI退出的嵌套shutdown及OTEL等待，报告metrics_exporter=none使延迟下降；仅作机制佐证，不作为本机0.163 Windows exec根因或已验证修复。
+- 版本资产边界进一步核对：本机指定codex.exe SHA256为F6DBF48CB70F62649C645F26C87DC9BF84CC36986202DFAD8E12FB5B8CA70312；官方该tag两个direct x64 CLI exe资产digest分别76b4bfc8…/abc4da40…，均不同。未下载或替换安装包；公开精确版本源码锚点存在，但本机字节与这两份发布资产不一致的事实保持，不臆断其原因。
+- 唯一候选下一步仍为P0-4.17有限最终文件接线，并可在明确范围内复用现有extraArgs传-c analytics.enabled=false，关闭这条非必要遥测等待；保留90000ms、固定模型/effort、严格validator、可信退出与Job停止门禁。不得据此直接报告修复成功、关闭所有telemetry、补stdin、加grace或再试第三次模型。当前仅调研方案，实施及新调用需相应有界授权/费用事实。
+- 证据project-progress/p0416-direct-exit-research-20261020/research.json（ignored）；基线/NEXT及本机页同步，不提升规划信用或真实Review/E2E状态。直接源码：[analytics/client](https://github.com/openai/codex/blob/4ebc485ca321243727539187169425fcf972f2c4/codex-rs/analytics/src/client.rs#L314)、[app-server退出](https://github.com/openai/codex/blob/4ebc485ca321243727539187169425fcf972f2c4/codex-rs/app-server/src/in_process.rs#L793)、[exec日志过滤](https://github.com/openai/codex/blob/4ebc485ca321243727539187169425fcf972f2c4/codex-rs/exec/src/lib.rs#L254)、[精确OTEL配置](https://github.com/openai/codex/blob/4ebc485ca321243727539187169425fcf972f2c4/codex-rs/core/src/otel_init.rs#L69)；官方配置https://learn.chatgpt.com/docs/config-file/config-advanced 。
+
 <!-- project-progress:begin -->
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-20T16:00:57.4332423+08:00",
+  "updatedAt": "2026-10-20T16:10:52.3791236+08:00",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
     "id": "P0-4.16",
-    "name": "精确版本源码复核完成，真实Review仍BLOCKED",
+    "name": "退出等待与日志缺口已按精确源码定位，实际卡点未证实",
     "status": "blocked",
-    "summary": "官方确有rust-v0.163.0-alpha.10.2指向4ebc485；精确源码确认unsubscribe/shutdown在最终文件写出前、后台drain和analytics flush等待。转交日志标记未获源码支持，stdin/Job根因仍无证据；0新调用/测试/源码修改。"
+    "summary": "analytics队列POST10s/flush25s；精确版本analytics.enabled=false使queue=None且flush直接返回。RUST_LOG不继承、exec默认error解释关闭warn缺失；现存日志未定位7939ms具体await。0新模型/测试/生产修改。"
   },
   "next": {
     "id": "P0-4.17",
-    "name": "待有界授权：独立最终答复出口最小接线，保留退出门禁",
+    "name": "待有界授权：独立最终答复出口及进程局部关闭analytics",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1397,6 +1409,11 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
     }
   ],
   "checks": [
+    {
+      "name": "直接退出链调研",
+      "source": "PROJECT_BASELINE.md §7.77直接调研补充；project-progress/p0416-direct-exit-research-20261020/research.json",
+      "result": "已追至analytics queue/HTTP/flush、线程drain及日志filter。确认官方进程级analytics开关可旁路该等待，不证明本次根因；sqlite只读查询无对应会话记录，未试模型。"
+    },
     {
       "name": "P0-4.16精确版本补充核对",
       "source": "PROJECT_BASELINE.md §7.77补充；project-progress/p0416-final-output-source-review-20261020/exact-version-followup.json",

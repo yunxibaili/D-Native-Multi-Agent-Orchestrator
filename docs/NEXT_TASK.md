@@ -1,4 +1,4 @@
-# 唯一下一任务 — P0-4.17 独立最终答复出口最小接线（待有界授权）
+# 唯一下一任务 — P0-4.17 最终答复出口与进程局部analytics关闭（待有界授权）
 
 P0-4.16只读核对完成（PROJECT_BASELINE.md §7.77）。官方-o适合分离最终答复，但固定官方exec在thread/unsubscribe与client.shutdown后才写文件，不能单独解决退出超时。本机stdin无开放写管道证据，不加close补丁；TIME_WAIT/Job/socket或telemetry根因未确立。当前不授权源码实施/开发模型/真实Reviewer/新Round。
 
@@ -20,3 +20,5 @@ Owner批准有限实现范围及有效开发费用事实后，仍由OpenCode实�
 资料与源代码行号：project-progress/p0416-final-output-source-review-20261020/assessment.json（ignored）；官方非交互文档https://learn.chatgpt.com/docs/non-interactive-mode 。P0-4.16只读核对完成不等于真实Review/E2E PASS，9/26项历史边界保持。
 
 精确版本补充：官方Tag/Release已确认；资料中无公开锚点和两条AppServer/Lifecycle进入日志不采纳。精确源码支持后台drain/analytics flush等待候选，但没有本机trace证明实际卡点；不新增泛查/模型试跑。证据exact-version-followup.json，基线§7.77补充；本文件唯一候选范围保持。
+
+直接调研补充：精确版本analytics/client.rs确认HTTP10s/flush25s，-c analytics.enabled=false使queue=None并让flush直接返回，可通过既有extraArgs在本次结构化Reviewer局部设置，不改全局配置或runtime。该候选应与唯一owned -o文本接线同属有限范围，但不宣称解决退出根因或关闭所有自定义OTLP。现有RUST_LOG不继承/默认error过滤与无会话日志使具体await不可定位；不再依据静默推测stdin/Job，不扩deadline、不试模型。证据project-progress/p0416-direct-exit-research-20261020/research.json，基线§7.77直接补充；当前仍不授权实施或调用。
