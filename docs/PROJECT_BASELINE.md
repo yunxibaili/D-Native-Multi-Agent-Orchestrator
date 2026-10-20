@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-20。见§7.79：P0-4.18有限离线PASS，单文件补验185/0、typecheck最终0、两个Job final0；生产未改。下一步建议仅迁移P02集成假Reviewer，待授权；真实Review/E2E不提升。
+更新：2026-10-20。§7.79 P0-4.18有限离线185/0；§7.81定位归档清理片段的Windows启发式误判，采用无删除归档事务后已推送独立分支并核对远端SHA。真实Review/E2E不提升，下一P02集成夹具迁移待授权。
 
 ## 1. 权责与当前结论
 
@@ -963,18 +963,20 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 - 不修改Codex/安全设置或增加allow规则，不编码/改名/换工具绕过。采用更安全、独立可审核的操作：归档事务只创建隔离索引、精确add三文件、审核manifest/diff并保存审核分支；该阶段不包含删除。之后单独核对所有权并普通删除确切临时索引及空目录，不Force、不Recurse，意外内容保留并报错。
 - 三文件范围仍为tests/unified-review.test.ts、唯一基线与NEXT；父提交f5896ccd，目标codex/p0418-unified-review-offline-20261020；无main切换/合并/强推。是否成功以archive-source-fix.json与远端SHA/manifest核对为准，不预写成功。P0-4.18离线185/0保持，本轮0测试/模型；不启动P0-4.19。
 
+- §7.81实际结果：移除归档事务中的删除操作后，同一Git入口成功创建并推送094086e2f953814d19c718888d513cbe21bcf63f，远端refs/heads/codex/p0418-unified-review-offline-20261020的SHA一致；相对f5896ccd的manifest仅既定三文件，diff --check=0。没有修改安全设置/规则或改用别的上传入口；该成功支持清理表达式误判定位。原失败记录保留，不能倒写为原命令执行过。
+- 归档收口以本次文档跟进提交及archive-source-fix.json/归档保护记录为准：无主工作树checkout、main合并、强推或模型/测试调用；隔离索引的所有权、确切清理及HEAD/index/范围外哈希在最终本机记录独立核对。本轮不启动P0-4.19，后续仍需明确测试/实施者授权。
 <!-- project-progress:begin -->
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-20T12:10:32.3191530Z",
+  "updatedAt": "2026-10-20T12:16:52.8305880Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
     "id": "P0-4.18",
     "name": "Review最终文件夹具与单文件有界离线验收",
     "status": "done",
-    "summary": "有限离线PASS保持：185/0/typecheck最终0；归档在Owner批准的一次重试后仍被命令策略拒绝，具体规则UNKNOWN，未执行Git写操作。"
+    "summary": "有限离线PASS保持185/0/typecheck最终0；Windows清理表达式误判已源码定位，独立审核分支094086e已推送并核对远端。未测试/调用模型，真实Review仍PARTIAL。"
   },
   "next": {
     "id": "P0-4.19",
@@ -1053,13 +1055,6 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
     ]
   },
   "blockers": [
-    {
-      "severity": "P1",
-      "kind": "阶段归档",
-      "title": "获明确授权后命令仍被策略拒绝",
-      "detail": "CreateProcess前blocked by policy，无具体rationale；无提交/push/临时索引，未绕过。",
-      "next": "先由执行环境提供可见拒绝规则/恢复允许执行；停止同动作重试，不改安全设置。"
-    },
     {
       "severity": "P1",
       "kind": "集成夹具兼容性",
@@ -1472,6 +1467,11 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
     }
   ],
   "checks": [
+    {
+      "name": "P0-4.18归档拒绝根因与成功同步",
+      "source": "PROJECT_BASELINE.md §7.81；project-progress/p0418-unified-review-offline-20261020/approval-source-review.json；archive-source-fix.json",
+      "result": "固定源代码明确原清理if片段触发Force+delete粗分段；无删除归档事务成功，094086e远端SHA/三文件manifest核对。无规则修改或模型调用。"
+    },
     {
       "name": "归档拒绝排查及Owner批准的一次重试",
       "source": "PROJECT_BASELINE.md §7.80；project-progress/p0418-unified-review-offline-20261020/approval-investigation.json；archive-retry-blocked.json",
