@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-19。当前见§7.64：P0-4.9批准测试事实投影有界静态实施/独立源码审核PASS。复用原Attempt出处校验，冻结副本同时进入ReviewPacket与最终RoundResult；未运行行为测试或真实Review。下一步P0-4.10只读核对现有UTF-8结果出口与下一轮观察方案，不新建运行器。P0-4.6真实E2E仍PARTIAL，真实调用授权关闭。
+更新：2026-10-20。当前见§7.65：P0-4.10只读核对独立审核PASS。单次串行可复用现有UTF-8结果发布，不需新增生产功能；副本需核对本轮身份并单列CLI/预算/Job事实。P0-4.7/P0-4.9静态PASS保持，真实E2E仍PARTIAL。唯一下一步P0-4.11为待Owner新批准的一次真实串行Round，当前调用授权仍关闭。
 
 ## 1. 权责与当前结论
 
@@ -114,7 +114,7 @@ B4.7.3：Space Bunny Free+MiMo V2.6 Flash Free，三个真实独立任务/会话
 
 LAYA：既有Python环境0.3.21，缓存D:/AI/laya-cache，固定权重revision55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851。历史离线CUDA加载和GET health通过；typed分类中英/计划/pair小样本通过。next_action的正向质量验收曾多次continue或wait，不能改成complete；置信度裁剪等原有限制不因文档更新消失。默认不常驻，不升级/下载/切权重。
 
-## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.64）
+## 5. Owner新裁定与现有代码的差距（2026-10-16历史对照，当前见§7.65）
 
 Owner批准日期：2026-10-16。**Owner approved / Not yet implemented / Not yet tested**。正式未来默认覆盖旧“仅显式实验”建议，未改变当前生产或历史报告。
 
@@ -142,7 +142,7 @@ stageBindingDigest当前经P0-2绑定材料、objective、workflow、计划完�
 
 ## 6. 唯一下一步与授权
 
-P0-4.9有界静态实施/独立源码审核PASS（§7.64），P0-4.7静态PASS保持，P0-4.6真实执行仍PARTIAL。唯一下一步P0-4.10：待Owner转交OpenCode，只读核对现有UTF-8结果文件能否作为下一次观察的主证据，以及保留Round身份和不覆盖历史的最小操作路径。不新建运行器、不调用模型、不修补P0-4.6。父任务歧义与真实行为验收仍开放。
+P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持，P0-4.6真实执行仍PARTIAL。唯一下一步为Owner新授权的一次串行真实Round，不再增加准备性开发或全面预检。需新费用声明与调用/时限/数据范围；UTF-8结果副本、完整CLI原始输出、预算与Job事实分开留存，不修补旧结果。未取得新授权前不创建Demo、不刷新pool、不运行stage-check/服务/推理。
 
 真实产品Agent/LAYA/Native Review/E2E调用保持关闭，旧剩余次数不继承。OpenCode最近一次Free CLI探测403仍是接入线索，不能推断当前必然可用或不可用；先完成本地确定性缺口，再按新授权核实模型/费用/数据/次数。阶段裁定后可按Owner既有授权推送独立审核分支，不合并main。
 
@@ -765,6 +765,15 @@ P0-4.9有界静态实施/独立源码审核PASS（§7.64），P0-4.7静态PASS�
 - 裁定PASS仅限本片按批准标准的静态实施与独立源码审核；未证明真实Round中的关联、落盘、模型Review通过或费用。validatedAt非测试结束时刻、outputDigest非原始字节日志、原120s机器测试默认值保持。P0-4.6仍PARTIAL，所有真实会话/POST授权关闭，9/26历史债务与68/100信用不变。
 - 唯一下一步P0-4.10为待Owner转交的只读结果出口核对：优先复用round-observation.ts的UTF-8原子发布，核对默认路径/身份/覆盖语义，制定下一次受控执行的最小证据留存方案；不写新观察框架、不运行CLI/服务/模型。父任务展示暂不合并。本轮基线/NEXT/进度页及精确七文件归档由Codex维护，远端SHA、临时索引清理和现场保护以ignored project-progress/p049-static-review-20261019记录为准。
 
+### 7.65 P0-4.10结果出口只读核对独立审核（仅核对PASS；下一真实执行待新授权）
+
+- 已对照round-observation.ts、round-cli.ts、cli/index.ts及runtime/store.ts核对Owner转交报告。默认结果为ORCH_HOME/round-result.json，未设时为用户目录.native-agent-orchestrator/round-result.json；生产CLI不传roundResultDir override，--observe不改变此出口，当前无--round-result-dir参数。本机只读环境/文件元数据确认ORCH_HOME未设，旧文件14914B、mtime=2026-10-19T11:38:46.2811700Z；未读/解析旧内容，未把它当新投影证据。
+- publishRoundResult以JSON.stringify和UTF-8临时写入后rename固定latest文件，无按Round历史目录或发布锁；auto预执行失败也可写同一路径的pre-execution-attention对象。readRoundResult只做JSON解析而非schema认证；存在文件、ok路径或identity.complete本身都不等于本轮成功。完整report的rootTaskId/cwd、时间和发布ok须与副本identity.roundId对应，Review/Human Gate及任务完成另判。
+- 接受单次串行、无其他并发发布者条件下复用现有发布，不新增生产功能或观察框架。收紧留存步骤：目标evidence目录必须本轮拥有且不得覆盖；在进程退出后、下一次发布前按字节复制，并核对复制后副本的Round身份、时间、必要结构及源/目标SHA256。不只验证复制前的源；竞争/失配/发布失败时不得借旧文件或宣称落盘通过。不为移动报告而改ORCH_HOME，因为它还影响SessionStore/transcripts等。
+- RoundResult可提供任务/Attempt/批准测试/Review/Human Gate结构化事实，不能替代完整CLI report及预算/发送门、实际进程退出、Worker/Reviewer停止事实、服务/Job记录。下一次另存完整CLI stdout/stderr原始字节，避免依赖PowerShell字符串解码；此处仅规定留证要求，未实现或运行新捕获方式。不能从approvedTest.treeStopConfirmed推导所有Worker/服务已停止。
+- 无需再开生产实现任务。唯一下一步P0-4.11是待Owner新批准的一次有界真实串行Round，建议沿用固定Space Bunny Free×OpenCode两会话、Codex gpt-6.1-sol一次Review、LAYA POST三次、90s执行/请求及120s机器测试等旧范围，但全部只是待批准建议，不能继承旧授权或过期费用声明。允许时使用全新空Demo工作区，不覆盖P0-4.6；实际命令/新digest及费用窗口在授权后按现有契约准备。
+- 本轮只静态读源码、读取元数据并维护基线/NEXT/ignored快照；没有typecheck、测试、产品CLI、探针、模型、服务、pool更新或新digest，五个P0-4.9已验收源码哈希保持。按既有阶段归档授权仅推送两份审核文档；远端SHA/临时索引及主现场保护见project-progress/p0410-review-20261020。真实E2E仍PARTIAL，历史9/26债务、正式前端边界与68/100估算不变。
+
 ## 8. 规划估算与本机快照
 
 沿用历史十项权重信用68/100（固定分母为完整后端需求，不含正式UI）；页面按5%档显示约70%、剩30%，旧合理剩余区间30–50%。这不是工时、可用率、自动化完成率或MVP成功概率。本轮文档不增分；下一真实E2E仍未成功，必须看具体阻塞和证据，不能用百分比代替它。
@@ -773,18 +782,18 @@ P0-4.9有界静态实施/独立源码审核PASS（§7.64），P0-4.7静态PASS�
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-19T12:59:06.3855793Z",
+  "updatedAt": "2026-10-20T03:01:23.9007956Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-4.9",
-    "name": "批准测试事实投影静态实施/独立审核PASS",
+    "id": "P0-4.10",
+    "name": "现有UTF-8结果出口只读核对审核PASS",
     "status": "done",
-    "summary": "五源码文件静态接线通过：复用Attempt出处、冻结副本、同一事实到Review与最终JSON。已读Worker检查日志，不重复运行；无行为/真实Review验收，P0-4.6仍PARTIAL。"
+    "summary": "单次串行可复用UTF-8发布；复制后核对Round身份/哈希，CLI预算/退出/Job单列。未运行CLI/模型，旧结果不回填；下一真实Round待Owner新授权。"
   },
   "next": {
-    "id": "P0-4.10",
-    "name": "待Owner转交：只读核对现有UTF-8结果出口及最小观察方案",
+    "id": "P0-4.11",
+    "name": "待Owner新批准：一次串行真实闭环及完整证据留存",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -862,16 +871,16 @@ P0-4.9有界静态实施/独立源码审核PASS（§7.64），P0-4.7静态PASS�
     {
       "severity": "P1",
       "kind": "当前验收缺口",
-      "title": "Review契约接线已静态通过，批准测试事实未投影到审核/结果",
-      "detail": "元数据接线已收口但未实跑Review；批准测试事实仍在既有内存证据，Review/报告未呈现，父任务及UTF-8缺口开放，真实Round仍PARTIAL。",
-      "next": "只读盘点现有CompletionEvidence身份/测试字段、只读事实出口及两个消费点，给最小实施范围；不改代码/运行模型或拼造旧证据。"
+      "title": "Review契约与测试投影静态通过，尚缺新真实闭环验收",
+      "detail": "P0-4.7/4.9静态PASS；P0-4.10确认可复用UTF-8结果文件，但没有新运行证明关联、发布和合法Review。旧Round仍PARTIAL，父任务呈现歧义保留。",
+      "next": "取得新的费用/调用/时限/数据授权后只跑一次串行Round，留存匹配本轮的结果副本、完整CLI原始输出及预算/Job证据；失败即停。"
     },
     {
       "severity": "P1",
       "kind": "后续依赖",
       "title": "原生权限/费用资格与真实闭环尚未验收",
       "detail": "P0-2冻结的是解析后的声明与有界执行面，不是原生Agent完整权限或账户计费认证；Task/Attempt内存不等于可恢复，真实MVP仍PARTIAL。",
-      "next": "依次P0-2、P0-3通过，再另行授权P0-4真实E2E。"
+      "next": "P0-2/3既有有界PASS保持；当前仅申请新的单次P0-4真实执行范围，不继承已耗尽或过期授权。"
     },
     {
       "severity": "P2",
@@ -1211,10 +1220,15 @@ P0-4.9有界静态实施/独立源码审核PASS（§7.64），P0-4.7静态PASS�
       "title": "新授权真实闭环",
       "status": "planned",
       "deliverable": "Owner预授权→真实实现/独立测试→机器门→Native Review→Human Gate",
-      "evidence": "依赖前三片独立通过，模型/费用/次数/数据仍需新授权。"
+      "evidence": "P0-4.6真实PARTIAL；P0-4.7/4.9静态PASS，4.10结果出口核对PASS；新执行的模型/费用/次数/时限/数据仍需Owner批准。"
     }
   ],
   "checks": [
+    {
+      "name": "P0-4.10结果出口只读核对独立审核",
+      "source": "PROJECT_BASELINE.md §7.65；project-progress/p0410-review-20261020；round-observation.ts与round-cli.ts",
+      "result": "仅核对PASS：UTF-8 latest发布、失败/覆盖、身份和副本核验范围确认；单次串行无需生产改动。只读旧文件元数据，无CLI/模型/测试；下一真实Round待新授权。"
+    },
     {
       "name": "P0-4.9事实投影独立源码审核",
       "source": "PROJECT_BASELINE.md §7.64；project-progress/p049-static-review-20261019；Worker p049-typecheck/diff-check日志",
