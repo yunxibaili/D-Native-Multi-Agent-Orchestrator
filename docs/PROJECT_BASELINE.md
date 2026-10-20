@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-20。§7.82 P0-4.19集成夹具迁移有限离线PASS：OpenCode Go实现，typecheck一次0，Codex白名单contained单文件一次118/0，三个owned Job final0。无生产修改/真实产品Round，下一步仅建议单次原生Reviewer验证，待新授权。
+更新：2026-10-20。§7.83 P0-4.20启动前BLOCKED：Owner已批准一次Reviewer并确认费用，当前缺的是仅审核既有Round且经过runUnifiedReview的可执行入口；原生会话0，未用额度不自动补用。P0-4.19有限离线PASS保持，不代表真实Review成功。
 
 ## 1. 权责与当前结论
 
@@ -978,22 +978,32 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 - 本机证据project-progress/p0419-p02-review-fixture-20261020/含before、两轮提示词/费用声明/原始流/Job/run、typecheck日志及真实退出码、源码前后、Codex静态复核、唯一suite结果和independent-review.json；audit只读、不上传。阶段归档仅本测试+唯一基线+NEXT，以be2b005为父独立codex/p0419-p02-review-offline-20261020审核分支，不合并main/强推，SHA/清理以archive.json/最终记录为准。
 - 唯一下一建议P0-4.20：单次受控原生Reviewer验证既有真实成果，最多一个codex/gpt-6.1-sol原生会话、实际执行deadline90s；严格final文件/JSON/身份/退出/Job停止门禁不放宽，不新Round/Worker/LAYA，不失败重试。须Owner新的调用、数据范围与当前订阅费用声明；Go开发授权不继承给Reviewer，当前不执行。
 
+## 7.83 P0-4.20 单次原生Reviewer的入口适用性核对（2026-10-20，启动前BLOCKED）
+
+- Owner“继续推进”批准NEXT_TASK所列一次既有真实Round成果的独立Codex Review；随后明确确认gpt-6.1-sol订阅包含额度足额、主/辅助无额外credits/API按量/自动充值/付费fallback。回复接收后首次时钟观测为12:49:45Z（非平台精确发送时间），固定窗口截止13:19:45Z，不滚动。此次不是缺少执行或费用授权；授权记录见ignored project-progress/p0420-review-entry-20261020/authorization.json。
+- 核对当前源码与已有P0-4.13/15入口：src/cli/index.ts:213的review分支进入cmdRun，:286只调用orch.run(req)，返回原生RunResult；并不执行统一ReviewPacket、runUnifiedReview的owned最终文件读取、verdict验证和输出清理。给这个入口手工追加schema/-o参数不能替代统一门禁。
+- src/cli/round-cli.ts:4773是src/scripts内runUnifiedReview唯一生产调用；该分支在Round执行后调用，没有仅消费既有Round的Review入口。scripts只有白名单测试Runner，历史P0-4.13/15诊断也是原生CLI review，不是可复用的统一审核入口。离线suite通过不证明此独立入口已经存在。
+- 按本轮“无适用入口或需生产修改即停止”的边界，未新增脚本、node-e、Runtime或生产代码，未重跑Round、Worker、LAYA或诊断模型；Reviewer会话0/1、Worker0、LAYA POST0、Round0、测试0。本轮owned执行进程未创建，ActiveProcessesFinal=0、cleanupFailures=0仅指本轮owned范围，非全机无进程；不把未启动计为原生Review PASS。
+- 复用已核对的统一Review门禁/固定版本资料，本片纯本地调用链核对，无新增外部机制，无需Gemini追加检索。旧真实Round、产物、结果和Human Gate不改；9/26历史债务及P0-4.19离线结论保持。主HEAD/index及范围外dirty按前后哈希核对，文档归档不包含本机审计/进度证据。
+- 唯一最小下一步：申请在现有review CLI增加消费明确ReviewPacket的有界分支，复用现有Orchestrator与runUnifiedReview，保留原始review兼容入口和固定模型/90s/一次调用/退出/Job/final文件门禁；先离线接线验收，不在实现过程中调用真实模型。不是新增调度器、恢复执行旧Round或回填其PASS。当前不授权该生产修改，也不自动补用本次未用会话；后续真实验证需新的有效费用窗口。
+- 证据：project-progress/p0420-review-entry-20261020/，仅授权、源码入口映射、现场哈希与最终保全记录；本轮不运行测试/typecheck。基线/NEXT/本机进度同步；远端归档SHA与隔离资源清理以archive.json/final.json为准。
+
 <!-- project-progress:begin -->
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-20T12:40:32.1108683Z",
+  "updatedAt": "2026-10-20T12:53:24.2934612Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-4.19",
-    "name": "P02集成假Reviewer输出契约迁移",
-    "status": "done",
-    "summary": "有限离线PASS：OpenCode Go两轮实现，一次typecheck0；Codex单文件一次118/0，三个owned Job final0。首轮超时及一次node-e只读偏差保留，真实Review未运行。"
+    "id": "P0-4.20",
+    "name": "既有真实成果的单次Reviewer入口核对",
+    "status": "blocked",
+    "summary": "执行与费用已授权；仅原生review入口不经过runUnifiedReview，按边界在启动前停止。真实会话/POST/Round均0，不补用额度。"
   },
   "next": {
-    "id": "P0-4.20",
-    "name": "待Owner新授权：单次原生Reviewer验证既有真实成果",
+    "id": "P0-4.21",
+    "name": "待批准：现有review CLI复用统一Review门禁的最小接线",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
