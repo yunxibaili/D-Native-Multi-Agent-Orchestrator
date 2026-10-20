@@ -13,8 +13,10 @@ P0-4.16只读核对完成（PROJECT_BASELINE.md §7.77）。官方-o适合分离
 
 ## 暂不实施的退出问题
 
-保留P0-4.15最终JSON82.074s、turn.completed82.168s、运行90.108s超时及7939ms尾段事实。固定源码有unsubscribe/shutdown异步等待，内部常量45s，但不能与安装版字节对应，不能据此扩大90s或添加猜测grace。需版本对应源码/既有日志才能定位本机具体卡点；没有新模型试跑。
+保留P0-4.15最终JSON82.074s、turn.completed82.168s、运行90.108s超时及7939ms尾段事实。固定源码有unsubscribe/shutdown异步等待，内部常量45s，现已核对官方精确版本tag及commit4ebc485（仍未比对安装资产字节），不能据此扩大90s或添加猜测grace。需版本对应源码/既有日志才能定位本机具体卡点；没有新模型试跑。
 
 Owner批准有限实现范围及有效开发费用事实后，仍由OpenCode实施、Codex独立审核；最多一次实现加一次有据返工。遵守默认零新增测试和禁止重复验证规则，实施验收范围需与授权一致。当前不继承过期Go/Reviewer费用窗口，不启动第三次相同Reviewer验证、Worker/LAYA/Round。
 
 资料与源代码行号：project-progress/p0416-final-output-source-review-20261020/assessment.json（ignored）；官方非交互文档https://learn.chatgpt.com/docs/non-interactive-mode 。P0-4.16只读核对完成不等于真实Review/E2E PASS，9/26项历史边界保持。
+
+精确版本补充：官方Tag/Release已确认；资料中无公开锚点和两条AppServer/Lifecycle进入日志不采纳。精确源码支持后台drain/analytics flush等待候选，但没有本机trace证明实际卡点；不新增泛查/模型试跑。证据exact-version-followup.json，基线§7.77补充；本文件唯一候选范围保持。

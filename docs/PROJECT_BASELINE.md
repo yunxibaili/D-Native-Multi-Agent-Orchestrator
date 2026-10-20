@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-20。当前见§7.77：P0-4.16只读核对完成。官方-o在shutdown后写出，写函数不证明schema有效；现有stdin无开放写端证据。不采用stdin/TIME_WAIT猜测补丁。下一候选仅独立最终答复出口接线，待有界授权；真实Review仍BLOCKED、旧Round仍PARTIAL。
+更新：2026-10-20。见§7.77及补充：官方精确版本tag指向4ebc485；退出有unsubscribe、内部drain/analytics flush后才写最终消息。转交进入日志和stdin/Job根因未获支持；0新模型/测试/生产修改，真实Review仍BLOCKED。
 
 ## 1. 权责与当前结论
 
@@ -901,18 +901,26 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 - 唯一下一步为Owner批准上述最终答复出口的有限实施范围并提供有效开发费用事实，再沿OpenCode开发/Codex审核分工；本轮不自动启动开发或真实Reviewer。旧Round/Human Gate、P0-4.12静态结果、P0-4.13/15超时及9/26历史边界保持。基线/NEXT/本机快照同步；证据位于ignored project-progress/p0416-final-output-source-review-20261020/assessment.json，audit只读。
 - 已读来源：[官方非交互文档](https://learn.chatgpt.com/docs/non-interactive-mode)、[官方命令文档](https://learn.chatgpt.com/docs/developer-commands?surface=cli)、[固定exec退出路径](https://github.com/openai/codex/blob/014489466a1739c2c563cdfe57880c2c7c8680e3/codex-rs/exec/src/lib.rs)、[固定最终文件写入](https://github.com/openai/codex/blob/014489466a1739c2c563cdfe57880c2c7c8680e3/codex-rs/exec/src/event_processor.rs)、[固定JSONL processor](https://github.com/openai/codex/blob/014489466a1739c2c563cdfe57880c2c7c8680e3/codex-rs/exec/src/event_processor_with_jsonl_output.rs)、[固定in-process shutdown](https://github.com/openai/codex/blob/014489466a1739c2c563cdfe57880c2c7c8680e3/codex-rs/app-server-client/src/lib.rs)。没有引用无URL SDK为已核验来源。
 
+### 精确版本补充核对：rust-v0.163.0-alpha.10.2（2026-10-20）
+
+- GitHub MCP实际get_tag/get_release_by_tag成功：官方存在[rust-v0.163.0-alpha.10.2](https://github.com/openai/codex/releases/tag/rust-v0.163.0-alpha.10.2)，annotated tag d9151c94a70013f176ff370fa93da02734662e41指向commit **4ebc485ca321243727539187169425fcf972f2c4**，tagger日期2026-10-15T16:57:41Z。因此“Alpha无公开exact tag/不能固定commit”不成立；本节早先0144894版本范围限制现由精确版本源码补充。未下载/比对本机二进制与发布资产，不宣称构建字节一致。
+- 精确版本exec/lib.rs:1374-1407及:2014-2027顺序仍为unsubscribe请求响应→client.shutdown→print_final_output。核对的exec/JSONL processor/app-server-client没有资料声称的“[AppServer] unsubscribing from thread”或“[Lifecycle] initiating client shutdown sequence”进入日志，GitHub代码搜索亦0命中（非全历史证明）。实际exec只有失败警告thread/unsubscribe failed during shutdown（:1384）及in-process app-server shutdown failed（:1400）；未见警告不能推导成功或没有等待。
+- app-server-client/src/lib.rs:425-428转发Shutdown给handle.shutdown，:581-609等待内部响应及worker，内部timeout45s。app-server/src/in_process.rs:592-599清理连接/监听器、drain_background_tasks/shutdown_threads；:793-806先分别等待processor/outbound内部5s，再analytics flush，最后ACK；:106-108、346-364的ACK35s/join5s是内部预算。由此可确认存在后台清理/flush等待，不能确定本机7939ms卡在何处，不扩大90s、不加猜测2–3s grace。此exec使用in-process client，不应直接套用外部TCP/stdio EOF握手根因。
+- thread/unsubscribe取消当前连接订阅的基本含义可采用；官方当前协议另区分unsubscribed/notSubscribed/notLoaded及无订阅后的线程保留，取消订阅不等于线程/进程关闭。原始日志无上述两条标记，也无stdin未关、TIME_WAIT或Job死锁证据，不按此修改底座。
+- 本轮0新CLI/Agent/模型/LAYA/Round/测试，0生产/测试/全局配置修改；P0-4.17候选待授权状态不变，不继续泛查/模型试跑。补充证据exact-version-followup.json位于既有ignored目录，旧assessment与失败证据不覆盖；真实Review仍BLOCKED，旧Round仍PARTIAL。
+
 <!-- project-progress:begin -->
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-20T15:49:06.0911086+08:00",
+  "updatedAt": "2026-10-20T16:00:57.4332423+08:00",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
     "id": "P0-4.16",
-    "name": "最终消息/退出路径只读核对完成，真实Review仍BLOCKED",
+    "name": "精确版本源码复核完成，真实Review仍BLOCKED",
     "status": "blocked",
-    "summary": "官方-o可分离最终消息，但固定源码在unsubscribe与shutdown之后才写；写函数不做schema校验。现有stdin未提供时ignore、提供时end，无未关写管道证据。退出卡点未定位，0新模型/测试/源码修改。"
+    "summary": "官方确有rust-v0.163.0-alpha.10.2指向4ebc485；精确源码确认unsubscribe/shutdown在最终文件写出前、后台drain和analytics flush等待。转交日志标记未获源码支持，stdin/Job根因仍无证据；0新调用/测试/源码修改。"
   },
   "next": {
     "id": "P0-4.17",
@@ -1385,10 +1393,15 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
       "title": "最终答复与原生退出机制源码核对",
       "status": "done",
       "deliverable": "过滤Gemini结论、读取固定官方源码与本机调用链，形成最小候选",
-      "evidence": "§7.77只读完成：-o在shutdown后写，无host schema保证；本机无开放stdin写端证据，实际退出卡点仍未知"
+      "evidence": "§7.77及补充：精确tag及commit4ebc485已核对；-o在shutdown后写、stdin无漏关证据，实际卡点未知"
     }
   ],
   "checks": [
+    {
+      "name": "P0-4.16精确版本补充核对",
+      "source": "PROJECT_BASELINE.md §7.77补充；project-progress/p0416-final-output-source-review-20261020/exact-version-followup.json",
+      "result": "官方Tag/Release和4ebc485源码已取得；否定无公开版本锚点，校正日志标记与退出等待。未证明安装资产字节相同或实际8秒卡点，不实施猜测补丁。"
+    },
     {
       "name": "P0-4.16最终文件与退出机制核对",
       "source": "PROJECT_BASELINE.md §7.77；project-progress/p0416-final-output-source-review-20261020/assessment.json；官方固定0144894源码",
