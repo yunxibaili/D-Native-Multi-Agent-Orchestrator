@@ -1,20 +1,25 @@
-# 唯一下一任务 — P0-4.14 Reviewer启动与首轮响应只读定位（待Owner决定）
+# 唯一下一任务 — P0-4.15 Reviewer可选连接进程级缩减验证（待新授权）
 
-当前事实见PROJECT_BASELINE.md §7.74。P0-4.13真实验证BLOCKED：唯一gpt-6.1-sol Session在90s截止，输出0，无verdict；没有重试。原生turn_context已证明实际模型与read-only。全部owned Job final0、cleanupFailures=[]，旧Round和Demo未改变。
+依据PROJECT_BASELINE.md §7.75，P0-4.14只读核对完成；P0-4.13真实验收仍BLOCKED，旧Round仍PARTIAL。当前没有新模型调用授权。
 
-## 唯一最小方向
+## 已过滤的资料
 
-先只读分析现有原生trace/诊断/时间线和受支持的进程级配置，区分启动目录刷新、MCP握手、模型首轮等待及指令读取。事实：turn_started约15.5s，首次Skill读取约79.4s，90s截止；有目录刷新timeout/MCP transport错误，但不能据此认定唯一根因。
+不采用未在核对官方schema中定义的enable_mcp/check_for_updates；check_for_update_on_startup是软件更新检查，不是目录刷新开关。不能把turn_started当作初始化结束边界，不能把63.89秒全归因于schema或Skill；实际Skill工具仅201ms。high推理强度是已记录变量，不是根因。没有本机证据证明Defender/Job句柄争用。
 
-需要Gemini/官方资料辅助核对当前Codex0.163.0-alpha.10.2的exec初始化及MCP/目录刷新行为、是否存在官方支持的单次进程级隔离方法。保持认证、规则和原有安全边界，不读凭据、不修改全局配置，不自动忽略AGENTS/Skill或提高deadline。先形成有根据的最小方案，不新增框架/源码补丁或新调用。
+## 唯一最小待授权方案
 
-## 明确保留
+仅下一次Reviewer进程，用已有extraArgs→Codex -c传递官方支持的进程覆盖，关闭不需要的Apps及已知MCP连接：
 
-- P0-4.12专用exec --output-schema静态PASS，已真实进入Session；最终schema输出仍未验。不能因一次超时认定schema无效，也不能认定适配已真实PASS。
-- P0-4.11仍PARTIAL，不回填旧Review/Human Gate；未来完整Round需单独授权。
-- 本次预算Reviewer1/1已用，Worker/LAYA/Round均0；费用窗口内剩余时间不等于新会话授权。
-- 单次review CLI必须重复使用分隔形式：--extra --output-schema --extra <schema绝对路径>。现有generic parser的重复--extra=value会覆盖前值，导致前置拒绝；这是验证命令的既有接口限制，不影响Round内部extraArgs数组。当前不改parser。
+- features.apps=false
+- mcp_servers.node_repl.enabled=false
+- mcp_servers.github.enabled=false
 
-不运行新CLI探针/模型/服务/测试，不升级组件，不新增或修改测试/验证脚本。保持HEAD/index/范围外dirty与所有旧证据；如后续确需开发，仍由OpenCode实施、Codex审核，并核对新的开发模型/费用授权。
+均为候选、未设置/执行；官方资料不证明安装版及managed/plugin来源下全覆盖。保留gpt-6.1-sol、高推理强度、原始审核材料/schema、read-only、90s真实deadline、AGENTS/Skill、安全验证和owned Job；不替换目录缓存、不改模型或同时调整时限。
 
-证据目录project-progress/p0413-review-protocol-20261020仅本机保留。阶段仅精确归档基线/NEXT_TASK；不得上传project-progress或合并main。
+复用既有review CLI和schema资产，不改生产源码、不新建配置/Workflow层、不需开发Worker。若新授权，仅1Reviewer原生会话、0重试、0Worker/LAYA/Round、0新增收费；费用确认与授权必须有效。按真实事件比较连接诊断及阶段时间，失败立即停止，不为通过追加推理或修改prompt。
+
+CLI多个raw参数必须采用重复分隔形式--extra <value>，避免现有重复--extra=value覆盖问题。需要传给原生CLI的参数为-c <key=value>，经既有extraArgs数组转发；不要修改全局config.toml或忽略规则。
+
+无论结果如何，保存原始UTF-8输出、模型/Session、deadline和Job停止证据，确认ActiveProcessesFinal=0；不覆盖旧结果或追认E2E PASS。当前只形成方案，等待Owner决定。
+
+资料：官方配置参考https://learn.chatgpt.com/docs/config-file/config-reference；固定schema与本机核对见project-progress/p0414-research-assessment-20261020/assessment.json（不入Git）。

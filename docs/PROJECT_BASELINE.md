@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-20。当前见§7.74：P0-4.13单次Reviewer真实验证BLOCKED，90s截止且无输出/verdict。原生gpt-6.1-sol/read-only已核实，初始CLI参数错误在0模型时纠正；唯一会话已耗用，无重试，全部Job final0。P0-4.12静态PASS不等于真实审核PASS，旧Round仍PARTIAL。
+更新：2026-10-20。当前见§7.75：P0-4.14只读调研过滤完成。外部建议中的enable_mcp/check_for_updates未获官方配置定义支持；本机时间线不能证明64s由schema或Skill导致。仅形成下一次Reviewer进程局部停用非必要Apps/MCP的待授权方案，本轮0模型/测试/源码配置改动，旧验收仍BLOCKED/PARTIAL。
 
 ## 1. 权责与当前结论
 
@@ -864,22 +864,34 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 - 仓库原始HEAD/index/所有已记录dirty字节不变（本轮仅随后维护本节/NEXT），workspace两文件哈希不变；默认latest RoundResult与执行前SHA256一致，没有追认或覆盖旧结果。P0-4.12静态PASS仍保留，P0-4.13真实验证BLOCKED，旧P0-4.11仍PARTIAL。
 - 证据：project-progress/p0413-review-protocol-20261020/{owner-authorization.json,invocation.json,invocation-corrected.json,review.stderr.log,review-corrected.stdout.jsonl,run-corrected.json,timeline.json,independent-review.json}，仅本机保留不入Git。唯一下一步是只读核对native初始化/首轮时间线与现有配置来源，借官方资料区分连接启动与模型响应耗时；不自动启动新会话、不猜测性源码修改。
 
+## 7.75 P0-4.14 调研结论与本机事实过滤（2026-10-20，只读核对完成）
+
+- Owner转交Gemini调研后，按既有协作规则过滤并映射本机证据，未盲目执行其配置。复用P0-4.13原始时间线/rollout，不重复模型、测试或CLI探针，不委派没有必要的开发任务。
+- 实际读取官方配置参考及GitHub MCP固定openai/codex@014489466a1739c2c563cdfe57880c2c7c8680e3的codex-rs/core/config.schema.json。核对范围中不存在enable_mcp、check_for_updates，不能当作本机已验证有效的总开关；存在的check_for_update_on_startup控制Codex软件更新检查，不构成关闭模型目录刷新的证据。固定官方schema不是本机安装包的字节级版本证明。
+- 可采纳的机制：官方支持mcp_servers.<id>.enabled按服务关闭，features.apps控制Apps/connector集成，-c支持进程级覆盖；普通MCP服务与内建Apps连接需分别对待。model_catalog_json是另一项启动目录覆盖功能，但本轮没有验证缓存、映射或来源，不拿它伪装成通用“禁刷新”开关。未设置这些参数、未改全局文件或账户。
+- 本机硬事实：Session起点到turn_started=15511ms；turn到首次shell=63890ms；首次工具本身201ms；约90s截止。MCP诊断在turn_started之后仍存在，因此该标志不是所有初始化已完成的证明。不能把前15.5s全部精确归为扫描/网络，也不能把后63.89s全部归为模型首字或结构化解码。
+- 该工具是模型主动读取三份Skill文件，不等同于CLI启动阶段的Skill自动发现；201ms不支持“本次文件读取耗费64s/Defender或Job句柄阻塞”的结论。本次未采集Defender/句柄争用证据。原生turn_context确认推理强度high（只核对model/effort/sandbox等元数据，不读取或展示隐藏推理内容）；它是待控制变量，不是已定位根因，不擅自调低。
+- 当前静态schema没有minLength或复杂组合分支。转交资料的Issue54285未给权威URL/对应版本复现，本轮不将其或“所有版本均如此”升级为本机原因；schema解码延迟仍是未验证假设。P0-4.12静态PASS、P0-4.13真实BLOCKED和旧Round PARTIAL均保留。
+- 唯一候选下一步：仅在下一次新授权Reviewer进程中，以官方支持的-c覆盖禁用不需要的Apps及已知node_repl/github MCP连接，例如features.apps=false、mcp_servers.node_repl.enabled=false、mcp_servers.github.enabled=false；保持gpt-6.1-sol/high/schema/90s/read-only/Job/AGENTS与Skill规则不变，不同时更换模型、推理强度、deadline或目录缓存。仍未确认这些覆盖在安装版和managed/plugin来源下全部生效，更不保证解决超时。
+- 当前仅只读方案，无需改生产源码、写新调度层或委派实现。若Owner批准新1个Reviewer会话则按原始事件比较连接诊断和阶段耗时，失败即停；不继承上一会话已耗尽预算、不自动重试、不启动Worker/LAYA/Round。下一真实调用仍需单独授权和有效费用事实。
+- 依据：[官方配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)、上述固定官方schema和本机project-progress/p0414-research-assessment-20261020/assessment.json。本轮除基线/NEXT/本机进度外零修改；未读取auth.json/API Key/令牌，无新进程清理义务。
+
 <!-- project-progress:begin -->
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-20T07:14:06.0322101+00:00",
+  "updatedAt": "2026-10-20T07:24:48.8211825+00:00",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-4.13",
-    "name": "Reviewer真实验证BLOCKED：90s无verdict",
+    "id": "P0-4.14",
+    "name": "只读调研过滤完成，真实Reviewer仍BLOCKED",
     "status": "blocked",
-    "summary": "仅1个原生gpt-6.1-sol/read-only Session，90s截止、无最终输出；连接诊断及首次Skill读取时间线已保存。Job全空，旧Round/Demo未改，无重试。"
+    "summary": "两项外部总开关键未获官方配置定义支持；201ms Skill读取不证明64s阻塞。形成仅进程局部关闭非必要Apps/MCP的待授权方案，0新模型/测试/源码修改。"
   },
   "next": {
-    "id": "P0-4.14",
-    "name": "只读分析原生启动/首轮响应时间线，结合官方资料制定最小方案",
+    "id": "P0-4.15",
+    "name": "待新授权：单Reviewer进程局部关闭非必要Apps/MCP，保留其余条件",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -956,24 +968,24 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
   "blockers": [
     {
       "severity": "P1",
-      "kind": "当前唯一直接阻断",
-      "title": "单Reviewer会话90s无verdict，耗时原因尚未确立",
-      "detail": "模型目录/MCP连接错误可见，turn约15.5s，首次Skill工具约79.4s，截止无输出；不能推断唯一根因。",
-      "next": "先只读核对启动与首轮时间线和配置来源，外部资料仅作机制证据，不自动增加deadline或重试。"
+      "kind": "当前验收缺口",
+      "title": "90s无verdict的根因未确立",
+      "detail": "外部“总开关”和时间归因需修正；仅已确认连接诊断及精确时间，不能猜测schema/Defender原因。",
+      "next": "新授权下一Reviewer会话仅局部关闭非必要Apps/MCP，其余变量保持；不保证有效，不自动调用。"
     },
     {
       "severity": "P2",
-      "kind": "事实边界",
-      "title": "结构化最终输出仍未验，旧Round仍PARTIAL",
-      "detail": "本次native turn_context确认gpt-6.1-sol/read-only；产品0新Round/Worker/LAYA，旧Review不回填。",
-      "next": "未来真实调用需新授权，本次1/1预算已用完。"
+      "kind": "版本边界",
+      "title": "官方schema/文档不代替安装版行为实测",
+      "detail": "候选覆盖在本机0.163.0-alpha.10.2及managed/plugin来源下未验证。",
+      "next": "既有固定模型/费用/安全规则保持，不添加无依据开关。"
     },
     {
       "severity": "P2",
-      "kind": "历史风险",
-      "title": "9项既有失败/26项handoff仍开放",
-      "detail": "未运行测试或扩大历史豁免。",
-      "next": "不为当前网络/响应问题修无关历史测试。"
+      "kind": "历史边界",
+      "title": "旧Round仍PARTIAL，9/26项历史失败不变",
+      "detail": "本轮无测试/真实产品调用，不追认旧验收。",
+      "next": "保持有限准入与单独新授权。"
     }
   ],
   "tasks": [
@@ -1328,6 +1340,13 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
       "status": "blocked",
       "deliverable": "一次独立审核，复用真实成果，固定模型/90s/无重试",
       "evidence": "§7.74真实timed_out，输出0/verdict无；模型及read-only实证、全部Job final0，旧结果保留"
+    },
+    {
+      "id": "P0-4.14",
+      "title": "外部调研与本机启动时间线过滤",
+      "status": "done",
+      "deliverable": "权威配置键核对、事实/推断分离、最小进程级候选",
+      "evidence": "§7.75只读完成，0模型/CLI探针/测试/源码配置修改，运行状态未提升"
     }
   ],
   "checks": [
@@ -1655,6 +1674,11 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
       "name": "P0-4.13真实验收",
       "source": "project-progress/p0413-review-protocol-20261020/independent-review.json",
       "result": "Reviewer1/1，90s超时BLOCKED，模型gpt-6.1-sol/read-only，3控制final0，无新Round/LAYA/Worker"
+    },
+    {
+      "name": "P0-4.14只读核对",
+      "source": "project-progress/p0414-research-assessment-20261020/assessment.json",
+      "result": "官方schema/配置与已有时间线核对；不采纳enable_mcp/check_for_updates为已验证开关，无新调用"
     }
   ],
   "sources": [
