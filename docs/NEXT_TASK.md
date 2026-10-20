@@ -1,18 +1,20 @@
-# 唯一下一任务 — P0-4.16 最终答复与原生退出机制离线核对（待有界授权）
+# 唯一下一任务 — P0-4.17 独立最终答复出口最小接线（待有界授权）
 
-依据PROJECT_BASELINE.md §7.76，P0-4.15为PARTIAL：模型82.074s输出JSON pass、82.168s发出turn.completed，但实际运行90.108s超时，accepted verdict=null。此前及本次连续两次Reviewer超时，停止真实验证；费用窗口和单次额度均已结束。旧Round/Human Gate保持PARTIAL/待人工，不回填结果。
+P0-4.16只读核对完成（PROJECT_BASELINE.md §7.77）。官方-o适合分离最终答复，但固定官方exec在thread/unsubscribe与client.shutdown后才写文件，不能单独解决退出超时。本机stdin无开放写管道证据，不加close补丁；TIME_WAIT/Job/socket或telemetry根因未确立。当前不授权源码实施/开发模型/真实Reviewer/新Round。
 
-## 唯一优先范围
+## 唯一候选实施范围
 
-仅复用保存的原始JSONL、安装版/固定官方源码和现有adapter/runtime调用链，定位两项直接缺口：
+仅为现有结构化Codex Round Review接入官方--output-last-message，复用现有extraArgs、文件资产和严格normalizeReviewOutput/validateReviewVerdict：
 
-1. 最终答复的可信采集：当前Codex JSONL agent_message无phase，所有消息进入noteText/TailBuffer，过程说明与最终JSON混合。核对官方--output-last-message的实际版本支持、写出时机、唯一owned文件和生命周期，以及与RunResult身份/退出状态的关联。不得用正则抽JSON、抓最后花括号、读取私有rollout作生产通道或放宽严格normalize/validate。
-2. turn.completed后的退出：本次回合完成后7939ms仍未自然退出。核对native exec终止、后台任务/连接关闭、stdin/流读取与Runtime等待路径。不能仅凭turn.completed、文件存在或模型pass将timed_out改为succeeded，也不能跳过Job安全停止确认。
+- 宿主创建独立、唯一、owned的本次文件位置，绑定本次Review/Run身份，不接受预存/旧文件、越界/重解析路径、空/非法或超量内容；保留原始JSONL与过程说明作为事件证据。
+- 只有现有运行实际succeeded、可信退出和Job停止均成立后读取该最终文件；读/写失败必须明确拒绝。文件存在、turn.completed、模型pass都不覆盖timed_out/failed。
+- 禁止正则抽JSON、取最后花括号、生产读取私有rollout、放宽schema、回填旧Round或改变原生停止/任务状态权威。其他Agent和非结构化Review兼容路径保持。
+- 有界实施时确认最小adapter/Review/资产生命周期接线位置，不新建通用输出平台、Runtime、Planner或Scheduler；不顺带修CLI重复--extra=解析或增加其他功能。
 
-不开展第三次同条件Reviewer试跑，不增加90s、不换模型/effort、不改prompt碰运气，不启动Worker/LAYA/Round/开发Agent。当前不授权实现或新增测试；若源码核对确定最小修复，再由Owner批准范围，沿既有OpenCode开发/Codex审核分工，并核实新的开发模型费用事实。
+## 暂不实施的退出问题
 
-## 本轮已知证据
+保留P0-4.15最终JSON82.074s、turn.completed82.168s、运行90.108s超时及7939ms尾段事实。固定源码有unsubscribe/shutdown异步等待，内部常量45s，但不能与安装版字节对应，不能据此扩大90s或添加猜测grace。需版本对应源码/既有日志才能定位本机具体卡点；没有新模型试跑。
 
-Task tsk_53fc5683131b44e1b7dc；Session 01a15839-274a-7083-9e9c-d337b003d6c5；gpt-6.1-sol/high/read-only。进程局部-c关闭Apps/node_repl/github，MCP诊断0，目录刷新超时1；单样本不作因果归因。原始事件、最终消息诊断、调用参数、时间线及两层Job证据见project-progress/p0415-review-local-connections-20261020/。全部Job final0、cleanupFailures0；旧产物/默认latest结果/全局配置未动。任何后续修改都不能覆盖这些失败事实。
+Owner批准有限实现范围及有效开发费用事实后，仍由OpenCode实施、Codex独立审核；最多一次实现加一次有据返工。遵守默认零新增测试和禁止重复验证规则，实施验收范围需与授权一致。当前不继承过期Go/Reviewer费用窗口，不启动第三次相同Reviewer验证、Worker/LAYA/Round。
 
-官方最终消息出口参考（本轮沿用已读资料）：https://learn.chatgpt.com/docs/developer-commands?surface=cli 。具体安装版退出原因仍未知，必要时按既有协同规则给Gemini精确检索单；不采用无依据配置开关。
+资料与源代码行号：project-progress/p0416-final-output-source-review-20261020/assessment.json（ignored）；官方非交互文档https://learn.chatgpt.com/docs/non-interactive-mode 。P0-4.16只读核对完成不等于真实Review/E2E PASS，9/26项历史边界保持。

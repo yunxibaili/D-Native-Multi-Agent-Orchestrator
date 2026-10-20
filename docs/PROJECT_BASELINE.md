@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-20。当前见§7.76：P0-4.15单Reviewer输出了最终JSON pass，但原生进程90s超时，未取得可接受Review；过程说明混入最终输出的采集缺口已实证。两次连续超时后停止真实调用，Job最终0，旧Round仍PARTIAL；下一步仅离线核对最终消息与退出机制。
+更新：2026-10-20。当前见§7.77：P0-4.16只读核对完成。官方-o在shutdown后写出，写函数不证明schema有效；现有stdin无开放写端证据。不采用stdin/TIME_WAIT猜测补丁。下一候选仅独立最终答复出口接线，待有界授权；真实Review仍BLOCKED、旧Round仍PARTIAL。
 
 ## 1. 权责与当前结论
 
@@ -888,22 +888,35 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 - 既有产物、原始latest RoundResult、全局config哈希保持；没有源码/测试/生产配置变更。原始UTF-8事件/双流、调用参数、时间线、最终JSON诊断、身份与清理核对位于ignored project-progress/p0415-review-local-connections-20261020/，旁路audit只读。P0-4.13及本次连续两次真实Reviewer超时，执行两次失败熔断，不启动第三次重复验证或额外开发模型调用。
 - 唯一下一步是离线/源码核对最终消息的官方可信出口及原生turn完成后的退出机制；可研究官方--output-last-message，但不得将最终文本存在等同于成功、忽略deadline/Job或削弱parse/validate。实现需新的有界授权与开发费用事实；本轮仅更新文档/进度，按既有授权精确归档文档审核分支，不自动进入真实E2E。
 
+## 7.77 P0-4.16 最终答复与原生退出机制只读核对（2026-10-20，核对完成，运行仍BLOCKED）
+
+- Owner转交Gemini结果后，仅核对本地adapter/transport/ManagedProcess/Job与既有原始事件，实际打开官方developer-commands及non-interactive-mode文档，并通过GitHub MCP成功读取openai/codex固定014489466a1739c2c563cdfe57880c2c7c8680e3源码。本轮0原生CLI探针/模型/Agent/LAYA/Review/Round/测试、无生产/测试/全局配置修改，不重复消耗两次超时后的调用。
+- 可采纳：官方--output-last-message/-o提供最终助手答复文件，适合作为结构化审核的独立文本出口。仍需宿主严格normalize/validate、Task/Session/RunResult绑定、唯一owned路径和旧文件排除，不能以文件存在或模型pass代替真实运行成功、deadline或Job停止。
+- 固定源码精确顺序：exec JSONL processor在完成Turn时记录final_message、发出turn.completed并返回InitiateShutdown（event_processor_with_jsonl_output.rs:525-536）；exec/lib.rs:1375-1403先等待thread/unsubscribe，再等待client.shutdown，之后print_final_output；JSONL processor:631-636才调用handle_last_message。故并非收到turn.completed就立即持久化；-o只解决文本分离，不能单独解除shutdown等待，截止发生在此前仍可能没有新文件。未证明固定源码与本机0.163.0-alpha.10.2安装包字节相同，不据此断言本机具体阻塞函数。
+- 修正失败语义：event_processor.rs:31-48最终文件使用std::fs::write，不在此校验JSON Schema，不作原子替换；无last message时可写空文本，写错误只打印stderr、不传播Result。因此“schema失败必不创建/必半截”或“退出0+存在文件就已验证schema”均无该源码依据。必须拒绝缺失/空/非法/过期/越界结果，保留原始JSONL和stderr，不能回退混合stdout捞JSON。
+- 现有stdin链路：codex.ts:212-232 prompt走argv且不传stdin；CliJsonlTransport原样转交；spawn.ts:445-446无stdin时为ignore，:546-551有stdin时调用child.stdin.end。launcher.c:458-495继承三个标准句柄或回退NUL。固定exec源码read_prompt_from_stdin在Turn前读取到EOF；本次已产生Turn/最终消息，不支持“启动后忘关写端导致post-turn卡住”。不为此添加重复close或改底层stdin策略。
+- 本机等待链同样不支持仅凭输出静默认定管道死锁：ManagedProcess同时监听exit/close（:593-596），不只等待stdio close；Job持续观察真实root句柄和active计数。固定官方InProcessAppServerClient::shutdown（app-server-client/src/lib.rs:579-610）包含内部异步shutdown/join等待，常量IN_PROCESS_SHUTDOWN_TIMEOUT=45s（:93-95）；它只证明存在等待，不证明本机8s正卡于此，更不授权扩大90s。无匹配追踪证明TIME_WAIT、socket析构、telemetry或Job约束是本次根因。
+- 转交Go SDK未提供具体仓库/版本/源码URL，其Drain/Close stdin/Wait顺序不能替代Rust原生exec事实；不加猜测的2–3s grace，不在turn.completed后提前杀进程冒充自然退出，也不将timed_out改为succeeded。
+- 最小候选实施面是结构化Codex Review的独立最终文件接线与读取/留存生命周期，复用现有extraArgs/native资产/严格validator；不重建Runtime、不改变TaskStore/Verification/Review权威、不改默认其他Agent输出。仅在真实succeeded、退出与Job停止事实成立后消费本次文件；当前尚未实施，所需adapter/Review边界由有界实施任务确认。退出原因另需版本对应源码与现有日志，当前不盲修。
+- 唯一下一步为Owner批准上述最终答复出口的有限实施范围并提供有效开发费用事实，再沿OpenCode开发/Codex审核分工；本轮不自动启动开发或真实Reviewer。旧Round/Human Gate、P0-4.12静态结果、P0-4.13/15超时及9/26历史边界保持。基线/NEXT/本机快照同步；证据位于ignored project-progress/p0416-final-output-source-review-20261020/assessment.json，audit只读。
+- 已读来源：[官方非交互文档](https://learn.chatgpt.com/docs/non-interactive-mode)、[官方命令文档](https://learn.chatgpt.com/docs/developer-commands?surface=cli)、[固定exec退出路径](https://github.com/openai/codex/blob/014489466a1739c2c563cdfe57880c2c7c8680e3/codex-rs/exec/src/lib.rs)、[固定最终文件写入](https://github.com/openai/codex/blob/014489466a1739c2c563cdfe57880c2c7c8680e3/codex-rs/exec/src/event_processor.rs)、[固定JSONL processor](https://github.com/openai/codex/blob/014489466a1739c2c563cdfe57880c2c7c8680e3/codex-rs/exec/src/event_processor_with_jsonl_output.rs)、[固定in-process shutdown](https://github.com/openai/codex/blob/014489466a1739c2c563cdfe57880c2c7c8680e3/codex-rs/app-server-client/src/lib.rs)。没有引用无URL SDK为已核验来源。
+
 <!-- project-progress:begin -->
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-20T15:41:31.4757719+08:00",
+  "updatedAt": "2026-10-20T15:49:06.0911086+08:00",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-4.15",
-    "name": "真实Reviewer部分证据完成，运行超时未验收",
+    "id": "P0-4.16",
+    "name": "最终消息/退出路径只读核对完成，真实Review仍BLOCKED",
     "status": "blocked",
-    "summary": "一次gpt-6.1-sol/high/read-only会话82.074s输出JSON pass，82.168s turn.completed，但90.108s运行超时；过程说明与最终JSON混合采集缺口已确认。两次连续超时后停止真实调用，Job final0，旧Round仍PARTIAL。"
+    "summary": "官方-o可分离最终消息，但固定源码在unsubscribe与shutdown之后才写；写函数不做schema校验。现有stdin未提供时ignore、提供时end，无未关写管道证据。退出卡点未定位，0新模型/测试/源码修改。"
   },
   "next": {
-    "id": "P0-4.16",
-    "name": "仅离线：最终答复采集与turn.completed后退出机制核对",
+    "id": "P0-4.17",
+    "name": "待有界授权：独立最终答复出口最小接线，保留退出门禁",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -980,24 +993,24 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
   "blockers": [
     {
       "severity": "P1",
-      "kind": "真实验收缺口",
-      "title": "模型有最终JSON，但原生进程未在deadline内退出",
-      "detail": "82.168s turn.completed，至90s失败相隔7939ms；不能据此认定成功或残留子进程根因。",
-      "next": "两次连续Reviewer超时，停止真实调用；只核对安装版/官方退出路径和现有原始证据。"
+      "kind": "运行终态",
+      "title": "turn.completed后具体阻塞点未知",
+      "detail": "固定官方源码有thread/unsubscribe与client.shutdown等待，但不等于本机alpha构建根因；既有两次超时后不追加试跑。",
+      "next": "版本对应的退出路径/已有日志定位，不延长90s、不猜测TIME_WAIT/Job或stdin补丁。"
     },
     {
       "severity": "P1",
-      "kind": "输出采集缺口",
-      "title": "commentary与final JSON被共同追加到RunResult.output",
-      "detail": "产品JSONL agent_message无phase；codex adapter全部noteText，session TailBuffer累积。",
-      "next": "核对官方最终消息出口与现有资产生命周期，不用正则抽取、放宽严格parser或读取私有rollout作为生产通道。"
+      "kind": "最终输出",
+      "title": "commentary与final JSON混合采集尚未修复",
+      "detail": "官方-o可以分离文本，但在shutdown后写出；写入函数不提供schema及成功保证。",
+      "next": "新授权后最小接线唯一owned最终文件，绑定run身份、拒绝旧/空/损坏文件，仍要求succeeded及Job停止。"
     },
     {
       "severity": "P2",
-      "kind": "历史边界",
-      "title": "旧Round仍PARTIAL，9/26项历史失败不变",
-      "detail": "本轮仅1Reviewer，无Worker/LAYA/Round/测试；账单仅Owner有效声明，无独立金额实测。",
-      "next": "不回填旧结果，不继续第三次相同验证，不增加时限或更换模型。"
+      "kind": "范围边界",
+      "title": "旧Round仍PARTIAL；未授权新模型调用/实现",
+      "detail": "Go开发及Reviewer费用窗口均不延续；9/26历史失败不变。",
+      "next": "不回填历史，不把只读资料核对当真实Review PASS。"
     }
   ],
   "tasks": [
@@ -1366,9 +1379,21 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
       "status": "blocked",
       "deliverable": "单次原生会话，进程局部关闭Apps/已知MCP，保留模型/high/schema/90s/只读",
       "evidence": "§7.76：JSON pass仅诊断；运行timed_out，accepted verdict=null；混合输出缺口实证、全部Job final0，授权已用完"
+    },
+    {
+      "id": "P0-4.16",
+      "title": "最终答复与原生退出机制源码核对",
+      "status": "done",
+      "deliverable": "过滤Gemini结论、读取固定官方源码与本机调用链，形成最小候选",
+      "evidence": "§7.77只读完成：-o在shutdown后写，无host schema保证；本机无开放stdin写端证据，实际退出卡点仍未知"
     }
   ],
   "checks": [
+    {
+      "name": "P0-4.16最终文件与退出机制核对",
+      "source": "PROJECT_BASELINE.md §7.77；project-progress/p0416-final-output-source-review-20261020/assessment.json；官方固定0144894源码",
+      "result": "仅只读核对完成，运行仍BLOCKED。采纳-o，拒绝文件即schema通过、stdin未关和TIME_WAIT根因推断；0新模型/测试/生产修改。"
+    },
     {
       "name": "P0-4.15单次Reviewer独立核对",
       "source": "PROJECT_BASELINE.md §7.76；project-progress/p0415-review-local-connections-20261020/independent-review.json",
