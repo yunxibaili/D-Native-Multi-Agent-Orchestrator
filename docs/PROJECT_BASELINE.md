@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-20。见§7.77直接调研补充：analytics POST10s/flush25s及官方进程级关闭路径已核对；RUST_LOG未透传、exec默认error造成观察缺口。现有日志仍未证明7939ms卡在哪个await，0新模型/测试/生产修改，Review仍BLOCKED。
+更新：2026-10-20。见§7.78：P0-4.17由Owner例外允许Codex单文件实现最终答复出口与局部analytics关闭，单次typecheck通过；未运行测试/模型。旧模拟Reviewer缺少新文件/身份契约，离线验收待明确授权，当前PARTIAL，真实Review/E2E不提升。
 
 ## 1. 权责与当前结论
 
@@ -921,22 +921,34 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 - 唯一候选下一步仍为P0-4.17有限最终文件接线，并可在明确范围内复用现有extraArgs传-c analytics.enabled=false，关闭这条非必要遥测等待；保留90000ms、固定模型/effort、严格validator、可信退出与Job停止门禁。不得据此直接报告修复成功、关闭所有telemetry、补stdin、加grace或再试第三次模型。当前仅调研方案，实施及新调用需相应有界授权/费用事实。
 - 证据project-progress/p0416-direct-exit-research-20261020/research.json（ignored）；基线/NEXT及本机页同步，不提升规划信用或真实Review/E2E状态。直接源码：[analytics/client](https://github.com/openai/codex/blob/4ebc485ca321243727539187169425fcf972f2c4/codex-rs/analytics/src/client.rs#L314)、[app-server退出](https://github.com/openai/codex/blob/4ebc485ca321243727539187169425fcf972f2c4/codex-rs/app-server/src/in_process.rs#L793)、[exec日志过滤](https://github.com/openai/codex/blob/4ebc485ca321243727539187169425fcf972f2c4/codex-rs/exec/src/lib.rs#L254)、[精确OTEL配置](https://github.com/openai/codex/blob/4ebc485ca321243727539187169425fcf972f2c4/codex-rs/core/src/otel_init.rs#L69)；官方配置https://learn.chatgpt.com/docs/config-file/config-advanced 。
 
+## 7.78 P0-4.17 最终答复出口与局部analytics接线（2026-10-20，PARTIAL：实现/静态检查完成，离线行为待验收）
+
+- Owner继续指令批准实施候选，并确认本轮Go订阅足额、Use balance关闭、主/辅助不消耗按量余额；该事实记录于11:36:27Z，固定窗口截止12:06:27Z，不滚动。实际opencode-agent contained开发启动在进程创建前被自动审批拒绝，仅返回blocked by policy、没有具体原因；未换启动方式绕过、未消耗开发模型调用。Owner随后明确允许本轮Codex直接实施该最小切片，长期OpenCode开发/Codex审核分工和全局Free模型环境保持。
+- 仅生产文件src/orchestration/unified-review.ts变化，复用官方--output-last-message/-o、原--output-schema资产、现有reviewer.review唯一入口/extraArgs/read-only/Runtime/Job。仅Codex结构化Review加-c analytics.enabled=false；非Codex请求和原run.output路径不变，没有改adapter、schema、runtime、TaskStore、Verification、LAYA、Reviewer模型/时限或Human Gate。
+- 宿主每次创建唯一owned临时目录和不存在的固定final-message.json路径，元数据绑定本次closure；复用firstReparseAncestor/relativePathCrossesLink，核对根/祖先/规范路径和目录bigint身份，拒绝链接/Junction/替换。实际读取前须run.taskId匹配非空handle.taskId、run/handle.agentId匹配指定Reviewer，run.state=succeeded、exitCode0、signalnull、cleanup.treeStopConfirmed=true。身份不明、超时、失败或停止不明均不得消费最终文件/合成成功。
+- 最终文件以descriptor作最多64KiB+1探测式有界读取，要求普通单链接文件、非空/不超64KiB，核对named与fd的bigint dev/ino/birthtime/size/mtime/ctime以及读取前后目录身份，UTF-8 fatal解码。仍复用normalizeReviewOutput/validateReviewVerdict，不正则捞JSON、不从混合stdout回退；宿主reviewer/reviewedAt在spread后写入，时间只读取一次。成功投影使用最终文本outputTail，原RunResult/原始事件不修改。
+- 资源路径只在当前执行停止事实确认且身份核对后清理：unlink确切owned文件，再rmdir空目录，不recursive rm。unknown stop/结果等待异常保留路径并在reason说明；替换/多余条目/cleanup失败均可观察、verdict为null并拒绝completed。新逻辑含实际信任边界assert自检，但本轮未运行这些分支，不能以源码断言代替行为负控或OS沙箱保证。
+- Owner允许的唯一一次npm run typecheck实跑exit0（tsc --noEmit，无diagnostics）；工作树diff检查在本节与NEXT更新后单次记录。没有新建/修改/运行测试、fixture或验证脚本，无node-e/python-c、无真实Agent/LAYA/Native Review/Round、无额外费用调用。Codex为本次实现者且做静态复核，不将其描述为另一个原生独立Review已通过。
+- 静态兼容性限制明确保留：现有tests/unified-review.test.ts:139-146的fakeReviewer只返回result，缺少RunHandle身份且不写-o文件，须按新合同迁移才可继续使用；tests/p02-auto-advance.test.ts的模拟Codex路径也需后续核对。未跑suite，不能声称测试数量或无新增回归，不跳过/放宽生产门禁来保旧假结果。本轮范围不含测试修改，9/26历史边界不变。
+- 本机证据project-progress/p0417-final-output-implementation-20261020/：before/精确源码前后快照、任务/范围/Owner费用与实施者例外、自动审批拒绝记录、typecheck日志/JSON、static-review.json、实现diff；全部ignored，audit只读。唯一下一步建议Owner明确授权既有unified-review测试文件的夹具迁移与一次白名单离线contained验收；当前不自动执行，不直接跳到新真实Review/Round。
+- 源码依据沿用§7.77已实际读取的官方精确commit4ebc485与OpenAI文档，无重复模型试跑；P0-4.13/15两次超时、原Round PARTIAL/Human Gate与latest原件保持。本轮归档若推送，仅精确单源码+本基线+NEXT审核分支，不合并main，主HEAD/index/范围外dirty保持。
+
 <!-- project-progress:begin -->
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-20T16:10:52.3791236+08:00",
+  "updatedAt": "2026-10-20T19:49:09.3767326+08:00",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-4.16",
-    "name": "退出等待与日志缺口已按精确源码定位，实际卡点未证实",
-    "status": "blocked",
-    "summary": "analytics队列POST10s/flush25s；精确版本analytics.enabled=false使queue=None且flush直接返回。RUST_LOG不继承、exec默认error解释关闭warn缺失；现存日志未定位7939ms具体await。0新模型/测试/生产修改。"
+    "id": "P0-4.17",
+    "name": "最终答复接线已实现，静态检查通过，离线行为待验收",
+    "status": "partial",
+    "summary": "Owner例外由Codex单文件实现-o及进程局部analytics关闭；typecheck单次0，未运行测试/模型。严格文件/身份/退出/Job门禁已接线；旧模拟Reviewer夹具需迁移，不能宣称回归或真实Review PASS。"
   },
   "next": {
-    "id": "P0-4.17",
-    "name": "待有界授权：独立最终答复出口及进程局部关闭analytics",
+    "id": "P0-4.18",
+    "name": "待明确测试授权：既有unified-review夹具迁移与单文件离线验收",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1013,24 +1025,24 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
   "blockers": [
     {
       "severity": "P1",
-      "kind": "运行终态",
-      "title": "turn.completed后具体阻塞点未知",
-      "detail": "固定官方源码有thread/unsubscribe与client.shutdown等待，但不等于本机alpha构建根因；既有两次超时后不追加试跑。",
-      "next": "版本对应的退出路径/已有日志定位，不延长90s、不猜测TIME_WAIT/Job或stdin补丁。"
+      "kind": "离线行为证据",
+      "title": "最终文件/身份与失败关闭分支尚未行为验收",
+      "detail": "现有unified-review fakeReviewer未提供完整handle身份，也不写-o文件；测试未改/未跑，不能沿用历史绿。",
+      "next": "仅在明确授权后迁移既有单文件夹具并按白名单/离线/contained路径单次验证，不放宽生产门禁。"
     },
     {
       "severity": "P1",
-      "kind": "最终输出",
-      "title": "commentary与final JSON混合采集尚未修复",
-      "detail": "官方-o可以分离文本，但在shutdown后写出；写入函数不提供schema及成功保证。",
-      "next": "新授权后最小接线唯一owned最终文件，绑定run身份、拒绝旧/空/损坏文件，仍要求succeeded及Job停止。"
+      "kind": "真实运行",
+      "title": "实际Reviewer90s退出及有效verdict仍未证明",
+      "detail": "本轮0模型，旧连续两次timed_out和Round PARTIAL不回填；analytics旁路仅有精确源码依据。",
+      "next": "先离线验收；新真实验证须独立有效调用/费用范围。"
     },
     {
       "severity": "P2",
-      "kind": "范围边界",
-      "title": "旧Round仍PARTIAL；未授权新模型调用/实现",
-      "detail": "Go开发及Reviewer费用窗口均不延续；9/26历史失败不变。",
-      "next": "不回填历史，不把只读资料核对当真实Review PASS。"
+      "kind": "协作范围",
+      "title": "OpenCode启动被自动审批拒绝，未发生开发调用",
+      "detail": "仅返回blocked by policy，无详细原因；Owner批准本轮Codex直接实现，长期分工/全局模型不变。",
+      "next": "不变更启动方式绕过审批；当前不追加开发模型调用。"
     }
   ],
   "tasks": [
@@ -1406,9 +1418,21 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
       "status": "done",
       "deliverable": "过滤Gemini结论、读取固定官方源码与本机调用链，形成最小候选",
       "evidence": "§7.77及补充：精确tag及commit4ebc485已核对；-o在shutdown后写、stdin无漏关证据，实际卡点未知"
+    },
+    {
+      "id": "P0-4.17",
+      "title": "最终答复文件及局部analytics接线",
+      "status": "active",
+      "deliverable": "单源码文件，复用native review/schema/严格解析与Job证据",
+      "evidence": "§7.78实现+单次typecheck0；行为与旧夹具未验收，0真实调用，非独立模型Review PASS"
     }
   ],
   "checks": [
+    {
+      "name": "P0-4.17单文件实现与静态复核",
+      "source": "PROJECT_BASELINE.md §7.78；project-progress/p0417-final-output-implementation-20261020/static-review.json；typecheck.log",
+      "result": "一次typecheck0；Codex按Owner例外实现并静态自查。未运行测试或真实模型，既有假Reviewer契约不完整需迁移，不宣称回归通过。"
+    },
     {
       "name": "直接退出链调研",
       "source": "PROJECT_BASELINE.md §7.77直接调研补充；project-progress/p0416-direct-exit-research-20261020/research.json",

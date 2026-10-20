@@ -57,7 +57,15 @@
  * like a successful one, and must never erase what actually ran.
  */
 
+import assert from 'node:assert/strict';
+import {
+  closeSync, existsSync, fstatSync, lstatSync, mkdtempSync, openSync, readSync,
+  realpathSync, rmdirSync, unlinkSync, type BigIntStats,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { firstReparseAncestor, relativePathCrossesLink } from './workspace-manifest.ts';
 import type { RunHandle, RunRequest, RunResult, TaskState } from '../core/types.ts';
 import type { TaskStatus } from './task.ts';
 import type { TaskType } from '../quota/types.ts';
@@ -586,6 +594,110 @@ export interface RunUnifiedReviewOptions {
   readonly maxTextChars?: number;
 }
 
+const REVIEW_FINAL_MAX_BYTES = 64 * 1024;
+
+interface OwnedReviewOutput {
+  readonly directory: string;
+  readonly file: string;
+  readonly directoryStamp: BigIntStats;
+  fileStamp: BigIntStats | null;
+}
+
+function sameFileIdentity(a: BigIntStats, b: BigIntStats): boolean {
+  return a.dev === b.dev && a.ino === b.ino && a.birthtimeNs === b.birthtimeNs;
+}
+
+function unchangedFile(a: BigIntStats, b: BigIntStats): boolean {
+  return sameFileIdentity(a, b) && a.size === b.size &&
+    a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
+}
+
+function assertReviewDirectory(output: OwnedReviewOutput): void {
+  const stamp = lstatSync(output.directory, { bigint: true });
+  const physical = realpathSync(output.directory);
+  const expected = resolve(output.directory);
+  const samePath = process.platform === 'win32'
+    ? physical.toLowerCase() === expected.toLowerCase()
+    : physical === expected;
+  assert(stamp.isDirectory() && sameFileIdentity(stamp, output.directoryStamp) &&
+    samePath && firstReparseAncestor(output.directory) === null &&
+    !relativePathCrossesLink(dirname(output.directory), basename(output.directory)),
+  'the owned review directory was replaced or crosses a link/junction');
+}
+
+function createReviewOutput(): OwnedReviewOutput {
+  const root = resolve(tmpdir());
+  assert(firstReparseAncestor(root) === null &&
+    !relativePathCrossesLink(dirname(root), basename(root)),
+  'the review temporary directory crosses a link/junction');
+  const directory = mkdtempSync(join(root, 'native-agent-review-'));
+  try {
+    const output: OwnedReviewOutput = {
+      directory,
+      file: join(directory, 'final-message.json'),
+      directoryStamp: lstatSync(directory, { bigint: true }),
+      fileStamp: null,
+    };
+    assertReviewDirectory(output);
+    assert(!existsSync(output.file), 'the new review output path already exists');
+    return output;
+  } catch (error) {
+    throw new Error(`review output setup failed; owned directory retained at ${directory}: ${String(error)}`);
+  }
+}
+
+function readReviewOutput(output: OwnedReviewOutput): string {
+  assertReviewDirectory(output);
+  const named = lstatSync(output.file, { bigint: true });
+  assert(named.isFile() && named.nlink === 1n &&
+    !relativePathCrossesLink(output.directory, basename(output.file)),
+  'the final review output is not a single-link regular file');
+  output.fileStamp = named;
+  assert(named.size > 0n && named.size <= BigInt(REVIEW_FINAL_MAX_BYTES),
+    'the final review output is empty or exceeds 64 KiB');
+  const fd = openSync(output.file, 'r');
+  try {
+    assert(unchangedFile(named, fstatSync(fd, { bigint: true })),
+      'the final review output changed while opening it');
+    const bytes = Buffer.alloc(REVIEW_FINAL_MAX_BYTES + 1);
+    let size = 0;
+    while (size < bytes.length) {
+      const count = readSync(fd, bytes, size, bytes.length - size, null);
+      if (count === 0) break;
+      size += count;
+    }
+    assert(size > 0 && size <= REVIEW_FINAL_MAX_BYTES && BigInt(size) === named.size &&
+      unchangedFile(named, fstatSync(fd, { bigint: true })) &&
+      unchangedFile(named, lstatSync(output.file, { bigint: true })),
+    'the final review output changed while reading it');
+    assertReviewDirectory(output);
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, size));
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function removeReviewOutput(output: OwnedReviewOutput): void {
+  assertReviewDirectory(output);
+  let stamp: BigIntStats | null = null;
+  try {
+    stamp = lstatSync(output.file, { bigint: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  if (stamp !== null) {
+    assert(stamp.isFile() && stamp.nlink === 1n &&
+      !relativePathCrossesLink(output.directory, basename(output.file)) &&
+      (output.fileStamp === null || unchangedFile(output.fileStamp, stamp)),
+    'the owned review output changed before cleanup');
+    unlinkSync(output.file);
+  } else {
+    assert(output.fileStamp === null, 'the consumed review output disappeared before cleanup');
+  }
+  // An unexpected entry must survive: never recursively remove this directory.
+  rmdirSync(output.directory);
+}
+
 /**
  * Run ONE native Codex review of a completed round.
  *
@@ -611,6 +723,31 @@ export async function runUnifiedReview(
     reviewedAt: null,
   } as const;
   const maxChars = options.maxTextChars ?? DEFAULT_TEXT_TAIL_CHARS;
+  let ownedOutput: OwnedReviewOutput | null = null;
+  let stopConfirmed = false;
+  const finish = (result: UnifiedReviewResult): UnifiedReviewResult => {
+    if (ownedOutput === null) return result;
+    if (!stopConfirmed) {
+      return {
+        ...result,
+        reason: `${result.reason ?? ''}; owned review output retained at ${ownedOutput.directory}: ` +
+          'this execution has no confirmed tree stop',
+      };
+    }
+    try {
+      removeReviewOutput(ownedOutput);
+      return result;
+    } catch (error) {
+      return {
+        ...base,
+        status: 'failed',
+        code: 'reviewer-output-cleanup-failed',
+        reason: `${result.reason ?? ''}; owned review output cleanup failed at ` +
+          `${ownedOutput.directory}: ${String(error)}`,
+        outputTail: result.outputTail,
+      };
+    }
+  };
 
   const subject = [
     'You are reviewing ONE completed execution round of a multi-agent orchestrator.',
@@ -624,6 +761,19 @@ export async function runUnifiedReview(
   ].join('\n');
   const prompt = reviewInstructions(subject);
 
+  if (options.reviewer === 'codex') {
+    try {
+      ownedOutput = createReviewOutput();
+    } catch (error) {
+      return {
+        ...base,
+        status: 'unavailable',
+        code: 'reviewer-output-setup-failed',
+        reason: `the reviewer output location could not be prepared: ${String(error)}`,
+      };
+    }
+  }
+
   let handle: RunHandle;
   try {
     handle = reviewer.review({
@@ -634,48 +784,78 @@ export async function runUnifiedReview(
       // Codex only: ask the CLI itself to constrain the reply to the static
       // schema. The adapter recognises this selector and takes its fresh exec
       // profile. Other reviewers' requests are unchanged.
-      ...(options.reviewer === 'codex'
-        ? { extraArgs: ['--output-schema', REVIEW_OUTPUT_SCHEMA_PATH], sandbox: 'read-only' }
+      ...(ownedOutput !== null
+        ? {
+            extraArgs: [
+              '--output-schema', REVIEW_OUTPUT_SCHEMA_PATH,
+              '--output-last-message', ownedOutput.file,
+              '-c', 'analytics.enabled=false',
+            ],
+            sandbox: 'read-only',
+          }
         : {}),
     });
   } catch (e) {
     // Could not even START: adapter missing, agent unknown, capability refused.
-    return {
+    return finish({
       ...base,
       status: 'unavailable',
       reason: `the reviewer could not be started: ${(e as Error).message}`,
       code: 'reviewer-unavailable',
-    };
+    });
   }
 
   let run: RunResult;
   try {
     run = await handle.result(options.timeoutMs);
   } catch (e) {
-    return {
+    return finish({
       ...base,
       status: 'unavailable',
       reason: `the reviewer did not produce a result: ${(e as Error).message}`,
       code: 'reviewer-no-result',
-    };
+    });
+  }
+
+  if (ownedOutput !== null) {
+    try {
+      assert(typeof handle.taskId === 'string' && handle.taskId.trim().length > 0 &&
+        run.taskId === handle.taskId && run.agentId === handle.agentId &&
+        handle.agentId === options.reviewer, 'the reviewer result belongs to a different execution');
+      stopConfirmed = run.cleanup?.treeStopConfirmed === true;
+    } catch (error) {
+      return finish({
+        ...base,
+        status: 'failed',
+        code: 'reviewer-result-identity-mismatch',
+        reason: String(error),
+        outputTail: tailText(run.output ?? '', maxChars),
+      });
+    }
   }
 
   if (run.state !== 'succeeded') {
-    return {
+    return finish({
       ...base,
       status: 'failed',
       reason: run.error?.message ?? `the reviewer ended ${run.state}`,
       code: run.error?.code ?? `reviewer-${run.state}`,
       outputTail: tailText(run.output ?? '', maxChars),
-    };
+    });
   }
 
   // A succeeded review still has to produce a VALID verdict. Prose that does not satisfy
   // the contract is `failed`, not a pass — this is what stops "the reviewer was chatty"
   // from reading as approval.
   let verdict: ReviewVerdict;
+  let verdictOutput = run.output;
   try {
-    const parsed = normalizeReviewOutput(run.output) as Record<string, unknown>;
+    if (ownedOutput !== null) {
+      assert(run.exitCode === 0 && run.signal === null && stopConfirmed,
+        'the reviewer has no successful native exit and confirmed tree stop');
+      verdictOutput = readReviewOutput(ownedOutput);
+    }
+    const parsed = normalizeReviewOutput(verdictOutput) as Record<string, unknown>;
     const reviewedAt = options.now();
     verdict = validateReviewVerdict({
       ...parsed,
@@ -683,16 +863,16 @@ export async function runUnifiedReview(
       reviewedAt,
     });
   } catch (e) {
-    return {
+    return finish({
       ...base,
       status: 'failed',
       reason: `the reviewer's reply did not satisfy the verdict contract: ${(e as Error).message}`,
       code: 'reviewer-output-invalid',
-      outputTail: tailText(run.output ?? '', maxChars),
-    };
+      outputTail: tailText(verdictOutput ?? '', maxChars),
+    });
   }
 
-  return {
+  return finish({
     status: 'completed',
     reviewer: options.reviewer,
     verdict,
@@ -703,10 +883,10 @@ export async function runUnifiedReview(
       ? []
       : [`the reviewer suggests "${verdict.recommendedAction}" — a suggestion for YOUR next round; ` +
          'nothing was re-run automatically'],
-    outputTail: tailText(run.output ?? '', maxChars),
+    outputTail: tailText(verdictOutput ?? '', maxChars),
     code: null,
     reviewedAt: verdict.reviewedAt,
-  };
+  });
 }
 
 // ---------------------------------------------------------------------------

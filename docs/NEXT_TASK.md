@@ -1,24 +1,17 @@
-# 唯一下一任务 — P0-4.17 最终答复出口与进程局部analytics关闭（待有界授权）
+# 唯一下一任务 — P0-4.18 既有Review夹具迁移与单文件离线验收（待明确测试授权）
 
-P0-4.16只读核对完成（PROJECT_BASELINE.md §7.77）。官方-o适合分离最终答复，但固定官方exec在thread/unsubscribe与client.shutdown后才写文件，不能单独解决退出超时。本机stdin无开放写管道证据，不加close补丁；TIME_WAIT/Job/socket或telemetry根因未确立。当前不授权源码实施/开发模型/真实Reviewer/新Round。
+P0-4.17单文件实现与静态检查完成，当前PARTIAL（PROJECT_BASELINE.md §7.78）。Owner本轮仅批准Codex直接实现、一次typecheck/diff，不含测试；未启动OpenCode/Reviewer/LAYA/Round。不得将typecheck0或信任边界assert当行为负控通过。
 
-## 唯一候选实施范围
+## 已实现范围
 
-仅为现有结构化Codex Round Review接入官方--output-last-message，复用现有extraArgs、文件资产和严格normalizeReviewOutput/validateReviewVerdict：
+仅src/orchestration/unified-review.ts：Codex结构化Review的唯一owned -o文件、进程局部analytics.enabled=false；同一handle/task/agent且succeeded/exit0/signalnull/Job停止后才读取，最多64KiB、UTF-8严格、路径与metadata检查，原normalize/validate及宿主字段保留。未知停止保留owned位置，cleanup失败拒绝完成；其他Reviewer保持原路径。
 
-- 宿主创建独立、唯一、owned的本次文件位置，绑定本次Review/Run身份，不接受预存/旧文件、越界/重解析路径、空/非法或超量内容；保留原始JSONL与过程说明作为事件证据。
-- 只有现有运行实际succeeded、可信退出和Job停止均成立后读取该最终文件；读/写失败必须明确拒绝。文件存在、turn.completed、模型pass都不覆盖timed_out/failed。
-- 禁止正则抽JSON、取最后花括号、生产读取私有rollout、放宽schema、回填旧Round或改变原生停止/任务状态权威。其他Agent和非结构化Review兼容路径保持。
-- 有界实施时确认最小adapter/Review/资产生命周期接线位置，不新建通用输出平台、Runtime、Planner或Scheduler；不顺带修CLI重复--extra=解析或增加其他功能。
+## 唯一最小待授权范围
 
-## 暂不实施的退出问题
+在不修改/放宽生产门禁前提下，迁移既有tests/unified-review.test.ts中的假Reviewer，使其提供正确handle/RunResult身份，并按请求的--output-last-message确实写入本次文件。覆盖合法最终JSON与混合过程输出分离、缺失/空/错误/超量/非法UTF8文件、错误身份/失败退出/未确认停止不通过，以及非Codex兼容路径；可复用原有受控fixture，不新建测试框架或真实Agent入口。首片只改这一既有测试文件；其他suite中的fake适配另行静态定位，不自动扩大。
 
-保留P0-4.15最终JSON82.074s、turn.completed82.168s、运行90.108s超时及7939ms尾段事实。固定源码有unsubscribe/shutdown异步等待，内部常量45s，现已核对官方精确版本tag及commit4ebc485（仍未比对安装资产字节），不能据此扩大90s或添加猜测grace。需版本对应源码/既有日志才能定位本机具体卡点；没有新模型试跑。
+如获明确授权，只通过已登记的白名单Runner、offline bootstrap和外层contained机制运行该单文件一次，不direct node回退、不运行全量或其他suite、不重复验证；确认无真实Agent启动和owned Job final0。停止未确认的模拟必须由现有假Transport提供，不启动真实模型。缺白名单登记/安全入口时直接报告，不改Runner绕过限制。
 
-Owner批准有限实现范围及有效开发费用事实后，仍由OpenCode实施、Codex独立审核；最多一次实现加一次有据返工。遵守默认零新增测试和禁止重复验证规则，实施验收范围需与授权一致。当前不继承过期Go/Reviewer费用窗口，不启动第三次相同Reviewer验证、Worker/LAYA/Round。
+当前仍遵守默认零新增/修改测试，须Owner明确授权上述单文件改动和一次运行后执行；本文件是建议，不是测试授权。若需要开发模型，另核对有效费用事实；OpenCode上次启动被自动审批拦截，不用替代启动方式绕过。本轮Codex实施者例外不自动延续。
 
-资料与源代码行号：project-progress/p0416-final-output-source-review-20261020/assessment.json（ignored）；官方非交互文档https://learn.chatgpt.com/docs/non-interactive-mode 。P0-4.16只读核对完成不等于真实Review/E2E PASS，9/26项历史边界保持。
-
-精确版本补充：官方Tag/Release已确认；资料中无公开锚点和两条AppServer/Lifecycle进入日志不采纳。精确源码支持后台drain/analytics flush等待候选，但没有本机trace证明实际卡点；不新增泛查/模型试跑。证据exact-version-followup.json，基线§7.77补充；本文件唯一候选范围保持。
-
-直接调研补充：精确版本analytics/client.rs确认HTTP10s/flush25s，-c analytics.enabled=false使queue=None并让flush直接返回，可通过既有extraArgs在本次结构化Reviewer局部设置，不改全局配置或runtime。该候选应与唯一owned -o文本接线同属有限范围，但不宣称解决退出根因或关闭所有自定义OTLP。现有RUST_LOG不继承/默认error过滤与无会话日志使具体await不可定位；不再依据静默推测stdin/Job，不扩deadline、不试模型。证据project-progress/p0416-direct-exit-research-20261020/research.json，基线§7.77直接补充；当前仍不授权实施或调用。
+真实Reviewer/Round仍无授权；P0-4.13/15超时、旧Round/Human Gate PARTIAL、9/26历史失败与全局模型保持。后续行为验收未完成前不宣称P0-4.17完整PASS或回归保持全绿。
