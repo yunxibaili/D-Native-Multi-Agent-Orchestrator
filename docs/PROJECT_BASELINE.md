@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-20。当前见§7.75：P0-4.14只读调研过滤完成。外部建议中的enable_mcp/check_for_updates未获官方配置定义支持；本机时间线不能证明64s由schema或Skill导致。仅形成下一次Reviewer进程局部停用非必要Apps/MCP的待授权方案，本轮0模型/测试/源码配置改动，旧验收仍BLOCKED/PARTIAL。
+更新：2026-10-20。当前见§7.76：P0-4.15单Reviewer输出了最终JSON pass，但原生进程90s超时，未取得可接受Review；过程说明混入最终输出的采集缺口已实证。两次连续超时后停止真实调用，Job最终0，旧Round仍PARTIAL；下一步仅离线核对最终消息与退出机制。
 
 ## 1. 权责与当前结论
 
@@ -876,22 +876,34 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 - 当前仅只读方案，无需改生产源码、写新调度层或委派实现。若Owner批准新1个Reviewer会话则按原始事件比较连接诊断和阶段耗时，失败即停；不继承上一会话已耗尽预算、不自动重试、不启动Worker/LAYA/Round。下一真实调用仍需单独授权和有效费用事实。
 - 依据：[官方配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)、上述固定官方schema和本机project-progress/p0414-research-assessment-20261020/assessment.json。本轮除基线/NEXT/本机进度外零修改；未读取auth.json/API Key/令牌，无新进程清理义务。
 
+## 7.76 P0-4.15 可选连接缩减单次真实验证（2026-10-20，PARTIAL，未取得可接受Review）
+
+- Owner“可以”批准本次唯一1个Reviewer会话；费用沿用仍有效的07:05:15Z–07:35:15Z声明，实际运行07:31:42.612Z–07:33:13.029Z在窗口内，没有刷新或滚动费用事实。该会话额度已用尽、声明已到期；无新增Worker/LAYA POST/Round/开发委派/测试，不继承未用调用。
+- 经既有review CLI→Codex adapter→Native Runtime/owned Job，固定gpt-6.1-sol、high、read-only、原prompt/schema和90000ms真实deadline；仅进程extraArgs设置features.apps=false、mcp_servers.node_repl.enabled=false、mcp_servers.github.enabled=false。未修改生产/全局配置、模型、推理强度、权限或目录缓存。
+- Task tsk_53fc5683131b44e1b7dc，原生Session 01a15839-274a-7083-9e9c-d337b003d6c5。原生turn_context核对model/effort/sandbox；模型只读Skill和既有add.js/add.test.js，没有重跑测试或修改产物。聚合usage input80249/cached50432/output790/reasoning237/total81276，不能当作单次上下文大小或独立账单证明；费用仍依据Owner包含额度声明。
+- 时间线：启动至turn_started15478ms，首次工具50522ms；最终JSON agent_message在82074ms，内容verdict=pass、findings2、recommendedAction=none；native turn.completed在82168ms。但native进程未在deadline前退出，90108ms RunResult.state=timed_out，error=TIMED_OUT，exitCode/signal=null。turn.completed至session.failed间隔7939ms。最终JSON和turn.completed仅是模型完成证据，不是进程树停止/运行成功，acceptedReviewVerdict仍null；没有修改或追认旧Round/Human Gate。
+- 本次MCP transport诊断0，模型目录刷新timeout仍1；前次首次工具约79.4s，本次50.5s，单样本不能证明开关造成加速或已经排除所有插件/managed连接。初始化仍约15.5s，不能将剩余时间全部归给schema/Skill。CLI turn.completed之后未退出的具体原因未定位；受控停止后rootExit1，不证明模型回合前后曾自然成功退出。
+- 确认另一个实际采集缺口：产品JSONL两条agent_message只有id/type/text，无phase；codex.ts全部ctx.sink.noteText，session.ts追加TailBuffer，故RunResult.output为过程说明+最终JSON。原生本机rollout的阶段元数据可交叉区分commentary/final_answer，但不作为生产私有读取通道。即使以后进程成功退出，此混合文本仍不满足严格JSON解析；本轮未改parser、不用正则捞JSON、不回填成功。单独保存最终事件为诊断，不是已接受verdict。
+- 两层validated Job均assignedBeforeResume=1/phase=done/complete=1/treeStopped=1/activeProcessesFinal=0；内层stopRequested=1、status=terminated，外层status=success/rootExit1。外层launcher exit0不是产品成功。cleanupFailures=[]；保留owned control/stop标记为证据，无按裸PID或名称杀进程。
+- 既有产物、原始latest RoundResult、全局config哈希保持；没有源码/测试/生产配置变更。原始UTF-8事件/双流、调用参数、时间线、最终JSON诊断、身份与清理核对位于ignored project-progress/p0415-review-local-connections-20261020/，旁路audit只读。P0-4.13及本次连续两次真实Reviewer超时，执行两次失败熔断，不启动第三次重复验证或额外开发模型调用。
+- 唯一下一步是离线/源码核对最终消息的官方可信出口及原生turn完成后的退出机制；可研究官方--output-last-message，但不得将最终文本存在等同于成功、忽略deadline/Job或削弱parse/validate。实现需新的有界授权与开发费用事实；本轮仅更新文档/进度，按既有授权精确归档文档审核分支，不自动进入真实E2E。
+
 <!-- project-progress:begin -->
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-20T07:24:48.8211825+00:00",
+  "updatedAt": "2026-10-20T15:41:31.4757719+08:00",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-4.14",
-    "name": "只读调研过滤完成，真实Reviewer仍BLOCKED",
+    "id": "P0-4.15",
+    "name": "真实Reviewer部分证据完成，运行超时未验收",
     "status": "blocked",
-    "summary": "两项外部总开关键未获官方配置定义支持；201ms Skill读取不证明64s阻塞。形成仅进程局部关闭非必要Apps/MCP的待授权方案，0新模型/测试/源码修改。"
+    "summary": "一次gpt-6.1-sol/high/read-only会话82.074s输出JSON pass，82.168s turn.completed，但90.108s运行超时；过程说明与最终JSON混合采集缺口已确认。两次连续超时后停止真实调用，Job final0，旧Round仍PARTIAL。"
   },
   "next": {
-    "id": "P0-4.15",
-    "name": "待新授权：单Reviewer进程局部关闭非必要Apps/MCP，保留其余条件",
+    "id": "P0-4.16",
+    "name": "仅离线：最终答复采集与turn.completed后退出机制核对",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -968,24 +980,24 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
   "blockers": [
     {
       "severity": "P1",
-      "kind": "当前验收缺口",
-      "title": "90s无verdict的根因未确立",
-      "detail": "外部“总开关”和时间归因需修正；仅已确认连接诊断及精确时间，不能猜测schema/Defender原因。",
-      "next": "新授权下一Reviewer会话仅局部关闭非必要Apps/MCP，其余变量保持；不保证有效，不自动调用。"
+      "kind": "真实验收缺口",
+      "title": "模型有最终JSON，但原生进程未在deadline内退出",
+      "detail": "82.168s turn.completed，至90s失败相隔7939ms；不能据此认定成功或残留子进程根因。",
+      "next": "两次连续Reviewer超时，停止真实调用；只核对安装版/官方退出路径和现有原始证据。"
     },
     {
-      "severity": "P2",
-      "kind": "版本边界",
-      "title": "官方schema/文档不代替安装版行为实测",
-      "detail": "候选覆盖在本机0.163.0-alpha.10.2及managed/plugin来源下未验证。",
-      "next": "既有固定模型/费用/安全规则保持，不添加无依据开关。"
+      "severity": "P1",
+      "kind": "输出采集缺口",
+      "title": "commentary与final JSON被共同追加到RunResult.output",
+      "detail": "产品JSONL agent_message无phase；codex adapter全部noteText，session TailBuffer累积。",
+      "next": "核对官方最终消息出口与现有资产生命周期，不用正则抽取、放宽严格parser或读取私有rollout作为生产通道。"
     },
     {
       "severity": "P2",
       "kind": "历史边界",
       "title": "旧Round仍PARTIAL，9/26项历史失败不变",
-      "detail": "本轮无测试/真实产品调用，不追认旧验收。",
-      "next": "保持有限准入与单独新授权。"
+      "detail": "本轮仅1Reviewer，无Worker/LAYA/Round/测试；账单仅Owner有效声明，无独立金额实测。",
+      "next": "不回填旧结果，不继续第三次相同验证，不增加时限或更换模型。"
     }
   ],
   "tasks": [
@@ -1347,9 +1359,21 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
       "status": "done",
       "deliverable": "权威配置键核对、事实/推断分离、最小进程级候选",
       "evidence": "§7.75只读完成，0模型/CLI探针/测试/源码配置修改，运行状态未提升"
+    },
+    {
+      "id": "P0-4.15",
+      "title": "Reviewer可选连接进程级缩减验证",
+      "status": "blocked",
+      "deliverable": "单次原生会话，进程局部关闭Apps/已知MCP，保留模型/high/schema/90s/只读",
+      "evidence": "§7.76：JSON pass仅诊断；运行timed_out，accepted verdict=null；混合输出缺口实证、全部Job final0，授权已用完"
     }
   ],
   "checks": [
+    {
+      "name": "P0-4.15单次Reviewer独立核对",
+      "source": "PROJECT_BASELINE.md §7.76；project-progress/p0415-review-local-connections-20261020/independent-review.json",
+      "result": "PARTIAL/未验收：最终JSON82.074s、turn.completed82.168s、原生timed_out90.108s；MCP诊断0/目录超时1，不作单样本因果推断。1Reviewer，0Worker/LAYA/Round/重试；Job final0，旧产物/结果/全局配置保持。"
+    },
     {
       "name": "直接Go委派恢复及半途现场审核",
       "source": "PROJECT_BASELINE.md §7.71；project-progress/go-handoff-delegation-20261020",
