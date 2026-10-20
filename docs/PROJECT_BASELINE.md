@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-20。当前见§7.68：P0-4.11预检BLOCKED经独立复核保持；专用文件被外层Space Bunny覆盖，inline内容未透传。唯一最小建议是获Owner新批准后，在新Demo自有根增加就近opencode.json，不改已有父/全局配置或生产allowlist；本机尚未验证。旧费用窗口已过期，当前调用关闭。P0-4.7/4.9静态PASS、P0-4.10只读PASS及P0-4.6真实PARTIAL保持。
+更新：2026-10-20。当前见§7.71：Owner恢复Codex直接委派OpenCode并独立审核，本轮Go wrapper实际接手；Worker因外目录权限未完成最终交接，不记PASS。Codex核对发现新Demo配置/stage-check已通过，遗留LAYA已按owned Job安全停止。源码不变，产品真实Round授权窗口已过期，当前不继续推理。
 
 ## 1. 权责与当前结论
 
@@ -789,6 +789,7 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 - 按“发现有效合并冲突即停止”执行：未运行stage-check，未生成/沿用digest，未启动LAYA，未发health/POST，无Worker/Reviewer会话、无机器批准测试、无Round、无Human Gate；仅两次本地`opencode debug config`（0/0）作配置取证，不是模型调用或真实推理。授权窗口内未发生任何真实调用，过期后不得补用。
 - 清理：无owned进程/服务启动，检查8077无listener且无laya python进程；本轮新建Demo目录已删除、旧Demo及祖先/全局配置未改；无生产源码/测试/安装/commit/push/merge改动。原始配置取证、哈希、调用计数与清理事实见ignored project-progress/p0411-preflight-blocked-20261020/facts.json。
 - P0-4.11仍BLOCKED而非PARTIAL：未产生新的RoundResult/Review/Gate证据；P0-4.6真实PARTIAL、P0-4.10只读PASS保持，68/100与9/26历史债务不变。后续如需执行，Owner须先明确允许调整祖先配置/有效路由（或批准最小allowlist透传）并重新提供未过期的费用声明，不能由本次转述或旧声明代替。
+
 ### 7.68 P0-4.11配置冲突独立审核（BLOCKED保持；就近配置候选未执行）
 
 - 已读取§7.67、NEXT_TASK、原授权/窗口记录、两份debug有效配置的脱敏字段、facts及cleanup；没有输出provider options/凭据值，也未重新运行debug或网络/进程探针。两份JSON分别确为Space Bunny及DeepSeek的model/small_model/whitelist，退出0来自Worker保存记录；当前六个源码SHA256及外层配置完整哈希与facts相符，本轮已删Demo仍不存在。
@@ -798,6 +799,30 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 - 计数收紧：证据支持报告0次产品Round/Worker/Reviewer/LAYA/机器测试，另有2次本地debug进程，不能将facts.processes.started=0解释为全部OS进程启动为0。删除Demo事实已复核；无8077 listener、无laya进程及清理来自Worker保存记录，本轮未独立重探，无debug Job控制记录可据此宣称全机/所有进程停止。未做账户账单审核，不把“无模型调用”提升为独立费用审计。
 - 本轮只维护两份文档与ignored进度/审核记录，真实调用/测试/诊断重跑均0，源码不变。P0-4.6真实PARTIAL及P0-4.7/4.9静态PASS保留，历史9/26债务与68/100信用不变。阶段文档精确归档、远端SHA与临时索引清理见project-progress/p0411-independent-review-20261020。
 
+### 7.69 P0-4.11配置修复执行口径（Owner指定；未授权/未执行）
+
+- Owner于2026-10-20指定获批后的修复方式：只在新Demo自有根目录增加`opencode.json`，workspace保持为空；顶层`model`/`small_model`固定`opencode/deepseek-v4.1-flash-free`，`enabled_providers:["opencode"]`，`provider.opencode.whitelist:["deepseek-v4.1-flash-free"]`，预置`$schema`；不加入权限放宽、插件/MCP/凭据，不设置或依赖`OPENCODE_CONFIG_CONTENT`，不改已有父目录、全局配置或生产allowlist。
+- 只允许一次最多30秒的contained无推理有效配置核验：使用既有owned containment入口，cwd为新Demo workspace，读取有效`model`/`small_model`/`provider.opencode.whitelist`及来源；完整保存stdout/stderr原始字节、退出码和Job控制事实，输出仅脱敏模型/白名单/来源。主/辅助模型或白名单不一致、超时、需要追加诊断、或父/全局覆盖仍生效，立即停止并清理，不进入stage-check/Round，不追加第二次诊断。
+- 继续条件收紧为四项同时满足：Owner重新授权P0-4.11、提供当前30分钟费用声明、上述唯一核验通过、窗口有效；缺一即只报告缺项并停止。核验通过不等于账户可调用或零收费，也不替代stage-check/digest。
+- 本条仅记录Owner指定的执行口径，不是新的费用/调用授权，也不是配置READY。当前未创建新Demo、未运行核验/CLI/服务/模型；旧11:26:24–11:56:24窗口已过期且未消耗真实调用。P0-4.11保持BLOCKED，P0-4.6真实PARTIAL、P0-4.10只读PASS、9/26历史债务及68/100估算不变。
+
+### 7.70 OpenCode Go DeepSeek单次可调用性验证（真实最小问答PASS；非P0-4.11续跑）
+
+- Owner明确要求试用OpenCode Go的DeepSeek V4.1 Flash。复用官方Go文档、公开本机目录与既有CLI/Job路径；准确ID为opencode-go/deepseek-v4.1-flash，区别于opencode/deepseek-v4.1-flash-free。当前公开目录context=1000000及非零token价格仅为元数据，不是订阅余量或新账单。Go官方说明Use balance开启可在额度耗尽后使用余额；本次沿用Owner此前Go订阅有效/额度足够/Use balance关闭的确认及当前明确试调请求，未读取账户付款状态，不声称本轮重新核实。
+- 在本轮自有TEMP空目录仅配置主/small为同一Go模型、provider及白名单仅该路由，工具ask且external_directory deny；未改全局模型/OPENCODE_AGENT_MODEL、项目产品池、旧Demo或源码。通过genuine CLI run --live-agent及既有sealed Job启动，30秒会话deadline，仅固定回复GO_PROBE_OK，不发项目代码、不请求工具、不恢复半途任务/产品Round。
+- 一次模型会话ses_ea80d9c7bffezIsnrAotCW3iYm，任务tsk_12c02c70c6b84e309030；原生导出复核providerID=opencode-go、modelID=deepseek-v4.1-flash、finish=stop、一个assistant。真实输出GO_PROBE_OK、state=succeeded、exit0/signal null、5651ms、工具0，未观察到重试。usage total8028、costUsd=0.000943026为原生估算用量，不等于新增扣费或独立零费用证明。
+- 起初合并准备/执行命令被自动审批以blocked by policy拒绝，未启动目标；拆分后首次launcher因裸node无法定位而create-process-failed/Win32Error=2，目标尚未创建。改用绝对Node路径后完成上述唯一模型会话，未重跑模型；失败控制记录保留。原生export只读核对不创建第二个模型会话，未读取auth.json/Key/token。
+- 原生任务cleanup.treeStopConfirmed=true；外层及只读export两个validated control均success/done/assignedBeforeResume=1/treeStopped=1/ActiveProcessesFinal=0。自有TEMP目录已在绝对路径/所有权/Job事实核对后删除，cleanupFailures=0；OpenCode自身数据库原生会话按既有状态保留。HEAD/index保持，未执行仓库测试/typecheck、LAYA或Native Review，无源码/全局配置修改。
+- 完整本机证据见ignored project-progress/go-deepseek-callability-20261020/result.json、native-identity.json、task.json、transcript及控制记录。本次只证明当前Go入口能回答一个最小问题，不证明文件交付或完整E2E，也不把Go订阅模型写成Free。P0-4.11产品授权/模型池/既有进度不据此变更；Owner所述半途任务需实际交接证据，不能自行续跑或改写完成状态。本片仅维护文档与进度，不另建Git归档分支。
+### 7.71 直接Go开发委派恢复与半途现场独立核对（Worker交接未完成；既有准备证据有效）
+
+- Owner明确“暂时不用给提示词，按照之前一样直接给opencode发任务，然后你审核”。当前会话恢复Codex调查/直接bounded委派/独立审核，使用刚验证的opencode-go/deepseek-v4.1-flash作为本轮开发辅助入口；通过进程局部OPENCODE_AGENT_MODEL覆盖，未改用户环境或AGENTS/原生安装。产品P0-4.11的Free模型池不自动改成Go，本次没有新产品Round授权。
+- 实际调用既有opencode-agent implement（Git Bash），owned sealed Job，90s上限，任务仅只读接手盘点；会话ses_ea8082d53ffe42TJFKHQhwoLeW，52566ms、wrapper/launcher exit0。原生export确认10条assistant均opencode-go/deepseek-v4.1-flash。26个工具事件，5次仓库外文件read被原生external_directory自动拒绝，结束finish=tool-calls且无最终文本；因此仅DELEGATION VERIFIED，交接报告INCOMPLETE，不能以exit0记交付PASS。未放宽权限、未追加第二轮实现或绕过原生拒绝；Worker前后全部228个原文件哈希/HEAD/index相同，未运行检查/测试或修改源码。
+- Worker目录盘点发现此前未交回的D:/workbench-demo/p0411-20261020T040805Z。Codex独立核对原有config-check.facts.json与stage-check.stdout.json：就近配置pass=true、882ms，主/small/whitelist均Free路由，既有Job stop/final0；stage-check ok=true，digest=1848249bf5edc831a72a8cb5832ffb72553eeeeb307e0747167a378c0bcbfbab。workspace与状态文件均0。旧“祖先配置冲突未解决”已不再是该Demo当前事实，无需增加生产allowlist实现。
+- 保存的新授权记录为2026-10-20 12:08:05至12:38:05（UTC04:08:05–04:38:05），当前已过期；本次只核对原记录，不刷新pool/digest，不将Go开发能力证明当产品费用声明。没有找到已保存的Round/Worker任务执行证据；两份LAYA日志为空，不能仅凭空日志认证历史POST总数或断言服务从未启动。
+- 实际只读进程/端口核对发现8077仍由123200监听，Python链120072→123200属于launcher122800。其已核实命令明确指向上述Demo的laya-control.txt/laya-stop.marker，创建时刻12:15:13；这是先前中断的owned Job。Codex只写匹配的既有stop marker，未启动服务或请求health/POST，未按PID/名称强杀。最终control complete=1、phase=done、launcherStatus=terminated、stopRequested=1、assignedBeforeResume=1、treeStopped=1、ActiveProcessesFinal=0，rootExitCode=1为停止事实；launcher退出、8077关闭。旧Demo和证据保留，仅增加其停止标记和完成控制记录，不删除半途成果。
+- 当前辅助委派与只读export Job也已验证停止；本轮自有TEMP配置目录删除，cleanupFailures=0，用户全局模型仍为Free原值，产品路由不变。全部证据见ignored project-progress/go-handoff-delegation-20261020（任务、原生事件/身份、运行/审查、现存准备事实与LAYA清理）。没有Worker完整最终报告或行为测试，不据此封板E2E；P0-4.6真实PARTIAL保持。
+- 当前无需制造开发切片。唯一后续是Owner决定是否将下一次产品Worker也切Go并确认对应新费用/执行范围，再由Codex组织唯一真实链；若产品仍用Free，则不得把本次Go辅助授权或已过期声明借给它。准备材料和旧digest可以查阅但不能直接凭旧窗口执行。基线/NEXT/页面同步，阶段文档由Codex精确归档，主现场及历史债务/68信用保持。
 ## 8. 规划估算与本机快照
 
 沿用历史十项权重信用68/100（固定分母为完整后端需求，不含正式UI）；页面按5%档显示约70%、剩30%，旧合理剩余区间30–50%。这不是工时、可用率、自动化完成率或MVP成功概率。本轮文档不增分；下一真实E2E仍未成功，必须看具体阻塞和证据，不能用百分比代替它。
@@ -806,18 +831,18 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-20T03:58:31.2793780Z",
+  "updatedAt": "2026-10-20T06:26:52.0630832Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
     "id": "P0-4.11",
-    "name": "单次真实Round预检BLOCKED（OpenCode有效配置冲突）",
+    "name": "新Demo准备已通过；真实Round等待新费用/执行范围",
     "status": "blocked",
-    "summary": "独立复核保持BLOCKED：两份配置及透传链相符；0产品调用、2本地debug。候选改为新Demo自有根就近配置，尚未核验或获授权；旧窗口过期，不改生产allowlist。"
+    "summary": "接手发现新Demo配置与stage-check已通过，原配置阻断关闭；遗留LAYA已按owned Job停止且8077关闭。Go辅助委派实证但未完成最终文本，源码未改；产品授权窗口已过期。"
   },
   "next": {
     "id": "P0-4.11",
-    "name": "待Owner批准新Demo就近配置及重新授权单次真实闭环",
+    "name": "待Owner确认产品模型与新的费用/执行范围后，直接委派唯一真实闭环",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -895,9 +920,9 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
     {
       "severity": "P1",
       "kind": "当前执行阻断",
-      "title": "OpenCode有效配置被祖先space-bunny覆盖",
-      "detail": "以新Demo workspace为cwd时，专用OPENCODE_CONFIG的deepseek主/small/whitelist被D:/workbench-demo/opencode.json覆盖；OPENCODE_CONFIG_CONTENT可覆盖但不在spawn ENV_ALLOWLIST，Worker收不到。",
-      "next": "优先申请仅在新Demo自有根新增就近opencode.json，保持workspace空且不改已有父/全局/生产allowlist；与新费用声明及单次Round一并授权。候选尚未核验。"
+      "title": "新Demo配置阻断已解除，当前等待有效执行窗口",
+      "detail": "此前冲突已由新Demo就近配置解决，保存的882ms配置核验及stage-check均通过；本轮接手已安全停止遗留LAYA，旧12:08:05–12:38:05费用窗口已过期。",
+      "next": "Owner已指定仅在新Demo根新增就近opencode.json，workspace空，deepseek主/small/whitelist，$schema；最多一次30s contained无推理核验。尚待Owner同时重新授权并提供当前费用声明，核验通过且窗口有效后才继续；未执行、未改父/全局/生产allowlist。"
     },
     {
       "severity": "P1",
@@ -1258,10 +1283,25 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
       "title": "DeepSeek V4.1 Flash Free单次串行真实闭环",
       "status": "blocked",
       "deliverable": "新费用窗口内一次全新空Demo的LAYA→实现→机器验证→独立测试→验证→Codex Review→Human Gate",
-      "evidence": "预检BLOCKED：专用OPENCODE_CONFIG被祖先space-bunny覆盖，OPENCODE_CONFIG_CONTENT不在ENV_ALLOWLIST；0 stage-check/LAYA/POST/Worker/Reviewer/测试/Round，Demo已删、无进程。"
+      "evidence": "预检BLOCKED：专用OPENCODE_CONFIG被祖先space-bunny覆盖，OPENCODE_CONFIG_CONTENT不在ENV_ALLOWLIST；0 stage-check/LAYA/POST/Worker/Reviewer/测试/Round，Demo已删、无进程。Owner已指定新Demo根就近opencode.json+单次30s无推理核验口径（§7.69），仍未重新授权/执行。"
     }
   ],
   "checks": [
+    {
+      "name": "直接Go委派恢复及半途现场审核",
+      "source": "PROJECT_BASELINE.md §7.71；project-progress/go-handoff-delegation-20261020",
+      "result": "wrapper/原生Go身份实证；外目录权限拒绝且无最终报告，交接不记PASS。Codex核对新Demo配置/stage-check已通过，遗留LAYA受控停止final0/端口关闭；源码未改，产品窗口过期。"
+    },
+    {
+      "name": "Go DeepSeek单次真实可调用性",
+      "source": "PROJECT_BASELINE.md §7.70；project-progress/go-deepseek-callability-20261020/result.json与原生身份/Job记录",
+      "result": "最小问答PASS：1模型会话，opencode-go/deepseek-v4.1-flash，GO_PROBE_OK/exit0/5651ms/工具0；Job final0，owned已删。非E2E或账单证明，不切换产品池/恢复半途任务。"
+    },
+    {
+      "name": "P0-4.11配置修复口径记录",
+      "source": "PROJECT_BASELINE.md §7.69；Owner 2026-10-20指令",
+      "result": "仅记录指定口径：新Demo根opencode.json、workspace空、deepseek主/small/whitelist、$schema；最多一次30s contained无推理核验，失败即停。未重新授权/未提供费用声明，未创建Demo、未运行核验/CLI/服务/模型。"
+    },
     {
       "name": "P0-4.11预检BLOCKED独立复核",
       "source": "PROJECT_BASELINE.md §7.68；project-progress/p0411-independent-review-20261020；v1.19.3配置源码",
