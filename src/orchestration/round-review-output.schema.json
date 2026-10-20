@@ -1,0 +1,41 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "reason", "findings", "recommendedAction"],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["pass", "rework", "reject"]
+    },
+    "reason": {
+      "type": "string"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["location", "severity", "message", "evidence"],
+        "properties": {
+          "location": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["info", "minor", "major", "critical"]
+          },
+          "message": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "recommendedAction": {
+      "type": "string",
+      "enum": ["none", "rework", "assign"]
+    }
+  }
+}

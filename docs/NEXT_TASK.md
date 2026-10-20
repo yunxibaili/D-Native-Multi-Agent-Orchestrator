@@ -1,22 +1,22 @@
-# 唯一下一任务 — P0-4.12 Native Review契约有限只读映射（待Owner决定）
+# 唯一下一任务 — P0-4.13 单次Reviewer结构化协议验证（待新调用授权）
 
-当前事实见PROJECT_BASELINE.md §7.72。P0-4.11已真实运行一次，结论PARTIAL；本轮调用已用Worker2/2、Reviewer1/1、LAYA POST3/3，完成后停止。未用完的声明时间不构成追加调用授权。
+当前事实见PROJECT_BASELINE.md §7.73。Owner已批准Round独立审核改用专用codex exec --output-schema；OpenCode已完成三文件实施，Codex独立静态PASS。类型检查/diff各一次exit0，未运行测试/真实产品调用；不能宣称安装版协议或真实Review通过。
 
-## 已确认
+## 已实现
 
-- 产品Worker已由Owner明确切为opencode-go/deepseek-v4.1-flash。两原生Session实际一致，根add.js/add.test.js真实交付。
-- 两个P0-1批准测试的结构化code=0、treeStopConfirmed及身份绑定均真实投影/发布，不再是旧UNREPORTED；新RoundResult已按身份复制、哈希核对。源码/全局/祖先配置未改。
-- round-mvgba79g约91.2s，产品target退出1/CLI ok=false，外层launcher退出0；不可混同。Human Gate waiting_for_user，automaticPostRoundAction=none，所有owned Job final0、8077已关闭。
-- 原生Review确实收到reviewInstructions JSON要求，但ExitedReviewMode输出原生{findings,overall_correctness,overall_explanation,overall_confidence_score}，最终agent_message为自然语言；产品parse拒绝，verdict=null。不能再归因为缺少prompt，也不能将patch is correct自动转为整轮pass。
+- runUnifiedReview保持单次Runtime.review，Codex请求显式schema路径及read-only；adapter复用既有fresh exec profile/ManagedProcess，同模型、独立Session、deadline与清理不变。
+- 无schema的旧exec review保留；非法/重复schema selector及review+threadId拒绝。普通Worker调用不变。
+- verdict等模型判断仍须严格合法；reviewer/reviewedAt由主机绑定，无默认pass、无patch-is-correct转换。
+- P0-4.11仍PARTIAL：两个真实Go Worker/批准测试完成；旧Review无合法verdict，不回填或追认。
 
-## 唯一建议切片
+## 唯一最小待授权验证
 
-有限只读核对src/adapters/codex.ts的review profile/mapEvent、NativeReview事件/RunResult输出及src/orchestration/unified-review.ts/review-verdict.ts既有契约，结合本轮保存的native-review-items.json确定最小适配位置及语义。区分“原生补丁判断”与“Round完成/模型身份/证据充分性”，保持fail-closed，不新增第二套Review权威；先给精确方案再申请必要源码实施授权。
+只新增1个Codex gpt-6.1-sol独立审核Session，90s真实process deadline，失败不重试。复用D:/workbench-demo/p0411-20261020T040805Z的已交付add.js/add.test.js与本轮保存的真实Review packet；不重新启动Worker/LAYA，不创建新Round、不改旧任务状态或Human Gate。
 
-本轮不自动启动此下一片，不运行新Review/Worker/LAYA/Round/测试，不扩大模型预算。需要核对外部Codex CLI契约时按OpenAI官方资料/本机当前版本，以Gemini资料辅助，不能照搬猜测。不得修复或转换历史结果追认PASS。
+复用现有CLI review命令和--extra接口：额外分别传--output-schema与静态schema绝对路径（建议--extra=...形式），--sandbox read-only、指定model/timeout/live-agent/json，仍经sealed owned Job启动。实际请求正文来自已核对的历史packet，不把自然语言“patch正确”当作产品verdict。保存原始UTF-8输出、Session/模型与Job停止事实，核对必需JSON字段及负面结论；本次仅协议/独立审核验证，不冒充整轮E2E PASS。
 
-## 现场与证据
+执行前需Owner对新1会话范围与当前订阅包含额度/无额外credits/API余额/自动充值/fallback的费用声明作新确认；旧产品预算已耗尽，开发委派不继承产品预算。未获得新授权前不运行真实审核、CLI探针或模型。
 
-Demo D:/workbench-demo/p0411-20261020T040805Z保留；本轮目录project-progress/p0411-go-execution-20261020包含授权、开发wrapper、配置/stage、raw CLI、身份导出、批准测试、原生Review事件、留存哈希、全部Job停止及独立报告，禁止上传整个project-progress。开发准备wrapper90s超时安全停，与产品调用统计分开，不记委派PASS。
+保持单Session、无重试、无模型替换、无自动后续动作；无论成功失败都按既有owned marker/Job清理，确认ActiveProcessesFinal=0。不改生产源码/旧Demo配置/pool/digest/历史结果，不新增测试/临时脚本，不升级组件。下一真实完整Round仍需单独决定。
 
-后续继续由OpenCode有限实现、Codex审核；当前Go开发/产品路由仅按Owner明确授权，不改用户环境默认Free。保持HEAD/index及范围外dirty，历史9/26项不动。阶段文档由Codex按已有隔离归档授权精确提交审核分支，不合并main。
+阶段归档由Codex使用独立索引精确提交3个源码资产+基线/NEXT_TASK，不包含project-progress/本机证据或凭据，不合并main；主HEAD/index和范围外dirty保持。

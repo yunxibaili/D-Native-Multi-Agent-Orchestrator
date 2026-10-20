@@ -109,6 +109,9 @@ export function createCodexAdapter(config?: {
   };
 
   const validateRequest = (req: RunRequest): void => {
+    // A structured review is still a one-shot judgement: `--output-schema` is
+    // passed to `exec`, not `exec review`, but it must never resume a worker.
+    if (req.mode === 'review') assertSchemaSelector(req);
     // A review is a one-shot judgement; it has no conversation to continue.
     // `codex exec review` has no way to accept a thread id, so combining them
     // would silently drop the threadId. Refuse rather than appear to honour it.
@@ -334,6 +337,12 @@ export function createCodexAdapter(config?: {
  * Which `codex exec` subcommand to use and which optional flags it accepts.
  * Each field is a live trial on 0.158.0-alpha.2.1, not a guess — passing an
  * unsupported flag is a clap usage error and exits 2.
+ *
+ * A review may take two routes, and they are NOT the same argv:
+ *   - native `exec review` when no schema selector is supplied (unchanged)
+ *   - fresh `exec` + `--output-schema` when a schema selector IS supplied, so
+ *     the reviewer's reply can be constrained by the CLI itself. This fresh
+ *     route keeps its worker-like sandbox/-C flags; it is not a native review.
  */
 interface FlagProfile {
   subcommand: string;
@@ -348,8 +357,60 @@ const PROFILES: Record<'fresh' | 'resume' | 'review', FlagProfile> = {
   review: { subcommand: 'review', acceptsColor: false, acceptsCd: false, acceptsSandbox: false },
 };
 
+const SCHEMA_SELECTOR = '--output-schema';
+
+/** The schema selector only has meaning on the review route. */
+function schemaSelectorIndexes(req: RunRequest): number[] {
+  if (req.mode !== 'review' || !req.extraArgs?.length) return [];
+  const indexes: number[] = [];
+  for (let i = 0; i < req.extraArgs.length; i++) {
+    const arg = req.extraArgs[i];
+    if (arg === SCHEMA_SELECTOR || arg.startsWith(`${SCHEMA_SELECTOR}=`)) indexes.push(i);
+  }
+  return indexes;
+}
+
+/**
+ * Validate an explicit structured-review selector instead of letting a
+ * malformed one fall through to clap or get silently dropped.
+ */
+function assertSchemaSelector(req: RunRequest): void {
+  const extra = req.extraArgs ?? [];
+  const indexes = schemaSelectorIndexes(req);
+  if (indexes.length === 0) return;
+  if (indexes.length > 1) {
+    throw new InvalidRequestError(
+      'codex',
+      'duplicate --output-schema in extraArgs',
+      `Pass exactly one ${SCHEMA_SELECTOR} <path> pair; the schema must be unambiguous.`,
+    );
+  }
+  const index = indexes[0]!;
+  if (extra[index] !== SCHEMA_SELECTOR) {
+    throw new InvalidRequestError(
+      'codex',
+      'malformed --output-schema selector',
+      `Use a separate ${SCHEMA_SELECTOR} <path> pair, not an inline "=" value.`,
+    );
+  }
+  const value = extra[index + 1];
+  if (value === undefined || value.trim() === '' || value.startsWith('-')) {
+    throw new InvalidRequestError(
+      'codex',
+      'missing --output-schema path',
+      `${SCHEMA_SELECTOR} requires a non-empty schema file path as the next argument.`,
+    );
+  }
+}
+
+function hasSchemaSelector(req: RunRequest): boolean {
+  return schemaSelectorIndexes(req).length === 1;
+}
+
 function selectProfile(req: RunRequest): FlagProfile {
-  if (req.mode === 'review') return PROFILES.review;
+  // An explicit schema selector intentionally takes the fresh `exec` profile:
+  // `exec review` has no schema flag, and a structured review must not resume.
+  if (req.mode === 'review') return hasSchemaSelector(req) ? PROFILES.fresh : PROFILES.review;
   if (req.threadId) return PROFILES.resume;
   return PROFILES.fresh;
 }

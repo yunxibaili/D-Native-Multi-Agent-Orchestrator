@@ -57,6 +57,7 @@
  * like a successful one, and must never erase what actually ran.
  */
 
+import { fileURLToPath } from 'node:url';
 import type { RunHandle, RunRequest, RunResult, TaskState } from '../core/types.ts';
 import type { TaskStatus } from './task.ts';
 import type { TaskType } from '../quota/types.ts';
@@ -516,6 +517,16 @@ export function renderReviewPacket(packet: ReviewPacket): string {
 // 3. Running the review — the EXISTING native seam, once, no retry
 // ---------------------------------------------------------------------------
 
+/**
+ * Static JSON Schema asset handed to `codex exec --output-schema` for the Codex
+ * reviewer. It constrains only the model-owned fields; `reviewer`/`reviewedAt`
+ * stay host-added after parsing. Resolved from this module so no cwd or global
+ * path is assumed.
+ */
+const REVIEW_OUTPUT_SCHEMA_PATH = fileURLToPath(
+  new URL('./round-review-output.schema.json', import.meta.url),
+);
+
 /** The one injected dependency: the existing native review entrypoint. */
 export interface NativeReviewer {
   /**
@@ -620,6 +631,12 @@ export async function runUnifiedReview(
       prompt,
       cwd: options.cwd,
       ...(options.modelId === null ? {} : { model: options.modelId }),
+      // Codex only: ask the CLI itself to constrain the reply to the static
+      // schema. The adapter recognises this selector and takes its fresh exec
+      // profile. Other reviewers' requests are unchanged.
+      ...(options.reviewer === 'codex'
+        ? { extraArgs: ['--output-schema', REVIEW_OUTPUT_SCHEMA_PATH], sandbox: 'read-only' }
+        : {}),
     });
   } catch (e) {
     // Could not even START: adapter missing, agent unknown, capability refused.

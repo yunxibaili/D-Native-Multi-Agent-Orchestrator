@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-20。当前见§7.72：Owner确认产品切Go及30分钟费用窗口后，完成唯一P0-4.11真实Round，结论PARTIAL。两个Worker及结构化批准测试通过，Native Review原生输出契约不兼容、无合法verdict；Human Gate待Owner，全部owned Job final=0，未追加Round。
+更新：2026-10-20。当前见§7.73：Owner批准Round审核采用专用codex exec --output-schema入口。OpenCode三文件实施及Codex静态审核通过；类型检查/diff各一次exit0，owned Job final0。本轮无产品调用，真实Review与旧P0-4.11仍未通过，不追认旧Round。
 
 ## 1. 权责与当前结论
 
@@ -840,22 +840,34 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 - 全部本轮owned控制记录及6个产品内部Job均done/complete/treeStopped/final=0；LAYA使用精确owned marker协同停止，8077关闭，cleanupFailures=[]。未强杀既有桌面Agent。Reviewer原生工具读取了本机Skill指令文件及Demo产物；没有项目源码/凭据读取证据，不将协作式cwd边界描述为OS沙箱。未修改仓库源码/测试，HEAD/index和范围外dirty保持。Native Worker cost合计0.000207798美元仅用量估算，不是新增扣费；账单未独立审计。
 - 证据：project-progress/p0411-go-execution-20261020/{independent-review.json,round.stdout.json,round.stderr.log,result-retention.json,workers-native-identity.json,review-native-contract.json,native-review-items.json,new-controls.json,laya-cleanup.json}，不入Git。结论PARTIAL，不封板整个后端。唯一建议下一步：有限只读核对原生Review结构化事件与现有verdict语义契约的适配面，再由Owner批准最小实现；本轮不修改Reviewer源码、不追加真实调用。
 
+## 7.73 P0-4.12 专用结构化Round审核入口（2026-10-20，静态PASS）
+
+- Owner先授权继续推进，再明确选择“采用专用结构化审核入口”；允许Round独立审核由codex exec review改为codex exec --output-schema，保持指定模型、独立原生Session、deadline、containment和严格验证，不增加本轮产品调用。普通补丁Review兼容路径保留，不把两类审核混称同一原生子命令。
+- 本轮核对P0-4.11真实transcript：产品JSONL只有command_execution和最终agent_message，不含原生ExitedReviewMode；结构化原生review_output仅存在于本机rollout。不能只在adapter监听一个从未出现在产品流中的字段。官方Cookbook的Review phase使用codex exec + JSON schema；官方CLI文档亦记录output-schema。GitHub MCP实际读取openai/codex固定014489466a1739c2c563cdfe57880c2c7c8680e3的exec/src/{cli.rs,lib.rs,event_processor_with_jsonl_output.rs}，UserTurn携带output_schema，而ReviewStart不携带。固定源码不冒称与本机0.163.0-alpha.10.2二进制完全一致。
+- OpenCode实际wrapper实现Session ses_ea7eaaa40ffeVxaYbNMjHgtYxp，原生19个assistant均opencode-go/deepseek-v4.1-flash，06:52:34.117Z→06:55:19.139Z，165.023s/正常退出；这属于已批准Go开发委派，不消耗产品Worker/Reviewer预算。沿用Owner当前订阅包含额度及Use balance关闭声明，未改全局模型环境。
+- 仅修改src/adapters/codex.ts、src/orchestration/unified-review.ts，新增静态src/orchestration/round-review-output.schema.json。Round保持一次reviewer.review调用，仅Codex请求增加静态schema绝对路径与sandbox=read-only。adapter在mode=review且显式独立--output-schema参数存在时选择已有fresh exec profile；没有schema仍用旧exec review。重复、inline等号、空值/缺路径选择符拒绝；review+threadId继续拒绝，保留独立会话。沿用原--json/--model/-C、process timeout、CliJsonlTransport/ManagedProcess，无第二执行入口/调度器。
+- Schema严格要求模型给verdict/reason/findings/recommendedAction，枚举与既有validator一致，additionalProperties=false；finding的evidence要求字符串（既有可选字段允许该值）。不要求模型生成reviewer/reviewedAt，由原可信主机字段覆盖；没有判断默认值或patch-is-correct转换。normalizeReviewOutput→validateReviewVerdict、非法输出失败关闭、单次/无重试、TaskStore/Verification/Human Gate均不变。
+- Worker只运行一次npm run typecheck和一次git diff --check，原生工具事件均exit0；diff仅既有文档CRLF warning。Codex只审阅实际diff、源码调用链、静态JSON与原始检查日志，不重复检查命令，不新增/修改/运行测试，不编写验证脚本。旧unit/contract的无schema Review参数路径保持；尚未运行回归，不据静态走查声称回归全绿。
+- 开发Job与只读Session导出Job均validated complete/done/success/assignedBeforeResume/treeStopped/ActiveProcessesFinal=0，cleanupFailures=[]。本轮产品Agent/LAYA/Native Review/Round均0；不延用P0-4.11剩余产品授权、不更新旧Demo/pool/digest或旧结果。HEAD/index/范围外dirty保持，阶段仅精确归档本轮三源码资产及两文档。
+- 结论：P0-4.12静态接线PASS、runtime unverified；不等于真实Review或E2E PASS。唯一下一建议：新的单次Reviewer结构化协议验证，复用已交付Demo和保存证据、不重跑Worker/LAYA，获得合法verdict后也不追认旧Round。需Owner新调用/费用授权；目前停止产品调用。
+- 来源：[官方结构化Review示例](https://developers.openai.com/cookbook/examples/codex/build_iterative_repair_loops_with_codex)、[官方CLI参数](https://learn.chatgpt.com/docs/developer-commands?surface=cli)。本机证据project-progress/p0412-structured-review-20261020/{research.json,scope.json,worker.jsonl,worker-report.json,native-identity.json,independent-review.json}不入Git。
+
 <!-- project-progress:begin -->
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-20T06:43:42.2150393+00:00",
+  "updatedAt": "2026-10-20T06:58:09.7820417+00:00",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-4.11",
-    "name": "Go真实Round PARTIAL；Native Review输出契约待适配",
+    "id": "P0-4.12",
+    "name": "专用结构化审核入口静态PASS；真实协议待验",
     "status": "blocked",
-    "summary": "两个Go Worker及可信批准测试实际通过；3/3 LAYA POST；原生Review输出自身结构及自然语言而非合法verdict。Human Gate待Owner，全部owned Job final0，无追加调用。"
+    "summary": "OpenCode三文件实施，Codex独立静态审核；typecheck/diff各一次exit0，owned final0。未新增产品调用；旧P0-4.11仍PARTIAL。"
   },
   "next": {
-    "id": "P0-4.12",
-    "name": "有限只读映射原生Review事件与现有verdict契约；禁止自动转换为PASS",
+    "id": "P0-4.13",
+    "name": "待新授权，仅一次Reviewer结构化协议验证，复用已交付成果",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -932,24 +944,24 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
   "blockers": [
     {
       "severity": "P1",
-      "kind": "当前唯一直接阻断",
-      "title": "Native Review原生结构与产品verdict不兼容",
-      "detail": "EnteredReviewMode含JSON约定，ExitedReviewMode为原生overall_correctness结构，adapter最终只取得自然语言。两个Worker/批准测试真实完成，reviewer-output-invalid，不能判E2E PASS。",
-      "next": "只读定位原生事件消费与既有verdict语义适配，Owner确认后有限修改；不重跑Round或补调用。"
+      "kind": "当前验收缺口",
+      "title": "新结构化审核入口尚无真实协议结果",
+      "detail": "独立Session与schema路线静态接线通过，但安装版flag组合、实际schema约束及合法verdict未运行验证；旧Round不追认。",
+      "next": "Owner新授权下仅Reviewer一次，复用旧Demo与真实证据，不重跑Worker/LAYA。"
     },
     {
       "severity": "P2",
       "kind": "证据边界",
-      "title": "Reviewer实际模型自报及独立账单尚未取得",
-      "detail": "请求/本地线程模型gpt-6.1-sol，rollout不含独立实际model字段；费用仅当前Owner声明，cost为估算。",
-      "next": "保留未知，不通过付费探测解决。"
+      "title": "账单与原生模型自报未独立测得",
+      "detail": "Go开发身份原生导出已确认；产品费用依据Owner声明，Reviewer模型自报仍无独立字段。",
+      "next": "新调用前确认当前资格与费用，禁止付费探测。"
     },
     {
       "severity": "P2",
       "kind": "历史风险保留",
-      "title": "26项handoff及9项既有失败仍单独开放",
-      "detail": "本轮不触及历史豁免或全量测试；父计划呈现歧义保留。",
-      "next": "仅在相关切片触及共享路径时有界核对。"
+      "title": "9项既有失败/26项handoff仍单独开放",
+      "detail": "本轮未运行测试或扩大历史豁免。",
+      "next": "仅触及相关共享路径时有界核对。"
     }
   ],
   "tasks": [
@@ -1290,6 +1302,13 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
       "status": "blocked",
       "deliverable": "新费用窗口内一次全新空Demo的LAYA→实现→机器验证→独立测试→验证→Codex Review→Human Gate",
       "evidence": "§7.72真实PARTIAL：两个Worker/批准测试完成，Native Review无合法verdict，Human Gate等待Owner，owned final0。"
+    },
+    {
+      "id": "P0-4.12",
+      "title": "Round专用结构化审核入口",
+      "status": "done",
+      "deliverable": "复用Runtime.review和contained fresh exec，显式静态JSON Schema",
+      "evidence": "§7.73静态PASS，typecheck/diff各一次exit0；无真实产品调用，runtime未验。"
     }
   ],
   "checks": [
@@ -1607,6 +1626,11 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
       "name": "P0-4.11真实独立核验",
       "source": "project-progress/p0411-go-execution-20261020/independent-review.json",
       "result": "Worker2/2，批准测试exit0×2，POST3/3，Review无合法verdict，owned全部final0，PARTIAL"
+    },
+    {
+      "name": "P0-4.12独立静态审核",
+      "source": "project-progress/p0412-structured-review-20261020/independent-review.json",
+      "result": "三文件实际diff/调用链/原生检查日志通过；产品0调用、Job final0，非真实Review PASS"
     }
   ],
   "sources": [
