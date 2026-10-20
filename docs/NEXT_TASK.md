@@ -1,17 +1,22 @@
-# 唯一下一任务 — P0-4.18 既有Review夹具迁移与单文件离线验收（待明确测试授权）
+# 唯一下一任务 — P0-4.19 P02集成假Reviewer契约迁移（待Owner授权）
 
-P0-4.17单文件实现与静态检查完成，当前PARTIAL（PROJECT_BASELINE.md §7.78）。Owner本轮仅批准Codex直接实现、一次typecheck/diff，不含测试；未启动OpenCode/Reviewer/LAYA/Round。不得将typecheck0或信任边界assert当行为负控通过。
+P0-4.18有限离线PASS，见唯一基线§7.79。既有unified-review单文件最终185/0，两个contained Job final0；首次183/1与Owner批准补验保留。typecheck首次2，补两项假清理元数据后0；之后未再次运行suite。生产未改，真实模型/Round未运行，真实Review/E2E保持PARTIAL。
 
-## 已实现范围
+## 唯一最小建议
 
-仅src/orchestration/unified-review.ts：Codex结构化Review的唯一owned -o文件、进程局部analytics.enabled=false；同一handle/task/agent且succeeded/exit0/signalnull/Job停止后才读取，最多64KiB、UTF-8严格、路径与metadata检查，原normalize/validate及宿主字段保留。未知停止保留owned位置，cleanup失败拒绝完成；其他Reviewer保持原路径。
+仅迁移tests/p02-auto-advance.test.ts的假Codex：补extraArgs/sandbox能力，按本次--output-last-message写入已有VERDICT，保留真实RuntimeOrch.review/RunResult身份及FakeTransport生命周期。保留原A–I测试、批准测试与授权撤销断言，不删/skip、不放宽生产门禁、不修改生产代码或Runner。
 
-## 唯一最小待授权范围
+静态依据：CAPS未声明extraArgs/sandbox，review回调只转发runtime.review(req)，VERDICT只由frame输出，不产生-o文件。本片未运行该文件，不预报失败数量；185/0不是P02集成验收。
 
-在不修改/放宽生产门禁前提下，迁移既有tests/unified-review.test.ts中的假Reviewer，使其提供正确handle/RunResult身份，并按请求的--output-last-message确实写入本次文件。覆盖合法最终JSON与混合过程输出分离、缺失/空/错误/超量/非法UTF8文件、错误身份/失败退出/未确认停止不通过，以及非Codex兼容路径；可复用原有受控fixture，不新建测试框架或真实Agent入口。首片只改这一既有测试文件；其他suite中的fake适配另行静态定位，不自动扩大。
+获Owner明确测试与实施者授权后，仅通过白名单Runner+offline bootstrap+外层Windows Job运行此单文件一次，保存原始流、suite/root退出码与final0。不direct node回退、不运行其他suite/全量，不调用真实Agent/LAYA/Review/Round。上一片Codex实施者例外和补验次数不自动延续；开发模型需有效费用事实，不绕过审批拒绝。
 
-如获明确授权，只通过已登记的白名单Runner、offline bootstrap和外层contained机制运行该单文件一次，不direct node回退、不运行全量或其他suite、不重复验证；确认无真实Agent启动和owned Job final0。停止未确认的模拟必须由现有假Transport提供，不启动真实模型。缺白名单登记/安全入口时直接报告，不改Runner绕过限制。
+当前只提出建议，不自动实施。实际90s Reviewer退出与合法verdict仍待证明，旧Round/Human Gate、9/26历史项保持。真实调用以后另需当前模型/会话/费用/时限/数据授权，旧窗口不补用。不开展新功能、前端或真实E2E。
 
-当前仍遵守默认零新增/修改测试，须Owner明确授权上述单文件改动和一次运行后执行；本文件是建议，不是测试授权。若需要开发模型，另核对有效费用事实；OpenCode上次启动被自动审批拦截，不用替代启动方式绕过。本轮Codex实施者例外不自动延续。
+主HEAD/index及范围外dirty保持；阶段归档仅独立codex审核分支精确文件，忽略目录证据不上传，不合并main。
+归档前置：本片独立索引提交/推送命令被自动审批整体拒绝（blocked by policy），未启动、未建提交/临时资源；不得称已推送。已有归档授权不等于工具审批通过，下轮先处理该阻塞，不改入口绕过。
 
-真实Reviewer/Round仍无授权；P0-4.13/15超时、旧Round/Human Gate PARTIAL、9/26历史失败与全局模型保持。后续行为验收未完成前不宣称P0-4.17完整PASS或回归保持全绿。
+§7.80：Owner已明确批准P0-4.18原三文件归档重试一次；具体拒绝理由仍UNKNOWN，不改安全配置、不绕过。远端SHA实际验证前不得记成功。无新测试/开发模型授权。
+
+本轮重试结果：Owner批准的那一次精确归档重试再次被命令执行策略在创建进程前拒绝（仅blocked by policy，无具体理由）；已停止，未建提交/临时资源、未push。先处理执行环境拒绝信息，不改策略或换入口规避。P0-4.19仍待独立测试/实施者授权。
+
+§7.81新定位：原清理if片段被固定版Windows危险命令启发式把枚举-Force与普通删除合并识别。Owner授权继续调查并推送；改为无删除的归档事务及独立owned普通清理，不改安全配置。成功与否以远端SHA及archive-source-fix.json为准。

@@ -21,9 +21,9 @@
  * malformed ones.
  */
 
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { Orchestrator } from '../src/orchestrator/orchestrator.ts';
@@ -45,7 +45,8 @@ import {
 import { buildHandoff } from '../src/orchestration/workbench-handoff.ts';
 import { TaskStore } from '../src/orchestration/store.ts';
 import { REVIEW_VERDICTS } from '../src/orchestration/review-verdict.ts';
-import type { RunHandle, RunResult } from '../src/core/types.ts';
+import { isOfflineFrozen } from '../src/runtime/offline-policy.ts';
+import type { RunHandle, RunRequest, RunResult } from '../src/core/types.ts';
 import type { NativeReviewer } from '../src/orchestration/unified-review.ts';
 
 let passed = 0;
@@ -66,6 +67,9 @@ function check(name: string, cond: boolean, detail = ''): void {
 function section(title: string): void {
   process.stdout.write(`\n== ${title} ==\n`);
 }
+
+check('offline policy is frozen before any reviewer fixture runs', isOfflineFrozen());
+if (!isOfflineFrozen()) throw new Error('this suite requires the reviewed offline runner');
 
 const NOW = 1_700_000_000_000;
 const now = () => NOW;
@@ -135,18 +139,57 @@ function packetTask(over: Partial<ReviewPacketTask> = {}): ReviewPacketTask {
   };
 }
 
-/** A reviewer that COUNTS its own invocations and replies with whatever it was told to. */
-function fakeReviewer(reply: { state: RunResult['state']; output: string } | { throws: string }) {
-  const calls: { agentId: string; prompt: string; cwd: string }[] = [];
+// Only paths offered to our synthetic reviewers belong to this fixture. Production
+// deliberately retains them when stop/identity cannot be confirmed.
+const fixtureOutputDirectories = new Set<string>();
+function finalOutputPath(req: Omit<RunRequest, 'mode'>): string | null {
+  const args = req.extraArgs ?? [];
+  const index = args.indexOf('--output-last-message');
+  if (index < 0) return null;
+  const file = args[index + 1];
+  if (!file || basename(file) !== 'final-message.json' ||
+      dirname(dirname(resolve(file))) !== resolve(tmpdir()) ||
+      !basename(dirname(file)).startsWith('native-agent-review-')) {
+    throw new Error('fixture received an unexpected owned output path');
+  }
+  fixtureOutputDirectories.add(dirname(file));
+  return file;
+}
+
+/** A reviewer that COUNTS calls and writes the final CLI artifact independently of stdout. */
+function fakeReviewer(reply: {
+  state: RunResult['state']; output: string;
+  final?: string | Uint8Array | null;
+  wrongPath?: boolean;
+  run?: Partial<RunResult>;
+  handleTaskId?: string;
+  handleAgentId?: string;
+} | { throws: string }) {
+  const calls: Omit<RunRequest, 'mode'>[] = [];
+  const runs: RunResult[] = [];
   const reviewer: NativeReviewer = {
     review(req): RunHandle {
-      calls.push({ agentId: req.agentId, prompt: req.prompt, cwd: req.cwd });
+      calls.push(req);
+      const file = finalOutputPath(req);
       if ('throws' in reply) throw new Error(reply.throws);
-      const run = result({ state: reply.state, output: reply.output, taskId: 'rt-review' });
-      return { result: async () => run } as unknown as RunHandle;
+      const final = reply.final === undefined ? reply.output : reply.final;
+      if (file !== null && final !== null) {
+        writeFileSync(reply.wrongPath ? `${file}.wrong` : file, final);
+      }
+      const run = result({
+        state: reply.state, output: reply.output, taskId: 'rt-review', agentId: req.agentId,
+        cleanup: { rootKilled: false, descendantsReaped: true, note: 'synthetic transport stopped', treeStopConfirmed: true, processStart: 'started' },
+        ...reply.run,
+      });
+      runs.push(run);
+      return {
+        taskId: reply.handleTaskId ?? 'rt-review',
+        agentId: reply.handleAgentId ?? req.agentId,
+        result: async () => run,
+      } as unknown as RunHandle;
     },
   };
-  return { reviewer, calls };
+  return { reviewer, calls, runs };
 }
 
 const validVerdict = (over: Record<string, unknown> = {}): string => JSON.stringify({
@@ -397,6 +440,77 @@ section('unified review 3. the review runs once, and never fakes a verdict');
   check('the reviewer is never retried', dead.calls.length === 1 && ok.calls.length === 1);
 }
 
+// The native Codex contract consumes the file, never a chatty/mixed transcript.
+{
+  const packet = packetOf([packetTask()]);
+  const mixed = fakeReviewer({ state: 'succeeded', output: 'Checking files...\nintermediate prose',
+    final: validVerdict({ reviewer: 'untrusted', reviewedAt: 0 }) });
+  const r = await runUnifiedReview(mixed.reviewer, packet, reviewOpts);
+  const req = mixed.calls[0]!;
+  const file = finalOutputPath(req)!;
+  check('mixed process output does not replace the valid final file', r.status === 'completed' && r.verdict?.verdict === 'pass');
+  check('host reviewer and timestamp override model fields', r.verdict?.reviewer === 'codex' && r.reviewedAt === NOW);
+  check('verdict tail is final JSON, not process chatter', r.outputTail?.text === validVerdict({ reviewer: 'untrusted', reviewedAt: 0 }));
+  check('synthetic RunResult output is not rewritten', mixed.runs[0]!.output === 'Checking files...\nintermediate prose');
+  check('schema, final-file selector and local analytics flag reach the reviewer',
+    req.extraArgs?.includes('--output-schema') === true && req.extraArgs.includes('analytics.enabled=false') && req.sandbox === 'read-only');
+  check('successful owned output is removed after confirmed stop', !existsSync(dirname(file)));
+  check('final artifact success still makes exactly one call', mixed.calls.length === 1);
+
+  const invalidFiles: readonly [string, string | Uint8Array | null][] = [
+    ['missing', null], ['empty', ''], ['oversize', 'x'.repeat(64 * 1024 + 1)],
+    ['invalid UTF-8', new Uint8Array([0xc3, 0x28])], ['malformed JSON', '{'],
+    ['missing judgment fields', '{"verdict":"pass"}'],
+    ['invalid verdict', validVerdict({ verdict: 'ship-it' })],
+  ];
+  for (const [name, final] of invalidFiles) {
+    const f = fakeReviewer({ state: 'succeeded', output: validVerdict(), final });
+    const rejected = await runUnifiedReview(f.reviewer, packet, reviewOpts);
+    check(`${name} final file rejects valid-looking stdout`, rejected.status === 'failed' && rejected.verdict === null && rejected.code === 'reviewer-output-invalid', String(rejected.code));
+    check(`${name} stopped fixture output is cleaned`, !existsSync(dirname(finalOutputPath(f.calls[0]!)!)));
+    check(`${name} does not cause a retry`, f.calls.length === 1);
+  }
+  const wrong = fakeReviewer({ state: 'succeeded', output: validVerdict(), wrongPath: true });
+  const rejected = await runUnifiedReview(wrong.reviewer, packet, reviewOpts);
+  const wrongFile = finalOutputPath(wrong.calls[0]!)!;
+  check('a final file at the wrong path is never accepted', rejected.status === 'failed' && rejected.verdict === null && rejected.code === 'reviewer-output-cleanup-failed');
+  check('unexpected entry is retained instead of recursively deleted', existsSync(`${wrongFile}.wrong`) && rejected.reason?.includes(dirname(wrongFile)) === true);
+
+  const invalidRuns: readonly [string, Partial<RunResult>, string][] = [
+    ['wrong task', { taskId: 'another-run' }, 'reviewer-result-identity-mismatch'],
+    ['wrong agent', { agentId: 'opencode' }, 'reviewer-result-identity-mismatch'],
+    ['nonzero exit', { exitCode: 1 }, 'reviewer-output-invalid'],
+    ['missing exit', { exitCode: null }, 'reviewer-output-invalid'],
+    ['signalled exit', { signal: 'SIGTERM' }, 'reviewer-output-invalid'],
+    ['unconfirmed stop', { cleanup: { rootKilled: false, descendantsReaped: false, note: 'unknown', treeStopConfirmed: false, processStart: 'may-have-started' } }, 'reviewer-output-invalid'],
+  ];
+  for (const [name, run, code] of invalidRuns) {
+    const f = fakeReviewer({ state: 'succeeded', output: validVerdict(), run });
+    const rejected = await runUnifiedReview(f.reviewer, packet, reviewOpts);
+    check(`${name} rejects even a valid final file`, rejected.status === 'failed' && rejected.verdict === null && rejected.code === code, String(rejected.code));
+    if (code === 'reviewer-result-identity-mismatch' || name === 'unconfirmed stop') {
+      const file = finalOutputPath(f.calls[0]!)!;
+      check(`${name} retains evidence without a trusted stop`, existsSync(file) && rejected.reason?.includes(dirname(file)) === true);
+    }
+    check(`${name} still calls the reviewer once`, f.calls.length === 1);
+  }
+  for (const handle of [{ handleTaskId: '' }, { handleAgentId: 'opencode' }]) {
+    const f = fakeReviewer({ state: 'succeeded', output: validVerdict(), ...handle });
+    const rejected = await runUnifiedReview(f.reviewer, packet, reviewOpts);
+    check('invalid handle identity is rejected before consuming the final file', rejected.code === 'reviewer-result-identity-mismatch' && rejected.verdict === null);
+  }
+  const failed = fakeReviewer({ state: 'failed', output: validVerdict() });
+  const failedResult = await runUnifiedReview(failed.reviewer, packet, reviewOpts);
+  check('a failed run cannot promote its valid final file', failedResult.status === 'failed' && failedResult.code === 'NONZERO_EXIT' && failedResult.verdict === null);
+  const timed = fakeReviewer({ state: 'timed_out', output: validVerdict() });
+  const timedResult = await runUnifiedReview(timed.reviewer, packet, reviewOpts);
+  check('a timed-out run cannot promote its valid final file', timedResult.status === 'failed' && timedResult.verdict === null);
+  const other = fakeReviewer({ state: 'succeeded', output: validVerdict(), final: null });
+  const compatible = await runUnifiedReview(other.reviewer, packet, { ...reviewOpts, reviewer: 'opencode' });
+  check('non-Codex reviewer keeps its output-based contract', compatible.status === 'completed' && compatible.verdict?.reviewer === 'opencode');
+  check('non-Codex reviewer receives no Codex file/schema/profile arguments', other.calls[0]!.extraArgs === undefined && other.calls[0]!.sandbox === undefined);
+}
+
 // ---------------------------------------------------------------------------
 // 4. A verdict is a RECOMMENDATION — it never drives the workflow
 // ---------------------------------------------------------------------------
@@ -448,7 +562,7 @@ section('unified review 4. a verdict never drives the workflow');
   // difference between "nobody looked" and "nobody found anything".
   const packet = packetOf([packetTask()]);
   const skipped = await runUnifiedReview(
-    { review: () => { throw new Error('must not be called'); } },
+    fakeReviewer({ throws: 'must not be called' }).reviewer,
     packet,
     reviewOpts,
   );
@@ -567,7 +681,7 @@ section('unified review 6. the real RuntimeOrch.review() seam');
     // signed out, hung, or waiting on a prompt.
     const stalling = createFakeAdapter({
       id: 'codex',
-      capabilities: { newTask: true, review: true, modelSelection: true, cwd: true },
+      capabilities: { newTask: true, review: true, modelSelection: true, cwd: true, extraArgs: true, sandbox: true },
       script: [{ kind: 'hang' }],
     });
     // R5-1.2 (§11.2): a fake named after a REAL agent must REPLACE, not extra-add —
@@ -579,7 +693,7 @@ section('unified review 6. the real RuntimeOrch.review() seam');
     // production edge rather than on a stand-in.
     let reviewCalls = 0;
     const realReview = real.review.bind(real);
-    real.review = (req) => { reviewCalls++; return realReview(req); };
+    real.review = (req) => { reviewCalls++; finalOutputPath(req); return realReview(req); };
 
     const packet = packetOf([packetTask()]);
     const r = await runUnifiedReview(real, packet, {
@@ -600,7 +714,12 @@ section('unified review 6. the real RuntimeOrch.review() seam');
     check('the real seam was invoked EXACTLY ONCE despite the timeout', reviewCalls === 1, String(reviewCalls));
 
     // Release the hanging session so the suite does not leave it running.
-    for (const s of real.activeSessions()) await s.cancel('unified review test finished');
+    for (const s of real.activeSessions()) {
+      await s.cancel('unified review test finished');
+      const settled = await s.result(1_000);
+      check('the controlled reviewer reached a cancelled terminal result', settled.state === 'cancelled');
+    }
+    check('the controlled hanging reviewer is no longer active after cancellation', real.activeSessions().length === 0);
 
     // An agent the runtime has NEVER heard of: the real edge refuses to START it, which is
     // a different failure from a reviewer that started and then hung. The name is
@@ -620,6 +739,16 @@ section('unified review 6. the real RuntimeOrch.review() seam');
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* windows may still hold it */ }
   }
 }
+
+// All reviewers above are synthetic and all controlled sessions have now stopped.
+// Retained output is fixture-owned; the production code must not remove it early.
+for (const dir of fixtureOutputDirectories) {
+  if (dirname(resolve(dir)) !== resolve(tmpdir()) || !basename(dir).startsWith('native-agent-review-')) {
+    throw new Error('refusing cleanup outside fixture-owned review directory');
+  }
+  rmSync(dir, { recursive: true, force: true });
+}
+check('no fixture-owned final output directory remains', [...fixtureOutputDirectories].every(dir => !existsSync(dir)));
 
 process.stdout.write(`\n${passed} passed, ${failed} failed\n`);
 if (failures.length) {

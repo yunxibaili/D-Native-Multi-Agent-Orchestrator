@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-20。见§7.78：P0-4.17由Owner例外允许Codex单文件实现最终答复出口与局部analytics关闭，单次typecheck通过；未运行测试/模型。旧模拟Reviewer缺少新文件/身份契约，离线验收待明确授权，当前PARTIAL，真实Review/E2E不提升。
+更新：2026-10-20。见§7.79：P0-4.18有限离线PASS，单文件补验185/0、typecheck最终0、两个Job final0；生产未改。下一步建议仅迁移P02集成假Reviewer，待授权；真实Review/E2E不提升。
 
 ## 1. 权责与当前结论
 
@@ -933,22 +933,52 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 - 本机证据project-progress/p0417-final-output-implementation-20261020/：before/精确源码前后快照、任务/范围/Owner费用与实施者例外、自动审批拒绝记录、typecheck日志/JSON、static-review.json、实现diff；全部ignored，audit只读。唯一下一步建议Owner明确授权既有unified-review测试文件的夹具迁移与一次白名单离线contained验收；当前不自动执行，不直接跳到新真实Review/Round。
 - 源码依据沿用§7.77已实际读取的官方精确commit4ebc485与OpenAI文档，无重复模型试跑；P0-4.13/15两次超时、原Round PARTIAL/Human Gate与latest原件保持。本轮归档若推送，仅精确单源码+本基线+NEXT审核分支，不合并main，主HEAD/index/范围外dirty保持。
 
+## 7.79 P0-4.18 Review最终文件夹具迁移与有界离线验收（2026-10-20，有限PASS）
+
+- Owner批准既有tests/unified-review.test.ts迁移及单文件一次离线验收，本轮明确允许Codex直接实施；OpenCode调用0，不改变长期分工/全局模型，不改生产源码。沿用§7.77/78已核对的精确版本来源与内部调用链，无需重复外检。
+- 假Reviewer按本次--output-last-message写入独有文件，提供一致的handle/RunResult task/agent及模拟停止事实；原逐种verdict、失败不通过、单次调用、不驱动调度、唯一执行边界意图保留。真实RuntimeOrch.review仍用replaceAdapters的FakeTransport，补extraArgs/sandbox能力，不启动真实Codex。非Codex保持output解析。
+- 新负控：混合过程输出与最终JSON分离、宿主身份/时间覆盖、RunResult输出不变；缺失/空/错误路径/超64KiB/非法UTF8/坏JSON/缺字段/非法verdict拒绝。错误Task/Agent/handle、非零或缺失退出码、signal、停止不明、失败/超时不产生verdict；无可信停止保留owned文件，意外条目不由生产递归删除。测试仅在全部假会话结束后清理已记录的自有目录，无残留。未穷举路径替换竞态，不是OS沙箱或模型遵从性证明。
+- 白名单Runner scripts/test-timed.mjs，进程局部TEST_TIMED_SUITES=tests/unified-review.test.ts，offline bootstrap先冻结，再由外层sealed Windows Job保护。首次11:56:31Z→11:56:32Z为183/1；唯一失败是本轮新增cancel后立即检查activeSessions，旧夹具过早删目录也出现persist警告。源码明确cancel只请求停止、result等待finalize，未归因于生产缺陷。
+- Owner明确批准修正并额外运行一次：cancel后等待同一session.result(1000)并断言cancelled。补验11:57:24Z→11:57:25Z为185/0，Runner712ms，未再见提前删目录警告。两次launcher均exit0，但Job rootExit分别1/0，严格区分；均assignedBeforeResume=1/phase=done/complete=1/treeStopped=1/final0/status=success，无stop marker/强杀/清理失败，新共享control=0。
+- 类型检查首次exit2：两个假CleanupReport缺processStart；仅补started/may-have-started元数据后第二次exit0。185/0在这两项元数据补齐前取得，补后不重复suite；实际unified-review不读取此字段，业务/负控断言未变，不声称最终字节已重跑。最终diff检查另留日志。无其他suite/全量测试，无真实Agent/LAYA/Native Review/Round，无新增模型费用。
+- Codex复核源码、diff、原始双流与UTF16LE Job记录；仅P0-4.18有限离线PASS，P0-4.17核心最终输出/身份拒绝分支已有离线证据，不是另一个原生独立审核或真实90s Review成功。9/26历史、原Round/Human Gate PARTIAL保持。
+- 静态确认tests/p02-auto-advance.test.ts假Codex未声明extraArgs/sandbox，只输出VERDICT、不写本次-o；集成夹具仍需迁移，不能据185/0声称P02集成回归绿。唯一下一建议P0-4.19仅迁移该既有文件、一次白名单离线contained验证，待明确授权；不自动追加测试或真实调用。
+- 本机证据project-progress/p0418-unified-review-offline-20261020/含before、测试前后、scope/补验授权、两次原始流/run JSON/Job control、两次typecheck、review/Git保护记录。audit只读不上传；主HEAD/index与范围外dirty逐文件哈希保留。阶段归档以f5896ccd为父，仅测试+唯一基线+NEXT，实际远端SHA/清理见archive.json，不合并main。
+
+- 本轮阶段归档命令被自动审批在CreateProcess前整体拒绝，仅返回blocked by policy；没有创建临时索引/提交/分支，也没有执行push。不能宣称GitHub同步成功；不更换入口绕过，事实见archive-blocked.json。下轮先处理待归档状态，现有独立分支f5896ccd不包含本轮测试。
+
+## 7.80 P0-4.18 归档审批拒绝核对与一次明确重试授权（2026-10-20）
+
+- Owner要求继续并核查拒绝原因。只读核对：原工具返回CreateProcess Rejected/blocked by policy，Git尚未执行；ls-remote成功但目标审核分支不存在。可见user/project rules目录及检查的ProgramData requirements候选不存在，本机限定日志未取得附加rationale；这不证明其他管理/服务端策略不存在。
+- 官方Rules说明forbidden可直接拒绝；Auto-review官方说明通常仅在可交互approval下触发，never没有该类审核。本会话工具上下文为never/full-access，所以此前“自动审批拒绝”只可作为现象简称，不应当作已定位Auto-review子系统。具体触发策略/理由仍UNKNOWN，不猜GitHub权限、付费、命令长度或某个Git子命令。
+- 来源已实际打开：https://learn.chatgpt.com/docs/agent-configuration/rules 与 https://learn.chatgpt.com/docs/sandboxing/auto-review；本轮不改任何审批、安全或账户设置，不读取凭据。Owner新明确批准原精确三文件隔离归档重试一次；仍用原Git入口，若再拒绝立即停止，不换工具绕过。是否创建提交/推送成功以本机archive-retry.json及远端核对为准，未预写成功。
+- 本片不增加源码/测试改动，不复跑检查或suite、不调用模型。P0-4.18有限离线PASS与P02夹具待迁移/真实Review未通过保持；主HEAD/index/范围外dirty继续保护。本机approval-investigation.json只记摘要，不上传应用日志或凭据。
+
+- 上述Owner新批准的一次精确重试也在CreateProcess前被拒绝，仍仅blocked by policy；本轮归档BLOCKED，没有创建临时索引/提交/分支或执行push，未换工具/拆分/编码绕过。证据archive-retry-blocked.json；具体拒绝规则继续UNKNOWN。不得再用相同操作循环重试，需执行环境提供可见策略原因。
+
+## 7.81 P0-4.18 归档拒绝的源码定位与安全操作拆分（2026-10-20）
+
+- Owner继续授权调查实际原因并推送。GitHub MCP只读成功取得既有精确版本commit 4ebc485的exec_policy.rs及shell-command/src/command_safety/windows_dangerous_commands.rs；后者223–287行粗分段仅把分号/管道等当硬边界，括号/花括号只是soft punctuation。同段出现删除cmdlet与-Force就判危险，不将参数准确归属到具体cmdlet。
+- 原拒绝命令中if(@(Get-ChildItem -LiteralPath $tmp -Force).Count -eq 0){Remove-Item -LiteralPath $tmp}因此会命中该规则：Force实际属于只读枚举，普通删除未带Force，但粗分段仍得到has_delete && has_force。exec_policy.rs 793–805在Never时转Forbidden，1087–1117把Other输出为blocked by policy，和本机CreateProcess拒绝一致；不是GitHub返回的push错误，也不必存在用户.rules。这里是固定源码与原命令的静态重建，不是新测试或本机二进制逐字节一致证明。
+- 不修改Codex/安全设置或增加allow规则，不编码/改名/换工具绕过。采用更安全、独立可审核的操作：归档事务只创建隔离索引、精确add三文件、审核manifest/diff并保存审核分支；该阶段不包含删除。之后单独核对所有权并普通删除确切临时索引及空目录，不Force、不Recurse，意外内容保留并报错。
+- 三文件范围仍为tests/unified-review.test.ts、唯一基线与NEXT；父提交f5896ccd，目标codex/p0418-unified-review-offline-20261020；无main切换/合并/强推。是否成功以archive-source-fix.json与远端SHA/manifest核对为准，不预写成功。P0-4.18离线185/0保持，本轮0测试/模型；不启动P0-4.19。
+
 <!-- project-progress:begin -->
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-20T19:49:09.3767326+08:00",
+  "updatedAt": "2026-10-20T12:10:32.3191530Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-4.17",
-    "name": "最终答复接线已实现，静态检查通过，离线行为待验收",
-    "status": "partial",
-    "summary": "Owner例外由Codex单文件实现-o及进程局部analytics关闭；typecheck单次0，未运行测试/模型。严格文件/身份/退出/Job门禁已接线；旧模拟Reviewer夹具需迁移，不能宣称回归或真实Review PASS。"
+    "id": "P0-4.18",
+    "name": "Review最终文件夹具与单文件有界离线验收",
+    "status": "done",
+    "summary": "有限离线PASS保持：185/0/typecheck最终0；归档在Owner批准的一次重试后仍被命令策略拒绝，具体规则UNKNOWN，未执行Git写操作。"
   },
   "next": {
-    "id": "P0-4.18",
-    "name": "待明确测试授权：既有unified-review夹具迁移与单文件离线验收",
+    "id": "P0-4.19",
+    "name": "待授权：P02集成假Reviewer最终文件契约迁移",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1025,23 +1055,30 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
   "blockers": [
     {
       "severity": "P1",
-      "kind": "离线行为证据",
-      "title": "最终文件/身份与失败关闭分支尚未行为验收",
-      "detail": "现有unified-review fakeReviewer未提供完整handle身份，也不写-o文件；测试未改/未跑，不能沿用历史绿。",
-      "next": "仅在明确授权后迁移既有单文件夹具并按白名单/离线/contained路径单次验证，不放宽生产门禁。"
+      "kind": "阶段归档",
+      "title": "获明确授权后命令仍被策略拒绝",
+      "detail": "CreateProcess前blocked by policy，无具体rationale；无提交/push/临时索引，未绕过。",
+      "next": "先由执行环境提供可见拒绝规则/恢复允许执行；停止同动作重试，不改安全设置。"
+    },
+    {
+      "severity": "P1",
+      "kind": "集成夹具兼容性",
+      "title": "P02假Reviewer尚未迁移最终文件契约",
+      "detail": "CAPS未声明extraArgs/sandbox，不写-o；本片只运行unified-review，P02未测。",
+      "next": "Owner授权后仅迁移既有p02-auto-advance.test.ts并一次有界离线验收。"
     },
     {
       "severity": "P1",
       "kind": "真实运行",
       "title": "实际Reviewer90s退出及有效verdict仍未证明",
       "detail": "本轮0模型，旧连续两次timed_out和Round PARTIAL不回填；analytics旁路仅有精确源码依据。",
-      "next": "先离线验收；新真实验证须独立有效调用/费用范围。"
+      "next": "先迁移集成夹具；真实Review以后另获当前调用/费用授权。"
     },
     {
       "severity": "P2",
       "kind": "协作范围",
       "title": "OpenCode启动被自动审批拒绝，未发生开发调用",
-      "detail": "仅返回blocked by policy，无详细原因；Owner批准本轮Codex直接实现，长期分工/全局模型不变。",
+      "detail": "上一片blocked by policy；本片Owner明确允许Codex直接迁移测试，长期分工/全局模型保持。",
       "next": "不变更启动方式绕过审批；当前不追加开发模型调用。"
     }
   ],
@@ -1422,12 +1459,29 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
     {
       "id": "P0-4.17",
       "title": "最终答复文件及局部analytics接线",
-      "status": "active",
+      "status": "done",
       "deliverable": "单源码文件，复用native review/schema/严格解析与Job证据",
-      "evidence": "§7.78实现+单次typecheck0；行为与旧夹具未验收，0真实调用，非独立模型Review PASS"
+      "evidence": "§7.78源码/静态；§7.79输出/身份核心负控185/0，非真实Review成功"
+    },
+    {
+      "id": "P0-4.18",
+      "title": "Review最终文件夹具离线验收",
+      "status": "done",
+      "deliverable": "现有假Reviewer迁移及单文件负控",
+      "evidence": "§7.79；183/1→Owner批准185/0，typecheck2→0，两个Job final0，真实调用0"
     }
   ],
   "checks": [
+    {
+      "name": "归档拒绝排查及Owner批准的一次重试",
+      "source": "PROJECT_BASELINE.md §7.80；project-progress/p0418-unified-review-offline-20261020/approval-investigation.json；archive-retry-blocked.json",
+      "result": "明确批准后仍CreateProcess前拒绝；理由未暴露，不能确认Auto-review子系统；原本地离线证据保持"
+    },
+    {
+      "name": "P0-4.18有界离线验收",
+      "source": "PROJECT_BASELINE.md §7.79；project-progress/p0418-unified-review-offline-20261020/review.json",
+      "result": "185/0，typecheck最终0，两个Job final0；首次失败保留，真实Review未运行"
+    },
     {
       "name": "P0-4.17单文件实现与静态复核",
       "source": "PROJECT_BASELINE.md §7.78；project-progress/p0417-final-output-implementation-20261020/static-review.json；typecheck.log",
