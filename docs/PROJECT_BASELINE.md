@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-20。当前见§7.73：Owner批准Round审核采用专用codex exec --output-schema入口。OpenCode三文件实施及Codex静态审核通过；类型检查/diff各一次exit0，owned Job final0。本轮无产品调用，真实Review与旧P0-4.11仍未通过，不追认旧Round。
+更新：2026-10-20。当前见§7.74：P0-4.13单次Reviewer真实验证BLOCKED，90s截止且无输出/verdict。原生gpt-6.1-sol/read-only已核实，初始CLI参数错误在0模型时纠正；唯一会话已耗用，无重试，全部Job final0。P0-4.12静态PASS不等于真实审核PASS，旧Round仍PARTIAL。
 
 ## 1. 权责与当前结论
 
@@ -852,22 +852,34 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 - 结论：P0-4.12静态接线PASS、runtime unverified；不等于真实Review或E2E PASS。唯一下一建议：新的单次Reviewer结构化协议验证，复用已交付Demo和保存证据、不重跑Worker/LAYA，获得合法verdict后也不追认旧Round。需Owner新调用/费用授权；目前停止产品调用。
 - 来源：[官方结构化Review示例](https://developers.openai.com/cookbook/examples/codex/build_iterative_repair_loops_with_codex)、[官方CLI参数](https://learn.chatgpt.com/docs/developer-commands?surface=cli)。本机证据project-progress/p0412-structured-review-20261020/{research.json,scope.json,worker.jsonl,worker-report.json,native-identity.json,independent-review.json}不入Git。
 
+## 7.74 P0-4.13 单次Reviewer协议验证（2026-10-20，BLOCKED）
+
+- Owner回复“可以”批准既定单Reviewer范围；原费用窗口已在15:02:49到期，另获Owner明确回复“确认，按当前回复起30分钟有效”，确认gpt-6.1-sol包含额度足够、无额外credits/API余额/自动充值/fallback及辅助同边界。新费用窗口按首次本机观察15:05:15→15:35:15记录，不冒充精确平台发送时间。此声明不是独立账单测量。
+- 复用现有CLI review codex、既有真实packet/模型原生导出/可信测试及UTF-8留存事实，附上事实说明，允许模型给pass/rework/reject；不重跑Worker/LAYA，不创建新Round、不回填旧Review或更改Human Gate。真实运行请求固定gpt-6.1-sol、read-only、90s进程deadline、静态schema，旧Demo与状态路径保留。
+- 首次CLI命令是Codex操作错误：重复--extra=value被现有parseArgs等号分支覆盖，schema选择符丢失，仅剩路径，sandbox被旧exec review preflight拒绝。该次无原生Agent进程/Session/模型请求，控制root退出1。源码未改；静态定位后改为重复分隔形式--extra --output-schema --extra <path>，保留原命令及错误日志。不是对已失败模型Session重试，也没有新增调用额度。此前NEXT对重复等号写法的建议错误，当前已纠正；Round内部直接extraArgs数组不受此CLI命令问题影响。
+- 唯一真实Session=01a15822-69d6-7503-89e8-a4fa7a36c1b6，运行Task=tsk_0d381076adb745348cec；07:06:52.567Z→07:08:22.717Z，90150ms，state=timed_out/error=TIMED_OUT，output长度0，无verdict/usage。外层launcher退出0，产品root退出1；Native RunResult exitCode=null/signal=null，不将外层成功当作产品通过。
+- 原生rollout的turn_context明确model=gpt-6.1-sol、sandbox_policy.type=read-only，本次实际模型字段得到独立证明；不倒推旧Review的模型。新exec参数组合确实进入真实Session，但尚未得到最终schema输出，不能声称结构化协议验收PASS。
+- 可观察诊断：模型目录刷新request timed out，既有MCP连接https://chatgpt.com/backend-api/ps/mcp发生transport错误；07:07:08.079Z turn_started（启动后15.5s），07:08:11.969Z首次shell开始、07:08:12.170Z完成（约79.6s）。该工具只读取三份本机Skill指令，未执行测试、未读取Demo成果、未写文件；工具内容存在PowerShell默认解码乱码。根因尚未确立，不能仅凭这些诊断宣称MCP或Skill是超时唯一原因，也不能自动改prompt/增加时限/重跑求通过。
+- 调用：Reviewer1/1，Worker0/LAYA0/Round0；未追加模型、未动生产源码/测试/全局配置/旧pool/digest。三份真实控制记录均done/complete/treeStopped/ActiveProcessesFinal=0（内部原生Job为stopRequested/terminated），cleanupFailures=[]；ORCH_KEEP_CONTROL留存的.stop是证据marker，不是未停止进程。采集器曾误把.stop作为control解析，已按扩展名分开，仅修正证据分类，未重启进程。
+- 仓库原始HEAD/index/所有已记录dirty字节不变（本轮仅随后维护本节/NEXT），workspace两文件哈希不变；默认latest RoundResult与执行前SHA256一致，没有追认或覆盖旧结果。P0-4.12静态PASS仍保留，P0-4.13真实验证BLOCKED，旧P0-4.11仍PARTIAL。
+- 证据：project-progress/p0413-review-protocol-20261020/{owner-authorization.json,invocation.json,invocation-corrected.json,review.stderr.log,review-corrected.stdout.jsonl,run-corrected.json,timeline.json,independent-review.json}，仅本机保留不入Git。唯一下一步是只读核对native初始化/首轮时间线与现有配置来源，借官方资料区分连接启动与模型响应耗时；不自动启动新会话、不猜测性源码修改。
+
 <!-- project-progress:begin -->
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-20T06:58:09.7820417+00:00",
+  "updatedAt": "2026-10-20T07:14:06.0322101+00:00",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-4.12",
-    "name": "专用结构化审核入口静态PASS；真实协议待验",
+    "id": "P0-4.13",
+    "name": "Reviewer真实验证BLOCKED：90s无verdict",
     "status": "blocked",
-    "summary": "OpenCode三文件实施，Codex独立静态审核；typecheck/diff各一次exit0，owned final0。未新增产品调用；旧P0-4.11仍PARTIAL。"
+    "summary": "仅1个原生gpt-6.1-sol/read-only Session，90s截止、无最终输出；连接诊断及首次Skill读取时间线已保存。Job全空，旧Round/Demo未改，无重试。"
   },
   "next": {
-    "id": "P0-4.13",
-    "name": "待新授权，仅一次Reviewer结构化协议验证，复用已交付成果",
+    "id": "P0-4.14",
+    "name": "只读分析原生启动/首轮响应时间线，结合官方资料制定最小方案",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -944,24 +956,24 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
   "blockers": [
     {
       "severity": "P1",
-      "kind": "当前验收缺口",
-      "title": "新结构化审核入口尚无真实协议结果",
-      "detail": "独立Session与schema路线静态接线通过，但安装版flag组合、实际schema约束及合法verdict未运行验证；旧Round不追认。",
-      "next": "Owner新授权下仅Reviewer一次，复用旧Demo与真实证据，不重跑Worker/LAYA。"
+      "kind": "当前唯一直接阻断",
+      "title": "单Reviewer会话90s无verdict，耗时原因尚未确立",
+      "detail": "模型目录/MCP连接错误可见，turn约15.5s，首次Skill工具约79.4s，截止无输出；不能推断唯一根因。",
+      "next": "先只读核对启动与首轮时间线和配置来源，外部资料仅作机制证据，不自动增加deadline或重试。"
     },
     {
       "severity": "P2",
-      "kind": "证据边界",
-      "title": "账单与原生模型自报未独立测得",
-      "detail": "Go开发身份原生导出已确认；产品费用依据Owner声明，Reviewer模型自报仍无独立字段。",
-      "next": "新调用前确认当前资格与费用，禁止付费探测。"
+      "kind": "事实边界",
+      "title": "结构化最终输出仍未验，旧Round仍PARTIAL",
+      "detail": "本次native turn_context确认gpt-6.1-sol/read-only；产品0新Round/Worker/LAYA，旧Review不回填。",
+      "next": "未来真实调用需新授权，本次1/1预算已用完。"
     },
     {
       "severity": "P2",
-      "kind": "历史风险保留",
-      "title": "9项既有失败/26项handoff仍单独开放",
-      "detail": "本轮未运行测试或扩大历史豁免。",
-      "next": "仅触及相关共享路径时有界核对。"
+      "kind": "历史风险",
+      "title": "9项既有失败/26项handoff仍开放",
+      "detail": "未运行测试或扩大历史豁免。",
+      "next": "不为当前网络/响应问题修无关历史测试。"
     }
   ],
   "tasks": [
@@ -1309,6 +1321,13 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
       "status": "done",
       "deliverable": "复用Runtime.review和contained fresh exec，显式静态JSON Schema",
       "evidence": "§7.73静态PASS，typecheck/diff各一次exit0；无真实产品调用，runtime未验。"
+    },
+    {
+      "id": "P0-4.13",
+      "title": "仅Reviewer结构化协议真实验证",
+      "status": "blocked",
+      "deliverable": "一次独立审核，复用真实成果，固定模型/90s/无重试",
+      "evidence": "§7.74真实timed_out，输出0/verdict无；模型及read-only实证、全部Job final0，旧结果保留"
     }
   ],
   "checks": [
@@ -1631,6 +1650,11 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
       "name": "P0-4.12独立静态审核",
       "source": "project-progress/p0412-structured-review-20261020/independent-review.json",
       "result": "三文件实际diff/调用链/原生检查日志通过；产品0调用、Job final0，非真实Review PASS"
+    },
+    {
+      "name": "P0-4.13真实验收",
+      "source": "project-progress/p0413-review-protocol-20261020/independent-review.json",
+      "result": "Reviewer1/1，90s超时BLOCKED，模型gpt-6.1-sol/read-only，3控制final0，无新Round/LAYA/Worker"
     }
   ],
   "sources": [

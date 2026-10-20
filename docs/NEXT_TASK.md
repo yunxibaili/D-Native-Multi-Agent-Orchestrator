@@ -1,22 +1,20 @@
-# 唯一下一任务 — P0-4.13 单次Reviewer结构化协议验证（待新调用授权）
+# 唯一下一任务 — P0-4.14 Reviewer启动与首轮响应只读定位（待Owner决定）
 
-当前事实见PROJECT_BASELINE.md §7.73。Owner已批准Round独立审核改用专用codex exec --output-schema；OpenCode已完成三文件实施，Codex独立静态PASS。类型检查/diff各一次exit0，未运行测试/真实产品调用；不能宣称安装版协议或真实Review通过。
+当前事实见PROJECT_BASELINE.md §7.74。P0-4.13真实验证BLOCKED：唯一gpt-6.1-sol Session在90s截止，输出0，无verdict；没有重试。原生turn_context已证明实际模型与read-only。全部owned Job final0、cleanupFailures=[]，旧Round和Demo未改变。
 
-## 已实现
+## 唯一最小方向
 
-- runUnifiedReview保持单次Runtime.review，Codex请求显式schema路径及read-only；adapter复用既有fresh exec profile/ManagedProcess，同模型、独立Session、deadline与清理不变。
-- 无schema的旧exec review保留；非法/重复schema selector及review+threadId拒绝。普通Worker调用不变。
-- verdict等模型判断仍须严格合法；reviewer/reviewedAt由主机绑定，无默认pass、无patch-is-correct转换。
-- P0-4.11仍PARTIAL：两个真实Go Worker/批准测试完成；旧Review无合法verdict，不回填或追认。
+先只读分析现有原生trace/诊断/时间线和受支持的进程级配置，区分启动目录刷新、MCP握手、模型首轮等待及指令读取。事实：turn_started约15.5s，首次Skill读取约79.4s，90s截止；有目录刷新timeout/MCP transport错误，但不能据此认定唯一根因。
 
-## 唯一最小待授权验证
+需要Gemini/官方资料辅助核对当前Codex0.163.0-alpha.10.2的exec初始化及MCP/目录刷新行为、是否存在官方支持的单次进程级隔离方法。保持认证、规则和原有安全边界，不读凭据、不修改全局配置，不自动忽略AGENTS/Skill或提高deadline。先形成有根据的最小方案，不新增框架/源码补丁或新调用。
 
-只新增1个Codex gpt-6.1-sol独立审核Session，90s真实process deadline，失败不重试。复用D:/workbench-demo/p0411-20261020T040805Z的已交付add.js/add.test.js与本轮保存的真实Review packet；不重新启动Worker/LAYA，不创建新Round、不改旧任务状态或Human Gate。
+## 明确保留
 
-复用现有CLI review命令和--extra接口：额外分别传--output-schema与静态schema绝对路径（建议--extra=...形式），--sandbox read-only、指定model/timeout/live-agent/json，仍经sealed owned Job启动。实际请求正文来自已核对的历史packet，不把自然语言“patch正确”当作产品verdict。保存原始UTF-8输出、Session/模型与Job停止事实，核对必需JSON字段及负面结论；本次仅协议/独立审核验证，不冒充整轮E2E PASS。
+- P0-4.12专用exec --output-schema静态PASS，已真实进入Session；最终schema输出仍未验。不能因一次超时认定schema无效，也不能认定适配已真实PASS。
+- P0-4.11仍PARTIAL，不回填旧Review/Human Gate；未来完整Round需单独授权。
+- 本次预算Reviewer1/1已用，Worker/LAYA/Round均0；费用窗口内剩余时间不等于新会话授权。
+- 单次review CLI必须重复使用分隔形式：--extra --output-schema --extra <schema绝对路径>。现有generic parser的重复--extra=value会覆盖前值，导致前置拒绝；这是验证命令的既有接口限制，不影响Round内部extraArgs数组。当前不改parser。
 
-执行前需Owner对新1会话范围与当前订阅包含额度/无额外credits/API余额/自动充值/fallback的费用声明作新确认；旧产品预算已耗尽，开发委派不继承产品预算。未获得新授权前不运行真实审核、CLI探针或模型。
+不运行新CLI探针/模型/服务/测试，不升级组件，不新增或修改测试/验证脚本。保持HEAD/index/范围外dirty与所有旧证据；如后续确需开发，仍由OpenCode实施、Codex审核，并核对新的开发模型/费用授权。
 
-保持单Session、无重试、无模型替换、无自动后续动作；无论成功失败都按既有owned marker/Job清理，确认ActiveProcessesFinal=0。不改生产源码/旧Demo配置/pool/digest/历史结果，不新增测试/临时脚本，不升级组件。下一真实完整Round仍需单独决定。
-
-阶段归档由Codex使用独立索引精确提交3个源码资产+基线/NEXT_TASK，不包含project-progress/本机证据或凭据，不合并main；主HEAD/index和范围外dirty保持。
+证据目录project-progress/p0413-review-protocol-20261020仅本机保留。阶段仅精确归档基线/NEXT_TASK；不得上传project-progress或合并main。
