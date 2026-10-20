@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-20。§7.79 P0-4.18有限离线185/0；§7.81定位归档清理片段的Windows启发式误判，采用无删除归档事务后已推送独立分支并核对远端SHA。真实Review/E2E不提升，下一P02集成夹具迁移待授权。
+更新：2026-10-20。§7.82 P0-4.19集成夹具迁移有限离线PASS：OpenCode Go实现，typecheck一次0，Codex白名单contained单文件一次118/0，三个owned Job final0。无生产修改/真实产品Round，下一步仅建议单次原生Reviewer验证，待新授权。
 
 ## 1. 权责与当前结论
 
@@ -965,22 +965,35 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 
 - §7.81实际结果：移除归档事务中的删除操作后，同一Git入口成功创建并推送094086e2f953814d19c718888d513cbe21bcf63f，远端refs/heads/codex/p0418-unified-review-offline-20261020的SHA一致；相对f5896ccd的manifest仅既定三文件，diff --check=0。没有修改安全设置/规则或改用别的上传入口；该成功支持清理表达式误判定位。原失败记录保留，不能倒写为原命令执行过。
 - 归档收口以本次文档跟进提交及archive-source-fix.json/归档保护记录为准：无主工作树checkout、main合并、强推或模型/测试调用；隔离索引的所有权、确切清理及HEAD/index/范围外哈希在最终本机记录独立核对。本轮不启动P0-4.19，后续仍需明确测试/实施者授权。
+## 7.82 P0-4.19 P02集成假Reviewer迁移与单文件验收（2026-10-20，有限离线PASS）
+
+- Owner选择保持OpenCode实现、后续明确继续，并确认本轮DeepSeek Go额度足够/Use balance关闭、主辅助不消耗按量余额或收费fallback。Codex只调研、协调、审核和运行一次独立suite，未接管代码实现。用户环境仍固定Free，开发进程局部主/small_model均固定opencode-go/deepseek-v4.1-flash、只启用Go与对应白名单；不修改全局配置/环境。
+- OpenCode首次开发ses_ea6b6f720ffeIZIM9HEFack7jM，13条assistant均为Go指定模型；180809ms达到180s截止，launcher11/Job root1、stopRequested=1/terminated，部分编辑未完成、未typecheck。一次定向返工ses_ea6b1f8f6ffezPq3GRs5kvowit，14条assistant同模型，89736ms自然退出、launcher/root0，完成代码与一次npm run typecheck exit0。两原生开发会话均含Job complete/done/treeStopped/final0，不把首轮超时算成功。原生JSONL未观察retry类型事件，不等于所有内部HTTP请求计数。
+- 执行偏差保留：首次Worker违反禁止node-e要求，用一次node-e只读package脚本元数据；没有用于验证、未启动测试或产品模型，但仍是明确指令偏差，不写成全程无脚本。定向返工再次明确禁止后未再出现。两轮额度已用完，无第三轮调用。Go新增费用仅据Owner订阅声明，不以usage/cost字段冒充账单测量。
+- 唯一实现文件tests/p02-auto-advance.test.ts：去掉CAPS的never断言，单独Reviewer能力extraArgs/sandbox，Worker能力不变；校验本次-o路径为临时根直属native-agent-review-*目录中的final-message.json，UTF8/exclusive wx写入现有VERDICT并加入已有ownedDirs。仍一次return runtime.review(req)，保持原生handle/RunResult身份和FakeTransport停止生命周期；原Review期间授权撤销的时序保留。caseA仅新增请求参数和生产清理目录两项检查，原A–I断言不删不改，原真实批准测试/非零退出/预算与权限门禁不变。
+- Codex静态复核实际diff及两轮工具日志，确认Worker只有一次typecheck，没有跑suite，不重复其检查；类型结果0的完整日志留存。Codex于12:37:21Z→12:37:25Z只通过scripts/test-timed.mjs白名单选择该单文件，offline bootstrap先冻结，外层sealed Windows Job保护，原始双流按字节留证；118 passed/0 failed，Runner3704ms、suite Job rootExit0/launcher0。stdout首条policy frozen，C的真实受控子进程按预期exit1且Job空，D的批准测试非零拒绝日志属负控；不把负例WARN当产品执行失败，也不隐藏已有cline未安装提示。
+- 验收A–I完整保留：两个真实批准测试标记、独立假Reviewer传合法verdict、发送前与Review中撤销、测试失败不派发下游、wait、显式checkpoint、POST预算和非pass Review投影均通过。套件只用假Agent/假LAYA，批准测试Node子进程真实contained；生产Worker0/原生Codex Review0/真实LAYA POST0/产品Round0，不将模拟闭环当真实MVP。
+- 三个本轮outer Job（开发、返工、suite）均assignedBeforeResume/resumed/rootExitObserved/complete=1、phase=done、treeStopped=1、ActiveProcessesFinal=0，launcher/root均已退出、cleanupFailures0。suite前后三文件哈希一致；主HEAD/index及范围外dirty核对保留。共享control只记新增清单，不仅凭时间归属具体任务；suite外层Job提供整树停止事实。
+- 结论仅P0-4.19有限离线PASS，包含上述开发执行偏差；P0-4.17/18/19的输出契约及P02集成已有离线证据，非全部回归或真实Review通过。既有9/26历史豁免、旧Round PARTIAL/Human Gate保持，本轮未重跑其他suite。已有固定版本/本地调用链资料可复用，本片不新增外部机制，无需Gemini补查。
+- 本机证据project-progress/p0419-p02-review-fixture-20261020/含before、两轮提示词/费用声明/原始流/Job/run、typecheck日志及真实退出码、源码前后、Codex静态复核、唯一suite结果和independent-review.json；audit只读、不上传。阶段归档仅本测试+唯一基线+NEXT，以be2b005为父独立codex/p0419-p02-review-offline-20261020审核分支，不合并main/强推，SHA/清理以archive.json/最终记录为准。
+- 唯一下一建议P0-4.20：单次受控原生Reviewer验证既有真实成果，最多一个codex/gpt-6.1-sol原生会话、实际执行deadline90s；严格final文件/JSON/身份/退出/Job停止门禁不放宽，不新Round/Worker/LAYA，不失败重试。须Owner新的调用、数据范围与当前订阅费用声明；Go开发授权不继承给Reviewer，当前不执行。
+
 <!-- project-progress:begin -->
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-20T12:16:52.8305880Z",
+  "updatedAt": "2026-10-20T12:40:32.1108683Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-4.18",
-    "name": "Review最终文件夹具与单文件有界离线验收",
+    "id": "P0-4.19",
+    "name": "P02集成假Reviewer输出契约迁移",
     "status": "done",
-    "summary": "有限离线PASS保持185/0/typecheck最终0；Windows清理表达式误判已源码定位，独立审核分支094086e已推送并核对远端。未测试/调用模型，真实Review仍PARTIAL。"
+    "summary": "有限离线PASS：OpenCode Go两轮实现，一次typecheck0；Codex单文件一次118/0，三个owned Job final0。首轮超时及一次node-e只读偏差保留，真实Review未运行。"
   },
   "next": {
-    "id": "P0-4.19",
-    "name": "待授权：P02集成假Reviewer最终文件契约迁移",
+    "id": "P0-4.20",
+    "name": "待Owner新授权：单次原生Reviewer验证既有真实成果",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1057,24 +1070,10 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
   "blockers": [
     {
       "severity": "P1",
-      "kind": "集成夹具兼容性",
-      "title": "P02假Reviewer尚未迁移最终文件契约",
-      "detail": "CAPS未声明extraArgs/sandbox，不写-o；本片只运行unified-review，P02未测。",
-      "next": "Owner授权后仅迁移既有p02-auto-advance.test.ts并一次有界离线验收。"
-    },
-    {
-      "severity": "P1",
       "kind": "真实运行",
       "title": "实际Reviewer90s退出及有效verdict仍未证明",
-      "detail": "本轮0模型，旧连续两次timed_out和Round PARTIAL不回填；analytics旁路仅有精确源码依据。",
-      "next": "先迁移集成夹具；真实Review以后另获当前调用/费用授权。"
-    },
-    {
-      "severity": "P2",
-      "kind": "协作范围",
-      "title": "OpenCode启动被自动审批拒绝，未发生开发调用",
-      "detail": "上一片blocked by policy；本片Owner明确允许Codex直接迁移测试，长期分工/全局模型保持。",
-      "next": "不变更启动方式绕过审批；当前不追加开发模型调用。"
+      "detail": "unified-review185/0及P02集成118/0已有离线证据；原真实90s超时未被新原生成功替代，Go开发会话不是产品Reviewer。",
+      "next": "仅建议新授权单次Codex Reviewer；不重跑Round/Worker/LAYA，不继承过期费用窗口。"
     }
   ],
   "tasks": [
@@ -1464,9 +1463,21 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
       "status": "done",
       "deliverable": "现有假Reviewer迁移及单文件负控",
       "evidence": "§7.79；183/1→Owner批准185/0，typecheck2→0，两个Job final0，真实调用0"
+    },
+    {
+      "id": "P0-4.19",
+      "title": "P02集成假Reviewer契约迁移",
+      "status": "done",
+      "deliverable": "指定既有测试文件；生产不变",
+      "evidence": "§7.82；OpenCode模型两会话均确认，typecheck单次0；独立suite118/0，三个Job final0；首轮执行偏差保留"
     }
   ],
   "checks": [
+    {
+      "name": "P0-4.19唯一单文件离线验收",
+      "source": "PROJECT_BASELINE.md §7.82；project-progress/p0419-p02-review-fixture-20261020/independent-review.json",
+      "result": "118/0，Worker typecheck一次0且Codex未重复；0产品模型/真实LAYA，3个owned Job final0；非真实E2E"
+    },
     {
       "name": "P0-4.18归档拒绝根因与成功同步",
       "source": "PROJECT_BASELINE.md §7.81；project-progress/p0418-unified-review-offline-20261020/approval-source-review.json；archive-source-fix.json",

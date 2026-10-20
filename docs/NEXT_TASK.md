@@ -1,17 +1,17 @@
-# 唯一下一任务 — P0-4.19 P02集成假Reviewer契约迁移（待Owner授权）
+# 唯一下一任务 — P0-4.20 单次原生Reviewer验证（待Owner新授权）
 
-P0-4.18有限离线PASS，见唯一基线§7.79：单文件补验185/0、typecheck最终0，两个contained Job final0。首次183/1和类型修正记录保留，之后未重跑suite；生产未改，真实Review/E2E仍PARTIAL。
-
-## 归档已解除阻塞
-
-§7.81定位：原PowerShell清理if把Get-ChildItem的-Force与普通Remove-Item放在同一启发式片段，被识别为强制删除；never审批模式因此直接拒绝整条命令。固定版源码与实际错误对应。归档阶段移除所有删除，独立owned普通清理，不改安全规则或账户；同一Git入口已成功推送094086e2f953814d19c718888d513cbe21bcf63f到codex/p0418-unified-review-offline-20261020，远端SHA及三文件manifest核对。后续文档跟进提交/临时资源清理/现场保护以archive-source-fix.json及最终记录为准。
+P0-4.19有限离线PASS，唯一基线§7.82：OpenCode Go首次超时后一次定向返工完成，typecheck一次0；Codex独立白名单contained单文件一次118/0，3个owned Job final0。首轮node-e只读包信息违反指令的偏差完整保留。无生产改动，无真实产品Worker/LAYA/Review/Round；不能把离线闭环或开发Go会话当真实Review成功。
 
 ## 唯一最小建议
 
-仅迁移tests/p02-auto-advance.test.ts的假Codex：补extraArgs/sandbox能力，按本次--output-last-message写已有VERDICT，保留RuntimeOrch.review/RunResult身份与FakeTransport生命周期。保留A–I、批准测试与授权撤销断言，不删/skip，不放宽门禁，不改生产代码或Runner。
+单次受控Codex Native Review复核已有真实Round成果，不重新执行Round/Worker/LAYA。固定codex/gpt-6.1-sol，最多1个独立原生会话，实际进程deadline90000ms，失败不重试、不换模型；继续统一runUnifiedReview、结构化schema与唯一owned -o最终文件，严格身份/succeeded/exit0/signalnull/Job停止后读取/validate/清理门禁，不直接手拼输出当产品通过。
 
-依据：CAPS缺extraArgs/sandbox，review只转发runtime.review(req)，VERDICT仅输出frame、未写-o。本片未运行P02，不预报失败数量；185/0不是P02集成通过。
+执行前仅核对当前代码、既有真实Review材料/产物的身份和哈希，以及已有contained入口适用性；无适用入口或必须改生产代码时停止，提出精确需求，不临时另造Runtime。采用已实现进程局部analytics.enabled=false，不扩大deadline、不做额外探针碰运气。
 
-获Owner明确测试/实施者授权后，才通过白名单Runner+offline bootstrap+外层Windows Job运行该单文件一次，保存原始流、suite/root退出码和final0。不direct node回退、不运行其他suite/全量，不调用真实Agent/LAYA/Review/Round；既有实施者例外和补验次数不自动延续，开发模型需当前费用事实。
+## 尚未获批
 
-实际90s Reviewer退出与合法verdict仍未证明；旧Round/Human Gate、9/26历史保持，不补用过期真实调用窗口。不开展新功能或前端；主HEAD/index/范围外dirty保持，不合并main。
+Owner需明确授权上述一次原生会话及消费已有真实成果的数据范围，并确认当前gpt-6.1-sol订阅包含额度足额、无额外credits/API按量/自动充值/付费fallback、辅助调用同边界。Go开发声明不覆盖产品Reviewer，旧调用/费用窗口不补用；当前不启动模型或服务。
+
+验收仅该原生Review是否合法verdict及可信退出/清理，不能回填旧Round PASS或代替Owner Human Gate。输出与Job证据完整留存，不改旧结果/旧证据/用户账户。P0-2新增功能/前端/接力继续不启动。
+
+主HEAD/index/范围外dirty保留；阶段归档沿用独立codex分支、精确文件及隔离索引，不合并main、不强推、不上传本机进度/审计材料。P0-4.19远端SHA/清理事实以本机archive.json及最终记录为准。

@@ -32,12 +32,13 @@
  * their approved tests completed; the late revocation must reach the saved attention.
  * Other rejected draft cases remain unverified.
  *
- * Run: node tests/p02-auto-advance.test.ts
+ * Run: the registered offline Runner (TEST_TIMED_SUITES=tests/p02-auto-advance.test.ts),
+ * not a direct node invocation.
  */
 
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, sep } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { runRoundCli, type RoundCliOverrides } from '../src/cli/round-cli.ts';
@@ -92,7 +93,8 @@ const WORKER_MODEL = 'p02-worker/free-model';
 const REVIEWER_MODEL = 'codex/review-model';
 const PLAN_ID = 'add-flow';
 const OBJECTIVE = 'implement and test an add module';
-const CAPS = { newTask: true, review: true, modelSelection: true, cwd: true, resume: true } as never;
+const CAPS = { newTask: true, review: true, modelSelection: true, cwd: true, resume: true };
+const REVIEWER_CAPS = { ...CAPS, extraArgs: true, sandbox: true };
 
 const ADD_JS = "module.exports = { add: (a, b) => a + b };\n";
 const WRONG_ADD_JS = "module.exports = { add: (a, b) => a - b };\n";
@@ -276,6 +278,7 @@ interface CaseResult {
   probesRead: number;
   checkpointCalls: number;
   revocationTrace: string[];
+  reviewOutputDirectory?: string;
   modeMismatch?: {
     autoMode: unknown; autoDigest: unknown; checkpointDigest: unknown;
     exitCode: number; report: Record<string, unknown>;
@@ -297,6 +300,21 @@ async function runCli(drivable: unknown, argv: readonly string[], overrides: Rou
   let report: Record<string, unknown> = {};
   if (i !== -1) { try { report = JSON.parse(captured.slice(i)) as Record<string, unknown>; } catch { report = {}; } }
   return { exit, stdout: captured, report };
+}
+
+// Only paths offered to this synthetic reviewer belong to the fixture. Production
+// deliberately retains them when stop/identity cannot be confirmed.
+function fixtureFinalOutputPath(req: Omit<RunRequest, 'mode'>): string | null {
+  const args = req.extraArgs ?? [];
+  const index = args.indexOf('--output-last-message');
+  if (index < 0) return null;
+  const file = args[index + 1];
+  if (!file || basename(file) !== 'final-message.json' ||
+      dirname(dirname(resolve(file))) !== resolve(tmpdir()) ||
+      !basename(dirname(file)).startsWith('native-agent-review-')) {
+    throw new Error('fixture received an unexpected owned output path');
+  }
+  return resolve(file);
 }
 
 /**
@@ -321,13 +339,14 @@ async function harness(options: { revokeBeforeSend?: boolean; revokeDuringReview
 
   const requests: RunRequest[] = [];
   const reviewRequests: RunRequest[] = [];
+  let reviewOutputDirectory: string | undefined;
   const VERDICT = JSON.stringify({ verdict: options.reviewVerdict ?? 'pass', reason: 'fixture reviewer: the deliveries meet the recorded runs', findings: [], recommendedAction: 'none', reviewer: 'fixture-codex', reviewedAt: 1 });
   const runtime = new RuntimeOrchestrator({
     config: { agents: {} } as never,
     storeDir,
     replaceAdapters: [
       createFakeAdapter({ id: AGENT_A, capabilities: CAPS, script: [{ kind: 'exit', code: 0 }] }),
-      createFakeAdapter({ id: REVIEWER, capabilities: CAPS, script: [{ kind: 'frame', text: VERDICT, data: { text: VERDICT } }, { kind: 'exit', code: 0 }] }),
+      createFakeAdapter({ id: REVIEWER, capabilities: REVIEWER_CAPS, script: [{ kind: 'frame', text: VERDICT, data: { text: VERDICT } }, { kind: 'exit', code: 0 }] }),
     ],
   });
   const drivable = {
@@ -345,6 +364,11 @@ async function harness(options: { revokeBeforeSend?: boolean; revokeDuringReview
       if (options.revokeDuringReview) {
         writeFileSync(join(cwd, 'stage.json'), JSON.stringify({ ...STAGE, acceptance: 'Owner revoked the approved acceptance during the independent Review' }), 'utf8');
       }
+      const file = fixtureFinalOutputPath(req);
+      if (file === null) throw new Error('fixture reviewer received no owned output-last-message path');
+      reviewOutputDirectory = dirname(file);
+      ownedDirs.push(reviewOutputDirectory);
+      writeFileSync(file, VERDICT, { encoding: 'utf8', flag: 'wx' });
       return runtime.review(req);
     },
     run(req: RunRequest): RunHandle {
@@ -436,7 +460,7 @@ async function harness(options: { revokeBeforeSend?: boolean; revokeDuringReview
     exitCode: r.exit, confirmed: true, stageCheckExit: sc.exit, stageCheckReport: sc.report,
     stageCheckPosts, stageCheckRequests, stageCheckReviews,
     report: r.report, requests, reviewRequests, cwd, storeDir, reportDir,
-    fetchPosts: fetchImpl.posts().length, fetchGets: fetchImpl.gets().length, probesRead: probesRead.n, checkpointCalls: checkpointCalls.n, revocationTrace, modeMismatch,
+    fetchPosts: fetchImpl.posts().length, fetchGets: fetchImpl.gets().length, probesRead: probesRead.n, checkpointCalls: checkpointCalls.n, revocationTrace, modeMismatch, reviewOutputDirectory,
   };
 }
 
@@ -489,6 +513,14 @@ async function caseA(): Promise<void> {
   check('A: exactly two worker runs (one per step)', r.requests.length === 2, diag(r));
   check('A: one fake Review was dispatched exactly once', r.reviewRequests.length === 1, `rev=${r.reviewRequests.length}`);
   check('A: the unified review completed and passed', (r.report.unifiedReview as { status?: string } | undefined)?.status === 'completed' && (r.report.unifiedReview as { verdict?: string } | undefined)?.verdict === 'pass', JSON.stringify(r.report.unifiedReview));
+  const reviewReq = r.reviewRequests[0];
+  const reviewExtraArgs = reviewReq?.extraArgs ?? [];
+  check('A: the actual Review request carries output schema/last-message and a read-only sandbox',
+    reviewExtraArgs.includes('--output-schema') && reviewExtraArgs.includes('--output-last-message') && reviewReq?.sandbox === 'read-only',
+    JSON.stringify({ extraArgs: reviewExtraArgs, sandbox: reviewReq?.sandbox }));
+  check('A: the production Review owned its output directory and removed it after completing',
+    typeof r.reviewOutputDirectory === 'string' && !existsSync(r.reviewOutputDirectory),
+    JSON.stringify({ outputDirectory: r.reviewOutputDirectory }));
   check('A: exactly three LAYA POSTs (classify + two continue), no fourth', r.fetchPosts === 3, `posts=${r.fetchPosts}`);
   check('A: the probes getter was read at the pre-classify seam', r.probesRead >= 1, `probesRead=${r.probesRead}`);
   check('A: no checkpoint input was consumed and report.checkpoints is absent', r.checkpointCalls === 0 && !Object.prototype.hasOwnProperty.call(r.report, 'checkpoints'), `calls=${r.checkpointCalls} hasCheckpoints=${Object.prototype.hasOwnProperty.call(r.report, 'checkpoints')}`);
