@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-21。§7.85 P0-4.22单次真实原生Reviewer PASS：gpt-6.1-sol独立会话68417ms、exit0、合法verdict=pass，两个owned Job final0；本轮Worker/LAYA/新Round/测试均0。旧Round仍PARTIAL、Human Gate未接受，不倒写完整E2E PASS。
+更新：2026-10-21。§7.86 P0-4.23启动前BLOCKED：Owner已授权一次新Round并确认费用/边界，新Demo有效配置与stage-check通过；受控执行命令在CreateProcess前被自动审批拒绝，真实Round/Worker/Reviewer/LAYA均0，待一次精确重试批准。§7.85原生Reviewer-only PASS保持。
 
 ## 1. 权责与当前结论
 
@@ -1010,22 +1010,31 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 - 结论仅P0-4.22单次真实原生Reviewer PASS，关闭“此接线未有90s内可信原生退出/verdict”的证据缺口；§7.84离线PASS保持，9/26历史债务不扩大。旧round-mvgba79g仍PARTIAL、gate=waiting_for_user、automaticPostRoundAction=none；本次报告不修改旧任务/Verification/Human Gate、不回填完整MVP PASS。
 - 本机证据ignored project-progress/p0422-native-packet-review-20261021/含新授权、before、packet、来源映射、真实调用argv/原始双流/退出、原生模型/工具/用量/两个Job、保全及独立审核记录；audit只读，不上传凭据/本机证据。基线/NEXT/进度同步，估算不因本次一个成功会话自动加分。阶段归档只两文档，以719417c9为父独立codex审核分支；远端SHA/manifest及外部临时索引清理以archive.json/final.json为准。
 - 唯一下一建议P0-4.23：Owner对现有真实交付及Review作最终人工裁定后，另行批准一次全新最小Round，验证当前CLI的Worker→机器门禁自动流转→原生Review→Human Gate整轮联动；不得把今日独立历史材料审核当同一Round全链PASS。新Round、调用预算、Go/Codex当前费用、机器批准测试120s及协作式数据边界需新授权，当前不启动。现成实现与固定来源已足够，无需新增Gemini调研/架构开发。
+## 7.86 P0-4.23 全新最小Round准备与执行环境拒绝（2026-10-21，启动前BLOCKED）
+
+- Owner“继续推进”批准§7.85/NEXT的一次全新最小Round，随后明确“确认两项费用事实”“接受这些既有边界”：Go额度足够/Use balance关闭、Codex包含额度足额，主辅助无额外credits/API按量余额/自动充值/付费fallback；批准测试每条120s、协作式Demo/Job并非OS读取/网络沙箱，原生权限不放宽/不自动批准，OpenCode同会话既有有限重试可用，编排器重试0。回复接收后首次时钟04:03:37Z（非平台精确发送时间），费用固定截至04:33:37Z，不滚动；旧Human Gate未接受，未把“继续”当成accept。
+- 新拥有Demo D:/workbench-demo/p0423-20261021T040337Z，workspace空、control有plans/stage/orchestrator/pool，根opencode.json仅固定Go主/辅助模型和provider白名单。复用已有两任务CommonJS add.js→独立add.test.js完成契约及allowedScope/批准命令；双方90s、LAYA POST硬上限3、串行/无接力/任务重试0。未预置目标文件，未修改旧Demo/父/全局配置/生产代码。
+- 一次≤30s contained原生debug config只核对有效model/small_model/enabled_providers/Go whitelist，全部匹配指定Go；原始配置仅内存处理、不打印或落盘credential值。一次无推理stage-check exit0，digest=b178f6d967315bc5195019de0f933d817f199d3f82dbef9a8fff673efbe53afb；绑定新Owner pool声明与固定窗口，不复活旧池。两个预检Job complete/done/rootExit0/treeStopped/final0，cleanupFailures0，workspace仍空。
+- 唯一计划真实执行为既有sealed owned LAYA固定缓存启动→既有Round CLI→finally写owned stop marker协同停止/验证Job。该合并命令被执行环境自动审批在CreateProcess前整体拒绝，工具仅返回blocked by policy，无具体rationale；shell主体未运行，LAYA启动/health/POST、Worker、Reviewer、Round、批准测试均0，无服务/模型副作用。尚无laya-invocation或round-invocation记录，不能写成产品启动或模型限额失败。
+- 未换入口/拆分/编码绕过、未实际重试。已请求Owner只批准该命令精确重试一次，范围/费用/调用数/owned清理保持，再被拒绝立即停止；目前答复未到。既有§7.81 Force+delete误判不能自动解释本次拒绝（本命令不含原Remove-Item清理表达式），具体政策原因UNKNOWN，不能伪称已定位。无需Gemini重复调研已有产品路径；没有授权新的实现/开发Worker/安全规则修改。
+- 准备材料与拒绝事实保存在ignored project-progress/p0423-real-round-20261021/，含当前授权、before、新Demo配置哈希、有效配置白名单事实、stage原始输出/digest/两个控制记录、执行环境拒绝和未启动事实；audit只读，凭据不读取/上传。当前Demo保留为未执行材料，不删除用户文件或预置产物。主HEAD/index/范围外dirty及latest旧结果按结束核对，阶段只精确归档基线/NEXT，不上传本机材料；远端SHA/资源清理见archive.json/final.json。
+- 唯一下一步仍P0-4.23：等待Owner对已被拒绝动作的一次精确重试明确答复。若获准且04:33:37Z前材料仍匹配，沿用本次有效费用窗口和digest，只执行原定唯一Round；不重复申请同一费用事实。若窗口已过期，先补当前费用声明并按新绑定生成digest，不滚动刷新旧时间；若再次被拒绝，则停止并交执行环境提供具体政策原因，不通过其他启动方式规避。§7.85真实Reviewer68.417s/合法pass事实保持，新整轮联动仍无结果。
 <!-- project-progress:begin -->
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-21T04:01:06.9068088Z",
+  "updatedAt": "2026-10-21T04:12:08.3167222Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-4.22",
-    "name": "既有真实成果的单次原生Review",
-    "status": "done",
-    "summary": "Reviewer-only PASS：gpt-6.1-sol原生独立会话68.417s/exit0/合法pass，两层owned Job final0；Worker/LAYA/新Round/测试0。旧Round/Human Gate保持，非完整E2E PASS。"
+    "id": "P0-4.23",
+    "name": "全新最小Round准备与启动",
+    "status": "blocked",
+    "summary": "Owner已授权/确认费用边界，有效Go配置+stage-check通过；合并owned执行命令CreateProcess前被审批拒绝，真实模型/服务/Round0，待精确重试批准。"
   },
   "next": {
     "id": "P0-4.23",
-    "name": "待Owner人工裁定及新授权：一次全新最小Round整链验收",
+    "name": "待Owner一次精确重试答复；不换入口、不扩大预算",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1102,10 +1111,10 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
   "blockers": [
     {
       "severity": "P1",
-      "kind": "真实整轮验收",
-      "title": "当前实现的全新Round联动及Owner最终验收仍待验证",
-      "detail": "历史真实产物已获新的独立原生Review pass，68.417s/exit0/Job final0；原历史Round仍PARTIAL，不能回填其Review/Human Gate。",
-      "next": "Owner人工裁定现有结果；另授权全新最小Round及Go/Codex当前费用和预算，不自动运行。"
+      "kind": "执行环境审批",
+      "title": "owned执行命令CreateProcess前被拒绝",
+      "detail": "只返回blocked by policy、具体原因UNKNOWN；两预检Job final0，Worker/Reviewer/LAYA/Round均0。已申请一次精确重试，未获答复。",
+      "next": "有明确批准且费用窗口有效才精确重试一次，再拒绝即停；不替换启动方式。"
     }
   ],
   "tasks": [
@@ -1523,9 +1532,21 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
       "status": "done",
       "deliverable": "合法原生Review verdict+实际身份/退出/Job/原始证据",
       "evidence": "§7.85；gpt-6.1-sol/独立Session/68.417s/exit0/pass，2 owned Job final0；新Round/Worker/LAYA/测试0，旧Human Gate未改"
+    },
+    {
+      "id": "P0-4.23",
+      "title": "全新最小Round整链验收",
+      "status": "blocked",
+      "deliverable": "新Demo+当前Owner池+有效Go配置+stage digest；真实运行未启动",
+      "evidence": "§7.86；两预检Job final0，启动命令被审批拒绝，实际Round/Worker/Reviewer/LAYA POST0"
     }
   ],
   "checks": [
+    {
+      "name": "P0-4.23无推理准备及审批拒绝",
+      "source": "PROJECT_BASELINE.md §7.86；project-progress/p0423-real-round-20261021/execution-policy-rejection.json",
+      "result": "有效Go配置核对、stage-check一次通过，新digest；两个预检Job final0，真实执行命令未CreateProcess，待精确重试答复"
+    },
     {
       "name": "P0-4.22真实原生Reviewer独立验收",
       "source": "PROJECT_BASELINE.md §7.85；project-progress/p0422-native-packet-review-20261021/independent-review.json",
