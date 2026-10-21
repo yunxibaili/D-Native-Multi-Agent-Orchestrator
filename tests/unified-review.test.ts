@@ -27,6 +27,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { Orchestrator } from '../src/orchestrator/orchestrator.ts';
+import { runReviewPacket } from '../src/cli/review-cli.ts';
 import { createFakeAdapter, sourceText } from './helpers.ts';
 
 import {
@@ -737,6 +738,184 @@ section('unified review 6. the real RuntimeOrch.review() seam');
       empty.activeSessions().length === 0, String(empty.activeSessions().length));
   } finally {
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* windows may still hold it */ }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 7. The imported ReviewPacket CLI entry
+// ---------------------------------------------------------------------------
+section('unified review 7. imported packet CLI entry');
+
+{
+  /**
+   * `review codex --packet <file>` is a narrow entry over the SAME runUnifiedReview
+   * seam. These cases drive the callable entry directly (never index.ts's auto-main),
+   * with the existing fake reviewer, and measure that invalid input is rejected
+   * BEFORE any review call.
+   */
+  const dir = mkdtempSync(join(tmpdir(), 'unified-review-packet-'));
+  try {
+    const packet = buildReviewPacket({
+      roundId: 'round-packet',
+      originalRequest: 'add a retry to the http client',
+      layaPlan: 'Laya: a small isolated change.',
+      tasks: [packetTask()],
+      outcomes: [classifyExecutionOutcome({ taskId: 'c1', taskStatus: 'to_verify', run: result() })],
+      evidenceNote: 'AttemptStore holds the full append-only execution evidence.',
+    });
+    const packetPath = join(dir, 'packet.json');
+    writeFileSync(packetPath, JSON.stringify(packet, null, 2));
+
+    const ok = fakeReviewer({ state: 'succeeded', output: validVerdict() });
+    const good = await runReviewPacket(
+      { configuredModel: 'gpt-6.1-sol', review: ok.reviewer.review },
+      { agent: 'codex', packetPath, cwd: dir, timeout: 90_000 },
+    );
+    const request = ok.calls[0]!;
+    const extraArgs = request.extraArgs ?? [];
+    check('a valid packet returns zero only on a completed pass',
+      good.exitCode === 0 && good.report.status === 'reviewed' && good.report.review?.status === 'completed' &&
+      good.report.review?.verdict === 'pass', `${good.exitCode}/${good.report.status}`);
+    check('the report carries roundId, source and the input path/SHA256',
+      good.report.roundId === 'round-packet' && good.report.source === 'imported-packet' &&
+      good.report.input.path === resolve(packetPath) && /^[0-9a-f]{64}$/.test(good.report.input.sha256 ?? ''),
+      JSON.stringify(good.report.input));
+    check('the report states the provenance limit explicitly',
+      good.report.provenance.includes('NOT independently authenticated') &&
+      good.report.provenance.includes('not a fresh full end-to-end round'));
+    check('the report says nothing is re-run automatically',
+      good.report.automaticPostRoundAction === 'none');
+    check('the imported packet produced EXACTLY ONE unified reviewer call', ok.calls.length === 1,
+      String(ok.calls.length));
+    check('the reviewer got the generated schema/final-file/read-only profile',
+      extraArgs.includes('--output-schema') && extraArgs.includes('--output-last-message') &&
+      extraArgs.includes('analytics.enabled=false') && request.sandbox === 'read-only');
+    check('the trusted timeout reached the actual runtime request',
+      request.timeoutMs === 90_000 && request.model === 'gpt-6.1-sol' && request.agentId === 'codex',
+      `${String(request.timeoutMs)}/${String(request.model)}/${request.agentId}`);
+
+    // A completed, legal non-pass is a successful REVIEW but a non-zero command.
+    const nonpass = fakeReviewer({
+      state: 'succeeded',
+      output: validVerdict({ verdict: 'rework', reason: 'the retry is missing', recommendedAction: 'rework' }),
+    });
+    const rework = await runReviewPacket(
+      { configuredModel: 'gpt-6.1-sol', review: nonpass.reviewer.review },
+      { agent: 'codex', packetPath, cwd: dir },
+    );
+    check('a legal non-pass verdict returns nonzero and still reports the review',
+      rework.exitCode !== 0 && rework.report.status === 'reviewed' &&
+      rework.report.review?.status === 'completed' && rework.report.review?.verdict === 'rework',
+      `${rework.exitCode}/${String(rework.report.review?.verdict)}`);
+    check('a non-pass review is still called exactly once', nonpass.calls.length === 1,
+      String(nonpass.calls.length));
+
+    // Malformed/missing packet files and invalid nested identity fail before dispatch.
+    const invalid = (name: string, mutate: (raw: any) => void): string => {
+      const raw = JSON.parse(JSON.stringify(packet)) as any;
+      mutate(raw);
+      const path = join(dir, `${name}.json`);
+      writeFileSync(path, JSON.stringify(raw));
+      return path;
+    };
+    const malformed = join(dir, 'malformed.json');
+    writeFileSync(malformed, '{"roundId":');
+    const oversized = join(dir, 'oversized.json');
+    writeFileSync(oversized, Buffer.alloc(1024 * 1024 + 1, 0x20));
+    const notUtf8 = join(dir, 'not-utf8.json');
+    writeFileSync(notUtf8, Buffer.from([0x7b, 0x22, 0xff, 0xfe, 0x22, 0x7d]));
+    const invalidPackets: readonly [string, string][] = [
+      ['missing file', join(dir, 'does-not-exist.json')],
+      ['malformed JSON', malformed],
+      ['oversized file', oversized],
+      ['malformed UTF-8', notUtf8],
+      ['missing nested task status', invalid('missing-status', (raw) => { delete raw.tasks[0].status; })],
+      ['invalid nested run state', invalid('invalid-run-state', (raw) => { raw.tasks[0].handoff.runState = 'exploded'; })],
+      ['mismatched handoff identity', invalid('bad-handoff-identity', (raw) => { raw.tasks[0].handoff.taskId = 'another-task'; })],
+      ['missing evidence note', invalid('missing-evidence', (raw) => { raw.evidenceNote = ''; })],
+    ];
+    for (const [name, path] of invalidPackets) {
+      const f = fakeReviewer({ state: 'succeeded', output: validVerdict() });
+      const r = await runReviewPacket(
+        { configuredModel: 'gpt-6.1-sol', review: f.reviewer.review },
+        { agent: 'codex', packetPath: path, cwd: dir },
+      );
+      check(`${name} is rejected before any review call`,
+        r.exitCode !== 0 && r.report.status === 'rejected' && f.calls.length === 0,
+        `${r.exitCode}/${r.report.status}/${f.calls.length}`);
+    }
+
+    // A cwd must be an actual directory, not merely an existing path.
+    const fileCwd = fakeReviewer({ state: 'succeeded', output: validVerdict() });
+    const fileCwdResult = await runReviewPacket(
+      { configuredModel: 'gpt-6.1-sol', review: fileCwd.reviewer.review },
+      { agent: 'codex', packetPath, cwd: packetPath },
+    );
+    check('a cwd that is a regular file is rejected before any review call',
+      fileCwdResult.exitCode !== 0 && fileCwdResult.report.status === 'rejected' &&
+      fileCwd.calls.length === 0,
+      `${fileCwdResult.exitCode}/${fileCwdResult.report.status}/${fileCwd.calls.length}`);
+
+    // Model/timeout overrides that cannot preserve the fixed packet flow.
+    const badOverrides: readonly [string, { model?: string | boolean; timeout?: string | number | boolean }][] = [
+      ['a model override', { model: 'gpt-5' }],
+      ['a zero timeout', { timeout: 0 }],
+      ['a fractional timeout', { timeout: 1.5 }],
+      ['an excessive timeout', { timeout: 90_001 }],
+      ['a missing timeout value', { timeout: true }],
+    ];
+    for (const [name, override] of badOverrides) {
+      const f = fakeReviewer({ state: 'succeeded', output: validVerdict() });
+      const r = await runReviewPacket(
+        { configuredModel: 'gpt-6.1-sol', review: f.reviewer.review },
+        { agent: 'codex', packetPath, cwd: dir, ...override },
+      );
+      check(`${name} is rejected before any review call`,
+        r.exitCode !== 0 && r.report.status === 'rejected' && f.calls.length === 0,
+        `${r.exitCode}/${r.report.status}/${f.calls.length}`);
+    }
+
+    const configMismatch = fakeReviewer({ state: 'succeeded', output: validVerdict() });
+    const mismatch = await runReviewPacket(
+      { configuredModel: 'gpt-5', review: configMismatch.reviewer.review },
+      { agent: 'codex', packetPath, cwd: dir },
+    );
+    check('a configured model that is not the packet reviewer model is rejected before dispatch',
+      mismatch.exitCode !== 0 && mismatch.report.status === 'rejected' && configMismatch.calls.length === 0,
+      `${mismatch.exitCode}/${configMismatch.calls.length}`);
+
+    // Mixed plain-review overrides must not be smuggled into the packet flow.
+    const mixedOverrides: readonly [string, { extraPositionals?: readonly string[]; extraArgProvided?: boolean; roleProvided?: boolean; sandboxProvided?: boolean }][] = [
+      ['a prompt', { extraPositionals: ['do the thing'] }],
+      ['--extra', { extraArgProvided: true }],
+      ['--role', { roleProvided: true }],
+      ['--sandbox', { sandboxProvided: true }],
+    ];
+    for (const [name, override] of mixedOverrides) {
+      const f = fakeReviewer({ state: 'succeeded', output: validVerdict() });
+      const r = await runReviewPacket(
+        { configuredModel: 'gpt-6.1-sol', review: f.reviewer.review },
+        { agent: 'codex', packetPath, cwd: dir, ...override },
+      );
+      check(`${name} is refused on the packet path before any review call`,
+        r.exitCode !== 0 && r.report.status === 'rejected' && f.calls.length === 0,
+        `${r.exitCode}/${f.calls.length}`);
+    }
+
+    // The CLI must route the packet branch before the raw review path.
+    const strip = (src: string): string =>
+      src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    const indexSrc = strip(sourceText(new URL('../src/cli/index.ts', import.meta.url)));
+    const reviewCliSrc = strip(sourceText(new URL('../src/cli/review-cli.ts', import.meta.url)));
+    check('the CLI routes review --packet before the raw review path',
+      /parsed\.flags\.packet\s*!==\s*undefined/.test(indexSrc) && /runReviewPacket\s*\(/.test(indexSrc));
+    check('the packet CLI adds no second runtime.run call site',
+      !/runtime\s*\.\s*run\s*\(/.test(reviewCliSrc));
+    check('the packet CLI calls runUnifiedReview exactly once',
+      (reviewCliSrc.match(/runUnifiedReview\s*\(/g) ?? []).length === 1,
+      String((reviewCliSrc.match(/runUnifiedReview\s*\(/g) ?? []).length));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 }
 

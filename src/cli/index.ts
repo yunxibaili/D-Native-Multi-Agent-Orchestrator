@@ -12,6 +12,7 @@ import { setLogLevel, type LogLevel } from '../core/log.ts';
 import { Orchestrator } from '../orchestrator/orchestrator.ts';
 import { writeStarterConfig, type AgentConfig } from '../orchestrator/config.ts';
 import { runTaskCli } from './task-cli.ts';
+import { formatPacketReviewReport, runReviewPacket } from './review-cli.ts';
 import { buildQuotaCenter, type BuildQuotaCenterOptions, type QuotaCenterView } from '../quota/index.ts';
 import { installOfflinePolicy } from '../runtime/offline-policy.ts';
 import type { RunRequest, RunResult } from '../core/types.ts';
@@ -29,6 +30,7 @@ COMMANDS
   run <agent> <prompt>            run a new task on a native agent
   resume <agent> <threadId> <prompt>   continue an existing thread
   review <agent> <prompt>         native review entrypoint (codex)
+  review codex --packet <file>    review an imported ReviewPacket (read-only, JSON report)
   threads [agent]                 list resumable threads
   tasks [limit]                   list recent tasks
   show <taskId>                   print a stored task result
@@ -280,6 +282,12 @@ async function cmdRun(
   parsed: Parsed,
   mode: 'run' | 'review' | 'resume',
 ): Promise<number> {
+  // P0-4.21: `review --packet` is an explicit imported-packet path. It is dispatched
+  // BEFORE buildRequest so a missing/invalid packet can never fall back to a raw review.
+  if (mode === 'review' && parsed.flags.packet !== undefined) {
+    return cmdReviewPacket(orch, parsed);
+  }
+
   const { req } = buildRequest(orch, parsed, mode);
   const asJson = parsed.flags.json === true;
   const quiet = parsed.flags.quiet === true;
@@ -316,6 +324,32 @@ async function cmdRun(
     printResult(result);
   }
   return result.state === 'succeeded' ? 0 : 1;
+}
+
+async function cmdReviewPacket(orch: Orchestrator, parsed: Parsed): Promise<number> {
+  const packetFlag = parsed.flags.packet;
+  const modelFlag = parsed.flags.model;
+  const timeoutFlag = parsed.flags.timeout;
+  const result = await runReviewPacket(
+    {
+      configuredModel: orch.configFor('codex').model,
+      review: (req: Omit<RunRequest, 'mode'>) => orch.review(req),
+    },
+    {
+      agent: parsed.positionals[0] ?? '',
+      packetPath: typeof packetFlag === 'string' ? packetFlag : undefined,
+      cwd: resolve(str(parsed.flags, 'cwd') ?? process.cwd()),
+      extraPositionals: parsed.positionals.slice(1),
+      extraArgProvided: parsed.flags.extra !== undefined,
+      roleProvided: parsed.flags.role !== undefined,
+      sandboxProvided: parsed.flags.sandbox !== undefined,
+      model: typeof modelFlag === 'string' ? modelFlag : modelFlag === true ? true : undefined,
+      timeout: typeof timeoutFlag === 'string' ? timeoutFlag : timeoutFlag === true ? true : undefined,
+      now: () => Date.now(),
+    },
+  );
+  process.stdout.write(formatPacketReviewReport(result.report, parsed.flags.json === true) + '\n');
+  return result.exitCode;
 }
 
 function printResult(r: RunResult): void {

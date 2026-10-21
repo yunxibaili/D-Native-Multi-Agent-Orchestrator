@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-20。§7.83 P0-4.20启动前BLOCKED：Owner已批准一次Reviewer并确认费用，当前缺的是仅审核既有Round且经过runUnifiedReview的可执行入口；原生会话0，未用额度不自动补用。P0-4.19有限离线PASS保持，不代表真实Review成功。
+更新：2026-10-21。§7.84 P0-4.21最小packet审核CLI接线有限离线PASS：OpenCode Go实现及一次定向返工，两轮typecheck各0；Codex独立白名单contained单文件一次216/0，五个owned Job final0。真实产品Reviewer/Worker/LAYA/Round均0，尚未证明真实Reviewer在90s内成功。
 
 ## 1. 权责与当前结论
 
@@ -988,22 +988,32 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 - 唯一最小下一步：申请在现有review CLI增加消费明确ReviewPacket的有界分支，复用现有Orchestrator与runUnifiedReview，保留原始review兼容入口和固定模型/90s/一次调用/退出/Job/final文件门禁；先离线接线验收，不在实现过程中调用真实模型。不是新增调度器、恢复执行旧Round或回填其PASS。当前不授权该生产修改，也不自动补用本次未用会话；后续真实验证需新的有效费用窗口。
 - 证据：project-progress/p0420-review-entry-20261020/，仅授权、源码入口映射、现场哈希与最终保全记录；本轮不运行测试/typecheck。基线/NEXT/本机进度同步；远端归档SHA与隔离资源清理以archive.json/final.json为准。
 
+## 7.84 P0-4.21 现有 review CLI 复用统一审核门禁（2026-10-21，有限离线PASS）
+
+- Owner“继续推进”批准§7.83最小接线及单文件离线验收，随后确认开发采用DeepSeek Go、额度足够/Use balance关闭、主辅助不消耗按量余额或付费fallback。回复接收后首次时钟观测03:27:12Z，固定费用窗口截至03:57:12Z（非平台精确发送时间、不滚动）。仅进程局部覆盖主/small_model和Go白名单，用户/全局Free环境不改；Codex未接管实现。来源沿用既有固定版本与本地调用链，纯内部接线无需新增外部检索或Gemini任务。
+- 唯一实施文件src/cli/index.ts、src/cli/review-cli.ts（新增）、tests/unified-review.test.ts（仅追加第7组）。原始review的无packet分支保持；显式review codex --packet在原始buildRequest前分支，缺值/非法文件不回退原始review。限定codex/gpt-6.1-sol，拒混合prompt/extra/role/sandbox覆盖；只复用现有Orchestrator.review与runUnifiedReview，不新增Runtime/调度/TaskStore/判决权威。UnifiedReview、adapter、离线保护、生产进程底座均未改。
+- 导入边界检查1MiB普通UTF8 JSON、必须字段/数组/枚举/嵌套bounded text/handoff身份/批准测试Attempt与模型租约字段；文件以打开句柄验证、最多读取上限+1字节、核对前后身份/大小/mtime/ctime并finally关闭。首轮Codex静态审核检出“readFile后才查大小”的分配窗口及cwd只检查存在；唯一一次定向返工关闭这两项，未放松已有完成/停止门禁。调用者提供的历史材料不等于本机权威证据认证，报告明确NOT independently authenticated、不重放旧Round，不据packet内容回填产品PASS。
+- 默认实际请求timeoutMs=90000，合法范围1..90000；通过既有NativeReviewer转发在请求最后加入timeoutMs，并同步传入等待期限，避免只限制result等待。schema、唯一新鲜-o、read-only、analytics关闭、Task/RunResult身份、succeeded/exit0/signalnull/Job确认停止后最终文件读取/严格verdict/清理继续由runUnifiedReview负责。packet报告记录输入绝对路径/SHA256/roundId及来源限制，只有completed且verdict=pass返回0，其他非零，automaticPostRoundAction=none；不改变历史Human Gate。
+- 两次开发原生session：ses_ea37e901affeyxE003P67DLNZO（21条assistant，236973ms）；ses_ea3793944ffeWCWzCACwM2bVMR（17条assistant，107418ms）。Codex通过原生export只读元数据独立确认两者全部assistant provider/model为opencode-go/deepseek-v4.1-flash；两个export仅本地取证，无prompt或新模型会话。两轮开发均自然exit0，typecheck各只一次exit0；Codex未重跑类型检查。原始工具记录未发现禁止node-e/python-c、suite或嵌套产品调用；未观察retry事件不等于HTTP总请求计数。Go用量价格不冒充账单，费用资格依据Owner声明。
+- Codex独立走查最终三文件与完整检查日志后，于03:37:18.828Z→03:37:19.541Z仅通过白名单Runner运行tests/unified-review.test.ts一次：216 passed/0 failed（Runner606ms，外层713ms/root0），offline bootstrap先冻结。全部既有断言及新增packet有效/非pass/非法schema与身份/模型/timeout/混合参数/超大文件/非法UTF8/cwd文件负例通过；最终目录清理断言通过。两条既有cline未安装WARN是注册提示，不是测试失败。无全量/其他suite，无真实产品Reviewer/Worker/LAYA/Round，开发Go会话不冒充产品审核。
+- 五个owned Job（两开发、两个本地metadata export、唯一suite）均assignedBeforeResume/resumed/rootExitObserved/complete=1、phase=done、rootExit0、treeStopped=1、ActiveProcessesFinal=0，cleanupFailures=0。源码/Runner在suite前后哈希一致，主HEAD/index及范围外dirty保留；9/26历史债务、P0-2新功能/前端/接力不触碰。证据全部ignored project-progress/p0421-review-cli-20261021/；audit只读，不上传凭据/本机审计/进度。阶段归档精确三代码测试文件+基线+NEXT，父5b4243bc，远端SHA/manifest及隔离索引清理以archive.json/final.json为准。
+- 结论仅P0-4.21有限离线PASS：§7.83入口缺口已关闭，实际原生Reviewer在90s内可信退出并返回合法verdict仍未知，旧Round保持PARTIAL。唯一下一建议P0-4.22：使用本入口、核对既有真实Round材料身份和哈希并准备明确来源packet后，另获有效授权/当前Codex费用事实，仅一次Reviewer验证；不重跑Round/Worker/LAYA、不继承过期窗口、不失败重试，不自动执行。
 <!-- project-progress:begin -->
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-20T12:53:24.2934612Z",
+  "updatedAt": "2026-10-21T03:40:30.7099443Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-4.20",
-    "name": "既有真实成果的单次Reviewer入口核对",
-    "status": "blocked",
-    "summary": "执行与费用已授权；仅原生review入口不经过runUnifiedReview，按边界在启动前停止。真实会话/POST/Round均0，不补用额度。"
+    "id": "P0-4.21",
+    "name": "packet审核CLI复用统一Review门禁",
+    "status": "done",
+    "summary": "有限离线PASS：Go实现+一次定向返工；两轮typecheck各0，独立单文件一次216/0，5 owned Jobs final0。真实产品调用0，真实Reviewer时限/合规verdict仍未验证。"
   },
   "next": {
-    "id": "P0-4.21",
-    "name": "待批准：现有review CLI复用统一Review门禁的最小接线",
+    "id": "P0-4.22",
+    "name": "待新授权：通过packet入口单次原生Reviewer复核既有真实成果",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1082,8 +1092,8 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
       "severity": "P1",
       "kind": "真实运行",
       "title": "实际Reviewer90s退出及有效verdict仍未证明",
-      "detail": "unified-review185/0及P02集成118/0已有离线证据；原真实90s超时未被新原生成功替代，Go开发会话不是产品Reviewer。",
-      "next": "仅建议新授权单次Codex Reviewer；不重跑Round/Worker/LAYA，不继承过期费用窗口。"
+      "detail": "packet CLI已接统一门禁，unified-review单文件216/0离线通过；尚无新的原生Review成功，Go开发/fixture不是产品Reviewer。",
+      "next": "仅建议新授权单次Codex Reviewer；先核对历史材料并生成明确来源packet，不重跑Round/Worker/LAYA，不继承旧费用窗口。"
     }
   ],
   "tasks": [
@@ -1480,9 +1490,28 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
       "status": "done",
       "deliverable": "指定既有测试文件；生产不变",
       "evidence": "§7.82；OpenCode模型两会话均确认，typecheck单次0；独立suite118/0，三个Job final0；首轮执行偏差保留"
+    },
+    {
+      "id": "P0-4.20",
+      "title": "单次Reviewer入口适用性核对",
+      "status": "blocked",
+      "deliverable": "启动前定位入口缺口，无真实调用",
+      "evidence": "§7.83；无适用入口按边界停，代码缺口由P0-4.21离线关闭，不能回填真实Review通过"
+    },
+    {
+      "id": "P0-4.21",
+      "title": "packet CLI统一审核接线",
+      "status": "done",
+      "deliverable": "CLI入口/输入边界/单一统一Review/既有单文件负控",
+      "evidence": "§7.84；OpenCode Go两轮模型核对，typecheck各一次0；独立suite216/0，5 owned Jobs final0，产品调用0"
     }
   ],
   "checks": [
+    {
+      "name": "P0-4.21唯一单文件离线验收",
+      "source": "PROJECT_BASELINE.md §7.84；project-progress/p0421-review-cli-20261021/independent-review.json",
+      "result": "216/0，Go两轮typecheck各一次0且Codex未重复；输入上限返工关闭；0产品模型/真实LAYA，5 owned Jobs final0；非真实Review/E2E"
+    },
     {
       "name": "P0-4.19唯一单文件离线验收",
       "source": "PROJECT_BASELINE.md §7.82；project-progress/p0419-p02-review-fixture-20261020/independent-review.json",
