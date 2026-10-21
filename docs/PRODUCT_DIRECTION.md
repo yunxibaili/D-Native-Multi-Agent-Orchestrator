@@ -1,6 +1,6 @@
 # 产品方向与当前取舍
 
-更新：2026-10-16。本文保存 Owner 已确认的定位与路线取舍；当前实现、证据和阶段状态只见 [唯一基线](PROJECT_BASELINE.md)。需求全集见 [后端需求](BACKEND_REQUIREMENTS.md)，交付顺序见 [路线](BACKEND_DELIVERY_PLAN.md)。新监督/机器完成契约状态：**Owner approved / Not yet implemented / Not yet tested**。
+更新：2026-10-21。本文保存 Owner 已确认的定位与路线取舍；当前实现、证据和阶段状态只见 [唯一基线](PROJECT_BASELINE.md)。需求全集见 [后端需求](BACKEND_REQUIREMENTS.md)，交付顺序见 [路线](BACKEND_DELIVERY_PLAN.md)。监督/机器完成契约已取得有界离线验收；完整真实闭环尚未通过，不能将两者混写为未实现或整体封板。
 
 ## 1. 要交付的个人工作台
 
@@ -26,7 +26,7 @@
 ## 3. 此次已裁定的最小路线
 
 1. **先打通一个真实闭环**：需求 → 已适配 Agent 产生内容/执行任务 → LAYA 选择/推进 → 真实交付与测试 → Codex Native Review → Human Gate。首个闭环可仍使用显式短计划；自然语言候选生成后补，不把两件事绑成大改造。
-2. **默认整轮预授权 + 异常人工介入**（Round-level Preauthorization + Exception-driven Human Intervention）：Owner开始前一次性批准并绑定短计划、写入范围、具体Agent×Model或合格候选池、费用上限及工具权限；正常中间任务通过机器门禁后自动流转，不再逐步人工accept。异常停止自动推进并交人工；原生独立Review后最终Human Gate仍由Owner决定。旧--checkpoint保留严格监督/调试。timeout/断线不伪记user_stop，pending_user须先安全停止活动资源；不取消执行deadline/预算，也不承诺隔天恢复。此为正式未来默认，**尚未实现或测试**，不追认历史实验。
+2. **默认整轮预授权 + 异常人工介入**（Round-level Preauthorization + Exception-driven Human Intervention）：Owner开始前一次性批准并绑定短计划、写入范围、具体Agent×Model或合格候选池、费用上限及工具权限；正常中间任务通过机器门禁后自动流转，不再逐步人工accept。异常停止自动推进并交人工；原生独立Review后最终Human Gate仍由Owner决定。旧--checkpoint保留严格监督/调试。timeout/断线不伪记user_stop，pending_user须先安全停止活动资源；不取消执行deadline/预算，也不承诺隔天恢复。P0-1/2/3已在基线所列有界离线范围通过；当前实现以确认stage且不带--checkpoint进入机器自动模式，无stage入口保留原行为，不能概括成所有入口无条件自动。完整真实闭环仍待验收，不追认历史实验。
 3. **质量与模型决策分离**：LAYA保留任务级选择权，不能越过统一完成门禁。适用编码/文件交付任务必须证明精确expectedArtifacts、考虑原dirty及Windows链接/Junction的allowedScope、批准命令真实test exit0；模型PASS或总Session exit0均无效。复用completeTask→applyVerification，不另建验证权威；异步检查后提交前重新确认同Task/Attempt/RunResult及证据版本。三门是必要条件，最终Native Review仍必要。
 4. **自然语言生成候选是准备步骤**：经现有 AgentAdapter/Runtime 生成 2–3 个短 JSON 候选，复用 parsePlanFile 校验与 plan-choice 选择，随后冻结计划并计算 stage digest。不能让 stage-check 暗中推理；生成会话、费用和数据单独入预算。
 5. **工具使用最小复用**：角色标签过滤已有声明候选，再让 LAYA 选择；保持 ModelRegistry/费用准入、Skill/MCP intent 和原生加载路径，不新建工具路由或 provider 网关。
@@ -52,6 +52,6 @@
 
 ## 6. 实施顺序与当前授权
 
-先P0-1确定性完成门禁，再P0-2授权范围内默认自动推进，再P0-3异常等待/最终交付，最后P0-4另行授权的真实E2E；不能先放开自动流转再补机器门。旧MVP-E2E.1d合并建议已被替代，NEXT_TASK只指P0-1。后续P1自然语言计划、P2模型/Skill/MCP配置、P3正式桌面UI顺序保持。
+依赖顺序仍为P0-1确定性完成门禁、P0-2授权范围内自动推进、P0-3异常等待/最终交付、P0-4另行授权的真实E2E。P0-1/2/3的有界离线验收已完成；§7.85取得一次真实独立Reviewer pass，但不是完整Round通过。P0-4.23在启动前被执行环境拒绝，尚无真实整轮结果。历史“下一项只指P0-1”的文字已失效，实际唯一任务见NEXT_TASK。
 
-此次仅产品契约和文档更新，不授权实现P0-1、开发Worker或第四次Round。三次真实MVP仍PARTIAL，26项B5.1-WF失败/有限准入不变；不改历史实验的两次人工accept要求或缺失事实。
+Owner本次允许转做不依赖真实调用的离线工作；范围为文档对齐、已有源码映射及下一片准备，不授权新功能实现或新的模型/测试调用。P1自然语言计划可先做只读准备，不将其作为受阻Round的替代验收，也不改变后续P2及正式桌面UI路线。历史三次MVP仍PARTIAL，26项B5.1-WF有限准入边界保留；不改历史人工accept要求或缺失事实。

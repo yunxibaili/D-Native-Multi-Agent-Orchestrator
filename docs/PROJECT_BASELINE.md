@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-21。§7.86 P0-4.23仍启动前BLOCKED；官方固定源码发现URL与UseShellExecute=false可能被粗粒度词匹配误判的具体机制，但未取得运行时命中规则，不能写成已确认根因。两次拒绝后无第三次尝试，真实Round/Worker/Reviewer/LAYA均0。§7.85原生Reviewer-only PASS保持。
+更新：2026-10-21。§7.87完成离线路线文档对齐及候选计划入口源码准备，未开发新功能或增加实现信用；§7.86真实整轮启动仍BLOCKED，§7.85原生Reviewer-only PASS保持。
 
 ## 1. 权责与当前结论
 
@@ -1024,22 +1024,31 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 - 后续只读取证已实际获取官方openai/codex固定commit 4ebc485ca321243727539187169425fcf972f2c4源码。windows_dangerous_commands.rs:57-63只检查has_url及token.contains("shellexecute")，不区分UseShellExecute=false；:305-332识别嵌入URL，:372-388对PowerShell -Command作shlex粗解析。被拒合并脚本同时含UseShellExecute=$false及http://127.0.0.1:8077/health，存在具体的误判解释。exec_policy.rs:793-806对dangerous+Never作Forbidden，:1110-1118的Other分支仅输出blocked by policy，与观察一致。此为固定源码静态重建，不是执行环境命中日志；没有证明当前主控宿主二进制与该commit完全一致，也没有运行完整命令分类器，故根因仍待环境确认，不能把高可信线索提升为已定位。来源及行段保存在ignored policy-source-audit.json。
 - 取证没有启动CLI、模型、服务或测试，没有第三次尝试，也没有为避开拒绝而拆分/编码/换工具、修改安全规则。唯一下一步是取得执行环境实际拒绝规则或维护者确认，再审定处理；不创建新Runtime或因运维策略拒绝改产品源码。原费用窗口已到期，不刷新旧时间戳或复用旧digest。Owner要求后续持续准备下一片、审核失败先查原因已接受，但不覆盖执行环境拒绝及真实调用授权边界。
 - Owner随后明确批准向既有上游Issue发送公开源码分析。已发布1条评论 https://github.com/openai/codex/issues/54463#issuecomment-6308372081 ，commentId=6308372081，2026-10-21T04:54:22Z；重新读取远端确认正文与批准内容一致。只含公开源码依据和受支持处理方式的请求，未附本机路径/项目代码/日志/账号/会话，未启动模型、服务或第三次执行，未改安全规则。回执保存在ignored public-comment-receipt.json。当前等待上游确认；上轮被拒的取证文档写入未重试，不因发布成功改写真实Round状态。
+## 7.87 受阻期间的离线路线对齐与候选计划准备（2026-10-21，仅准备完成）
+
+- Owner明确“可以，那先做其他的”，本次据此完成不依赖真实调用的文档一致性审核和下一片源码映射；未把这句话当新功能、测试或模型执行授权。读取最新基线/NEXT、产品方向、交付路线及旁路audit/evidence-index，只复用当前内部实现，无新的外部框架或官方参数假设，不需要Gemini重复检索。
+- PRODUCT_DIRECTION与BACKEND_DELIVERY_PLAN仍将P0-1列为唯一待实施项、将监督/机器门禁写为未实现；与§7.10/§7.41/§7.49的有限离线PASS及当前源码冲突。已修正为明确的当前范围，并把原源码接点表标成2026-10-16初始映射；保留原始需求、正式桌面路线、旧实验/26项历史失败，不提升真实E2E状态。当前代码的自动模式是有stage且非checkpoint，无stage保留旧行为，不写成所有入口默认自动。
+- 独立静态核对：applyVerification约897行为统一完成权威；round-cli约1473行选择机器自动模式、1323行冻结计划、1416行绑定digest、1431行stage-check提前返回。下一片候选生成只能是独立显式准备步骤，先输出草案后退出，再由用户核对和既有stage确认；不能塞到确认后的choosePlan约2185行临时生成。复用index.ts的CLI分发、Orchestrator.run约180行、RunRequest/RunResult、parsePlanFile约357行、decideWorkflowPlan约81行，不新增Planner/Workflow/Registry或执行权威。
+- 既有PlanFile上限为5候选/6步/64KiB/单文本400字符；未来准备入口可仅允许2–3候选，不能改大既有上限。原始计划步骤的expectedArtifacts/allowedScope/test由parseStep转成内部completion，不能直接把内部对象JSON.stringify作为外部plans.json，需保持已验证的原始格式。生成结果如outputTruncated或停止/退出事实不可信则不作为有效草案；模型输出的范围和测试只是提案，不构成批准，不能自动执行。
+- 一个直接预算影响已定位：现有分类约1771行、多个候选的LAYA选择约2193行、两个任务分别推进，会使同形两任务成功路径由固定单候选的3次变成4次POST。这是静态调用数推导；未提高上限、未消耗任何调用。未来生成Agent会话也另计，不能塞进原Worker≤2的授权。P0-4.23仍BLOCKED，原费用窗口不复活；本次准备不替代一次真实闭环。
+- 本次仅改PRODUCT_DIRECTION、BACKEND_DELIVERY_PLAN、PROJECT_BASELINE、NEXT_TASK并刷新ignored进度快照；源码/测试/配置/旧Demo/模型调用均0，未启动正式前端，规划信用68/100不增加。证据在ignored project-progress/offline-roadmap-prep-20261021/。下一片只提出“自然语言→2–3个计划JSON草案”的独立显式准备入口，开发Worker/模型/验证范围待Owner另行批准；先有界实施和静态审核，不自动进入真实Round或扩大预算。
+
 <!-- project-progress:begin -->
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-21T04:55:05.2000110Z",
+  "updatedAt": "2026-10-21T05:06:32.2399311Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-4.23",
-    "name": "执行环境拒绝规则取证",
-    "status": "blocked",
-    "summary": "Owner批准的公开源码反馈已发布至Issue54463并回读核实；仍等待维护者确认拒绝规则或支持的修复，真实调用0，不重试。"
+    "id": "OFFLINE-PREP.1",
+    "name": "离线路线对齐与候选计划入口准备",
+    "status": "done",
+    "summary": "已修正路线文档的旧P0状态并完成P1入口只读映射，明确阶段冻结顺序、原始/内部JSON差异和额外一次POST；源码/测试/模型0，真实Round仍受阻。"
   },
   "next": {
-    "id": "P0-4.23",
-    "name": "等待Issue54463维护者确认规则或支持的修复方式",
+    "id": "P1-PREP-ENTRY",
+    "name": "待批准独立候选计划草案入口的有界离线实现",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1544,6 +1553,13 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
       "status": "blocked",
       "deliverable": "新Demo+当前Owner池+有效Go配置+stage digest；真实运行未启动",
       "evidence": "§7.86；有效配置/stage通过；原启动和Owner批准的一次精确重试均在CreateProcess前被拒绝；实际Round/Worker/Reviewer/LAYA0，两预检Job final0"
+    },
+    {
+      "id": "OFFLINE-PREP.1",
+      "title": "离线路线对齐与候选计划入口准备",
+      "status": "done",
+      "deliverable": "四份文档对齐/现有接点映射/预算与序列化边界",
+      "evidence": "§7.87；只读源码核对，无模型/测试/生产代码改动，不提高规划信用"
     }
   ],
   "checks": [

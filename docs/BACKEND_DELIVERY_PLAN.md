@@ -1,7 +1,6 @@
 # 后端交付路线 — 机器完成门禁优先
 
-更新：2026-10-16。Owner批准日期：2026-10-16。状态：**Owner approved / Not yet implemented / Not yet tested**。
-本文记录未来实施顺序，不授权本轮开发或真实调用。事实只见[唯一基线](PROJECT_BASELINE.md)，需求见[BACKEND_REQUIREMENTS](BACKEND_REQUIREMENTS.md)，唯一下一项见[NEXT_TASK](NEXT_TASK.md)。
+更新：2026-10-21。原路线批准日期：2026-10-16。P0-1/2/3已取得有界离线验收；P0-4完整真实闭环仍未通过。以下保留原依赖顺序，具体事实只见[唯一基线](PROJECT_BASELINE.md)，需求见[BACKEND_REQUIREMENTS](BACKEND_REQUIREMENTS.md)，唯一下一项见[NEXT_TASK](NEXT_TASK.md)。本文不授权新开发或真实调用。
 
 ## 1. 正式默认产品契约
 
@@ -11,18 +10,18 @@ Owner开始前批准绑定的短计划、文件范围、具体Agent×Model或合
 异常停止并交人工；所有任务完成后真实Codex Native Review，再最终Human Gate，由Owner决定。
 自动推进记录为预授权策略下的系统验证结果，不伪造user_accept。旧--checkpoint保留严格监督/调试用途。
 
-这是未来**默认**，覆盖旧“仅显式实验策略”的建议；当前生产尚未改变。在以下三个离线切片全部通过前，不提前启用新默认。
+这是已批准的产品方向；当前代码在确认stage且未指定--checkpoint时进入机器自动模式，无stage时保留旧入口。P0-1/2/3的有界离线范围已通过，完整真实验收另列，不把当前实现描述成“尚未改变”，也不将其扩展为所有入口无条件自动。
 
 ## 2. P0实施顺序与准入
 
 | 顺序 | 有界交付 | 依赖 | 最小验收及停止条件 |
 |---|---|---|---|
-| **P0-1：确定性完成门禁** | PlanFile交付路径/允许范围/可信测试要求；实际Workspace与同Attempt证据；completeTask/applyVerification统一约束 | 唯一最近实施任务，待单独下发 | 精确路径、真实增删改归属、真实测试exit0；缺失/过期/错误Attempt/停止未知/越界均拒绝完成和下游；有效任务可完成。**不启用默认自动推进** |
+| **P0-1：确定性完成门禁** | PlanFile交付路径/允许范围/可信测试要求；实际Workspace与同Attempt证据；completeTask/applyVerification统一约束 | 已有界独立PASS（基线§7.10） | 精确路径、真实增删改归属、真实测试exit0；缺失/过期/错误Attempt/停止未知/越界均拒绝完成和下游；有效任务可完成；不等于完整E2E |
 | **P0-2：授权范围内自动推进** | 复用stage/冻结计划，绑定模型/候选池、费用、工具及P0-1要求；机器通过后推进 | P0-1独立通过 | 开始前真实Owner批准；Task1→Task2无需人工accept；任何边界变化立即停；旧checkpoint可用、不重跑成功Worker，不新增执行边 |
 | **P0-3：异常等待与最终Human Gate** | 区分系统/用户来源；安全释放活动执行资源、保存待人工材料；原生Review后交付 | P0-1、P0-2通过；可提前设计事件字段但不提前开默认 | timeout/断线不是user_stop；默认不因60秒未答而丢失待办；验证Job停止/费用deadline继续有效；保存pending结果不等于跨进程恢复；最终动作NONE |
 | **P0-4：一次新的真实闭环** | Owner预授权→LAYA决策→Worker1实现→机器验证→Worker2独立测试→机器验证→Codex Native Review→Human Gate | 前三项独立通过，且Owner**另行授权**本次模型、次数、费用、数据和时限 | 固定/候选约束、实际模型/任务/Attempt/Session对应，真实代码/测试/Review verdict、最终交付和Job空；异常即停，无额外Round或付费补救 |
 
-旧MVP-E2E.1d“两项一起修”的建议已被此依赖顺序取代，不能继续当唯一实施任务。当前NEXT_TASK只指P0-1；完成后停止，不连做P0-2。
+旧MVP-E2E.1d“两项一起修”的建议已被此依赖顺序取代。P0-2已有限离线PASS（§7.41），P0-3已有限离线PASS（§7.49）；§7.85真实独立Reviewer pass与P0-4整轮验收分开记录。P0-4.23启动受阻时可按Owner本次指示做独立离线准备，不自动执行下一阶段或复用过期真实调用授权。
 
 ## 3. P0-1的完成必要条件
 
@@ -40,7 +39,7 @@ Owner开始前批准绑定的短计划、文件范围、具体Agent×Model或合
 
 ## 4. 源码接点与安全边界
 
-| 当前入口（本轮只读） | 后续最小接线 | 仍缺什么 |
+| 2026-10-16初次定位入口（历史行号） | 当时提出的接线 | 当时缺口（不代表当前未实现） |
 |---|---|---|
 | plan-file.ts:66/169/284；round-cli.normalizedPlanScope；stage-material.stageBindingDigest | 在既有JSON增加必要交付/范围/测试字段，传播到Task/brief与同一计划绑定 | 当前仅fileScope/deliverable声明，没有三门 |
 | workspace.ts:96/432，既有dispatch/executeTask | 以实际WorkspaceHandle.cwd采集每次执行前基线/执行后证据 | 当前没有完整dirty增量归属/重解析点核验；Node/Win32资料仅方法，不是实现证明 |
@@ -49,7 +48,7 @@ Owner开始前批准绑定的短计划、文件范围、具体Agent×Model或合
 | round-cli.currentActualOf:2358；runOneCycle/complete分支；runUnifiedReview:4047 | 机器结果经同一Verification；缺证不能靠LAYA complete或手动accept绕过 | P0-1先门禁，P0-2后默认流转；Review保留独立会话和verdict |
 | workflow-checkpoint.ts:103/191/214；round-cli:2734/2746 | P0-3类型化原因、系统/用户来源及pending投影 | 当前仍60秒异常→stop/source=user；不将target语义直接加成第二TaskState |
 
-行号是本轮映射，实施前重定位。TaskStore/Assignment/Scheduler.tick/Orchestrator/AttemptStore/SessionRegistry/Job/Human Gate不新建替代。
+上表保留初次路线的映射历史，相关P0门禁/自动推进/来源修复已按基线有界验收，不能再将表中“当前没有”解读为今日状态。当前统一完成入口为orchestration/orchestrator.ts的applyVerification（约897行），stage自动模式在round-cli.ts约1473行；进一步实施前仍须重定位。TaskStore/Assignment/Scheduler.tick/Orchestrator/AttemptStore/SessionRegistry/Job/Human Gate不新建替代。
 LAYA保留合法任务决策，但不能越过门禁；不把wait改complete。停止未知不释放保护，不放宽Worker/Reviewer/LAYA执行deadline或费用预算，PARALLEL_WRITE=CLOSED。
 
 ## 5. P0-3恢复边界
@@ -63,7 +62,7 @@ LAYA保留合法任务决策，但不能越过门禁；不把wait改complete。�
 
 | 级别 | 后续目标 | 复用方式 |
 |---|---|---|
-| P1 | 自然语言需求生成2–3个候选短计划 | 已适配Agent→parsePlanFile→plan-choice/LAYA→冻结计划/digest；生成调用另计授权，不让stage-check暗中推理 |
+| P1 | 自然语言需求生成2–3个候选短计划 | 独立准备步骤调用已适配Agent→parsePlanFile→草案/人工核对→既有stage冻结候选与digest→Round内plan-choice/LAYA选择；生成调用另计授权，不让stage-check暗中推理 |
 | P2 | 模型与Skill/MCP配置、角色标签预过滤 | 现有Registry、用户费用池、Skill/MCP目录/intent和原生加载；不建models.yaml/第二网关；列出不等于可调用/免费 |
 | P3 | 正式Windows桌面UI | 桌面路线保持，先与Owner单独确认前端需求；本机ignored进度页不是产品UI |
 
@@ -72,4 +71,10 @@ LAYA保留合法任务决策，但不能越过门禁；不把wait改complete。�
 ## 7. 研究与维护
 
 [研究索引](ENGINEERING_RESEARCH_REFERENCES.md)保留原20项，新增Owner本次明确给出的Agentless、A2A、OpenAI Agents SDK；明确论文事实、官方机制与项目推导。只借鉴机制，不移植框架/服务。
-每片先调查→有界委派→独立验收→更新基线/NEXT/进度页。文档更新不增实现信用；历史68/100保持，不等于MVP成功率。真实推理和开发本轮均0，不追改三次历史实验。
+每片先调查→有界委派→独立验收→更新基线/NEXT/进度页。文档更新不增实现信用；历史68/100保持，不等于MVP成功率。本次仅文档与只读映射，真实推理、开发及测试调用均0，不追改历史实验。
+
+### P1离线准备结论（未实现）
+
+生成必须发生在round-cli.ts的stage冻结（约1323行）之前，不能在确认后的choosePlan（约2185行）临时生成或改写计划。最小候选是独立CLI准备入口，复用现有runtime.run、RunRequest/RunResult和parsePlanFile，生成后退出，随后由用户核对并走原stage-check/confirm。既有解析器上限为5个计划、6步、64KiB、单文本400字符；新入口的2–3个候选约束不能扩大这些上限。草案不是授权，不自动执行草案里的测试命令，不新建Planner或第二套工作流。
+
+多候选选择会额外消耗一次LAYA决策请求。沿现有两任务成功路径，分类1+选计划1+推进2在当前接线下需要4次POST，而原固定单计划实验为3次；这是静态调用数推导，不是新增实测。不得暗增原授权的3次上限，生成Agent会话也不计入原Worker≤2的既有预算。P1实现/模型生成/验证范围均待另行批准，正式UI需求仍未开始。

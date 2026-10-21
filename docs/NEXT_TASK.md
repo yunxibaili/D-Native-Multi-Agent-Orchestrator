@@ -1,27 +1,34 @@
-# 唯一下一任务 — P0-4.23 执行环境拒绝规则确认（真实调用停止）
+# 唯一下一任务 — 候选计划草案入口的有界离线实现（待Owner批准）
 
-唯一基线§7.86：原启动和Owner明确批准的一次精确重试都在CreateProcess前被拒绝，仅blocked by policy。唯一重试已用完；没有第三次尝试。实际Round/Worker/Reviewer/LAYA启动、health、POST、批准测试均0，既有两个预检Job final0。
+Owner允许先做不依赖真实调用的其他工作。§7.87的离线路线文档对齐与源码映射已经完成；本页提出下一实施片，不是已获开发/模型/测试授权。P0-4.23继续保持BLOCKED，旧真实调用窗口不复活，不绕过执行环境拒绝。
 
-## 本轮已取得的源码依据
+## 已完成的离线准备
 
-已实际读取官方openai/codex commit `4ebc485ca321243727539187169425fcf972f2c4`：`windows_dangerous_commands.rs:57-63`以URL和包含shellexecute的token粗匹配，不判断赋值false。被拒脚本含`UseShellExecute=$false`和localhost健康检查URL，存在具体误判机制；`exec_policy.rs:793-806,1110-1118`说明dangerous在Never下Forbidden并可能只返回blocked by policy。证据见ignored `project-progress/p0423-real-round-20261021/policy-source-audit.json`。
+PRODUCT_DIRECTION与BACKEND_DELIVERY_PLAN已纠正“P0-1仍未实施/自动推进尚未实现”的过时表述；P0-1/2/3仅继承基线的有界离线PASS，完整真实闭环不提升。原始需求、26项历史失败边界和Windows正式桌面路线保持。此次没有开发、测试、模型或前端工作。
 
-这不是实际运行时命中规则，尚未证明当前主控宿主与该源码commit完全一致；不把静态机制写成已确认根因。旧Force+delete原因不套用到本次。
+## 下一片最小目标（提案，未实施）
 
-## 唯一最小下一步
+给现有CLI增加一个独立、显式的候选计划准备入口：一句需求→已适配Agent返回2–3个短PlanFile JSON候选→既有解析器校验→输出待人工核对的草案后退出。该命令不派发草案任务、不调用LAYA、不生成批准/confirm，也不自动运行测试或进入Round。
 
-取得执行环境的实际拒绝规则/日志或维护者确认，再确定获准的处理。重复Owner授权或刷新费用不能解除环境策略。不得通过拆分、编码、换工具、换启动包装规避拒绝，不修改审批/安全设置、Agent安装或生产源码，不启动第三次执行或新的开发阶段。Owner要求持续推进已记录；当前在等待必要环境事实处停止。
+未来调用生成Agent仍需独立的当前模型、费用、数据和时限授权；开发会话也不继承过期Go声明。OpenCode为主要实现者，Codex独立审核。此次只准备接点，尚未委派。
 
-## 保留材料与未来执行边界
+| 现有文件/入口 | 实际接点与最小复用 |
+|---|---|
+| src/cli/index.ts:169、src/cli/round-cli.ts:1075 | 准备步骤独立于runRoundCli；不能在Round已经确认后生成计划，stage-check保持无推理 |
+| src/orchestrator/orchestrator.ts:180、src/core/types.ts:218 | 复用Orchestrator.run及RunRequest/RunResult、既有deadline/原生执行/contained清理；不新增运行时 |
+| src/orchestration/plan-file.ts:55、194、357 | 复用parsePlanFile和CompletionContract；新入口只收2–3候选，保留5候选/6步/64KiB/单文本400字符既有上限；拒绝截断、非法或不完整结果 |
+| src/cli/round-cli.ts:1323、1416、1431 | 草案定稿后才经既有计划冻结、stageBindingDigest、stage-check/confirm；草案不批准自身 |
+| src/cli/round-cli.ts:2185、src/decision/plan-choice.ts:81 | 后续Round由现有choosePlan/decideWorkflowPlan在获批候选中选择，沿原planWithCandidates/TaskStore执行；不新增Planner |
 
-新Demo `D:/workbench-demo/p0423-20261021T040337Z` 的workspace仍空、配置哈希未变。Go主/small_model/provider有效配置核对及一次stage-check exit0已保留；旧digest `b178f6d967315bc5195019de0f933d817f199d3f82dbef9a8fff673efbe53afb` 不代表真实执行完成。
+两个直接注意点：
 
-原费用窗口2026-10-21北京时间12:03:37–12:33:37已到期，pool/digest不得补用或滚动刷新。以后环境问题解决且执行安排获准时才核对当时费用，不反复询问同一已批准事项。
+1. parseStep将原始expectedArtifacts/allowedScope/test变成内部completion。不能把内部解析对象直接序列化回外部plans.json；必须保持既有原始文件格式，并只消费校验结果，不把模型任意字段并入配置/授权。RunResult的outputTruncated、退出及停止事实也不能忽略。
+2. 原两任务固定单计划流程为3次LAYA POST；多个候选再由LAYA选择会多一次，静态推导需要4次。不能暗增原3次上限，生成Agent会话另计。若未来获准真实实验，必须把这些新增调用列入授权和stage digest，不挪用旧预算。
 
-原范围不变：Worker Go DeepSeek V4.1 Flash≤2会话；Reviewer codex/gpt-6.1-sol≤1；LAYA POST≤3；执行/请求/启动各90s、批准测试每条120s；并发1、编排器重试0、无接力/换模型/付费fallback，允许原生同会话既有有限重试。§7.85真实Reviewer-only PASS保持，旧Round PARTIAL及Human Gate waiting_for_user不改。
+## 实施和验证边界待确认
 
-仅同步基线/NEXT/本机进度并归档两份文档到既有独立审核分支；主HEAD/index/范围外dirty及旧结果保持，无main合并/强推，本机证据与凭据不上载。
+建议只接sequential草案，复用已有JSON结构，保持现有Round/Review/Verification/TaskStore及所有隔离保护。具体新增CLI名称/输出参数须实施前沿用代码风格，不将提案写成已存在功能。不新建models.yaml、工作流引擎、通用上下文平台或正式UI。
 
-## 已获批准并完成的上游反馈
+默认只做typecheck和diff审查；没有新增/修改/运行测试的授权，不新建临时验证脚本，也不调用真实生成模型验证。若后续需要定向测试，须先取得该单文件的明确范围。所有模型调用与外部工具写操作按各自授权，不以本页代替。
 
-Owner已明确批准；单条评论已发布并从远端回读核实：https://github.com/openai/codex/issues/54463#issuecomment-6308372081 （2026-10-21T04:54:22Z）。只发送公开源码依据；无私密信息或本机材料。当前唯一下一步为等待维护者确认实际规则或支持的修复方式，不再索要同一评论的授权，不自动重复发言或执行被拒命令。上轮被拒的文档写入没有重试。
+P0-4.23另行等待既有Issue54463反馈或执行环境支持的解决方式；已批准的单条评论已发，不自动重复发言、重试真实命令或修改安全规则。代码与文档阶段归档由Codex负责，主HEAD/index/范围外dirty保持，project-progress/audit不上载。
