@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-21。§7.84 P0-4.21最小packet审核CLI接线有限离线PASS：OpenCode Go实现及一次定向返工，两轮typecheck各0；Codex独立白名单contained单文件一次216/0，五个owned Job final0。真实产品Reviewer/Worker/LAYA/Round均0，尚未证明真实Reviewer在90s内成功。
+更新：2026-10-21。§7.85 P0-4.22单次真实原生Reviewer PASS：gpt-6.1-sol独立会话68417ms、exit0、合法verdict=pass，两个owned Job final0；本轮Worker/LAYA/新Round/测试均0。旧Round仍PARTIAL、Human Gate未接受，不倒写完整E2E PASS。
 
 ## 1. 权责与当前结论
 
@@ -998,22 +998,34 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 - Codex独立走查最终三文件与完整检查日志后，于03:37:18.828Z→03:37:19.541Z仅通过白名单Runner运行tests/unified-review.test.ts一次：216 passed/0 failed（Runner606ms，外层713ms/root0），offline bootstrap先冻结。全部既有断言及新增packet有效/非pass/非法schema与身份/模型/timeout/混合参数/超大文件/非法UTF8/cwd文件负例通过；最终目录清理断言通过。两条既有cline未安装WARN是注册提示，不是测试失败。无全量/其他suite，无真实产品Reviewer/Worker/LAYA/Round，开发Go会话不冒充产品审核。
 - 五个owned Job（两开发、两个本地metadata export、唯一suite）均assignedBeforeResume/resumed/rootExitObserved/complete=1、phase=done、rootExit0、treeStopped=1、ActiveProcessesFinal=0，cleanupFailures=0。源码/Runner在suite前后哈希一致，主HEAD/index及范围外dirty保留；9/26历史债务、P0-2新功能/前端/接力不触碰。证据全部ignored project-progress/p0421-review-cli-20261021/；audit只读，不上传凭据/本机审计/进度。阶段归档精确三代码测试文件+基线+NEXT，父5b4243bc，远端SHA/manifest及隔离索引清理以archive.json/final.json为准。
 - 结论仅P0-4.21有限离线PASS：§7.83入口缺口已关闭，实际原生Reviewer在90s内可信退出并返回合法verdict仍未知，旧Round保持PARTIAL。唯一下一建议P0-4.22：使用本入口、核对既有真实Round材料身份和哈希并准备明确来源packet后，另获有效授权/当前Codex费用事实，仅一次Reviewer验证；不重跑Round/Worker/LAYA、不继承过期窗口、不失败重试，不自动执行。
+## 7.85 P0-4.22 既有真实成果的一次独立原生Review（2026-10-21，Reviewer-only PASS）
+
+- Owner“可以，继续推进”批准§7.84/NEXT的唯一Reviewer范围，并确认gpt-6.1-sol订阅包含额度足额、主/辅助无额外credits/API按量/自动充值/付费fallback。接收回复后首次时钟观测03:48:48Z（非平台精确发送时间），固定窗口截至04:18:48Z；本次所有真实调用在窗口内。仅1个Reviewer、实际deadline90000ms、只读既有成果/必要证据、失败不重试；没有新的开发Worker授权或调用，旧Go/Reviewer窗口不结转。
+- 材料为真实历史round-mvgba79g。保留的RoundResult SHA256=ABFC3660766A5BE048144456E1AD21C7C10979E03CDE78E648159897112C8E95与原留存记录一致；两条历史Task/Attempt/lease session、Runtime RunResult起止时间、原生session和当前add.js/add.test.js哈希逐一映射。packet.json 16571B，SHA256=4994735b724afb9ab7aef54ceead8f0ec2afd8ba2058ab7d2a56c3a70621e8de；来源映射保存在本机source-map/materials中，未使用损坏的P0-4.6 stdout。已截断的2055字符历史提示词仍保留原tail与截断标记，handoff未单独恢复的decisions/unresolved不新增断言。历史批准测试exit0来自保存的机器记录，不是今天重跑，也不是Worker的PASS文字。
+- 唯一真实入口为现有src/cli/index.ts review codex --packet ... --cwd既有workspace --config既有固定配置 --model gpt-6.1-sol --timeout90000 --json --live-agent，复用runReviewPacket→runUnifiedReview→runtime.review。进程局部analytics关闭、schema/唯一owned -o/read-only及实际请求deadline均沿用已验收实现；未修改源码/配置/权限/外部安装，无额外探针/新Round/Worker/LAYA。原始stdout/stderr按字节保存，中文JSON有效，不经过PowerShell原生输出重编码。
+- 原生Task tsk_a085fdb77bdb46bca4bc，独立Session 01a15c97-e9da-7823-a1e6-8a3b3d4167e9；Runtime记录1792554821908→1792554890325，68417ms，自然succeeded/exit0/signalnull/cleanup.treeStopConfirmed=true。完整CLI 03:53:41.566Z→03:54:50.387Z共68821ms、exit0，无deadline触发。原生rollout turn_context独立确认model=gpt-6.1-sol、cwd为历史workspace、sandbox=read-only、approval=never，不只依赖请求模型字段。
+- 产品统一门禁消费本次新鲜最终文件，严格验证后返回status=completed/verdict=pass/code=null；有4项info findings、无自动后续动作。判决明确：现有源码/哈希/保存机器记录支持w1实现与w2独立会话验证，仅针对实际交付物，不代表历史Round完整E2E通过或Human Gate接受。模型侧reason/findings与CLI原始JSON、RunResult/transcript/rollout路径哈希均留本机证据，当前Codex文字审核不替代此原生verdict。
+- Reviewer仅3次只读shell调用，读取产物/哈希/来源记录，以及继承规则要求的既有research-before-work、Ponytail、Ponytail-review SKILL文件；未安装/新增Skill或MCP，未运行测试/模型/接力/写文件命令。本轮Reviewer1、Worker0、LAYA POST0、新Round0、测试0；无外层重试/模型替换，未观察重连/重试事件，不把此项等同原生内部HTTP请求计数。原生usage input118280（cached83328）、output2308、reasoning1118、total121706；费用资格依据Owner声明，未独立核实实际账单。
+- CLI外层与原生Reviewer内层两个owned sealed Job均assignedBeforeResume/resumed/rootExitObserved/complete=1、phase=done、rootExit0、treeStopped=1、ActiveProcessesFinal=0；cleanupFailures=0。owned最终文件清理由runUnifiedReview成功路径确认，清理失败会拒绝completed。保全初查对SessionStore全文件不变及thread文件命名的观察假设不符，未重跑模型：实际仅追加本次index记录（原字节前缀SHA256与before相同），新增该Task/Thread/Transcript三个Runtime记录；其余历史Demo文件、当前产物、原RoundResult和主latest结果哈希均保留。thread实际codex__<id>.json内容身份已核对，不凭文件名猜关联。
+- 结论仅P0-4.22单次真实原生Reviewer PASS，关闭“此接线未有90s内可信原生退出/verdict”的证据缺口；§7.84离线PASS保持，9/26历史债务不扩大。旧round-mvgba79g仍PARTIAL、gate=waiting_for_user、automaticPostRoundAction=none；本次报告不修改旧任务/Verification/Human Gate、不回填完整MVP PASS。
+- 本机证据ignored project-progress/p0422-native-packet-review-20261021/含新授权、before、packet、来源映射、真实调用argv/原始双流/退出、原生模型/工具/用量/两个Job、保全及独立审核记录；audit只读，不上传凭据/本机证据。基线/NEXT/进度同步，估算不因本次一个成功会话自动加分。阶段归档只两文档，以719417c9为父独立codex审核分支；远端SHA/manifest及外部临时索引清理以archive.json/final.json为准。
+- 唯一下一建议P0-4.23：Owner对现有真实交付及Review作最终人工裁定后，另行批准一次全新最小Round，验证当前CLI的Worker→机器门禁自动流转→原生Review→Human Gate整轮联动；不得把今日独立历史材料审核当同一Round全链PASS。新Round、调用预算、Go/Codex当前费用、机器批准测试120s及协作式数据边界需新授权，当前不启动。现成实现与固定来源已足够，无需新增Gemini调研/架构开发。
 <!-- project-progress:begin -->
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-21T03:40:30.7099443Z",
+  "updatedAt": "2026-10-21T04:01:06.9068088Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "P0-4.21",
-    "name": "packet审核CLI复用统一Review门禁",
+    "id": "P0-4.22",
+    "name": "既有真实成果的单次原生Review",
     "status": "done",
-    "summary": "有限离线PASS：Go实现+一次定向返工；两轮typecheck各0，独立单文件一次216/0，5 owned Jobs final0。真实产品调用0，真实Reviewer时限/合规verdict仍未验证。"
+    "summary": "Reviewer-only PASS：gpt-6.1-sol原生独立会话68.417s/exit0/合法pass，两层owned Job final0；Worker/LAYA/新Round/测试0。旧Round/Human Gate保持，非完整E2E PASS。"
   },
   "next": {
-    "id": "P0-4.22",
-    "name": "待新授权：通过packet入口单次原生Reviewer复核既有真实成果",
+    "id": "P0-4.23",
+    "name": "待Owner人工裁定及新授权：一次全新最小Round整链验收",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1090,10 +1102,10 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
   "blockers": [
     {
       "severity": "P1",
-      "kind": "真实运行",
-      "title": "实际Reviewer90s退出及有效verdict仍未证明",
-      "detail": "packet CLI已接统一门禁，unified-review单文件216/0离线通过；尚无新的原生Review成功，Go开发/fixture不是产品Reviewer。",
-      "next": "仅建议新授权单次Codex Reviewer；先核对历史材料并生成明确来源packet，不重跑Round/Worker/LAYA，不继承旧费用窗口。"
+      "kind": "真实整轮验收",
+      "title": "当前实现的全新Round联动及Owner最终验收仍待验证",
+      "detail": "历史真实产物已获新的独立原生Review pass，68.417s/exit0/Job final0；原历史Round仍PARTIAL，不能回填其Review/Human Gate。",
+      "next": "Owner人工裁定现有结果；另授权全新最小Round及Go/Codex当前费用和预算，不自动运行。"
     }
   ],
   "tasks": [
@@ -1504,9 +1516,21 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
       "status": "done",
       "deliverable": "CLI入口/输入边界/单一统一Review/既有单文件负控",
       "evidence": "§7.84；OpenCode Go两轮模型核对，typecheck各一次0；独立suite216/0，5 owned Jobs final0，产品调用0"
+    },
+    {
+      "id": "P0-4.22",
+      "title": "单次真实Codex packet审核",
+      "status": "done",
+      "deliverable": "合法原生Review verdict+实际身份/退出/Job/原始证据",
+      "evidence": "§7.85；gpt-6.1-sol/独立Session/68.417s/exit0/pass，2 owned Job final0；新Round/Worker/LAYA/测试0，旧Human Gate未改"
     }
   ],
   "checks": [
+    {
+      "name": "P0-4.22真实原生Reviewer独立验收",
+      "source": "PROJECT_BASELINE.md §7.85；project-progress/p0422-native-packet-review-20261021/independent-review.json",
+      "result": "一个真实gpt-6.1-sol会话，68.417s/exit0/signalnull/strict verdict pass/两Job final0；历史材料映射及索引前缀保留，非历史完整E2E PASS"
+    },
     {
       "name": "P0-4.21唯一单文件离线验收",
       "source": "PROJECT_BASELINE.md §7.84；project-progress/p0421-review-cli-20261021/independent-review.json",
