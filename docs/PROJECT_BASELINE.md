@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-21。§7.86 P0-4.23启动前BLOCKED：Owner已授权一次新Round并确认费用/边界，新Demo有效配置与stage-check通过；受控执行命令在CreateProcess前被自动审批拒绝，真实Round/Worker/Reviewer/LAYA均0，待一次精确重试批准。§7.85原生Reviewer-only PASS保持。
+更新：2026-10-21。§7.86 P0-4.23仍启动前BLOCKED：Owner批准的精确重试也被CreateProcess前自动审批拒绝，仅blocked by policy，原因UNKNOWN；唯一重试额度已用尽，真实Round/Worker/Reviewer/LAYA均0，不再重试或换入口。§7.85原生Reviewer-only PASS保持。
 
 ## 1. 权责与当前结论
 
@@ -1016,25 +1016,27 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 - 新拥有Demo D:/workbench-demo/p0423-20261021T040337Z，workspace空、control有plans/stage/orchestrator/pool，根opencode.json仅固定Go主/辅助模型和provider白名单。复用已有两任务CommonJS add.js→独立add.test.js完成契约及allowedScope/批准命令；双方90s、LAYA POST硬上限3、串行/无接力/任务重试0。未预置目标文件，未修改旧Demo/父/全局配置/生产代码。
 - 一次≤30s contained原生debug config只核对有效model/small_model/enabled_providers/Go whitelist，全部匹配指定Go；原始配置仅内存处理、不打印或落盘credential值。一次无推理stage-check exit0，digest=b178f6d967315bc5195019de0f933d817f199d3f82dbef9a8fff673efbe53afb；绑定新Owner pool声明与固定窗口，不复活旧池。两个预检Job complete/done/rootExit0/treeStopped/final0，cleanupFailures0，workspace仍空。
 - 唯一计划真实执行为既有sealed owned LAYA固定缓存启动→既有Round CLI→finally写owned stop marker协同停止/验证Job。该合并命令被执行环境自动审批在CreateProcess前整体拒绝，工具仅返回blocked by policy，无具体rationale；shell主体未运行，LAYA启动/health/POST、Worker、Reviewer、Round、批准测试均0，无服务/模型副作用。尚无laya-invocation或round-invocation记录，不能写成产品启动或模型限额失败。
-- 未换入口/拆分/编码绕过、未实际重试。已请求Owner只批准该命令精确重试一次，范围/费用/调用数/owned清理保持，再被拒绝立即停止；目前答复未到。既有§7.81 Force+delete误判不能自动解释本次拒绝（本命令不含原Remove-Item清理表达式），具体政策原因UNKNOWN，不能伪称已定位。无需Gemini重复调研已有产品路径；没有授权新的实现/开发Worker/安全规则修改。
+- 未换入口/拆分/编码绕过、未实际重试。已请求Owner只批准该命令精确重试一次，范围/费用/调用数/owned清理保持，再被拒绝立即停止；首次记录时答复未到，后续获批重试见下文。既有§7.81 Force+delete误判不能自动解释本次拒绝（本命令不含原Remove-Item清理表达式），具体政策原因UNKNOWN，不能伪称已定位。无需Gemini重复调研已有产品路径；没有授权新的实现/开发Worker/安全规则修改。
 - 准备材料与拒绝事实保存在ignored project-progress/p0423-real-round-20261021/，含当前授权、before、新Demo配置哈希、有效配置白名单事实、stage原始输出/digest/两个控制记录、执行环境拒绝和未启动事实；audit只读，凭据不读取/上传。当前Demo保留为未执行材料，不删除用户文件或预置产物。主HEAD/index/范围外dirty及latest旧结果按结束核对，阶段只精确归档基线/NEXT，不上传本机材料；远端SHA/资源清理见archive.json/final.json。
-- 唯一下一步仍P0-4.23：等待Owner对已被拒绝动作的一次精确重试明确答复。若获准且04:33:37Z前材料仍匹配，沿用本次有效费用窗口和digest，只执行原定唯一Round；不重复申请同一费用事实。若窗口已过期，先补当前费用声明并按新绑定生成digest，不滚动刷新旧时间；若再次被拒绝，则停止并交执行环境提供具体政策原因，不通过其他启动方式规避。§7.85真实Reviewer68.417s/合法pass事实保持，新整轮联动仍无结果。
+- Owner随后明确答复“批准这一次精确重试”，接收后首次时钟04:28:26Z，原30分钟费用窗口尚有效、所有Demo配置哈希未变。Codex只对同一受控命令精确重试一次，执行环境再次在CreateProcess前拒绝，仅blocked by policy，无更具体规则；原脚本主体未执行。批准的唯一重试已消耗，但真实LAYA启动/health/POST、Worker、Reviewer、Round、批准测试仍均0。没有拆分/编码/换入口或修改安全规则，未继续第三次尝试。
+- 首次停下时“等待答复”的状态为历史事实；当前重试答复已收到并落实为一次被拒绝尝试，不再等待相同授权或索要费用确认来解决策略拒绝。新Demo及原digest保留为未执行材料；窗口到期后声明/digest不可补用。旧产品结果与主HEAD/index/范围外dirty保持，两预检Job final0、cleanupFailures0，无新的owned运行进程。
+- 唯一下一步仍P0-4.23的执行环境问题：由执行环境提供该精确命令的具体拒绝规则或日志证据，再决定最小处理。Owner重复批准没有解除当前策略，不能以更换工具/包装/拆分启动绕过。当前只允许保留/只读核对拒绝证据，不启动任何真实调用，不改安全配置或生产源码。§7.85真实Reviewer68.417s/合法pass事实保持，新整轮联动仍无结果。补充证据execution-policy-retry-rejection.json；本次归档为原独立审核分支的精确文档快进，不合并main或强推。
 <!-- project-progress:begin -->
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-21T04:12:08.3167222Z",
+  "updatedAt": "2026-10-21T04:30:19.6057285Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
     "id": "P0-4.23",
     "name": "全新最小Round准备与启动",
     "status": "blocked",
-    "summary": "Owner已授权/确认费用边界，有效Go配置+stage-check通过；合并owned执行命令CreateProcess前被审批拒绝，真实模型/服务/Round0，待精确重试批准。"
+    "summary": "Owner批准的一次精确重试也在CreateProcess前被审批拒绝，仍仅blocked by policy。唯一重试额度已用尽，实际模型/服务/Round0；停止，不换入口。"
   },
   "next": {
     "id": "P0-4.23",
-    "name": "待Owner一次精确重试答复；不换入口、不扩大预算",
+    "name": "等待执行环境提供具体拒绝规则；停止真实调用",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1112,9 +1114,9 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
     {
       "severity": "P1",
       "kind": "执行环境审批",
-      "title": "owned执行命令CreateProcess前被拒绝",
-      "detail": "只返回blocked by policy、具体原因UNKNOWN；两预检Job final0，Worker/Reviewer/LAYA/Round均0。已申请一次精确重试，未获答复。",
-      "next": "有明确批准且费用窗口有效才精确重试一次，再拒绝即停；不替换启动方式。"
+      "title": "明确批准的精确重试仍被拒绝",
+      "detail": "首次与唯一获批重试均CreateProcess前blocked by policy，原因UNKNOWN；两预检Job final0，真实调用0。",
+      "next": "需执行环境提供该精确命令拒绝规则/日志；不再重试、不改入口或安全规则。"
     }
   ],
   "tasks": [
@@ -1538,10 +1540,15 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
       "title": "全新最小Round整链验收",
       "status": "blocked",
       "deliverable": "新Demo+当前Owner池+有效Go配置+stage digest；真实运行未启动",
-      "evidence": "§7.86；两预检Job final0，启动命令被审批拒绝，实际Round/Worker/Reviewer/LAYA POST0"
+      "evidence": "§7.86；有效配置/stage通过；原启动和Owner批准的一次精确重试均在CreateProcess前被拒绝；实际Round/Worker/Reviewer/LAYA0，两预检Job final0"
     }
   ],
   "checks": [
+    {
+      "name": "P0-4.23精确重试拒绝",
+      "source": "PROJECT_BASELINE.md §7.86；project-progress/p0423-real-round-20261021/execution-policy-retry-rejection.json",
+      "result": "Owner明确批准后同命令重试一次仍被审批拒绝，0目标进程/真实调用；停，无第三次尝试或替代入口"
+    },
     {
       "name": "P0-4.23无推理准备及审批拒绝",
       "source": "PROJECT_BASELINE.md §7.86；project-progress/p0423-real-round-20261021/execution-policy-rejection.json",
