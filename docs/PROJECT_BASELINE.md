@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-21。§7.86 P0-4.23仍启动前BLOCKED：Owner批准的精确重试也被CreateProcess前自动审批拒绝，仅blocked by policy，原因UNKNOWN；唯一重试额度已用尽，真实Round/Worker/Reviewer/LAYA均0，不再重试或换入口。§7.85原生Reviewer-only PASS保持。
+更新：2026-10-21。§7.86 P0-4.23仍启动前BLOCKED；官方固定源码发现URL与UseShellExecute=false可能被粗粒度词匹配误判的具体机制，但未取得运行时命中规则，不能写成已确认根因。两次拒绝后无第三次尝试，真实Round/Worker/Reviewer/LAYA均0。§7.85原生Reviewer-only PASS保持。
 
 ## 1. 权责与当前结论
 
@@ -1021,22 +1021,24 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 - Owner随后明确答复“批准这一次精确重试”，接收后首次时钟04:28:26Z，原30分钟费用窗口尚有效、所有Demo配置哈希未变。Codex只对同一受控命令精确重试一次，执行环境再次在CreateProcess前拒绝，仅blocked by policy，无更具体规则；原脚本主体未执行。批准的唯一重试已消耗，但真实LAYA启动/health/POST、Worker、Reviewer、Round、批准测试仍均0。没有拆分/编码/换入口或修改安全规则，未继续第三次尝试。
 - 首次停下时“等待答复”的状态为历史事实；当前重试答复已收到并落实为一次被拒绝尝试，不再等待相同授权或索要费用确认来解决策略拒绝。新Demo及原digest保留为未执行材料；窗口到期后声明/digest不可补用。旧产品结果与主HEAD/index/范围外dirty保持，两预检Job final0、cleanupFailures0，无新的owned运行进程。
 - 唯一下一步仍P0-4.23的执行环境问题：由执行环境提供该精确命令的具体拒绝规则或日志证据，再决定最小处理。Owner重复批准没有解除当前策略，不能以更换工具/包装/拆分启动绕过。当前只允许保留/只读核对拒绝证据，不启动任何真实调用，不改安全配置或生产源码。§7.85真实Reviewer68.417s/合法pass事实保持，新整轮联动仍无结果。补充证据execution-policy-retry-rejection.json；本次归档为原独立审核分支的精确文档快进，不合并main或强推。
+- 后续只读取证已实际获取官方openai/codex固定commit 4ebc485ca321243727539187169425fcf972f2c4源码。windows_dangerous_commands.rs:57-63只检查has_url及token.contains("shellexecute")，不区分UseShellExecute=false；:305-332识别嵌入URL，:372-388对PowerShell -Command作shlex粗解析。被拒合并脚本同时含UseShellExecute=$false及http://127.0.0.1:8077/health，存在具体的误判解释。exec_policy.rs:793-806对dangerous+Never作Forbidden，:1110-1118的Other分支仅输出blocked by policy，与观察一致。此为固定源码静态重建，不是执行环境命中日志；没有证明当前主控宿主二进制与该commit完全一致，也没有运行完整命令分类器，故根因仍待环境确认，不能把高可信线索提升为已定位。来源及行段保存在ignored policy-source-audit.json。
+- 取证没有启动CLI、模型、服务或测试，没有第三次尝试，也没有为避开拒绝而拆分/编码/换工具、修改安全规则。唯一下一步是取得执行环境实际拒绝规则或维护者确认，再审定处理；不创建新Runtime或因运维策略拒绝改产品源码。原费用窗口已到期，不刷新旧时间戳或复用旧digest。Owner要求后续持续准备下一片、审核失败先查原因已接受，但不覆盖执行环境拒绝及真实调用授权边界。
 <!-- project-progress:begin -->
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-21T04:30:19.6057285Z",
+  "updatedAt": "2026-10-21T04:42:14.3731931Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
     "id": "P0-4.23",
-    "name": "全新最小Round准备与启动",
+    "name": "执行环境拒绝规则取证",
     "status": "blocked",
-    "summary": "Owner批准的一次精确重试也在CreateProcess前被审批拒绝，仍仅blocked by policy。唯一重试额度已用尽，实际模型/服务/Round0；停止，不换入口。"
+    "summary": "已取得固定官方源码的URL+shellexecute粗匹配机制；UseShellExecute=false存在误判线索，尚无运行时命中规则。两次拒绝后未重试，真实调用0。"
   },
   "next": {
     "id": "P0-4.23",
-    "name": "等待执行环境提供具体拒绝规则；停止真实调用",
+    "name": "取得实际拒绝规则或维护者确认；不规避执行拒绝",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1114,9 +1116,9 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
     {
       "severity": "P1",
       "kind": "执行环境审批",
-      "title": "明确批准的精确重试仍被拒绝",
-      "detail": "首次与唯一获批重试均CreateProcess前blocked by policy，原因UNKNOWN；两预检Job final0，真实调用0。",
-      "next": "需执行环境提供该精确命令拒绝规则/日志；不再重试、不改入口或安全规则。"
+      "title": "具体误判机制已有源码依据，宿主实际拒绝分支尚未确认",
+      "detail": "官方固定源码对URL+shellexecute词匹配不区分false，Never下Forbidden；未证明当前宿主版本一致或取得实际规则日志。",
+      "next": "由执行环境提供命中规则或维护者确认；不拆分/编码/换入口，不启动第三次调用。"
     }
   ],
   "tasks": [

@@ -1,19 +1,23 @@
-# 唯一下一任务 — P0-4.23 执行环境拒绝规则取证（真实调用停止）
+# 唯一下一任务 — P0-4.23 执行环境拒绝规则确认（真实调用停止）
 
-唯一基线§7.86：原受控执行命令被CreateProcess前拒绝；Owner随后明确“批准这一次精确重试”，Codex在原费用窗口有效、Demo配置哈希未变时精确重试一次，仍同样被拒绝，仅blocked by policy，无具体rationale。唯一获批重试已用尽，不再等待相同授权，不进行第三次尝试或换入口。新Round/Worker/Reviewer/LAYA启动/health/POST/批准测试均0，两个既有预检Job final0。
+唯一基线§7.86：原启动和Owner明确批准的一次精确重试都在CreateProcess前被拒绝，仅blocked by policy。唯一重试已用完；没有第三次尝试。实际Round/Worker/Reviewer/LAYA启动、health、POST、批准测试均0，既有两个预检Job final0。
+
+## 本轮已取得的源码依据
+
+已实际读取官方openai/codex commit `4ebc485ca321243727539187169425fcf972f2c4`：`windows_dangerous_commands.rs:57-63`以URL和包含shellexecute的token粗匹配，不判断赋值false。被拒脚本含`UseShellExecute=$false`和localhost健康检查URL，存在具体误判机制；`exec_policy.rs:793-806,1110-1118`说明dangerous在Never下Forbidden并可能只返回blocked by policy。证据见ignored `project-progress/p0423-real-round-20261021/policy-source-audit.json`。
+
+这不是实际运行时命中规则，尚未证明当前主控宿主与该源码commit完全一致；不把静态机制写成已确认根因。旧Force+delete原因不套用到本次。
 
 ## 唯一最小下一步
 
-需要执行环境提供该精确命令的具体拒绝规则或日志证据，再据事实确定最小处理。Owner批准已存在，重复授权或刷新费用不能解决当前策略问题。不猜测与旧Force+delete误判相同，不通过拆分/编码/换工具/不同启动包装规避拒绝；不修改安全配置、Agent安装或生产源码。当前只读核对及证据保全，不调用任何模型/服务，不启动新开发阶段。
+取得执行环境的实际拒绝规则/日志或维护者确认，再确定获准的处理。重复Owner授权或刷新费用不能解除环境策略。不得通过拆分、编码、换工具、换启动包装规避拒绝，不修改审批/安全设置、Agent安装或生产源码，不启动第三次执行或新的开发阶段。Owner要求持续推进已记录；当前在等待必要环境事实处停止。
 
-## 已完成并保留的准备
+## 保留材料与未来执行边界
 
-新Demo：D:/workbench-demo/p0423-20261021T040337Z；workspace空、配置哈希未变。Go主/small_model/provider有效配置核对通过；一次stage-check exit0，digest=b178f6d967315bc5195019de0f933d817f199d3f82dbef9a8fff673efbe53afb。材料保留在本机，不能视为真实运行通过。
+新Demo `D:/workbench-demo/p0423-20261021T040337Z` 的workspace仍空、配置哈希未变。Go主/small_model/provider有效配置核对及一次stage-check exit0已保留；旧digest `b178f6d967315bc5195019de0f933d817f199d3f82dbef9a8fff673efbe53afb` 不代表真实执行完成。
 
-原费用事实窗口为2026-10-21 12:03:37至12:33:37（北京时间，首次接收时钟观测、非精确平台发送时间）。过期后pool声明/digest不能复活或补用；未来如执行环境问题解决且另获实际执行安排，再核对当时费用，不滚动刷新旧声明。已有调用预算尚未产生真实消耗，不代表可以无限尝试启动。
+原费用窗口2026-10-21北京时间12:03:37–12:33:37已到期，pool/digest不得补用或滚动刷新。以后环境问题解决且执行安排获准时才核对当时费用，不反复询问同一已批准事项。
 
-原计划不变：Worker opencode-go/deepseek-v4.1-flash≤2会话；Reviewer codex/gpt-6.1-sol≤1；LAYA POST≤3；原生执行/LAYA请求/启动各90s，批准测试每条120s；并发1、编排器重试0、无handoff/换模型/收费fallback，原生同会话有限重试已准许。没有改变这些边界，也没有额外启动入口。
+原范围不变：Worker Go DeepSeek V4.1 Flash≤2会话；Reviewer codex/gpt-6.1-sol≤1；LAYA POST≤3；执行/请求/启动各90s、批准测试每条120s；并发1、编排器重试0、无接力/换模型/付费fallback，允许原生同会话既有有限重试。§7.85真实Reviewer-only PASS保持，旧Round PARTIAL及Human Gate waiting_for_user不改。
 
-§7.85真实独立Reviewer68.417s/合法pass保持；旧Round PARTIAL/Human Gate waiting_for_user保持，不能因本次准备或Owner“继续”写成accept。正式前端/新功能/接力仍不启动。
-
-本轮只同步基线/NEXT/本机进度，精确快进既有独立codex审核分支、核对远端SHA/manifest、清理仓库外自有临时索引。主HEAD/index/范围外dirty及旧latest结果保持，不强推/合并、不上传本机project-progress/audit或凭据。
+仅同步基线/NEXT/本机进度并归档两份文档到既有独立审核分支；主HEAD/index/范围外dirty及旧结果保持，无main合并/强推，本机证据与凭据不上载。
