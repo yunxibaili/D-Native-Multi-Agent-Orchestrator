@@ -1,6 +1,6 @@
 # 项目基线 — 唯一当前事实入口
 
-更新：2026-10-21。§7.87完成离线路线文档对齐及候选计划入口源码准备，未开发新功能或增加实现信用；§7.86真实整轮启动仍BLOCKED，§7.85原生Reviewer-only PASS保持。
+更新：2026-10-21。§7.88 P1.0候选草案CLI有限静态验收通过：OpenCode一次实现加一次返工，唯一typecheck exit0，未运行功能测试或真实生成。P0-4.23真实整轮仍BLOCKED，原生Reviewer-only PASS保持。
 
 ## 1. 权责与当前结论
 
@@ -1033,22 +1033,32 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
 - 一个直接预算影响已定位：现有分类约1771行、多个候选的LAYA选择约2193行、两个任务分别推进，会使同形两任务成功路径由固定单候选的3次变成4次POST。这是静态调用数推导；未提高上限、未消耗任何调用。未来生成Agent会话也另计，不能塞进原Worker≤2的授权。P0-4.23仍BLOCKED，原费用窗口不复活；本次准备不替代一次真实闭环。
 - 本次仅改PRODUCT_DIRECTION、BACKEND_DELIVERY_PLAN、PROJECT_BASELINE、NEXT_TASK并刷新ignored进度快照；源码/测试/配置/旧Demo/模型调用均0，未启动正式前端，规划信用68/100不增加。证据在ignored project-progress/offline-roadmap-prep-20261021/。下一片只提出“自然语言→2–3个计划JSON草案”的独立显式准备入口，开发Worker/模型/验证范围待Owner另行批准；先有界实施和静态审核，不自动进入真实Round或扩大预算。
 
+## 7.88 P1.0 独立候选草案CLI（2026-10-21，有限静态验收通过）
+
+- Owner在§7.87已准备的范围上明确“继续推进”，本轮批准仅新增候选草案CLI的有界实现与静态检查；没有测试或真实生成/Stage/Round授权。另行回复“DeepSeek Go：订阅额度足够，Use balance关闭，不消耗按量余额”，首个接收后时钟05:21:53Z（非平台精确发送时间），固定窗口截至05:51:53Z；仅本轮子进程覆盖Go主/辅助/单provider白名单，全局用户Free配置未改。既有P0-4.23拒绝及过期费用不复活，本轮开发不是替代真实整轮或尝试绕过拒绝。
+- OpenCode主要实现，只改src/cli/index.ts和新增src/cli/plan-cli.ts。首次会话ses_ea314e570ffeH7JmJtB7rWsweF在240253ms触发截止并安全停，已写代码但未运行typecheck；Codex先查实际差异，发现新入口未沿用配置cwd、缺少明确不执行工具的提示、拒绝/副作用文案过度声称，要求唯一一次定向返工。返工会话ses_ea30e1cb9ffeBfRQwjeI5McqB9历时77287ms/exit0，修正上述问题、复用已有上限常量并更正文档化JSON输出。两原生会话均以只读本地export核实assistant provider/model唯一为opencode-go/deepseek-v4.1-flash（分别12/17条assistant消息），不采信Worker自报模型。
+- 新入口为plan <agent> "<objective>" [--model <id>] [--cwd <dir>] [--timeout <ms>] [--json]，真实生成仍需既有--live-agent。有效model为显式值或该Agent配置，cwd为显式值→Agent配置→进程目录；空值/非法目录/不支持参数、非1..90000整数deadline在唯一runtime.run之前拒绝。每次至多一个fresh native session，不传threadId、不重试/回退，不调用LAYA或runRoundCli，不提交计划任务/生成确认/执行草案测试/主动写出计划文件。旧CLI行为保持，plan专用排除使目标文字含task时不误进旧task分支；既有live/offline门及runtime/adapters未改。
+- 结果要求state=succeeded、exit0、无signal/error、输出未截断且进程树停止确认；完整输出按UTF-8字节在64KiB内，再严格JSON.parse→既有parsePlanFile→kind=sequential且2–3候选。无截取JSON、修复或默认成功。仅从解析器已认可字段重建外部expectedArtifacts/allowedScope/test形状，内部completion不泄漏为无效外部格式；不把模型额外字段并入配置/授权。输出一次JSON报告或明确DRAFT的人类文本，automaticPostRoundAction=none；draft仅代表可解析草案，不代表Owner批准、实际模型认证或Round PASS。
+- Codex独立静态审核了最终两文件、调用者和共享解析器、实际工具日志及检查输出。唯一一次npm run typecheck实际工具输出exit=0，完整日志无诊断；另一个日志命令只写结果JSON，并非第二次typecheck。Codex没有重跑typecheck/测试或新CLI。Worker的diff检查通过，完整新文件的空白检查在隔离归档索引中进行。没有新增/修改测试、临时验证脚本或真实计划生成；所有生产LAYA/Worker/Reviewer/Review/Round调用0。该结论只限静态接线，不能标记P1整体或功能运行PASS。
+- 两开发Job和两元数据export Job均assignedBeforeResume、done、complete、treeStopped、activeProcessesFinal=0；首个为受控截止terminated，其他正常退出，cleanupFailures=0，不强杀无关进程。原生日志cost合计0.051217725仅作计价元数据，不据此推断实际新增账单；Go包含额度/余额兜底关闭依据Owner当前声明，实际账户账单未独立核实。证据在ignored project-progress/p10-plan-entry-20261021/，包括before、两任务/日志/控制记录、模型身份、一次typecheck、源码审核和归档记录，不上传本机材料。
+- 已知未验证：CLI功能正负例、外部计划往返解析、原生生成是否只回JSON、后续stage-check或真实Round。无工具执行只是协作式提示，原生权限未改变，其副作用不在这里获得认证；拒绝与有效草案报告均明确此边界。下一片拟仅扩展已登记白名单的tests/b42-plan-file.test.ts，使用Fake Runtime覆盖上述输入/执行/解析/序列化边界，先取得写测试及一次受保护单文件运行的明确批准；本轮不自动开始。P0-4仍BLOCKED，旧Human Gate状态未改，68/100信用不增加，正式前端未开始。
+
 <!-- project-progress:begin -->
 ```json
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-21T05:06:32.2399311Z",
+  "updatedAt": "2026-10-21T05:39:11.7518342Z",
   "title": "LAYA 个人工作台",
   "scope": "原后端完整需求十项能力权重；不含正式桌面UI。68/100为历史规划信用，非真实MVP通过率",
   "current": {
-    "id": "OFFLINE-PREP.1",
-    "name": "离线路线对齐与候选计划入口准备",
+    "id": "P1.0",
+    "name": "独立候选计划草案CLI静态接线",
     "status": "done",
-    "summary": "已修正路线文档的旧P0状态并完成P1入口只读映射，明确阶段冻结顺序、原始/内部JSON差异和额外一次POST；源码/测试/模型0，真实Round仍受阻。"
+    "summary": "OpenCode两轮实际Go模型已核实；单会话草案入口、解析/外部序列化/拒绝文案静态通过，一次typecheck0。行为测试与真实生成未运行，非P1整体或E2E PASS。"
   },
   "next": {
-    "id": "P1-PREP-ENTRY",
-    "name": "待批准独立候选计划草案入口的有界离线实现",
+    "id": "P1.1",
+    "name": "待批准既有B42单文件的候选草案CLI离线负控",
     "authorized": false
   },
   "parallelWrite": "CLOSED",
@@ -1560,6 +1570,13 @@ P0-4.10只读核对独立审核PASS（§7.65），P0-4.7/P0-4.9静态PASS保持�
       "status": "done",
       "deliverable": "四份文档对齐/现有接点映射/预算与序列化边界",
       "evidence": "§7.87；只读源码核对，无模型/测试/生产代码改动，不提高规划信用"
+    },
+    {
+      "id": "P1.0",
+      "title": "独立候选草案CLI静态接线",
+      "status": "done",
+      "deliverable": "plan准备入口/既有Runtime和解析器/未批准草案报告",
+      "evidence": "§7.88；OpenCode两轮Go身份核实，一次typecheck0，4 owned Jobs final0；测试/产品调用0，功能未验收"
     }
   ],
   "checks": [

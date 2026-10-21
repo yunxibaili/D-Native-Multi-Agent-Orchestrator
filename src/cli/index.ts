@@ -13,6 +13,7 @@ import { Orchestrator } from '../orchestrator/orchestrator.ts';
 import { writeStarterConfig, type AgentConfig } from '../orchestrator/config.ts';
 import { runTaskCli } from './task-cli.ts';
 import { formatPacketReviewReport, runReviewPacket } from './review-cli.ts';
+import { formatPlanReport, runPlanPrepare } from './plan-cli.ts';
 import { buildQuotaCenter, type BuildQuotaCenterOptions, type QuotaCenterView } from '../quota/index.ts';
 import { installOfflinePolicy } from '../runtime/offline-policy.ts';
 import type { RunRequest, RunResult } from '../core/types.ts';
@@ -37,17 +38,22 @@ COMMANDS
   quota [--json] [--offline]      quota / model registry / budget / spawn gate snapshot
   task list|inspect|diff|merge   workspace loop: see a child's work, merge it into your repo
   round "<objective>"            ONE execution round: Laya decides → tasks execute → report
+  plan <agent> "<objective>"     DRAFT 2-3 sequential PlanFile candidates; no dispatch,
+                                 no LAYA, no tests, no approval. --model is required
+                                 unless the agent has a configured model.
   init                            write a starter orchestrator.json
   smoke [--quick]                 end-to-end verification suite
 
 OPTIONS
   --cwd <dir>        working directory for the agent (default: config, else cwd)
   --model <id>       native model id, passed through verbatim
+                     (plan: required unless the agent has a configured model)
   --role <id>        native role / agent / profile
   --sandbox <mode>   codex sandbox: read-only | workspace-write | danger-full-access
-  --timeout <ms>     hard wall-clock limit; cancels the task
+  --timeout <ms>     hard wall-clock limit; cancels the task (plan default: 90000)
   --extra <arg>      append a raw flag to the agent argv (repeatable)
-  --json             emit every runtime event as NDJSON on stdout
+  --json             emit machine-readable output: NDJSON runtime events for
+                     run/review/resume, one report object for plan
   --quiet            suppress the human-readable result
   --log-level <lvl>  silent|error|warn|info|debug   (default: warn)
   --config <path>    explicit orchestrator.json
@@ -64,6 +70,7 @@ EXAMPLES
   orchestrator run codex "review src/agent.ts" --mode review
   orchestrator run codex "explain the event contract" --json
   orchestrator resume codex <threadId> "now write the tests"
+  orchestrator plan opencode "add a README section" --model "<model-id>" --cwd . --json --live-agent
 `;
 
 interface Parsed {
@@ -158,7 +165,7 @@ async function main(): Promise<number> {
   // the wrong reason. So `task` is dispatched BEFORE generic parsing, with the
   // rest of argv handed over verbatim.
   const taskAt = argv.indexOf('task');
-  if (taskAt >= 0) {
+  if (taskAt >= 0 && argv[0] !== 'plan') {
     const cwdIdx = argv.indexOf('--cwd');
     const cwd = cwdIdx >= 0 && argv[cwdIdx + 1] !== undefined ? resolve(argv[cwdIdx + 1]!) : process.cwd();
     const rest = argv.filter((a, i) => {
@@ -224,6 +231,8 @@ async function main(): Promise<number> {
       return cmdShow(orch, parsed);
     case 'quota':
       return cmdQuota(orch, parsed);
+    case 'plan':
+      return cmdPlan(orch, parsed);
     case 'smoke':
       return cmdSmoke(orch, parsed);
     default:
@@ -349,6 +358,25 @@ async function cmdReviewPacket(orch: Orchestrator, parsed: Parsed): Promise<numb
     },
   );
   process.stdout.write(formatPacketReviewReport(result.report, parsed.flags.json === true) + '\n');
+  return result.exitCode;
+}
+
+async function cmdPlan(orch: Orchestrator, parsed: Parsed): Promise<number> {
+  const [agent = '', objective = '', ...extraPositionals] = parsed.positionals;
+  const result = await runPlanPrepare(
+    {
+      configuredModel: orch.configFor(agent.trim()).model,
+      configuredCwd: orch.configFor(agent.trim()).cwd,
+      run: (req) => orch.run(req),
+    },
+    {
+      agent,
+      objective,
+      extraPositionals,
+      flags: parsed.flags,
+    },
+  );
+  process.stdout.write(formatPlanReport(result.report, parsed.flags.json === true) + '\n');
   return result.exitCode;
 }
 
