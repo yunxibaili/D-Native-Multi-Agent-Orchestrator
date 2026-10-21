@@ -21,3 +21,7 @@
 原范围不变：Worker Go DeepSeek V4.1 Flash≤2会话；Reviewer codex/gpt-6.1-sol≤1；LAYA POST≤3；执行/请求/启动各90s、批准测试每条120s；并发1、编排器重试0、无接力/换模型/付费fallback，允许原生同会话既有有限重试。§7.85真实Reviewer-only PASS保持，旧Round PARTIAL及Human Gate waiting_for_user不改。
 
 仅同步基线/NEXT/本机进度并归档两份文档到既有独立审核分支；主HEAD/index/范围外dirty及旧结果保持，无main合并/强推，本机证据与凭据不上载。
+
+## 已获批准并完成的上游反馈
+
+Owner已明确批准；单条评论已发布并从远端回读核实：https://github.com/openai/codex/issues/54463#issuecomment-6308372081 （2026-10-21T04:54:22Z）。只发送公开源码依据；无私密信息或本机材料。当前唯一下一步为等待维护者确认实际规则或支持的修复方式，不再索要同一评论的授权，不自动重复发言或执行被拒命令。上轮被拒的文档写入没有重试。
